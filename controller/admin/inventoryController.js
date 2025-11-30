@@ -1,4 +1,4 @@
-import Inventory from "../models/Inventory.js";
+import Inventory from "../../models/admin/Inventory.js";
 
 // 🔹 Create new inventory record
 export const createInventory = async (req, res) => {

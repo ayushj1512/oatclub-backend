@@ -1,4 +1,4 @@
-import Order from "../models/Order.js";
+import Order from "../models/Orders.js";
 
 /**
  * @desc Create a new order

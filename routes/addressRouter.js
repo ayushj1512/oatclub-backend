@@ -1,47 +1,60 @@
 import express from "express";
 import {
   createAddress,
+  getAddressesByFirebaseUID,
   getAddressesByCustomer,
   getAddressById,
   updateAddress,
   deleteAddress,
-} from "../controllers/addressController.js";
+} from "../controller/addressController.js";
 
-// Initialize router
 const router = express.Router();
 
 /**
- * @route   POST /api/addresses
- * @desc    Create a new address for a customer
- * @access  Private (requires authentication)
+ * ---------------------------------------------------------
+ * CREATE ADDRESS
+ * POST /api/addresses
+ * ---------------------------------------------------------
  */
 router.post("/", createAddress);
 
 /**
- * @route   GET /api/addresses/:customerId
- * @desc    Get all addresses for a specific customer
- * @access  Private
+ * ---------------------------------------------------------
+ * GET ADDRESSES BY FIREBASE UID (Preferred Route)
+ * GET /api/addresses/firebase/:firebaseUID
+ * ---------------------------------------------------------
  */
-router.get("/:customerId", getAddressesByCustomer);
+router.get("/firebase/:firebaseUID", getAddressesByFirebaseUID);
 
 /**
- * @route   GET /api/addresses/single/:id
- * @desc    Get a single address by its ID
- * @access  Private
+ * ---------------------------------------------------------
+ * GET ADDRESSES BY CUSTOMER ID (Optional Route)
+ * GET /api/addresses/customer/:customerId
+ * ---------------------------------------------------------
+ */
+router.get("/customer/:customerId", getAddressesByCustomer);
+
+/**
+ * ---------------------------------------------------------
+ * GET SINGLE ADDRESS BY _id
+ * GET /api/addresses/single/:id
+ * ---------------------------------------------------------
  */
 router.get("/single/:id", getAddressById);
 
 /**
- * @route   PUT /api/addresses/:id
- * @desc    Update an existing address
- * @access  Private
+ * ---------------------------------------------------------
+ * UPDATE ADDRESS
+ * PUT /api/addresses/:id
+ * ---------------------------------------------------------
  */
 router.put("/:id", updateAddress);
 
 /**
- * @route   DELETE /api/addresses/:id
- * @desc    Delete an address
- * @access  Private
+ * ---------------------------------------------------------
+ * DELETE ADDRESS
+ * DELETE /api/addresses/:id
+ * ---------------------------------------------------------
  */
 router.delete("/:id", deleteAddress);
 

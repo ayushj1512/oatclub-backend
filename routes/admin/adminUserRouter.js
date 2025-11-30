@@ -7,7 +7,7 @@ import {
   deleteAdminUser,
   loginAdminUser,
   changePassword,
-} from "../controllers/adminUserController.js";
+} from "../../controller/admin/adminUserController.js";
 
 import { protect, authorize } from "../middleware/authMiddleware.js"; 
 // optional middleware for authentication & role-based access

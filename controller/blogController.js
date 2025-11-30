@@ -1,4 +1,4 @@
-import Blog from "../models/blog.js";
+import Blog from "../models/Blogs.js";
 
 /**
  * 🟢 Create a new blog

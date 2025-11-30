@@ -2,10 +2,28 @@ import mongoose from "mongoose";
 
 const addressSchema = new mongoose.Schema(
   {
+    // 🔑 Preferred Primary Keys for your business logic
+    firebaseUID: {
+      type: String,
+      required: [true, "Firebase UID is required"],
+      index: true,
+      trim: true,
+    },
+
+    email: {
+      type: String,
+      required: [true, "Email is required"],
+      index: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    // (Optional but recommended) Keep customerId for DB relationships
     customerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
-      required: [true, "Customer ID is required"],
+      required: true,
+      index: true,
     },
 
     fullName: {
@@ -58,7 +76,7 @@ const addressSchema = new mongoose.Schema(
 
     country: {
       type: String,
-      required: [true, "Country is required"],
+      required: true,
       trim: true,
       default: "India",
     },
@@ -78,11 +96,13 @@ const addressSchema = new mongoose.Schema(
     isDefaultShipping: {
       type: Boolean,
       default: false,
+      index: true,
     },
 
     isDefaultBilling: {
       type: Boolean,
       default: false,
+      index: true,
     },
 
     notes: {
@@ -99,9 +119,8 @@ const addressSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Allow multiple addresses per user, but only one default shipping/billing
-addressSchema.index({ customerId: 1 });
-addressSchema.index({ isDefaultShipping: 1 });
-addressSchema.index({ isDefaultBilling: 1 });
+// Index for your primary keys
+addressSchema.index({ firebaseUID: 1, email: 1 });
 
-export default mongoose.model("Address", addressSchema);
+export default mongoose.models.Address ||
+  mongoose.model("Address", addressSchema);

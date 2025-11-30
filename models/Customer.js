@@ -2,25 +2,26 @@ import mongoose from "mongoose";
 
 const customerSchema = new mongoose.Schema(
   {
+    // 🔐 Only reliable required value from Firebase Auth
     firebaseUID: {
       type: String,
-      required: [true, "Firebase UID is required"],
+      required: true,
       unique: true,
       trim: true,
     },
 
+    // 👤 Basic Profile — optional for OAuth
     name: {
       type: String,
-      required: [true, "Name is required"],
       trim: true,
+      default: "",
     },
 
     email: {
       type: String,
-      required: [true, "Email is required"],
       trim: true,
       lowercase: true,
-      unique: true,
+      default: "",
     },
 
     phone: {
@@ -34,6 +35,7 @@ const customerSchema = new mongoose.Schema(
       default: "",
     },
 
+    // 🎂 Optional data (customer may fill later)
     dateOfBirth: {
       type: Date,
       default: null,
@@ -41,8 +43,8 @@ const customerSchema = new mongoose.Schema(
 
     gender: {
       type: String,
-      enum: ["male", "female", "non_binary", "prefer_not_to_say"],
-      default: "prefer_not_to_say",
+      enum: ["male", "female", "non_binary", "prefer_not_to_say", "unknown"],
+      default: "unknown",
     },
 
     ageGroup: {
@@ -51,24 +53,24 @@ const customerSchema = new mongoose.Schema(
       default: "Unknown",
     },
 
+    // 🌍 Location fields — optional & editable anytime
     country: {
       type: String,
       trim: true,
       default: "India",
     },
-
     state: {
       type: String,
       trim: true,
       default: "",
     },
-
     city: {
       type: String,
       trim: true,
       default: "",
     },
 
+    // 🧩 Referral system
     referralCode: {
       type: String,
       trim: true,
@@ -81,6 +83,7 @@ const customerSchema = new mongoose.Schema(
       default: null,
     },
 
+    // ❤️ Preferences (user may fill/update later)
     preferences: {
       categories: [{ type: mongoose.Schema.Types.ObjectId, ref: "Category" }],
       favoriteBrands: [{ type: String, trim: true }],
@@ -90,6 +93,7 @@ const customerSchema = new mongoose.Schema(
       },
     },
 
+    // 📊 Analytics — always optional & auto-calculated
     analytics: {
       totalOrders: { type: Number, default: 0 },
       totalSpend: { type: Number, default: 0 },
@@ -99,6 +103,7 @@ const customerSchema = new mongoose.Schema(
       creditsEarned: { type: Number, default: 0 },
     },
 
+    // 🚀 Account status
     isActive: {
       type: Boolean,
       default: true,
@@ -112,11 +117,12 @@ const customerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Auto-determine ageGroup when DOB is set
+// Automatically set age group when DOB is added
 customerSchema.pre("save", function (next) {
   if (this.dateOfBirth) {
     const age = Math.floor(
-      (Date.now() - this.dateOfBirth.getTime()) / (365.25 * 24 * 60 * 60 * 1000)
+      (Date.now() - this.dateOfBirth.getTime()) /
+        (365.25 * 24 * 60 * 60 * 1000)
     );
 
     if (age <= 13) this.ageGroup = "Gen Alpha";
@@ -129,10 +135,11 @@ customerSchema.pre("save", function (next) {
   next();
 });
 
-// Index for quick lookups
-customerSchema.index({ email: 1 });
+// Indexes for fast querying
 customerSchema.index({ firebaseUID: 1 });
+customerSchema.index({ email: 1 });
 customerSchema.index({ ageGroup: 1 });
 customerSchema.index({ country: 1 });
 
-export default mongoose.model("Customer", customerSchema);
+export default mongoose.models.Customer ||
+  mongoose.model("Customer", customerSchema);
