@@ -1,3 +1,4 @@
+// routes/blogRouter.js
 import express from "express";
 import {
   createBlog,
@@ -10,37 +11,33 @@ import {
 const router = express.Router();
 
 /**
- * @route   POST /api/blogs
- * @desc    Create a new blog
- * @access  Private (admin only - add auth middleware later)
- */
-router.post("/", createBlog);
-
-/**
- * @route   GET /api/blogs
- * @desc    Get all blogs (supports ?published=true/false)
- * @access  Public
+ * PUBLIC
+ * GET /api/blogs
+ * Supports: ?published=true/false&q=&page=&limit=&category=&sort=
  */
 router.get("/", getAllBlogs);
 
 /**
- * @route   GET /api/blogs/:idOrSlug
- * @desc    Get a single blog by ID or slug
- * @access  Public
+ * PUBLIC
+ * GET /api/blogs/:idOrSlug
  */
 router.get("/:idOrSlug", getBlogByIdOrSlug);
 
 /**
- * @route   PUT /api/blogs/:id
- * @desc    Update a blog
- * @access  Private (admin only)
+ * ADMIN (add auth later)
+ * POST /api/blogs
+ */
+router.post("/", createBlog);
+
+/**
+ * ADMIN (add auth later)
+ * PUT /api/blogs/:id
  */
 router.put("/:id", updateBlog);
 
 /**
- * @route   DELETE /api/blogs/:id
- * @desc    Delete a blog
- * @access  Private (admin only)
+ * ADMIN (add auth later)
+ * DELETE /api/blogs/:id
  */
 router.delete("/:id", deleteBlog);
 

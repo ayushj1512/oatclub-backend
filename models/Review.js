@@ -1,23 +1,30 @@
-// models/Review.js
 import mongoose from "mongoose";
 
 const reviewSchema = new mongoose.Schema(
   {
-    // 🧩 Link to the product being reviewed
+    /* ---------------------------------------------------------
+       PRODUCT (REQUIRED)
+    --------------------------------------------------------- */
     product: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Product",
       required: true,
+      index: true,
     },
 
-    // 👤 Link to the customer who posted the review
+    /* ---------------------------------------------------------
+       CUSTOMER (OPTIONAL FOR NOW)
+       You can allow guest reviews later by disabling required
+    --------------------------------------------------------- */
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
       required: true,
     },
 
-    // 🌟 Rating value (1 to 5)
+    /* ---------------------------------------------------------
+       RATING (1–5)
+    --------------------------------------------------------- */
     rating: {
       type: Number,
       min: 1,
@@ -25,14 +32,32 @@ const reviewSchema = new mongoose.Schema(
       required: true,
     },
 
-    // 📝 Short review text
+    /* ---------------------------------------------------------
+       OPTIONAL TITLE OF REVIEW
+       (e.g., "Amazing quality!", "Perfect Fit", etc.)
+    --------------------------------------------------------- */
+    title: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      default: "",
+    },
+
+    /* ---------------------------------------------------------
+       LONG/TEXT REVIEW
+    --------------------------------------------------------- */
     reviewText: {
       type: String,
       trim: true,
       maxlength: 1000,
+      default: "",
     },
 
-    // 🖼️ Array of review images (Cloudinary URLs)
+    /* ---------------------------------------------------------
+       IMAGES (CLOUDINARY URLS)
+       - supports multiple images
+       - supports null values
+    --------------------------------------------------------- */
     images: [
       {
         type: String,
@@ -40,35 +65,51 @@ const reviewSchema = new mongoose.Schema(
       },
     ],
 
-    // ✅ Whether this review is from a verified purchase
+    /* ---------------------------------------------------------
+       VERIFIED PURCHASE TAG
+       - Mark when the user actually bought the product
+    --------------------------------------------------------- */
     verifiedPurchase: {
       type: Boolean,
       default: false,
     },
 
-    // 🕵️‍♀️ For moderation or analytics
+    /* ---------------------------------------------------------
+       STATUS:
+       - pending (default)
+       - approved (visible to customers)
+       - rejected (hidden)
+    --------------------------------------------------------- */
     status: {
       type: String,
       enum: ["pending", "approved", "rejected"],
       default: "approved",
+      index: true,
     },
 
-    // 🧠 Optional metadata for analytics
+    /* ---------------------------------------------------------
+       ANALYTICS: HELPFUL / REPORT
+       - For showing "X people found this helpful"
+       - Customer can tap "Report this review"
+    --------------------------------------------------------- */
     helpfulCount: {
       type: Number,
       default: 0,
     },
+
     reportedCount: {
       type: Number,
       default: 0,
     },
-
-    // 📅 Timestamp for audit and sorting
   },
   { timestamps: true }
 );
 
-// 🔹 Ensure a customer reviews a product only once (optional rule)
+/* ---------------------------------------------------------
+   UNIQUE REVIEW RULE:
+   A customer should review a product only once
+--------------------------------------------------------- */
 reviewSchema.index({ product: 1, customer: 1 }, { unique: true });
 
-export default mongoose.model("Review", reviewSchema);
+export default mongoose.models.Review ||
+  mongoose.model("Review", reviewSchema);

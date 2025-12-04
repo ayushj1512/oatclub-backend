@@ -21,6 +21,7 @@ export const createCoupon = async (req, res) => {
       validFrom,
       validTill,
       usageLimit,
+      usageLimitPerCustomer, // NEW
       isActive,
     } = req.body;
 
@@ -43,7 +44,9 @@ export const createCoupon = async (req, res) => {
       validFrom,
       validTill,
       usageLimit,
+      usageLimitPerCustomer, // NEW
       isActive,
+      usedBy: [], // NEW — Track customer usage list
     });
 
     res.status(201).json({
@@ -128,7 +131,7 @@ export const updateCoupon = async (req, res) => {
       return res.status(404).json({ message: "Coupon not found" });
     }
 
-    // Recalculate active status based on expiry
+    // Auto-deactivate if expired
     if (coupon.validTill < new Date()) {
       coupon.isActive = false;
       await coupon.save();
@@ -165,3 +168,95 @@ export const deleteCoupon = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
+
+/**
+ * @desc Apply coupon for a customer
+ * @route POST /api/coupons/apply
+ * @access Private (Customer)
+ */
+export const applyCoupon = async (req, res) => {
+  try {
+    const { code, customerId, cartTotal } = req.body;
+
+    if (!code || !customerId || !cartTotal) {
+      return res.status(400).json({
+        message: "code, customerId and cartTotal are required.",
+      });
+    }
+
+    const coupon = await Coupon.findOne({ code: code.toUpperCase() });
+
+    if (!coupon) {
+      return res.status(404).json({ message: "Invalid coupon code." });
+    }
+
+    // Check active
+    if (!coupon.isActive) {
+      return res.status(400).json({ message: "Coupon is not active." });
+    }
+
+    // Check expired
+    if (new Date() > coupon.validTill) {
+      return res.status(400).json({ message: "Coupon has expired." });
+    }
+
+    // Minimum purchase
+    if (cartTotal < coupon.minPurchase) {
+      return res.status(400).json({
+        message: `Minimum purchase required is ₹${coupon.minPurchase}`,
+      });
+    }
+
+    // GLOBAL usage limit
+    if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
+      return res.status(400).json({
+        message: "Coupon usage limit has been reached.",
+      });
+    }
+
+    // PER-CUSTOMER usage limit (default = 1)
+    if (coupon.usedBy.includes(customerId)) {
+      return res.status(400).json({
+        message: "You have already used this coupon.",
+      });
+    }
+
+    // Calculate discount
+    let discountAmount = 0;
+
+    if (coupon.discountType === "percentage") {
+      discountAmount = (cartTotal * coupon.discountValue) / 100;
+
+      if (coupon.maxDiscount > 0) {
+        discountAmount = Math.min(discountAmount, coupon.maxDiscount);
+      }
+    } else if (coupon.discountType === "flat") {
+      discountAmount = coupon.discountValue;
+    }
+
+    // Ensure discount is not negative
+    if (discountAmount <= 0) {
+      return res.status(400).json({
+        message: "Invalid discount calculation.",
+      });
+    }
+
+    // Apply usage tracking
+    coupon.usedBy.push(customerId);
+    coupon.usedCount += 1;
+
+    await coupon.save();
+
+    res.status(200).json({
+      message: "Coupon applied successfully",
+      discount: discountAmount,
+      finalTotal: cartTotal - discountAmount,
+    });
+  } catch (error) {
+    console.error("Error applying coupon:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+

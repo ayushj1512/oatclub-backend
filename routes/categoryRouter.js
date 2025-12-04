@@ -1,3 +1,4 @@
+// routes/categoryRoutes.js
 import express from "express";
 import {
   createCategory,
@@ -9,38 +10,47 @@ import {
 
 const router = express.Router();
 
+/* ============================================================
+   CATEGORY ROUTES — ENTERPRISE READY
+   BASE URL: /api/categories
+   ============================================================ */
+
 /**
  * @route   POST /api/categories
- * @desc    Create a new category
- * @access  Private (admin)
+ * @desc    Create new category (supports parent, SEO, icons, etc.)
+ * @access  Private/Admin
  */
 router.post("/", createCategory);
 
 /**
  * @route   GET /api/categories
- * @desc    Get all categories
+ * @desc    Get all categories (supports search, filter, tree)
+ * @query   ?search=shirt
+ *          ?active=true
+ *          ?featured=true
+ *          ?parent=null
  * @access  Public
  */
 router.get("/", getAllCategories);
 
 /**
  * @route   GET /api/categories/:id
- * @desc    Get a single category by ID
+ * @desc    Get single category by ID (populates parent + attributes)
  * @access  Public
  */
 router.get("/:id", getCategoryById);
 
 /**
  * @route   PUT /api/categories/:id
- * @desc    Update a category
- * @access  Private (admin)
+ * @desc    Update category (auto slug, safe validation)
+ * @access  Private/Admin
  */
 router.put("/:id", updateCategory);
 
 /**
  * @route   DELETE /api/categories/:id
- * @desc    Delete a category
- * @access  Private (admin)
+ * @desc    Delete category (blocks delete if subcategories exist)
+ * @access  Private/Admin
  */
 router.delete("/:id", deleteCategory);
 

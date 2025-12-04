@@ -23,6 +23,7 @@ const couponSchema = new mongoose.Schema(
       default: "",
     },
 
+    // DISCOUNT
     discountType: {
       type: String,
       enum: ["percentage", "flat"],
@@ -46,18 +47,19 @@ const couponSchema = new mongoose.Schema(
       default: 0, // 0 = no cap
     },
 
+    // TARGETING
     influencerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Customer", // can reference influencer/user
+      ref: "Customer",
       default: null,
     },
 
     issuedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Admin", // optional, if you have an Admin/User model
       default: null,
     },
 
+    // VALIDITY
     validFrom: {
       type: Date,
       default: Date.now,
@@ -68,9 +70,10 @@ const couponSchema = new mongoose.Schema(
       required: [true, "Coupon expiry date is required"],
     },
 
+    // USAGE LIMITS
     usageLimit: {
       type: Number,
-      default: 0, // 0 = unlimited
+      default: 0, // 0 = unlimited global usage
     },
 
     usedCount: {
@@ -78,6 +81,21 @@ const couponSchema = new mongoose.Schema(
       default: 0,
     },
 
+    // 🔥 NEW — Only once per customer
+    usageLimitPerCustomer: {
+      type: Number,
+      default: 1, // allow once per user
+    },
+
+    // 🔥 NEW — Track which customers have used it
+    usedBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Customer",
+      },
+    ],
+
+    // STATUS
     isActive: {
       type: Boolean,
       default: true,
@@ -86,7 +104,7 @@ const couponSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Automatically deactivate expired coupons
+// 🔥 Auto-deactivate expired coupons
 couponSchema.pre("save", function (next) {
   if (this.validTill < new Date()) {
     this.isActive = false;
@@ -94,9 +112,10 @@ couponSchema.pre("save", function (next) {
   next();
 });
 
-// Index for faster searches and lookups
+// 🔥 Indexes for performance
 couponSchema.index({ code: 1 });
 couponSchema.index({ type: 1 });
 couponSchema.index({ influencerId: 1 });
+couponSchema.index({ validTill: 1 });
 
 export default mongoose.model("Coupon", couponSchema);

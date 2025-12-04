@@ -5,6 +5,7 @@ import {
   getCouponByIdOrCode,
   updateCoupon,
   deleteCoupon,
+  applyCoupon,   // NEW
 } from "../controller/couponController.js";
 
 const router = express.Router();
@@ -18,28 +19,35 @@ router.post("/", createCoupon);
 
 /**
  * @route   GET /api/coupons
- * @desc    Get all coupons (optional filters by type, influencer, isActive)
+ * @desc    Get all coupons
  * @access  Private (Admin)
  */
 router.get("/", getAllCoupons);
 
 /**
  * @route   GET /api/coupons/:idOrCode
- * @desc    Get a coupon by its ID or CODE
+ * @desc    Get a coupon by ID or CODE
  * @access  Public
  */
 router.get("/:idOrCode", getCouponByIdOrCode);
 
 /**
+ * @route   POST /api/coupons/apply
+ * @desc    Apply a coupon for a user
+ * @access  Private (Customer)
+ */
+router.post("/apply", applyCoupon); // 🔥 NEW — IMPORTANT FOR VALIDATION
+
+/**
  * @route   PUT /api/coupons/:id
- * @desc    Update a coupon by ID
+ * @desc    Update a coupon
  * @access  Private (Admin)
  */
 router.put("/:id", updateCoupon);
 
 /**
  * @route   DELETE /api/coupons/:id
- * @desc    Delete a coupon by ID
+ * @desc    Delete a coupon
  * @access  Private (Admin)
  */
 router.delete("/:id", deleteCoupon);
