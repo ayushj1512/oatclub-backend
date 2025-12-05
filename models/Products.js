@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
-import { generateSKU } from "../utility/sku.js"; // ✅ adjust path if needed (utils/sku.js etc)
+import { generateSKU } from "../utility/sku.js";
+import Counter from "./Counter.js"; // ✅ use existing Counter model (like Orders)
 
 /* ------------------------------------------------------------------
    VARIANT LEVEL — supports ANY attribute combination (size/color/etc)
@@ -14,7 +15,7 @@ const variantSchema = new mongoose.Schema(
       },
     ],
 
-    sku: { type: String, unique: true, sparse: true, trim: true, index: true }, // ✅ SKU per variant
+    sku: { type: String, unique: true, sparse: true, trim: true, index: true },
     barcode: { type: String, trim: true, default: "" },
 
     price: { type: Number, default: 0 },
@@ -26,14 +27,23 @@ const variantSchema = new mongoose.Schema(
     image: { type: String, trim: true, default: "" },
     weight: { type: Number, default: 0 },
   },
-  { _id: true }
+  { _id: true, timestamps: false }
 );
 
 /* ------------------------------------------------------------------
-   MAIN PRODUCT SCHEMA — BRAND REMOVED
+   MAIN PRODUCT SCHEMA — TAGS AS MANUAL STRINGS (NO TAG MODEL)
+   ✅ Adds productCode (00001...) as sequential human-readable ID
 ------------------------------------------------------------------- */
 const productSchema = new mongoose.Schema(
   {
+    /* ✅ SEQUENTIAL HUMAN ID */
+    productCode: {
+      type: String,
+      unique: true,
+      required: true,
+      index: true,
+    },
+
     /* BASIC INFO */
     title: { type: String, required: true, trim: true },
     slug: { type: String, required: true, unique: true, lowercase: true },
@@ -56,7 +66,9 @@ const productSchema = new mongoose.Schema(
     },
 
     collections: [{ type: mongoose.Schema.Types.ObjectId, ref: "Collection" }],
-    tags: [{ type: mongoose.Schema.Types.ObjectId, ref: "Tag" }],
+
+    // ✅ manual tags (strings)
+    tags: [{ type: String, trim: true, lowercase: true }],
 
     /* PRICING */
     price: { type: Number, required: true },
@@ -65,7 +77,7 @@ const productSchema = new mongoose.Schema(
     taxClass: { type: String, default: "standard" },
 
     /* INVENTORY */
-    sku: { type: String, unique: true, sparse: true, trim: true, index: true }, // ✅ SKU for simple product
+    sku: { type: String, unique: true, sparse: true, trim: true, index: true },
     stock: { type: Number, default: 0 },
     isInStock: { type: Boolean, default: true },
 
@@ -136,26 +148,41 @@ const productSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-/* AUTO SET PRODUCT TYPE */
+/* ------------------------------------------------------------------
+   ✅ AUTO SET PRODUCT TYPE
+------------------------------------------------------------------- */
 productSchema.pre("save", function (next) {
-  if (this.variants?.length > 0) {
-    this.productType = "variable";
-  } else {
-    this.productType = "simple";
-  }
+  if (this.variants?.length > 0) this.productType = "variable";
+  else this.productType = "simple";
   next();
 });
 
-/* ---------------------------------------------------------------
+/* ------------------------------------------------------------------
+   ✅ AUTO-GENERATE SEQUENTIAL productCode like 00001
+   Uses Counter collection. Similar to your Order numbering.
+------------------------------------------------------------------- */
+productSchema.pre("validate", async function (next) {
+  try {
+    if (!this.productCode) {
+      const counter = await Counter.findOneAndUpdate(
+        { id: "product" },
+        { $inc: { sequence: 1 } },
+        { new: true, upsert: true }
+      );
+
+      // start from 00001
+      this.productCode = String(counter.sequence).padStart(5, "0");
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* ------------------------------------------------------------------
    ✅ AUTO-GENERATE SKUs (Product + Variants)
-   - Simple product: product.sku
-   - Variable product: each variant.sku
-   Notes:
-   - Category name is unknown at schema-level without populate,
-     so we use "CAT" + product slug/title for generation.
-   - For best SKU readability, generate again in controller
-     when you have populated category name (optional).
----------------------------------------------------------------- */
+------------------------------------------------------------------- */
 productSchema.pre("validate", function (next) {
   try {
     // SIMPLE PRODUCT SKU
@@ -175,16 +202,21 @@ productSchema.pre("validate", function (next) {
       this.variants = this.variants.map((v) => {
         if (v?.sku) return v;
 
-        // Pull size/color from attributes if present
-        const attrs = Array.isArray(v.attributes) ? v.attributes : [];
-        const sizeAttr = attrs.find((a) => String(a.key || "").toLowerCase() === "size");
-        const colorAttr = attrs.find((a) => String(a.key || "").toLowerCase() === "color");
+        const raw = v?.toObject?.() ? v.toObject() : v;
+
+        const attrs = Array.isArray(raw.attributes) ? raw.attributes : [];
+        const sizeAttr = attrs.find(
+          (a) => String(a.key || "").toLowerCase() === "size"
+        );
+        const colorAttr = attrs.find(
+          (a) => String(a.key || "").toLowerCase() === "color"
+        );
 
         const size = sizeAttr?.value || "";
         const color = colorAttr?.value || "";
 
         return {
-          ...v.toObject?.() ? v.toObject() : v,
+          ...raw,
           sku: generateSKU({
             brand: "MIR",
             category: "CAT",
@@ -196,8 +228,8 @@ productSchema.pre("validate", function (next) {
       });
     }
 
-    // Keep product-level sku empty for variable to avoid confusion
-    this.sku = this.sku || undefined;
+    // keep product.sku empty for variable products
+    this.sku = undefined;
 
     next();
   } catch (e) {
@@ -206,6 +238,7 @@ productSchema.pre("validate", function (next) {
 });
 
 /* INDEXES */
+productSchema.index({ productCode: 1 }, { unique: true });
 productSchema.index({ title: "text", description: "text" });
 productSchema.index({ keywords: 1 });
 productSchema.index({ category: 1, subcategory: 1 });
@@ -213,8 +246,11 @@ productSchema.index({ isActive: 1, isFeatured: 1 });
 productSchema.index({ averageRating: -1 });
 productSchema.index({ price: 1 });
 
-// Helpful SKU indexes (already in fields, but ok to be explicit)
+// SKU indexes
 productSchema.index({ sku: 1 }, { sparse: true });
 productSchema.index({ "variants.sku": 1 }, { sparse: true });
+
+// Tags index
+productSchema.index({ tags: 1 });
 
 export default mongoose.models.Product || mongoose.model("Product", productSchema);

@@ -3,258 +3,186 @@ import Category from "../models/Category.js";
 import Attribute from "../models/Attribute.js";
 import slugify from "slugify";
 import mongoose from "mongoose";
-
 import { uploadToCloudinary } from "../config/cloudinary.js";
-import { generateSKU, generateUniqueSKU } from "../utility/sku.js"; // ✅ adjust path if needed
+import { generateUniqueSKU } from "../utility/sku.js";
 
-/* ---------------- NORMALIZERS ---------------- */
-const normalizeArray = (val) => {
-  if (!val) return [];
-  if (Array.isArray(val)) return val;
-  if (typeof val === "string") return val.split(",").map((v) => v.trim()).filter(Boolean);
-  return [];
-};
+/* ---------------- tiny helpers ---------------- */
+const arr = (v) =>
+  !v ? [] : Array.isArray(v) ? v : typeof v === "string" ? v.split(",").map((x) => x.trim()).filter(Boolean) : [];
 
-const parseMaybeJSON = (val, fallback) => {
-  if (val == null) return fallback;
-  if (typeof val === "object") return val;
-  if (typeof val !== "string") return fallback;
-  const t = val.trim();
-  if (!t) return fallback;
+const tagsNorm = (v) => arr(v).map((t) => String(t || "").trim().toLowerCase()).filter(Boolean);
+
+const json = (v, fb) => {
+  if (v == null) return fb;
+  if (typeof v === "object") return v;
+  if (typeof v !== "string") return fb;
+  const s = v.trim();
+  if (!s) return fb;
   try {
-    return JSON.parse(t);
+    return JSON.parse(s);
   } catch {
-    return fallback;
+    return fb;
   }
 };
 
-const toObjectId = (v) => {
-  if (!v) return null;
-  if (typeof v === "object" && v._id) return v._id;
-  return v;
-};
+const oid = (v) => (v && typeof v === "object" && v._id ? v._id : v);
 
-/**
- * Extract size/color from variant.attributes array (your schema)
- */
-const extractSizeColor = (variant) => {
-  const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
-  const pick = (key) =>
-    attrs.find((a) => String(a?.key || "").toLowerCase() === key)?.value || "";
-  return { size: pick("size"), color: pick("color") };
-};
+const pop = (q) =>
+  q
+    .populate("category")
+    .populate("collections")
+    .populate("attributes.attribute")
+    .populate("variants.attributes.attribute");
 
-/**
- * CLOUDINARY UPLOAD FIX:
- * - multer memory storage provides file.buffer
- * - your uploadToCloudinary should accept (fileOrBuffer, folder)
- * This wrapper ensures we always pass buffer + mimetype safely.
- */
 const uploadFile = async (file, folder = "products") => {
   if (!file) return null;
-
-  // If your helper already accepts multer file, keep it.
-  // Otherwise many helpers expect buffer:
-  const payload = file.buffer ? file : file; // keep as file, helper can read buffer
-  const cloudRes = await uploadToCloudinary(payload, folder);
-
-  // Support different helper return shapes
-  const url =
-    cloudRes?.secure_url ||
-    cloudRes?.url ||
-    cloudRes?.data?.secure_url ||
-    cloudRes?.data?.url;
-
+  const r = await uploadToCloudinary(file, folder);
+  const url = r?.secure_url || r?.url || r?.data?.secure_url || r?.data?.url;
   if (!url) throw new Error("Cloudinary upload failed: URL missing");
   return url;
 };
 
-/* ============================================================
-   SKU GENERATION (Server truth)
-   - simple: product.sku
-   - variable: variants[].sku each
-   NOTE: at controller level we can use category name for better SKU.
-============================================================ */
+const extractSizeColor = (variant) => {
+  const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
+  const pick = (key) => attrs.find((a) => String(a?.key || "").toLowerCase() === key)?.value || "";
+  return { size: pick("size"), color: pick("color") };
+};
+
+const applyStockFromVariants = (doc) => {
+  const p = doc?.toObject ? doc.toObject() : doc;
+  if (!p) return p;
+
+  const variants = Array.isArray(p.variants) ? p.variants : [];
+  const isVariable = p.productType === "variable" || variants.length > 0;
+
+  if (!isVariable) {
+    const st = Number(p.stock ?? 0);
+    return { ...p, stock: st, isInStock: Boolean(p.isInStock ?? (st > 0)) };
+  }
+
+  const total = variants.reduce((s, v) => s + Number(v?.stock ?? 0), 0);
+  const any = variants.some((v) => Number(v?.stock ?? 0) > 0 && v?.isInStock !== false);
+  return { ...p, stock: total, isInStock: any };
+};
+
 const ensureSKUs = async (data, categoryDoc) => {
   const categoryName = categoryDoc?.name || "CAT";
   const title = data.title || data.slug || "PRODUCT";
-
-  // Decide variable
   const variants = Array.isArray(data.variants) ? data.variants : [];
-  const isVariable = variants.length > 0;
 
-  if (!isVariable) {
-    // simple
+  if (!variants.length) {
     if (!data.sku) {
-      // safest: ensure unique by hitting DB
-      data.sku = await generateUniqueSKU(Product, {
-        brand: "MIR",
-        category: categoryName,
-        title,
-      });
+      data.sku = await generateUniqueSKU(Product, { brand: "MIR", category: categoryName, title });
     }
     return data;
   }
 
-  // variable: do not rely on product.sku
   data.productType = "variable";
-  if (data.sku) delete data.sku;
+  delete data.sku;
 
-  // generate variant SKUs if missing
   for (let i = 0; i < variants.length; i++) {
     const v = variants[i] || {};
     if (v.sku) continue;
-
     const { size, color } = extractSizeColor(v);
-    // ensure unique on nested path (variants.sku)
-    const sku = await generateUniqueSKU(Product, {
-      brand: "MIR",
-      category: categoryName,
-      title,
-      size,
-      color,
-    });
-
-    variants[i] = { ...v, sku };
+    variants[i] = {
+      ...v,
+      sku: await generateUniqueSKU(Product, { brand: "MIR", category: categoryName, title, size, color }),
+    };
   }
 
   data.variants = variants;
   return data;
 };
 
+const validateCategory = async (categoryId) => {
+  if (!categoryId || !mongoose.Types.ObjectId.isValid(String(categoryId))) return null;
+  return Category.findById(categoryId);
+};
+
+const validateAttributes = async (attributes = []) => {
+  if (!Array.isArray(attributes) || !attributes.length) return;
+  for (const a of attributes) {
+    const id = oid(a?.attribute);
+    if (!id) continue;
+    const ok = await Attribute.exists({ _id: id });
+    if (!ok) throw new Error(`Invalid attribute ID: ${id}`);
+  }
+};
+
+const mergeUploads = async (req, existing = {}) => {
+  const uploadedImages = [];
+  let uploadedThumbnail = "";
+
+  // multer .array("images")
+  if (Array.isArray(req.files) && req.files.length) {
+    for (const f of req.files) uploadedImages.push(await uploadFile(f, "products"));
+  }
+
+  // multer.fields(...)
+  if (req.files && !Array.isArray(req.files)) {
+    const imgs = Array.isArray(req.files.images) ? req.files.images : [];
+    const thumbs = Array.isArray(req.files.thumbnail) ? req.files.thumbnail : [];
+
+    for (const f of imgs) uploadedImages.push(await uploadFile(f, "products"));
+    if (thumbs[0]) uploadedThumbnail = await uploadFile(thumbs[0], "products");
+  }
+
+  const keepImages = json(existing.keepImages, null);
+  const bodyImages = json(existing.images, null);
+
+  const base =
+    Array.isArray(keepImages) ? keepImages :
+    Array.isArray(bodyImages) ? bodyImages :
+    Array.isArray(existing._existingImages) ? existing._existingImages : [];
+
+  const images = [...arr(base), ...uploadedImages].filter(Boolean);
+  const incomingThumb = typeof existing.thumbnail === "string" ? existing.thumbnail : "";
+  const thumbnail = uploadedThumbnail || incomingThumb || existing._existingThumb || images[0] || "";
+
+  return { images, thumbnail };
+};
+
 /* ============================================================
-   📌 CREATE PRODUCT — With Cloudinary + SKU Generation
-   Supports both JSON and multipart/form-data
+   CREATE
 ============================================================ */
 export const createProduct = async (req, res) => {
   try {
-    let data = { ...req.body };
+    const data = { ...req.body };
 
-    // Parse JSON fields if passed as strings (common in form-data)
-    data.attributes = parseMaybeJSON(data.attributes, data.attributes || []);
-    data.variants = parseMaybeJSON(data.variants, data.variants || []);
-    data.highlights = parseMaybeJSON(data.highlights, data.highlights || []);
-
-    // Normalize arrays
-    data.keywords = normalizeArray(data.keywords);
-    data.tags = normalizeArray(data.tags);
-    data.collections = normalizeArray(data.collections);
-
-    // Clean optionals
+    data.attributes = json(data.attributes, []);
+    data.variants = json(data.variants, []);
+    data.highlights = json(data.highlights, []);
+    data.keywords = arr(data.keywords);
+    data.tags = tagsNorm(data.tags);
+    data.collections = arr(data.collections);
     if (data.subcategory === "" || data.subcategory === "null") data.subcategory = null;
 
-    /* ---------------- SLUG ---------------- */
-    data.slug = data.slug
-      ? slugify(String(data.slug), { lower: true })
-      : slugify(String(data.title || ""), { lower: true });
+    data.slug = slugify(String(data.slug || data.title || ""), { lower: true });
+    if (await Product.exists({ slug: data.slug })) return res.status(400).json({ message: "Slug already exists" });
 
-    const existingSlug = await Product.findOne({ slug: data.slug });
-    if (existingSlug) return res.status(400).json({ message: "Slug already exists" });
+    const categoryDoc = await validateCategory(data.category);
+    if (!categoryDoc) return res.status(400).json({ message: "Invalid category ID" });
 
-    /* ---------------- CATEGORY CHECK ---------------- */
-    if (!data.category || !mongoose.Types.ObjectId.isValid(String(data.category))) {
-      return res.status(400).json({ message: "Invalid category ID" });
-    }
+    await validateAttributes(data.attributes);
 
-    const categoryExists = await Category.findById(data.category);
-    if (!categoryExists) return res.status(400).json({ message: "Invalid category ID" });
+    const { images, thumbnail } = await mergeUploads(req, { images: data.images, thumbnail: data.thumbnail });
+    data.images = images;
+    data.thumbnail = thumbnail;
 
-    /* ---------------- VALIDATE ATTRIBUTES ---------------- */
-    if (Array.isArray(data.attributes)) {
-      for (const attr of data.attributes) {
-        const attrId = toObjectId(attr?.attribute);
-        if (!attrId) continue;
-        const exists = await Attribute.findById(attrId);
-        if (!exists) {
-          return res.status(400).json({ message: `Invalid attribute ID: ${attrId}` });
-        }
-      }
-    }
+    data.productType = Array.isArray(data.variants) && data.variants.length ? "variable" : data.productType || "simple";
+    await ensureSKUs(data, categoryDoc);
 
-    /* ============================================================
-       📸 UPLOAD IMAGES TO CLOUDINARY
-       Expected:
-       - req.files (array) OR
-       - req.files.images (array) + req.files.thumbnail (array)
-    ============================================================= */
-    let uploadedImages = [];
-    let uploadedThumbnail = "";
-
-    // Case A: multer .array("images")
-    if (Array.isArray(req.files) && req.files.length > 0) {
-      for (const file of req.files) {
-        const url = await uploadFile(file, "products");
-        uploadedImages.push(url);
-      }
-    }
-
-    // Case B: multer.fields([{name:"images"},{name:"thumbnail"}])
-    if (req.files && !Array.isArray(req.files)) {
-      const imageFiles = Array.isArray(req.files.images) ? req.files.images : [];
-      const thumbFiles = Array.isArray(req.files.thumbnail) ? req.files.thumbnail : [];
-
-      for (const f of imageFiles) {
-        const url = await uploadFile(f, "products");
-        uploadedImages.push(url);
-      }
-
-      if (thumbFiles[0]) {
-        uploadedThumbnail = await uploadFile(thumbFiles[0], "products");
-      }
-    }
-
-    // Merge with any images coming from body (if admin sends existing URLs)
-    const bodyImages = parseMaybeJSON(data.images, data.images || []);
-    const mergedImages = [
-      ...normalizeArray(bodyImages),
-      ...uploadedImages,
-    ].filter(Boolean);
-
-    data.images = mergedImages;
-
-    // thumbnail priority:
-    // 1) uploaded thumbnail
-    // 2) body thumbnail (existing)
-    // 3) first image
-    data.thumbnail =
-      uploadedThumbnail ||
-      (typeof data.thumbnail === "string" ? data.thumbnail : "") ||
-      mergedImages[0] ||
-      "";
-
-    /* ============================================================
-       VARIABLE PRODUCT CHECK + SKU Generation (server truth)
-    ============================================================= */
-    if (Array.isArray(data.variants) && data.variants.length > 0) {
-      data.productType = "variable";
-    } else {
-      data.productType = data.productType || "simple";
-    }
-
-    await ensureSKUs(data, categoryExists);
-
-    /* ---------------- CREATE PRODUCT ---------------- */
-    const product = await Product.create(data);
-
-    const populated = await Product.findById(product._id)
-      .populate("category")
-      .populate("collections")
-      .populate("tags")
-      .populate("attributes.attribute")
-      .populate("variants.attributes.attribute");
-
-    return res.status(201).json({
-      message: "Product created successfully",
-      product: populated,
-    });
-  } catch (err) {
-    console.error("❌ Create Product Error:", err);
-    res.status(500).json({ message: err.message });
+    const created = await Product.create(data);
+    const full = await pop(Product.findById(created._id));
+    return res.status(201).json({ message: "Product created successfully", product: applyStockFromVariants(full) });
+  } catch (e) {
+    console.error("❌ Create Product Error:", e);
+    return res.status(400).json({ message: e.message });
   }
 };
 
 /* ============================================================
-   📌 GET ALL PRODUCTS
+   GET ALL
 ============================================================ */
 export const getAllProducts = async (req, res) => {
   try {
@@ -270,20 +198,20 @@ export const getAllProducts = async (req, res) => {
       isActive,
       search,
       sort,
-      sku, // ✅ allow sku search
+      sku,
     } = req.query;
 
     const filters = {};
-
     if (category) filters.category = category;
     if (subcategory) filters.subcategory = subcategory;
     if (collection) filters.collections = collection;
-    if (tags) filters.tags = { $in: normalizeArray(tags) };
+
+    const t = tagsNorm(tags);
+    if (t.length) filters.tags = { $in: t };
+
     if (isActive !== undefined) filters.isActive = isActive === "true";
 
-    if (sku) {
-      filters.$or = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
-    }
+    if (sku) filters.$or = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
 
     if (minPrice || maxPrice) {
       filters.price = {};
@@ -293,7 +221,7 @@ export const getAllProducts = async (req, res) => {
 
     if (search) filters.$text = { $search: search };
 
-    const sortOptions = {
+    const sortMap = {
       price_asc: { price: 1 },
       price_desc: { price: -1 },
       newest: { createdAt: -1 },
@@ -301,238 +229,150 @@ export const getAllProducts = async (req, res) => {
       popularity: { "analytics.views": -1 },
     };
 
-    const sortObj = sortOptions[sort] || { createdAt: -1 };
     const skip = (Number(page) - 1) * Number(limit);
+    const sortObj = sortMap[sort] || { createdAt: -1 };
 
-    const products = await Product.find(filters)
-      .populate("category")
-      .populate("collections")
-      .populate("tags")
-      .populate("attributes.attribute")
-      .populate("variants.attributes.attribute")
-      .sort(sortObj)
-      .skip(skip)
-      .limit(Number(limit));
-
+    const docs = await pop(Product.find(filters)).sort(sortObj).skip(skip).limit(Number(limit));
     const total = await Product.countDocuments(filters);
 
     res.json({
       total,
       page: Number(page),
       pages: Math.ceil(total / Number(limit)),
-      products,
+      products: docs.map(applyStockFromVariants), // ✅ FIX variable stock here
     });
-  } catch (err) {
-    console.error("❌ Get All Products Error:", err);
-    res.status(500).json({ message: err.message });
+  } catch (e) {
+    console.error("❌ Get All Products Error:", e);
+    res.status(500).json({ message: e.message });
   }
 };
 
 /* ============================================================
-   📌 GET PRODUCT BY ID / SLUG
+   GET BY ID OR SLUG
 ============================================================ */
 export const getProductByIdOrSlug = async (req, res) => {
   try {
     const param = req.params.id;
 
-    const product =
-      (await Product.findOne({ slug: param })
-        .populate("category")
-        .populate("collections")
-        .populate("tags")
-        .populate("attributes.attribute")
-        .populate("variants.attributes.attribute")) ||
-      (mongoose.Types.ObjectId.isValid(String(param))
-        ? await Product.findById(param)
-            .populate("category")
-            .populate("collections")
-            .populate("tags")
-            .populate("attributes.attribute")
-            .populate("variants.attributes.attribute")
-        : null);
+    let doc = await pop(Product.findOne({ slug: param }));
+    if (!doc && mongoose.Types.ObjectId.isValid(String(param))) doc = await pop(Product.findById(param));
 
-    if (!product) return res.status(404).json({ message: "Product not found" });
-    res.json(product);
-  } catch (err) {
-    console.error("❌ Get Product Error:", err);
-    res.status(500).json({ message: err.message });
+    if (!doc) return res.status(404).json({ message: "Product not found" });
+    res.json(applyStockFromVariants(doc)); // ✅ FIX
+  } catch (e) {
+    console.error("❌ Get Product Error:", e);
+    res.status(500).json({ message: e.message });
   }
 };
 
 /* ============================================================
-   📌 GET PRODUCT BY SKU (Warehouse)
-   GET /api/products/sku/:sku
+   GET BY SKU
 ============================================================ */
 export const getProductBySKU = async (req, res) => {
   try {
     const { sku } = req.params;
 
-    const product = await Product.findOne({
-      $or: [{ sku }, { "variants.sku": sku }],
-    })
-      .populate("category")
-      .populate("attributes.attribute")
-      .populate("variants.attributes.attribute");
+    const doc = await pop(
+      Product.findOne({ $or: [{ sku }, { "variants.sku": sku }] })
+    );
+    if (!doc) return res.status(404).json({ message: "SKU not found" });
 
-    if (!product) return res.status(404).json({ message: "SKU not found" });
-
+    const product = applyStockFromVariants(doc); // ✅ FIX
     const matchedVariant = product.variants?.find((v) => v.sku === sku) || null;
 
     res.json({ product, matchedVariant });
-  } catch (err) {
-    console.error("❌ Get By SKU Error:", err);
-    res.status(500).json({ message: err.message });
+  } catch (e) {
+    console.error("❌ Get By SKU Error:", e);
+    res.status(500).json({ message: e.message });
   }
 };
 
 /* ============================================================
-   📌 UPDATE PRODUCT — supports Cloudinary uploads + SKU fill
-   - You can send:
-     - keepImages (json array of existing urls) OR images (json array)
-     - new files in req.files
+   UPDATE
 ============================================================ */
 export const updateProduct = async (req, res) => {
   try {
-    let data = { ...req.body };
+    const data = { ...req.body };
 
-    // Parse JSON fields (form-data safe)
-    data.attributes = parseMaybeJSON(data.attributes, data.attributes);
-    data.variants = parseMaybeJSON(data.variants, data.variants);
-    data.highlights = parseMaybeJSON(data.highlights, data.highlights);
+    data.attributes = json(data.attributes, data.attributes);
+    data.variants = json(data.variants, data.variants);
+    data.highlights = json(data.highlights, data.highlights);
 
-    // Normalize arrays
-    if (data.keywords !== undefined) data.keywords = normalizeArray(data.keywords);
-    if (data.tags !== undefined) data.tags = normalizeArray(data.tags);
-    if (data.collections !== undefined) data.collections = normalizeArray(data.collections);
-
-    // Clean
+    if (data.keywords !== undefined) data.keywords = arr(data.keywords);
+    if (data.tags !== undefined) data.tags = tagsNorm(data.tags);
+    if (data.collections !== undefined) data.collections = arr(data.collections);
     if (data.subcategory === "" || data.subcategory === "null") data.subcategory = null;
 
-    // Load existing
     const existing = await Product.findById(req.params.id).populate("category");
     if (!existing) return res.status(404).json({ message: "Product not found" });
 
-    // If title/slug updated, maintain slug uniqueness
+    // slug uniqueness
     if (data.slug || data.title) {
-      const nextSlug = data.slug
-        ? slugify(String(data.slug), { lower: true })
-        : slugify(String(data.title || existing.title), { lower: true });
-
+      const nextSlug = slugify(String(data.slug || data.title || existing.title), { lower: true });
       if (nextSlug !== existing.slug) {
-        const clash = await Product.findOne({ slug: nextSlug, _id: { $ne: existing._id } });
+        const clash = await Product.exists({ slug: nextSlug, _id: { $ne: existing._id } });
         if (clash) return res.status(400).json({ message: "Slug already exists" });
         data.slug = nextSlug;
       }
     }
 
-    // Category check (if changed)
+    // category change
     let categoryDoc = existing.category;
     if (data.category && String(data.category) !== String(existing.category?._id || existing.category)) {
-      if (!mongoose.Types.ObjectId.isValid(String(data.category))) {
-        return res.status(400).json({ message: "Invalid category ID" });
-      }
-      const cat = await Category.findById(data.category);
-      if (!cat) return res.status(400).json({ message: "Invalid category ID" });
-      categoryDoc = cat;
+      categoryDoc = await validateCategory(data.category);
+      if (!categoryDoc) return res.status(400).json({ message: "Invalid category ID" });
     }
 
-    /* ---------------- VALIDATE ATTRIBUTES ---------------- */
-    if (Array.isArray(data.attributes)) {
-      for (const attr of data.attributes) {
-        const attrId = toObjectId(attr?.attribute);
-        if (!attrId) continue;
-        const existsAttr = await Attribute.findById(attrId);
-        if (!existsAttr) return res.status(400).json({ message: `Invalid attribute ID: ${attrId}` });
-      }
-    }
+    await validateAttributes(data.attributes);
 
-    /* ---------------- CLOUDINARY: merge existing + new ---------------- */
-    const keepImages = parseMaybeJSON(data.keepImages, null);
-    const bodyImages = parseMaybeJSON(data.images, null);
+    const { images, thumbnail } = await mergeUploads(req, {
+      keepImages: data.keepImages,
+      images: data.images,
+      thumbnail: data.thumbnail,
+      _existingImages: existing.images,
+      _existingThumb: existing.thumbnail,
+    });
 
-    // Decide "base images" to keep
-    const baseImages =
-      Array.isArray(keepImages) ? keepImages :
-      Array.isArray(bodyImages) ? bodyImages :
-      Array.isArray(existing.images) ? existing.images : [];
+    data.images = images;
+    data.thumbnail = thumbnail;
 
-    let uploadedImages = [];
-    let uploadedThumbnail = "";
-
-    if (Array.isArray(req.files) && req.files.length > 0) {
-      for (const file of req.files) {
-        const url = await uploadFile(file, "products");
-        uploadedImages.push(url);
-      }
-    }
-
-    if (req.files && !Array.isArray(req.files)) {
-      const imageFiles = Array.isArray(req.files.images) ? req.files.images : [];
-      const thumbFiles = Array.isArray(req.files.thumbnail) ? req.files.thumbnail : [];
-
-      for (const f of imageFiles) {
-        const url = await uploadFile(f, "products");
-        uploadedImages.push(url);
-      }
-
-      if (thumbFiles[0]) {
-        uploadedThumbnail = await uploadFile(thumbFiles[0], "products");
-      }
-    }
-
-    const mergedImages = [...normalizeArray(baseImages), ...uploadedImages].filter(Boolean);
-    data.images = mergedImages;
-
-    // Update thumbnail carefully
-    const incomingThumb = typeof data.thumbnail === "string" ? data.thumbnail : "";
-    data.thumbnail = uploadedThumbnail || incomingThumb || existing.thumbnail || mergedImages[0] || "";
-
-    /* ---------------- productType ---------------- */
-    if (Array.isArray(data.variants) && data.variants.length > 0) {
+    // productType decision
+    if (Array.isArray(data.variants) && data.variants.length) {
       data.productType = "variable";
-      if (data.sku) delete data.sku; // avoid confusion for variable
-    } else if (data.variants && Array.isArray(data.variants) && data.variants.length === 0) {
+      delete data.sku;
+    } else if (Array.isArray(data.variants) && data.variants.length === 0) {
       data.productType = "simple";
     }
 
-    // Apply SKU generation if needed (server truth)
+    // ensure SKUs
     const skuData = { ...existing.toObject(), ...data };
     await ensureSKUs(skuData, categoryDoc);
-
-    // Only set sku/variants from skuData when we actually want to update them
     data.sku = skuData.sku;
     data.variants = skuData.variants;
 
-    const updated = await Product.findByIdAndUpdate(req.params.id, data, {
-      new: true,
-      runValidators: true,
-    })
-      .populate("category")
-      .populate("collections")
-      .populate("tags")
-      .populate("attributes.attribute")
-      .populate("variants.attributes.attribute");
+    const updated = await pop(
+      Product.findByIdAndUpdate(req.params.id, data, { new: true, runValidators: true })
+    );
 
     if (!updated) return res.status(404).json({ message: "Product not found" });
-
-    res.json({ message: "Product updated successfully", product: updated });
-  } catch (err) {
-    console.error("❌ Update Product Error:", err);
-    res.status(500).json({ message: err.message });
+    res.json({ message: "Product updated successfully", product: applyStockFromVariants(updated) }); // ✅ FIX
+  } catch (e) {
+    console.error("❌ Update Product Error:", e);
+    res.status(500).json({ message: e.message });
   }
 };
 
 /* ============================================================
-   DELETE / BULK DELETE / RATINGS / VARIANT STOCK
+   DELETE / BULK / ANALYTICS / VARIANT STOCK / RATINGS / IMPORT
 ============================================================ */
 export const deleteProduct = async (req, res) => {
   try {
     const deleted = await Product.findByIdAndDelete(req.params.id);
     if (!deleted) return res.status(404).json({ message: "Product not found" });
     res.json({ message: "Product deleted successfully" });
-  } catch (err) {
-    console.error("❌ Delete Product Error:", err);
-    res.status(500).json({ message: err.message });
+  } catch (e) {
+    console.error("❌ Delete Product Error:", e);
+    res.status(500).json({ message: e.message });
   }
 };
 
@@ -540,19 +380,17 @@ export const bulkDeleteProducts = async (req, res) => {
   try {
     const { ids } = req.body;
     if (!ids?.length) return res.status(400).json({ message: "No IDs provided" });
-
     await Product.deleteMany({ _id: { $in: ids } });
     res.json({ message: "Products deleted successfully" });
-  } catch (err) {
-    console.error("❌ Bulk Delete Error:", err);
-    res.status(500).json({ message: err.message });
+  } catch (e) {
+    console.error("❌ Bulk Delete Error:", e);
+    res.status(500).json({ message: e.message });
   }
 };
 
 export const incrementProductAnalytics = async (req, res) => {
   try {
     const { type } = req.body;
-
     const valid = ["views", "purchases", "wishlistCount", "cartAdds", "searchAppearances"];
     if (!valid.includes(type)) return res.status(400).json({ message: "Invalid analytics type" });
 
@@ -562,10 +400,10 @@ export const incrementProductAnalytics = async (req, res) => {
       { new: true }
     );
 
-    res.json(product);
-  } catch (err) {
-    console.error("❌ Analytics Update Error:", err);
-    res.status(500).json({ message: err.message });
+    res.json(applyStockFromVariants(product)); // optional but fine
+  } catch (e) {
+    console.error("❌ Analytics Update Error:", e);
+    res.status(500).json({ message: e.message });
   }
 };
 
@@ -579,15 +417,16 @@ export const updateVariantStock = async (req, res) => {
     const variant = product.variants.id(variantId);
     if (!variant) return res.status(404).json({ message: "Variant not found" });
 
-    variant.stock = stock;
-    variant.isInStock = stock > 0;
+    variant.stock = Number(stock);
+    variant.isInStock = Number(stock) > 0;
 
     await product.save();
 
-    res.json({ message: "Variant stock updated", product });
-  } catch (err) {
-    console.error("❌ Variant Stock Error:", err);
-    res.status(500).json({ message: err.message });
+    const full = await pop(Product.findById(product._id));
+    res.json({ message: "Variant stock updated", product: applyStockFromVariants(full) }); // ✅ FIX
+  } catch (e) {
+    console.error("❌ Variant Stock Error:", e);
+    res.status(500).json({ message: e.message });
   }
 };
 
@@ -603,26 +442,50 @@ export const updateProductRatings = async (req, res) => {
       averageRating: product.averageRating,
       totalReviews: product.totalReviews,
     });
-  } catch (err) {
-    console.error("❌ Ratings Error:", err);
-    res.status(500).json({ message: err.message });
+  } catch (e) {
+    console.error("❌ Ratings Error:", e);
+    res.status(500).json({ message: e.message });
   }
 };
 
 export const bulkImportProducts = async (req, res) => {
   try {
     const { products } = req.body;
-    if (!products?.length) return res.status(400).json({ message: "No products received" });
+    if (!Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ message: "No products received" });
+    }
 
-    // Optional: ensure slugs + SKUs should be generated at import time too (recommended)
-    const imported = await Product.insertMany(products, { ordered: false });
+    const imported = [];
+    const failed = [];
 
-    res.json({
-      message: "Products imported successfully",
+    for (let i = 0; i < products.length; i++) {
+      const p = products[i];
+
+      try {
+        // ✅ runs schema hooks: productCode + SKU generation + productType
+        const doc = await Product.create(p);
+        imported.push(doc);
+      } catch (e) {
+        failed.push({
+          index: i,
+          slug: p?.slug || null,
+          title: p?.title || null,
+          wordpressId: p?.wordpressId ?? null,
+          message: e?.message || String(e),
+        });
+      }
+    }
+
+    return res.json({
+      message: "Bulk import completed",
+      receivedCount: products.length,
       importedCount: imported.length,
+      failedCount: failed.length,
+      failed: failed.slice(0, 50), // keep response light
     });
-  } catch (err) {
-    console.error("❌ Bulk Import Error:", err);
-    res.status(500).json({ message: err.message });
+  } catch (e) {
+    console.error("❌ Bulk Import Error:", e);
+    return res.status(500).json({ message: e.message });
   }
 };
+
