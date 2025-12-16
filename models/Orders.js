@@ -7,11 +7,15 @@ import Counter from "./Counter.js";
  */
 const orderItemSchema = new mongoose.Schema(
   {
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+      required: true,
+    },
 
     // ✅ purchase-time snapshot (so order doesn't break if product changes later)
     productSnapshot: {
-      productCode: { type: String, default: "" }, // ✅ NEW (00001 style from Product)
+      productCode: { type: String, default: "" }, // (00001 style from Product)
       title: { type: String, required: true },
       slug: { type: String, default: "" },
 
@@ -21,7 +25,11 @@ const orderItemSchema = new mongoose.Schema(
       category: { type: mongoose.Schema.Types.ObjectId, ref: "Category", default: null },
       subcategory: { type: mongoose.Schema.Types.ObjectId, ref: "Category", default: null },
 
-      productType: { type: String, enum: ["simple", "variable", "digital", "external"], default: "simple" },
+      productType: {
+        type: String,
+        enum: ["simple", "variable", "digital", "external"],
+        default: "simple",
+      },
 
       sku: { type: String, default: "" }, // for simple products
       tags: [{ type: String, default: [] }], // ✅ tags are strings now
@@ -34,7 +42,7 @@ const orderItemSchema = new mongoose.Schema(
     // ✅ chosen variant snapshot (if variable)
     variant: {
       variantId: { type: mongoose.Schema.Types.ObjectId, default: null },
-      sku: { type: String, default: "" }, // ✅ NEW: variant SKU moved here (cleaner)
+      sku: { type: String, default: "" }, // variant SKU lives here
       attributes: [{ key: String, value: String }],
       image: { type: String, default: "" },
       weight: { type: Number, default: 0 },
@@ -48,6 +56,104 @@ const orderItemSchema = new mongoose.Schema(
     subtotal: { type: Number, required: true },
   },
   { _id: false }
+);
+
+// ============================================================================
+// RMA (Return/Exchange) — Embedded inside Order (no new order)
+// ============================================================================
+
+const rmaItemSchema = new mongoose.Schema(
+  {
+    // simplest link: index of item in order.items[]
+    orderItemIndex: { type: Number, required: true, min: 0 },
+    quantity: { type: Number, required: true, min: 1 },
+
+    // convenience snapshot (optional but useful for admin)
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", default: null },
+    productCode: { type: String, default: "" },
+    title: { type: String, default: "" },
+    variantSku: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
+const rmaSchema = new mongoose.Schema(
+  {
+    rmaNumber: { type: String, index: true }, // generated in pre-validate hook
+
+    type: { type: String, enum: ["return", "exchange"], default: "return" },
+
+    status: {
+      type: String,
+      enum: [
+        "requested",
+        "approved",
+        "rejected",
+        "pickup_scheduled",
+        "picked",
+        "in_transit",
+        "received",
+        "qc_pass",
+        "qc_fail",
+        "refund_initiated",
+        "refund_completed",
+        "replacement_shipped",
+        "closed",
+      ],
+      default: "requested",
+      index: true,
+    },
+
+    items: { type: [rmaItemSchema], required: true },
+
+    reason: {
+      type: String,
+      enum: ["wrong_size", "wrong_item", "damaged", "defective", "quality_issue", "changed_mind", "other"],
+      default: "other",
+    },
+
+    customerNote: { type: String, default: "" },
+    adminNote: { type: String, default: "" },
+
+    resolution: {
+      type: String,
+      enum: ["pending", "refund", "exchange", "store_credit", "reject"],
+      default: "pending",
+    },
+
+    // ✅ NEW: Exchange fee policy support
+    // - First exchange fee can be 0 (waived)
+    // - Second+ exchange fee can be 199 (unpaid -> paid)
+    fee: {
+      amount: { type: Number, default: 0 },
+      currency: { type: String, default: "INR" },
+      status: { type: String, enum: ["unpaid", "paid", "waived"], default: "waived" },
+    },
+
+    refund: {
+      amount: { type: Number, default: 0 },
+      mode: { type: String, enum: ["source", "upi", "bank", "manual"], default: "source" },
+      status: { type: String, enum: ["not_started", "initiated", "completed", "failed"], default: "not_started" },
+      referenceId: { type: String, default: "" },
+    },
+
+    // Shiprocket reverse pickup / tracking (store ids here)
+    reverseShipment: {
+      provider: { type: String, default: "shiprocket" },
+
+      // shiprocket response fields (names may vary by API version; keep generic strings)
+      orderId: { type: String, default: "" },
+      shipmentId: { type: String, default: "" },
+      awb: { type: String, default: "" },
+      courierName: { type: String, default: "" },
+      trackingUrl: { type: String, default: "" },
+
+      pickupScheduledAt: Date,
+      pickedAt: Date,
+      receivedAt: Date,
+    },
+  },
+  { timestamps: true }
 );
 
 /**
@@ -90,6 +196,9 @@ const orderSchema = new mongoose.Schema(
 
     // 🔹 ORDER ITEMS SNAPSHOT
     items: { type: [orderItemSchema], required: true },
+
+    // ✅ RMA embedded (no new order)
+    rmas: { type: [rmaSchema], default: [] },
 
     // 🔹 PAYMENT TOTALS
     subtotal: { type: Number, required: true },
@@ -160,7 +269,7 @@ const orderSchema = new mongoose.Schema(
         },
       ],
 
-      // ✅ FIX: tags are strings now (no Tag model)
+      // ✅ tags are strings now (no Tag model)
       tagsUsed: [{ type: String, default: [] }],
 
       couponApplied: { type: Boolean, default: false },
@@ -189,6 +298,44 @@ orderSchema.pre("validate", async function (next) {
 
     const padded = String(counter.sequence).padStart(6, "0");
     this.orderNumber = `MIRAY-${padded}`;
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ========================================================================================
+// ⭐ AUTO-GENERATE RMA NUMBERS for any new RMA missing rmaNumber
+// ========================================================================================
+orderSchema.pre("validate", async function (next) {
+  try {
+    if (!Array.isArray(this.rmas) || this.rmas.length === 0) return next();
+
+    // only generate for RMAs that don't have rmaNumber yet
+    const need = this.rmas.filter((r) => !r?.rmaNumber);
+    if (need.length === 0) return next();
+
+    for (let i = 0; i < this.rmas.length; i++) {
+      if (this.rmas[i]?.rmaNumber) continue;
+
+      const counter = await Counter.findOneAndUpdate(
+        { id: "rma" },
+        { $inc: { sequence: 1 } },
+        { new: true, upsert: true }
+      );
+
+      const padded = String(counter.sequence).padStart(6, "0");
+      this.rmas[i].rmaNumber = `RMA-${padded}`;
+
+      // ✅ ensure fee defaults are sane for old callers
+      if (!this.rmas[i].fee) {
+        this.rmas[i].fee = { amount: 0, currency: "INR", status: "waived" };
+      } else {
+        if (this.rmas[i].fee.amount == null) this.rmas[i].fee.amount = 0;
+        if (!this.rmas[i].fee.currency) this.rmas[i].fee.currency = "INR";
+        if (!this.rmas[i].fee.status) this.rmas[i].fee.status = this.rmas[i].fee.amount > 0 ? "unpaid" : "waived";
+      }
+    }
 
     next();
   } catch (err) {
@@ -234,5 +381,12 @@ orderSchema.pre("validate", function (next) {
 
 // Indexes
 orderSchema.index({ "trackingDetails.trackingId": 1 });
+
+// Helpful indexes for RMA queries
+orderSchema.index({ "rmas.rmaNumber": 1 });
+orderSchema.index({ "rmas.status": 1 });
+orderSchema.index({ "rmas.fee.status": 1 }); // ✅ NEW
+orderSchema.index({ "rmas.reverseShipment.awb": 1 });
+orderSchema.index({ "rmas.reverseShipment.shipmentId": 1 });
 
 export default mongoose.models.Order || mongoose.model("Order", orderSchema);

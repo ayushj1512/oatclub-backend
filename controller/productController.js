@@ -1,3 +1,5 @@
+// controller/productController.js
+
 import Product from "../models/Products.js";
 import Category from "../models/Category.js";
 import Attribute from "../models/Attribute.js";
@@ -8,9 +10,21 @@ import { generateUniqueSKU } from "../utility/sku.js";
 
 /* ---------------- tiny helpers ---------------- */
 const arr = (v) =>
-  !v ? [] : Array.isArray(v) ? v : typeof v === "string" ? v.split(",").map((x) => x.trim()).filter(Boolean) : [];
+  !v
+    ? []
+    : Array.isArray(v)
+      ? v
+      : typeof v === "string"
+        ? v
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean)
+        : [];
 
-const tagsNorm = (v) => arr(v).map((t) => String(t || "").trim().toLowerCase()).filter(Boolean);
+const tagsNorm = (v) =>
+  arr(v)
+    .map((t) => String(t || "").trim().toLowerCase())
+    .filter(Boolean);
 
 const json = (v, fb) => {
   if (v == null) return fb;
@@ -44,7 +58,8 @@ const uploadFile = async (file, folder = "products") => {
 
 const extractSizeColor = (variant) => {
   const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
-  const pick = (key) => attrs.find((a) => String(a?.key || "").toLowerCase() === key)?.value || "";
+  const pick = (key) =>
+    attrs.find((a) => String(a?.key || "").toLowerCase() === key)?.value || "";
   return { size: pick("size"), color: pick("color") };
 };
 
@@ -57,11 +72,13 @@ const applyStockFromVariants = (doc) => {
 
   if (!isVariable) {
     const st = Number(p.stock ?? 0);
-    return { ...p, stock: st, isInStock: Boolean(p.isInStock ?? (st > 0)) };
+    return { ...p, stock: st, isInStock: Boolean(p.isInStock ?? st > 0) };
   }
 
   const total = variants.reduce((s, v) => s + Number(v?.stock ?? 0), 0);
-  const any = variants.some((v) => Number(v?.stock ?? 0) > 0 && v?.isInStock !== false);
+  const any = variants.some(
+    (v) => Number(v?.stock ?? 0) > 0 && v?.isInStock !== false
+  );
   return { ...p, stock: total, isInStock: any };
 };
 
@@ -72,7 +89,11 @@ const ensureSKUs = async (data, categoryDoc) => {
 
   if (!variants.length) {
     if (!data.sku) {
-      data.sku = await generateUniqueSKU(Product, { brand: "MIR", category: categoryName, title });
+      data.sku = await generateUniqueSKU(Product, {
+        brand: "MIR",
+        category: categoryName,
+        title,
+      });
     }
     return data;
   }
@@ -86,7 +107,13 @@ const ensureSKUs = async (data, categoryDoc) => {
     const { size, color } = extractSizeColor(v);
     variants[i] = {
       ...v,
-      sku: await generateUniqueSKU(Product, { brand: "MIR", category: categoryName, title, size, color }),
+      sku: await generateUniqueSKU(Product, {
+        brand: "MIR",
+        category: categoryName,
+        title,
+        size,
+        color,
+      }),
     };
   }
 
@@ -95,7 +122,8 @@ const ensureSKUs = async (data, categoryDoc) => {
 };
 
 const validateCategory = async (categoryId) => {
-  if (!categoryId || !mongoose.Types.ObjectId.isValid(String(categoryId))) return null;
+  if (!categoryId || !mongoose.Types.ObjectId.isValid(String(categoryId)))
+    return null;
   return Category.findById(categoryId);
 };
 
@@ -113,12 +141,11 @@ const mergeUploads = async (req, existing = {}) => {
   const uploadedImages = [];
   let uploadedThumbnail = "";
 
-  // multer .array("images")
   if (Array.isArray(req.files) && req.files.length) {
-    for (const f of req.files) uploadedImages.push(await uploadFile(f, "products"));
+    for (const f of req.files)
+      uploadedImages.push(await uploadFile(f, "products"));
   }
 
-  // multer.fields(...)
   if (req.files && !Array.isArray(req.files)) {
     const imgs = Array.isArray(req.files.images) ? req.files.images : [];
     const thumbs = Array.isArray(req.files.thumbnail) ? req.files.thumbnail : [];
@@ -130,16 +157,115 @@ const mergeUploads = async (req, existing = {}) => {
   const keepImages = json(existing.keepImages, null);
   const bodyImages = json(existing.images, null);
 
-  const base =
-    Array.isArray(keepImages) ? keepImages :
-    Array.isArray(bodyImages) ? bodyImages :
-    Array.isArray(existing._existingImages) ? existing._existingImages : [];
+  const base = Array.isArray(keepImages)
+    ? keepImages
+    : Array.isArray(bodyImages)
+      ? bodyImages
+      : Array.isArray(existing._existingImages)
+        ? existing._existingImages
+        : [];
 
   const images = [...arr(base), ...uploadedImages].filter(Boolean);
   const incomingThumb = typeof existing.thumbnail === "string" ? existing.thumbnail : "";
-  const thumbnail = uploadedThumbnail || incomingThumb || existing._existingThumb || images[0] || "";
+  const thumbnail =
+    uploadedThumbnail || incomingThumb || existing._existingThumb || images[0] || "";
 
   return { images, thumbnail };
+};
+
+/* ============================================================
+   ✅ category/subcategory slug OR ObjectId resolver
+============================================================ */
+const resolveCategoryParamToId = async (param) => {
+  if (!param) return null;
+
+  const raw = String(param).trim();
+  if (!raw) return null;
+
+  if (mongoose.Types.ObjectId.isValid(raw)) return raw;
+
+  const slug = raw.toLowerCase();
+  const doc = await Category.findOne({ slug }).select("_id");
+  return doc?._id ? String(doc._id) : "__no_match__";
+};
+
+/* ============================================================
+   ✅ NEW: GET PRODUCTS BY TAG(S)
+   GET /api/products/by-tag?tag=sale
+   GET /api/products/by-tag?tags=sale,new-arrival
+   (supports same filters: category/subcategory/collection/minPrice/maxPrice/isActive/search/sort/page/limit/sku)
+============================================================ */
+export const getProductsByTag = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      tag,
+      tags, // comma list
+      category,
+      subcategory,
+      collection,
+      minPrice,
+      maxPrice,
+      isActive,
+      search,
+      sort,
+      sku,
+    } = req.query;
+
+    const t = tagsNorm(tags ?? tag);
+    if (!t.length) {
+      return res.status(400).json({ message: "tag/tags is required" });
+    }
+
+    const filters = { tags: { $in: t } };
+
+    if (category) filters.category = await resolveCategoryParamToId(category);
+    if (subcategory) filters.subcategory = await resolveCategoryParamToId(subcategory);
+    if (collection) filters.collections = collection;
+
+    if (isActive !== undefined) filters.isActive = isActive === "true";
+
+    if (sku) filters.$or = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
+
+    if (minPrice || maxPrice) {
+      filters.price = {};
+      if (minPrice) filters.price.$gte = Number(minPrice);
+      if (maxPrice) filters.price.$lte = Number(maxPrice);
+    }
+
+    if (search) filters.$text = { $search: search };
+
+    const sortMap = {
+      price_asc: { price: 1 },
+      price_desc: { price: -1 },
+      newest: { createdAt: -1 },
+      rating: { averageRating: -1 },
+      popularity: { "analytics.views": -1 },
+    };
+
+    const safeLimit = Math.min(200, Math.max(1, Number(limit)));
+    const skip = (Number(page) - 1) * safeLimit;
+    const sortObj = sortMap[sort] || { createdAt: -1 };
+
+    const docs = await pop(Product.find(filters))
+      .sort(sortObj)
+      .skip(skip)
+      .limit(safeLimit);
+
+    const total = await Product.countDocuments(filters);
+
+    return res.json({
+      tags: t,
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / safeLimit),
+      products: (docs || []).map(applyStockFromVariants),
+    });
+  } catch (e) {
+    console.error("❌ Get Products By Tag Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
 };
 
 /* ============================================================
@@ -158,23 +284,35 @@ export const createProduct = async (req, res) => {
     if (data.subcategory === "" || data.subcategory === "null") data.subcategory = null;
 
     data.slug = slugify(String(data.slug || data.title || ""), { lower: true });
-    if (await Product.exists({ slug: data.slug })) return res.status(400).json({ message: "Slug already exists" });
+    if (await Product.exists({ slug: data.slug }))
+      return res.status(400).json({ message: "Slug already exists" });
 
     const categoryDoc = await validateCategory(data.category);
-    if (!categoryDoc) return res.status(400).json({ message: "Invalid category ID" });
+    if (!categoryDoc)
+      return res.status(400).json({ message: "Invalid category ID" });
 
     await validateAttributes(data.attributes);
 
-    const { images, thumbnail } = await mergeUploads(req, { images: data.images, thumbnail: data.thumbnail });
+    const { images, thumbnail } = await mergeUploads(req, {
+      images: data.images,
+      thumbnail: data.thumbnail,
+    });
     data.images = images;
     data.thumbnail = thumbnail;
 
-    data.productType = Array.isArray(data.variants) && data.variants.length ? "variable" : data.productType || "simple";
+    data.productType =
+      Array.isArray(data.variants) && data.variants.length
+        ? "variable"
+        : data.productType || "simple";
+
     await ensureSKUs(data, categoryDoc);
 
     const created = await Product.create(data);
     const full = await pop(Product.findById(created._id));
-    return res.status(201).json({ message: "Product created successfully", product: applyStockFromVariants(full) });
+    return res.status(201).json({
+      message: "Product created successfully",
+      product: applyStockFromVariants(full),
+    });
   } catch (e) {
     console.error("❌ Create Product Error:", e);
     return res.status(400).json({ message: e.message });
@@ -182,7 +320,7 @@ export const createProduct = async (req, res) => {
 };
 
 /* ============================================================
-   GET ALL
+   ✅ GET ALL (supports category/subcategory = slug OR id)
 ============================================================ */
 export const getAllProducts = async (req, res) => {
   try {
@@ -202,8 +340,10 @@ export const getAllProducts = async (req, res) => {
     } = req.query;
 
     const filters = {};
-    if (category) filters.category = category;
-    if (subcategory) filters.subcategory = subcategory;
+
+    if (category) filters.category = await resolveCategoryParamToId(category);
+    if (subcategory) filters.subcategory = await resolveCategoryParamToId(subcategory);
+
     if (collection) filters.collections = collection;
 
     const t = tagsNorm(tags);
@@ -229,17 +369,22 @@ export const getAllProducts = async (req, res) => {
       popularity: { "analytics.views": -1 },
     };
 
-    const skip = (Number(page) - 1) * Number(limit);
+    const safeLimit = Math.min(200, Math.max(1, Number(limit)));
+    const skip = (Number(page) - 1) * safeLimit;
     const sortObj = sortMap[sort] || { createdAt: -1 };
 
-    const docs = await pop(Product.find(filters)).sort(sortObj).skip(skip).limit(Number(limit));
+    const docs = await pop(Product.find(filters))
+      .sort(sortObj)
+      .skip(skip)
+      .limit(safeLimit);
+
     const total = await Product.countDocuments(filters);
 
     res.json({
       total,
       page: Number(page),
-      pages: Math.ceil(total / Number(limit)),
-      products: docs.map(applyStockFromVariants), // ✅ FIX variable stock here
+      pages: Math.ceil(total / safeLimit),
+      products: docs.map(applyStockFromVariants),
     });
   } catch (e) {
     console.error("❌ Get All Products Error:", e);
@@ -255,10 +400,12 @@ export const getProductByIdOrSlug = async (req, res) => {
     const param = req.params.id;
 
     let doc = await pop(Product.findOne({ slug: param }));
-    if (!doc && mongoose.Types.ObjectId.isValid(String(param))) doc = await pop(Product.findById(param));
+    if (!doc && mongoose.Types.ObjectId.isValid(String(param))) {
+      doc = await pop(Product.findById(param));
+    }
 
     if (!doc) return res.status(404).json({ message: "Product not found" });
-    res.json(applyStockFromVariants(doc)); // ✅ FIX
+    res.json(applyStockFromVariants(doc));
   } catch (e) {
     console.error("❌ Get Product Error:", e);
     res.status(500).json({ message: e.message });
@@ -277,7 +424,7 @@ export const getProductBySKU = async (req, res) => {
     );
     if (!doc) return res.status(404).json({ message: "SKU not found" });
 
-    const product = applyStockFromVariants(doc); // ✅ FIX
+    const product = applyStockFromVariants(doc);
     const matchedVariant = product.variants?.find((v) => v.sku === sku) || null;
 
     res.json({ product, matchedVariant });
@@ -306,21 +453,30 @@ export const updateProduct = async (req, res) => {
     const existing = await Product.findById(req.params.id).populate("category");
     if (!existing) return res.status(404).json({ message: "Product not found" });
 
-    // slug uniqueness
     if (data.slug || data.title) {
-      const nextSlug = slugify(String(data.slug || data.title || existing.title), { lower: true });
+      const nextSlug = slugify(
+        String(data.slug || data.title || existing.title),
+        { lower: true }
+      );
+
       if (nextSlug !== existing.slug) {
-        const clash = await Product.exists({ slug: nextSlug, _id: { $ne: existing._id } });
+        const clash = await Product.exists({
+          slug: nextSlug,
+          _id: { $ne: existing._id },
+        });
         if (clash) return res.status(400).json({ message: "Slug already exists" });
         data.slug = nextSlug;
       }
     }
 
-    // category change
     let categoryDoc = existing.category;
-    if (data.category && String(data.category) !== String(existing.category?._id || existing.category)) {
+    if (
+      data.category &&
+      String(data.category) !== String(existing.category?._id || existing.category)
+    ) {
       categoryDoc = await validateCategory(data.category);
-      if (!categoryDoc) return res.status(400).json({ message: "Invalid category ID" });
+      if (!categoryDoc)
+        return res.status(400).json({ message: "Invalid category ID" });
     }
 
     await validateAttributes(data.attributes);
@@ -336,7 +492,6 @@ export const updateProduct = async (req, res) => {
     data.images = images;
     data.thumbnail = thumbnail;
 
-    // productType decision
     if (Array.isArray(data.variants) && data.variants.length) {
       data.productType = "variable";
       delete data.sku;
@@ -344,18 +499,24 @@ export const updateProduct = async (req, res) => {
       data.productType = "simple";
     }
 
-    // ensure SKUs
     const skuData = { ...existing.toObject(), ...data };
     await ensureSKUs(skuData, categoryDoc);
     data.sku = skuData.sku;
     data.variants = skuData.variants;
 
     const updated = await pop(
-      Product.findByIdAndUpdate(req.params.id, data, { new: true, runValidators: true })
+      Product.findByIdAndUpdate(req.params.id, data, {
+        new: true,
+        runValidators: true,
+      })
     );
 
     if (!updated) return res.status(404).json({ message: "Product not found" });
-    res.json({ message: "Product updated successfully", product: applyStockFromVariants(updated) }); // ✅ FIX
+
+    res.json({
+      message: "Product updated successfully",
+      product: applyStockFromVariants(updated),
+    });
   } catch (e) {
     console.error("❌ Update Product Error:", e);
     res.status(500).json({ message: e.message });
@@ -400,7 +561,7 @@ export const incrementProductAnalytics = async (req, res) => {
       { new: true }
     );
 
-    res.json(applyStockFromVariants(product)); // optional but fine
+    res.json(applyStockFromVariants(product));
   } catch (e) {
     console.error("❌ Analytics Update Error:", e);
     res.status(500).json({ message: e.message });
@@ -423,7 +584,10 @@ export const updateVariantStock = async (req, res) => {
     await product.save();
 
     const full = await pop(Product.findById(product._id));
-    res.json({ message: "Variant stock updated", product: applyStockFromVariants(full) }); // ✅ FIX
+    res.json({
+      message: "Variant stock updated",
+      product: applyStockFromVariants(full),
+    });
   } catch (e) {
     console.error("❌ Variant Stock Error:", e);
     res.status(500).json({ message: e.message });
@@ -460,9 +624,7 @@ export const bulkImportProducts = async (req, res) => {
 
     for (let i = 0; i < products.length; i++) {
       const p = products[i];
-
       try {
-        // ✅ runs schema hooks: productCode + SKU generation + productType
         const doc = await Product.create(p);
         imported.push(doc);
       } catch (e) {
@@ -481,11 +643,10 @@ export const bulkImportProducts = async (req, res) => {
       receivedCount: products.length,
       importedCount: imported.length,
       failedCount: failed.length,
-      failed: failed.slice(0, 50), // keep response light
+      failed: failed.slice(0, 50),
     });
   } catch (e) {
     console.error("❌ Bulk Import Error:", e);
     return res.status(500).json({ message: e.message });
   }
 };
-

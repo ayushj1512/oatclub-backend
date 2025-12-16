@@ -1,3 +1,5 @@
+// server.js (or app.js) — UPDATED (adds AbandonedCart routes too)
+
 import express from "express";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
@@ -25,6 +27,13 @@ import pingRoutes from "./routes/pingRouter.js";
 import superadminRoutes from "./routes/superadmin.js";
 import attributeRoutes from "./routes/attributeRoutes.js";
 
+// ✅ Reels Router
+import reelsRoutes from "./reels/reels.router.js";
+
+// ✅ Razorpay
+import razorpayRoutes from "./Razorpay/razorpay.router.js";
+import { webhook as razorpayWebhook } from "./Razorpay/razorpay.controller.js";
+
 // 🔥 Existing Ticket Route (admin)
 import ticketRoutes from "./routes/admin/tickets.js";
 
@@ -34,18 +43,37 @@ import { cloudinary } from "./config/cloudinary.js";
 // ✅ Media routes
 import mediaRoutes from "./cloudinary/mediaRoutes.js";
 
-// ✅ Customer Support Ticket Routes (your new feature)
+// ✅ Customer Support Ticket Routes
 import customerTicketRoutes from "./CustomerTicket/customerTicket.routes.js";
 
-// ✅ NEW: Barcode Item Routes
+// ✅ Barcode Item Routes
 import barcodeItemRoutes from "./BarcodeItem/barcodeItem.routes.js";
+
+// ✅ Superadmin Users Routes
+import userRoutes from "./User/User.Routes.js";
+
+// ✅ NEW: Abandoned Carts Routes
+import abandonedCartRoutes from "./AbandonedCart/AbandonedCartRoutes.js";
 
 dotenv.config();
 const app = express();
 
-// 🔹 Middleware
+// 🔹 Middleware (basic)
 app.use(cors());
 app.use(morgan("dev"));
+
+/**
+ * ✅ IMPORTANT:
+ * Razorpay webhook MUST be registered BEFORE express.json()
+ * because signature verification needs RAW request body.
+ */
+app.post(
+  "/api/razorpay/webhook",
+  express.raw({ type: "application/json" }),
+  razorpayWebhook
+);
+
+// 🔹 Body parsers for rest of API
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -85,18 +113,41 @@ app.use("/api/reviews", reviewRoutes);
 app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/admins", adminUserRoutes);
 app.use("/api/inventory", inventoryRoutes);
-app.use("/superadmin", superadminRoutes);
+
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/media", mediaRoutes);
 
-// 🔥 Admin tickets (existing)
+// ✅ Reels
+app.use("/api/reels", reelsRoutes);
+
+// 🔥 Admin tickets
 app.use("/api/tickets", ticketRoutes);
 
-// ✅ Customer support tickets (NEW)
+// ✅ Customer support tickets
 app.use("/api/support", customerTicketRoutes);
 
-// ✅ Barcode generation + barcode items CRUD (NEW)
+// ✅ Barcode generation + barcode items CRUD
 app.use("/api", barcodeItemRoutes);
+
+// ✅ Razorpay JSON routes (create-order, verify)
+app.use("/api/razorpay", razorpayRoutes);
+
+// ✅ Abandoned carts (NEW)
+// Endpoints (as per your router):
+//  - POST   /api/abandoned-carts/upsert
+//  - GET    /api/abandoned-carts
+//  - GET    /api/abandoned-carts/:id
+//  - PATCH  /api/abandoned-carts/:id/abandon
+//  - PATCH  /api/abandoned-carts/:id/recover
+//  - PATCH  /api/abandoned-carts/:id/retargeted
+//  - DELETE /api/abandoned-carts/:id
+app.use("/api/abandoned-carts", abandonedCartRoutes);
+
+// ✅ Superadmin routes (existing)
+app.use("/superadmin", superadminRoutes);
+
+// ✅ Superadmin Users CRUD
+app.use("/superadmin", userRoutes);
 
 // 🔹 Root route
 app.get("/", (req, res) => {
@@ -109,7 +160,10 @@ app.get("/api/cloudinary/test", async (req, res) => {
     const r = await cloudinary.api.ping();
     res.json({ ok: true, result: r });
   } catch (e) {
-    res.status(500).json({ ok: false, message: e?.message || "Cloudinary ping failed" });
+    res.status(500).json({
+      ok: false,
+      message: e?.message || "Cloudinary ping failed",
+    });
   }
 });
 

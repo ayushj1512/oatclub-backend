@@ -2,8 +2,9 @@ import express from "express";
 import {
   createProduct,
   getAllProducts,
+  getProductsByTag, // ✅ NEW
   getProductByIdOrSlug,
-  getProductBySKU,            // ✅ NEW
+  getProductBySKU,
   updateProduct,
   deleteProduct,
   bulkDeleteProducts,
@@ -19,10 +20,17 @@ const router = express.Router();
    🔓 PUBLIC ROUTES (Customers)
 =========================================================== */
 
+// ✅ Products by tag(s)
+// Examples:
+//   /api/products/by-tag?tag=sale
+//   /api/products/by-tag?tags=sale,new-arrival&page=1&limit=20
+router.get("/by-tag", getProductsByTag);
+
 // Get all products (filters, pagination, search)
+// NOTE: supports category/subcategory as slug OR ObjectId
 router.get("/", getAllProducts);
 
-// ✅ Warehouse/ops: fetch by SKU (product sku or variant sku)
+// Warehouse/ops: fetch by SKU (product sku or variant sku)
 router.get("/sku/:sku", getProductBySKU);
 
 // Product details by slug OR id
@@ -30,35 +38,18 @@ router.get("/details/:id", getProductByIdOrSlug);
 
 /* ===========================================================
    🔐 ADMIN ROUTES
-   (Place BEFORE dynamic "/:id" routes to avoid conflicts)
+   (Place BEFORE dynamic "/:id" route to avoid conflicts)
 =========================================================== */
 
-// Bulk delete products
 router.post("/bulk/delete", bulkDeleteProducts);
-
-// Bulk import WooCommerce/CSV products
 router.post("/bulk/import", bulkImportProducts);
 
-// Manually update product ratings
 router.post("/:id/update-ratings", updateProductRatings);
-
-// Update analytics (views, wishlistCount, etc.)
 router.patch("/:id/analytics", incrementProductAnalytics);
-
-// Update variant stock
 router.patch("/:id/variant-stock", updateVariantStock);
 
-/* ===========================================================
-   ADMIN CRUD ROUTES (AFTER ABOVE)
-=========================================================== */
-
-// Create product
 router.post("/", createProduct);
-
-// Update product
 router.put("/:id", updateProduct);
-
-// Delete product
 router.delete("/:id", deleteProduct);
 
 /* ===========================================================
