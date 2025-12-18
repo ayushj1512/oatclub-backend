@@ -3,7 +3,7 @@ import { generateSKU } from "../utility/sku.js";
 import Counter from "./Counter.js"; // ✅ use existing Counter model (like Orders)
 
 /* ------------------------------------------------------------------
-   VARIANT LEVEL — supports ANY attribute combination (size/color/etc)
+    VARIANT LEVEL — supports ANY attribute combination (size/color/etc)
 ------------------------------------------------------------------- */
 const variantSchema = new mongoose.Schema(
   {
@@ -31,8 +31,7 @@ const variantSchema = new mongoose.Schema(
 );
 
 /* ------------------------------------------------------------------
-   MAIN PRODUCT SCHEMA — TAGS AS MANUAL STRINGS (NO TAG MODEL)
-   ✅ Adds productCode (00001...) as sequential human-readable ID
+    MAIN PRODUCT SCHEMA
 ------------------------------------------------------------------- */
 const productSchema = new mongoose.Schema(
   {
@@ -52,18 +51,14 @@ const productSchema = new mongoose.Schema(
     shortDescription: { type: String, default: "" },
     highlights: [{ type: String }],
 
-    /* CATEGORY */
-    category: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Category",
-      required: true,
-    },
-
-    subcategory: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Category",
-      default: null,
-    },
+    /* CATEGORIES - Updated to Array, removed subcategory */
+    category: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Category",
+        required: true,
+      }
+    ],
 
     collections: [{ type: mongoose.Schema.Types.ObjectId, ref: "Collection" }],
 
@@ -149,7 +144,7 @@ const productSchema = new mongoose.Schema(
 );
 
 /* ------------------------------------------------------------------
-   ✅ AUTO SET PRODUCT TYPE
+    ✅ AUTO SET PRODUCT TYPE
 ------------------------------------------------------------------- */
 productSchema.pre("save", function (next) {
   if (this.variants?.length > 0) this.productType = "variable";
@@ -158,8 +153,7 @@ productSchema.pre("save", function (next) {
 });
 
 /* ------------------------------------------------------------------
-   ✅ AUTO-GENERATE SEQUENTIAL productCode like 00001
-   Uses Counter collection. Similar to your Order numbering.
+    ✅ AUTO-GENERATE SEQUENTIAL productCode like 00001
 ------------------------------------------------------------------- */
 productSchema.pre("validate", async function (next) {
   try {
@@ -169,11 +163,8 @@ productSchema.pre("validate", async function (next) {
         { $inc: { sequence: 1 } },
         { new: true, upsert: true }
       );
-
-      // start from 00001
       this.productCode = String(counter.sequence).padStart(5, "0");
     }
-
     next();
   } catch (e) {
     next(e);
@@ -181,11 +172,10 @@ productSchema.pre("validate", async function (next) {
 });
 
 /* ------------------------------------------------------------------
-   ✅ AUTO-GENERATE SKUs (Product + Variants)
+    ✅ AUTO-GENERATE SKUs (Product + Variants)
 ------------------------------------------------------------------- */
 productSchema.pre("validate", function (next) {
   try {
-    // SIMPLE PRODUCT SKU
     if (this.productType !== "variable" || !this.variants?.length) {
       if (!this.sku) {
         this.sku = generateSKU({
@@ -197,21 +187,13 @@ productSchema.pre("validate", function (next) {
       return next();
     }
 
-    // VARIABLE PRODUCT: ensure variant SKUs (do NOT set product.sku)
     if (Array.isArray(this.variants) && this.variants.length > 0) {
       this.variants = this.variants.map((v) => {
         if (v?.sku) return v;
-
         const raw = v?.toObject?.() ? v.toObject() : v;
-
         const attrs = Array.isArray(raw.attributes) ? raw.attributes : [];
-        const sizeAttr = attrs.find(
-          (a) => String(a.key || "").toLowerCase() === "size"
-        );
-        const colorAttr = attrs.find(
-          (a) => String(a.key || "").toLowerCase() === "color"
-        );
-
+        const sizeAttr = attrs.find((a) => String(a.key || "").toLowerCase() === "size");
+        const colorAttr = attrs.find((a) => String(a.key || "").toLowerCase() === "color");
         const size = sizeAttr?.value || "";
         const color = colorAttr?.value || "";
 
@@ -227,10 +209,7 @@ productSchema.pre("validate", function (next) {
         };
       });
     }
-
-    // keep product.sku empty for variable products
     this.sku = undefined;
-
     next();
   } catch (e) {
     next(e);
@@ -241,16 +220,12 @@ productSchema.pre("validate", function (next) {
 productSchema.index({ productCode: 1 }, { unique: true });
 productSchema.index({ title: "text", description: "text" });
 productSchema.index({ keywords: 1 });
-productSchema.index({ category: 1, subcategory: 1 });
+productSchema.index({ category: 1 }); // Updated index: removed subcategory
 productSchema.index({ isActive: 1, isFeatured: 1 });
 productSchema.index({ averageRating: -1 });
 productSchema.index({ price: 1 });
-
-// SKU indexes
 productSchema.index({ sku: 1 }, { sparse: true });
 productSchema.index({ "variants.sku": 1 }, { sparse: true });
-
-// Tags index
 productSchema.index({ tags: 1 });
 
 export default mongoose.models.Product || mongoose.model("Product", productSchema);

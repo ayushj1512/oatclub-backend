@@ -1,4 +1,4 @@
-// server.js (or app.js) — UPDATED (adds AbandonedCart routes too)
+// server.js (or app.js)
 
 import express from "express";
 import dotenv from "dotenv";
@@ -6,7 +6,9 @@ import mongoose from "mongoose";
 import cors from "cors";
 import morgan from "morgan";
 
-// Import routes
+// --------------------------------------------------
+// ROUTES
+// --------------------------------------------------
 import addressRoutes from "./routes/addressRouter.js";
 import blogRoutes from "./routes/blogRouter.js";
 import categoryRoutes from "./routes/categoryRouter.js";
@@ -21,51 +23,57 @@ import productRoutes from "./routes/productRouter.js";
 import queryRoutes from "./routes/queryRouter.js";
 import reviewRoutes from "./routes/reviewRouter.js";
 import wishlistRoutes from "./routes/wishlistRouter.js";
+
 import adminUserRoutes from "./routes/admin/adminUserRouter.js";
 import inventoryRoutes from "./routes/admin/inventoryRouter.js";
+import ticketRoutes from "./routes/admin/tickets.js";
+
+import attributeRoutes from "./routes/attributeRoutes.js";
 import pingRoutes from "./routes/pingRouter.js";
 import superadminRoutes from "./routes/superadmin.js";
-import attributeRoutes from "./routes/attributeRoutes.js";
 
-// ✅ Reels Router
+// ✅ NEW: PRODUCT VIEW ANALYTICS ROUTES
+import productViewAnalyticsRoutes from "./productviews/analytics.routes.js";
+
+// --------------------------------------------------
+// EXTRA / EXISTING FEATURES
+// --------------------------------------------------
+
+// Reels
 import reelsRoutes from "./reels/reels.router.js";
 
-// ✅ Razorpay
+// Razorpay
 import razorpayRoutes from "./Razorpay/razorpay.router.js";
 import { webhook as razorpayWebhook } from "./Razorpay/razorpay.controller.js";
 
-// 🔥 Existing Ticket Route (admin)
-import ticketRoutes from "./routes/admin/tickets.js";
-
-// ✅ Cloudinary
+// Cloudinary
 import { cloudinary } from "./config/cloudinary.js";
-
-// ✅ Media routes
 import mediaRoutes from "./cloudinary/mediaRoutes.js";
 
-// ✅ Customer Support Ticket Routes
+// Customer Support Tickets
 import customerTicketRoutes from "./CustomerTicket/customerTicket.routes.js";
 
-// ✅ Barcode Item Routes
+// Barcode
 import barcodeItemRoutes from "./BarcodeItem/barcodeItem.routes.js";
 
-// ✅ Superadmin Users Routes
+// Superadmin users
 import userRoutes from "./User/User.Routes.js";
 
-// ✅ NEW: Abandoned Carts Routes
+// Abandoned carts
 import abandonedCartRoutes from "./AbandonedCart/AbandonedCartRoutes.js";
 
+// --------------------------------------------------
 dotenv.config();
 const app = express();
 
-// 🔹 Middleware (basic)
+// --------------------------------------------------
+// MIDDLEWARE
+// --------------------------------------------------
 app.use(cors());
 app.use(morgan("dev"));
 
 /**
- * ✅ IMPORTANT:
- * Razorpay webhook MUST be registered BEFORE express.json()
- * because signature verification needs RAW request body.
+ * ⚠️ Razorpay webhook must be BEFORE json parser
  */
 app.post(
   "/api/razorpay/webhook",
@@ -73,13 +81,13 @@ app.post(
   razorpayWebhook
 );
 
-// 🔹 Body parsers for rest of API
+// Body parsers
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-/* ============================================================
-  ✅ Cloudinary Test (Startup Ping)
-============================================================ */
+// --------------------------------------------------
+// CLOUDINARY STARTUP CHECK
+// --------------------------------------------------
 (async () => {
   try {
     const r = await cloudinary.api.ping();
@@ -89,14 +97,21 @@ app.use(express.urlencoded({ extended: true }));
   }
 })();
 
-// 🔹 MongoDB connection
+// --------------------------------------------------
+// DATABASE
+// --------------------------------------------------
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB connected"))
-  .catch((err) => console.error("❌ MongoDB connection error:", err));
+  .catch((err) =>
+    console.error("❌ MongoDB connection error:", err)
+  );
 
-// 🔹 Routes
+// --------------------------------------------------
+// API ROUTES
+// --------------------------------------------------
 app.use("/api/ping", pingRoutes);
+
 app.use("/api/addresses", addressRoutes);
 app.use("/api/blogs", blogRoutes);
 app.use("/api/categories", categoryRoutes);
@@ -111,50 +126,61 @@ app.use("/api/products", productRoutes);
 app.use("/api/queries", queryRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/wishlist", wishlistRoutes);
+
 app.use("/api/admins", adminUserRoutes);
 app.use("/api/inventory", inventoryRoutes);
+app.use("/api/tickets", ticketRoutes);
 
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/media", mediaRoutes);
 
-// ✅ Reels
+// --------------------------------------------------
+// ✅ PRODUCT VIEW ANALYTICS (NEW)
+// POST /api/analytics/product-view
+// --------------------------------------------------
+app.use("/api/analytics", productViewAnalyticsRoutes);
+
+// --------------------------------------------------
+// REELS
+// --------------------------------------------------
 app.use("/api/reels", reelsRoutes);
 
-// 🔥 Admin tickets
-app.use("/api/tickets", ticketRoutes);
-
-// ✅ Customer support tickets
+// --------------------------------------------------
+// CUSTOMER SUPPORT
+// --------------------------------------------------
 app.use("/api/support", customerTicketRoutes);
 
-// ✅ Barcode generation + barcode items CRUD
+// --------------------------------------------------
+// BARCODE
+// --------------------------------------------------
 app.use("/api", barcodeItemRoutes);
 
-// ✅ Razorpay JSON routes (create-order, verify)
+// --------------------------------------------------
+// RAZORPAY
+// --------------------------------------------------
 app.use("/api/razorpay", razorpayRoutes);
 
-// ✅ Abandoned carts (NEW)
-// Endpoints (as per your router):
-//  - POST   /api/abandoned-carts/upsert
-//  - GET    /api/abandoned-carts
-//  - GET    /api/abandoned-carts/:id
-//  - PATCH  /api/abandoned-carts/:id/abandon
-//  - PATCH  /api/abandoned-carts/:id/recover
-//  - PATCH  /api/abandoned-carts/:id/retargeted
-//  - DELETE /api/abandoned-carts/:id
+// --------------------------------------------------
+// ABANDONED CARTS
+// --------------------------------------------------
 app.use("/api/abandoned-carts", abandonedCartRoutes);
 
-// ✅ Superadmin routes (existing)
+// --------------------------------------------------
+// SUPERADMIN
+// --------------------------------------------------
 app.use("/superadmin", superadminRoutes);
-
-// ✅ Superadmin Users CRUD
 app.use("/superadmin", userRoutes);
 
-// 🔹 Root route
+// --------------------------------------------------
+// ROOT
+// --------------------------------------------------
 app.get("/", (req, res) => {
   res.send("🛒 E-commerce API running...");
 });
 
-// ✅ optional quick endpoint to test Cloudinary anytime
+// --------------------------------------------------
+// CLOUDINARY TEST
+// --------------------------------------------------
 app.get("/api/cloudinary/test", async (req, res) => {
   try {
     const r = await cloudinary.api.ping();
@@ -167,12 +193,19 @@ app.get("/api/cloudinary/test", async (req, res) => {
   }
 });
 
-// 🔹 404 handler
+// --------------------------------------------------
+// 404 HANDLER
+// --------------------------------------------------
 app.use((req, res) => {
-  res.status(404).json({ success: false, message: "Route not found" });
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+  });
 });
 
-// 🔹 Global error handler
+// --------------------------------------------------
+// GLOBAL ERROR HANDLER
+// --------------------------------------------------
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(err.status || 500).json({
@@ -181,7 +214,9 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 🔹 Start server
+// --------------------------------------------------
+// START SERVER
+// --------------------------------------------------
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
