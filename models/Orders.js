@@ -22,8 +22,16 @@ const orderItemSchema = new mongoose.Schema(
       thumbnail: { type: String, default: "" },
       images: [{ type: String, default: [] }],
 
-      category: { type: mongoose.Schema.Types.ObjectId, ref: "Category", default: null },
-      subcategory: { type: mongoose.Schema.Types.ObjectId, ref: "Category", default: null },
+      category: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Category",
+        default: null,
+      },
+      subcategory: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Category",
+        default: null,
+      },
 
       productType: {
         type: String,
@@ -69,7 +77,11 @@ const rmaItemSchema = new mongoose.Schema(
     quantity: { type: Number, required: true, min: 1 },
 
     // convenience snapshot (optional but useful for admin)
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", default: null },
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+      default: null,
+    },
     productCode: { type: String, default: "" },
     title: { type: String, default: "" },
     variantSku: { type: String, default: "" },
@@ -108,7 +120,15 @@ const rmaSchema = new mongoose.Schema(
 
     reason: {
       type: String,
-      enum: ["wrong_size", "wrong_item", "damaged", "defective", "quality_issue", "changed_mind", "other"],
+      enum: [
+        "wrong_size",
+        "wrong_item",
+        "damaged",
+        "defective",
+        "quality_issue",
+        "changed_mind",
+        "other",
+      ],
       default: "other",
     },
 
@@ -127,13 +147,25 @@ const rmaSchema = new mongoose.Schema(
     fee: {
       amount: { type: Number, default: 0 },
       currency: { type: String, default: "INR" },
-      status: { type: String, enum: ["unpaid", "paid", "waived"], default: "waived" },
+      status: {
+        type: String,
+        enum: ["unpaid", "paid", "waived"],
+        default: "waived",
+      },
     },
 
     refund: {
       amount: { type: Number, default: 0 },
-      mode: { type: String, enum: ["source", "upi", "bank", "manual"], default: "source" },
-      status: { type: String, enum: ["not_started", "initiated", "completed", "failed"], default: "not_started" },
+      mode: {
+        type: String,
+        enum: ["source", "upi", "bank", "manual"],
+        default: "source",
+      },
+      status: {
+        type: String,
+        enum: ["not_started", "initiated", "completed", "failed"],
+        default: "not_started",
+      },
       referenceId: { type: String, default: "" },
     },
 
@@ -204,7 +236,11 @@ const orderSchema = new mongoose.Schema(
     subtotal: { type: Number, required: true },
     discount: { type: Number, default: 0 },
 
-    coupon: { type: mongoose.Schema.Types.ObjectId, ref: "Coupon", default: null },
+    coupon: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Coupon",
+      default: null,
+    },
 
     shippingFee: { type: Number, default: 0 },
     tax: { type: Number, default: 0 },
@@ -214,21 +250,43 @@ const orderSchema = new mongoose.Schema(
 
     currency: { type: String, default: "INR" },
 
+    razorpay: {
+      orderId: { type: String, default: "" }, // rzp_order_xxx
+      paymentId: { type: String, default: "" }, // rzp_payment_xxx
+      signature: { type: String, default: "" },
+
+      amount: { type: Number, default: 0 }, // in paise
+      currency: { type: String, default: "INR" },
+
+      paidAt: { type: Date, default: null },
+    },
+
     paymentMethod: {
-      type: String,
-      enum: ["cod", "card", "upi", "wallet", "netbanking"],
-      default: "cod",
-    },
+  type: String,
+  enum: ["cod", "razorpay"],
+  default: "cod",
+},
+
     paymentStatus: {
-      type: String,
-      enum: ["pending", "paid", "failed", "refunded"],
-      default: "pending",
-    },
+  type: String,
+  enum: ["pending", "paid", "failed", "refunded"],
+  default: "pending",
+  index: true,
+},
+
 
     // 🔹 ORDER STATUS
     fulfillmentStatus: {
       type: String,
-      enum: ["processing", "packed", "shipped", "out_for_delivery", "delivered", "returned", "cancelled"],
+      enum: [
+        "processing",
+        "packed",
+        "shipped",
+        "out_for_delivery",
+        "delivered",
+        "returned",
+        "cancelled",
+      ],
       default: "processing",
       index: true,
     },
@@ -247,7 +305,11 @@ const orderSchema = new mongoose.Schema(
     adminRemarks: { type: String, default: "" },
 
     // 🔹 LINK TO SUPPORT TICKET
-    queryRef: { type: mongoose.Schema.Types.ObjectId, ref: "Query", default: null },
+    queryRef: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Query",
+      default: null,
+    },
 
     // 🔹 ENTERPRISE ORDER NUMBER (SEQUENTIAL)
     orderNumber: { type: String, unique: true, required: true, index: true },
@@ -255,7 +317,11 @@ const orderSchema = new mongoose.Schema(
     orderDate: { type: Date, default: Date.now, index: true },
 
     // 🔹 HOW CUSTOMER PLACED ORDER
-    source: { type: String, enum: ["website", "mobile_app", "social_media", "manual"], default: "website" },
+    source: {
+      type: String,
+      enum: ["website", "mobile_app", "social_media", "manual"],
+      default: "website",
+    },
 
     isGiftOrder: { type: Boolean, default: false },
 
@@ -333,7 +399,9 @@ orderSchema.pre("validate", async function (next) {
       } else {
         if (this.rmas[i].fee.amount == null) this.rmas[i].fee.amount = 0;
         if (!this.rmas[i].fee.currency) this.rmas[i].fee.currency = "INR";
-        if (!this.rmas[i].fee.status) this.rmas[i].fee.status = this.rmas[i].fee.amount > 0 ? "unpaid" : "waived";
+        if (!this.rmas[i].fee.status)
+          this.rmas[i].fee.status =
+            this.rmas[i].fee.amount > 0 ? "unpaid" : "waived";
       }
     }
 
@@ -358,7 +426,10 @@ orderSchema.pre("validate", function (next) {
       });
     }
 
-    const subtotal = (this.items || []).reduce((sum, it) => sum + Number(it.subtotal || 0), 0);
+    const subtotal = (this.items || []).reduce(
+      (sum, it) => sum + Number(it.subtotal || 0),
+      0
+    );
     const shippingFee = Number(this.shippingFee || 0);
     const tax = Number(this.tax || 0);
     const discount = Number(this.discount || 0);
@@ -368,7 +439,10 @@ orderSchema.pre("validate", function (next) {
     this.finalPayable = Math.max(0, this.totalAmount - discount);
 
     // analytics basics
-    const totalItems = (this.items || []).reduce((sum, it) => sum + Number(it.quantity || 0), 0);
+    const totalItems = (this.items || []).reduce(
+      (sum, it) => sum + Number(it.quantity || 0),
+      0
+    );
     this.analytics = this.analytics || {};
     this.analytics.totalItems = totalItems;
     this.analytics.averageItemPrice = totalItems ? subtotal / totalItems : 0;

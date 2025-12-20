@@ -173,66 +173,91 @@ export const createOrder = async (req, res) => {
       currency = "INR",
     } = req.body;
 
-    if (!customerId) return res.status(400).json({ message: "customerId missing" });
+    /* ------------------------------------------------
+       🔒 HARD VALIDATIONS (CRITICAL)
+    ------------------------------------------------ */
+
+    if (!customerId) {
+      return res.status(400).json({ message: "customerId missing" });
+    }
+
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Order items missing" });
     }
 
+    // 🔥 PAYMENT METHOD GUARD (THIS FIXES EVERYTHING)
+    if (!["cod", "razorpay"].includes(paymentMethod)) {
+      return res.status(400).json({
+        message: "Invalid paymentMethod. Allowed: cod | razorpay",
+      });
+    }
+
     await session.withTransaction(async () => {
-      // 1) Fetch products in one query
+      /* ------------------------------------------------
+         1️⃣ FETCH PRODUCTS
+      ------------------------------------------------ */
       const productIds = items.map((i) => i?.productId).filter(Boolean);
 
-      // Guard: if frontend mistakenly sends non-mongo id, fail fast
       const invalidProductId = productIds.find((id) => !isObjectId(id));
       if (invalidProductId) {
-        throw new Error(`Invalid productId: ${invalidProductId} (must be Mongo ObjectId)`);
+        throw new Error(`Invalid productId: ${invalidProductId}`);
       }
 
-      const products = await Product.find({ _id: { $in: productIds } }).session(session).lean();
+      const products = await Product.find({
+        _id: { $in: productIds },
+      })
+        .session(session)
+        .lean();
+
       const productMap = new Map(products.map((p) => [String(p._id), p]));
 
-      // 2) Validate + build normalized items (with snapshot)
+      /* ------------------------------------------------
+         2️⃣ NORMALIZE ITEMS + SNAPSHOTS
+      ------------------------------------------------ */
       const normalizedItems = [];
       let computedSubtotal = 0;
       let totalQty = 0;
 
       for (const item of items) {
-        if (!item?.productId) throw new Error("productId missing in items");
+        if (!item?.productId) throw new Error("productId missing");
 
         const qty = Number(item.quantity || 0);
-        if (!Number.isFinite(qty) || qty < 1) throw new Error("Invalid quantity in items");
+        if (!Number.isFinite(qty) || qty < 1) {
+          throw new Error("Invalid quantity");
+        }
 
         const product = productMap.get(String(item.productId));
         if (!product) throw new Error("Product not found");
 
-        const variable =
-          product.productType === "variable" || (Array.isArray(product.variants) && product.variants.length > 0);
+        const isVariable =
+          product.productType === "variable" ||
+          (Array.isArray(product.variants) && product.variants.length > 0);
 
         let variant = null;
 
-        // variable -> require variantId + check variant stock only
-        if (variable) {
-          if (!item.variantId) throw new Error(`${product.title} - variantId missing`);
-          variant = findVariantById(product, item.variantId);
-          if (!variant) throw new Error(`${product.title} - variant not found`);
+        if (isVariable) {
+          if (!item.variantId) {
+            throw new Error(`${product.title} - variantId missing`);
+          }
 
-          const vStock = Number(variant.stock ?? 0);
-          if (vStock < qty) {
-            const skuText = variant?.sku ? ` (${variant.sku})` : "";
-            throw new Error(`${product.title}${skuText} out of stock`);
+          variant = findVariantById(product, item.variantId);
+          if (!variant) {
+            throw new Error(`${product.title} - variant not found`);
+          }
+
+          if (Number(variant.stock ?? 0) < qty) {
+            throw new Error(`${product.title} out of stock`);
           }
         } else {
-          // simple -> check product stock
-          const pStock = Number(product.stock ?? 0);
-          if (pStock < qty) {
-            const skuText = product?.sku ? ` (${product.sku})` : "";
-            throw new Error(`${product.title}${skuText} out of stock`);
+          if (Number(product.stock ?? 0) < qty) {
+            throw new Error(`${product.title} out of stock`);
           }
         }
 
-        // pricing snapshot
         const unitPrice =
-          variant && Number(variant.price) > 0 ? Number(variant.price) : Number(product.price || 0);
+          variant && Number(variant.price) > 0
+            ? Number(variant.price)
+            : Number(product.price || 0);
 
         const itemSubtotal = unitPrice * qty;
         totalQty += qty;
@@ -249,11 +274,13 @@ export const createOrder = async (req, res) => {
             images: Array.isArray(product.images) ? product.images : [],
             category: product.category || null,
             subcategory: product.subcategory || null,
-            productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
+            productType:
+              product.productType ||
+              (product?.variants?.length ? "variable" : "simple"),
             sku: product.sku || "",
             tags: Array.isArray(product.tags) ? product.tags : [],
             weight: Number(product.weight ?? 0),
-            currency: product.currency || currency || "INR",
+            currency: product.currency || currency,
           },
 
           variant: {
@@ -266,66 +293,58 @@ export const createOrder = async (req, res) => {
 
           quantity: qty,
           price: unitPrice,
-          compareAtPrice: variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
+          compareAtPrice:
+            variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
           subtotal: itemSubtotal,
         });
       }
 
-      // 3) Reduce stock (atomic)
+      /* ------------------------------------------------
+         3️⃣ STOCK REDUCTION (ATOMIC)
+      ------------------------------------------------ */
       for (const it of normalizedItems) {
         const variantId = it?.variant?.variantId;
 
-        if (variantId) {
-          const r = await Product.updateOne(
-            { _id: it.productId, "variants._id": variantId, "variants.stock": { $gte: it.quantity } },
-            { $inc: { "variants.$.stock": -it.quantity } }
-          ).session(session);
+        const result = variantId
+          ? await Product.updateOne(
+              {
+                _id: it.productId,
+                "variants._id": variantId,
+                "variants.stock": { $gte: it.quantity },
+              },
+              { $inc: { "variants.$.stock": -it.quantity } }
+            ).session(session)
+          : await Product.updateOne(
+              { _id: it.productId, stock: { $gte: it.quantity } },
+              { $inc: { stock: -it.quantity } }
+            ).session(session);
 
-          if (!r.modifiedCount) throw new Error("Stock update failed (variant). Please retry.");
-        } else {
-          const r = await Product.updateOne(
-            { _id: it.productId, stock: { $gte: it.quantity } },
-            { $inc: { stock: -it.quantity } }
-          ).session(session);
-
-          if (!r.modifiedCount) throw new Error("Stock update failed. Please retry.");
+        if (!result.modifiedCount) {
+          throw new Error("Stock update failed");
         }
       }
 
-      // 4) Coupon usage tracking (optional)
-      let couponApplied = false;
-      let couponDoc = null;
-
-      if (coupon) {
-        couponDoc = await Coupon.findById(coupon).session(session);
-        if (couponDoc) {
-          couponApplied = true;
-          couponDoc.usedCount = (couponDoc.usedCount || 0) + 1;
-          if (Array.isArray(couponDoc.usedBy)) couponDoc.usedBy.push(customerId);
-          await couponDoc.save({ session });
-        }
-      }
-
-      // 5) Totals
+      /* ------------------------------------------------
+         4️⃣ TOTALS + ANALYTICS
+      ------------------------------------------------ */
       const subtotal = computedSubtotal;
-      const totalAmount = subtotal + Number(shippingFee || 0) + Number(tax || 0);
-      const finalPayable = Math.max(0, totalAmount - Number(discount || 0));
-
-      // 6) Analytics
-      const tagsUsed = uniqStrings(
-        normalizedItems.flatMap((it) => (Array.isArray(it?.productSnapshot?.tags) ? it.productSnapshot.tags : []))
-      );
+      const totalAmount = subtotal + Number(shippingFee) + Number(tax);
+      const finalPayable = Math.max(0, totalAmount - Number(discount));
 
       const analytics = {
         totalItems: totalQty,
         averageItemPrice: totalQty ? subtotal / totalQty : 0,
-        couponApplied,
+        couponApplied: Boolean(coupon),
         creditsUsed: false,
         categoryBreakdown: computeCategoryBreakdown(normalizedItems),
-        tagsUsed,
+        tagsUsed: uniqStrings(
+          normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])
+        ),
       };
 
-      // 7) Create order (rmas default [])
+      /* ------------------------------------------------
+         5️⃣ CREATE ORDER (SOURCE OF TRUTH)
+      ------------------------------------------------ */
       const order = await Order.create(
         [
           {
@@ -336,19 +355,19 @@ export const createOrder = async (req, res) => {
 
             subtotal,
             discount,
-            coupon: couponDoc?._id || null,
+            coupon: coupon || null,
             shippingFee,
             tax,
             totalAmount,
             finalPayable,
 
-            currency: currency || normalizedItems?.[0]?.productSnapshot?.currency || "INR",
+            currency,
 
-            paymentMethod,
+            paymentMethod, // 🔒 cod | razorpay
             paymentStatus: "pending",
+
             source,
             isGiftOrder,
-
             analytics,
             rmas: [],
           },
@@ -356,7 +375,7 @@ export const createOrder = async (req, res) => {
         { session }
       );
 
-      req.__createdOrder = order?.[0];
+      req.__createdOrder = order[0];
     });
 
     return res.status(201).json({
@@ -365,11 +384,12 @@ export const createOrder = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Create Order Error:", error);
-    return res.status(500).json({ message: error?.message || "Server error" });
+    return res.status(500).json({ message: error.message || "Server error" });
   } finally {
     session.endSession();
   }
 };
+
 
 /* ============================================================
    CREATE RMA (Customer/Admin)
