@@ -31,6 +31,7 @@ import ticketRoutes from "./routes/admin/tickets.js";
 import attributeRoutes from "./routes/attributeRoutes.js";
 import pingRoutes from "./routes/pingRouter.js";
 import superadminRoutes from "./routes/superadmin.js";
+import shippingRoutes from "./shiprocket/shipping.routes.js";
 
 // ✅ NEW: PRODUCT VIEW ANALYTICS ROUTES
 import productViewAnalyticsRoutes from "./productviews/analytics.routes.js";
@@ -133,7 +134,7 @@ app.use("/api/tickets", ticketRoutes);
 
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/media", mediaRoutes);
-
+app.use("/api/shipping", shippingRoutes);
 // --------------------------------------------------
 // ✅ PRODUCT VIEW ANALYTICS (NEW)
 // POST /api/analytics/product-view
