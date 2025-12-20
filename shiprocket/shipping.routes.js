@@ -1,5 +1,5 @@
 import express from "express";
-import { bookWithShiprocket } from "../controllers/shipping.controller.js";
+import { bookWithShiprocket } from "./shipping.controller.js";
 import { shiprocketWebhook } from "../shiprocket/index.js";
 
 const router = express.Router();

@@ -1,7 +1,7 @@
 import {
   checkServiceability,
   createShipment,
-} from "../shiprocket/index.js";
+} from "./index.js";
 
 export async function bookWithShiprocket(req, res) {
   const order = req.body;
