@@ -26,6 +26,26 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: true, select: false, minlength: 4 },
 
     role: { type: String, enum: ["user", "admin", "superadmin"], default: "user", index: true },
+
+    /* 🛒 CART METRICS */
+    activeCartId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Cart",
+      default: null,
+      index: true,
+    },
+
+    lastCartActivityAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    cartCount: {
+      type: Number,
+      default: 0,
+    },
+    
     isActive: { type: Boolean, default: true, index: true },
 
     notes: { type: String, default: "", trim: true },

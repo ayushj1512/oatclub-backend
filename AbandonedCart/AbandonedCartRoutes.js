@@ -9,16 +9,16 @@ import {
   markCartRecovered,
   markRetargeted,
   deleteAbandonedCart,
-} from "./AbandonedCartController.js"; // ✅ if controllers are exported from AbandonedCart/AbandonedCart.js
+} from "./AbandonedCartController.js";
 
 const router = express.Router();
 
 /**
- * Base mount suggestion:
+ * Mount at:
  * app.use("/api/abandoned-carts", router)
  */
 
-// Create/Update (idempotent-ish)
+// Create / Update (idempotent)
 router.post("/upsert", upsertAbandonedCart);
 
 // Read
@@ -28,9 +28,9 @@ router.get("/:id", getAbandonedCart);
 // Lifecycle
 router.patch("/:id/abandon", markCartAbandoned);
 router.patch("/:id/recover", markCartRecovered);
-router.patch("/:id/retargeted", markRetargeted);
+router.patch("/:id/retarget", markRetargeted);
 
-// Delete
+// Delete (admin only later)
 router.delete("/:id", deleteAbandonedCart);
 
 export default router;

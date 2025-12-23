@@ -99,13 +99,28 @@ const abandonedCartSchema = new mongoose.Schema(
       ip: { type: String, trim: true, default: "" },
     },
 
+    cartRef: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Cart",
+  default: null,
+  index: true,
+},
+
+
     // lifecycle
     status: {
       type: String,
-      enum: ["ACTIVE", "ABANDONED", "RECOVERED", "EXPIRED"],
-      default: "ACTIVE",
+     enum: ["active", "abandoned", "recovered", "expired"],
+default: "active",
       index: true,
     },
+
+    isSnapshot: {
+  type: Boolean,
+  default: true,
+  immutable: true,
+},
+
 
     lastActivityAt: { type: Date, default: Date.now, index: true },
     abandonedAt: { type: Date, default: null, index: true },

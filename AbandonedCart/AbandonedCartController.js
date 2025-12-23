@@ -3,8 +3,8 @@
 
 import mongoose from "mongoose";
 import AbandonedCart from "./AbandonedCart.js"; // ⚠️ If this file itself IS the model, remove this import and use the model at bottom.
-import Customer from "../models/Customer.js";
-import Product from "../models/Products.js";
+import Customer from "../Customer/Customer.js";
+import Product from "../Products/Products.js";
 
 const safe = (v) => String(v ?? "").trim();
 const safeLower = (v) => safe(v).toLowerCase();
@@ -138,55 +138,87 @@ export const upsertAbandonedCart = async (req, res) => {
   try {
     const payload = req.body || {};
 
+    /* ---------------- IDENTIFIER ---------------- */
+
     const identity = pickCartIdentityFilter(payload);
     if (!identity) {
       return res.status(400).json({
         success: false,
-        message: "Provide at least one identifier: cartId or sessionId or customerFirebaseUID or customerEmail",
+        message:
+          "Provide at least one identifier: cartId / sessionId / customerFirebaseUID / customerEmail",
       });
     }
 
-    // Normalize identifiers
+    // ❗ prevent modifying snapshot once abandoned/recovered
+    const existing = await AbandonedCart.findOne(identity).lean();
+    if (existing && existing.status !== "active") {
+      return res.status(409).json({
+        success: false,
+        message: "Cannot modify abandoned or recovered cart snapshot",
+      });
+    }
+
+    /* ---------------- NORMALIZE IDS ---------------- */
+
     const cartId = safe(payload.cartId);
     const sessionId = safe(payload.sessionId);
     const customerFirebaseUID = safe(payload.customerFirebaseUID || payload.firebaseUID);
     const customerEmail = safeLower(payload.customerEmail || payload.email);
     const customerPhone = safe(payload.customerPhone || payload.phone);
 
-    // Optional: link Customer if we can
+    /* ---------------- LINK CUSTOMER ---------------- */
+
     let customerId = null;
     if (customerFirebaseUID || customerEmail) {
-      const cFilter = {};
-      if (customerFirebaseUID) cFilter.firebaseUID = customerFirebaseUID;
-      if (customerEmail) cFilter.email = customerEmail;
+      const customer = await Customer.findOne({
+        ...(customerFirebaseUID && { firebaseUID: customerFirebaseUID }),
+        ...(customerEmail && { email: customerEmail }),
+      }).lean();
 
-      const customer = await Customer.findOne(cFilter).lean();
       if (customer?._id) customerId = customer._id;
     }
 
-    // Build item snapshots from Product
+    /* ---------------- BUILD ITEM SNAPSHOTS ---------------- */
+
     const rawItems = Array.isArray(payload.items) ? payload.items : [];
-    const normalized = rawItems.map(normalizeItemInput).filter((x) => x.productId);
+    const normalized = rawItems
+      .map(normalizeItemInput)
+      .filter((i) => isObjectId(i.productId));
 
-    const snapshots = [];
+    // 🚀 FIX: single product query (no N+1)
+    const productIds = [...new Set(normalized.map((i) => String(i.productId)))];
+
+    const products = await Product.find({
+      _id: { $in: productIds },
+    }).lean();
+
+    const productMap = new Map(products.map((p) => [String(p._id), p]));
+
+    const items = [];
     for (const it of normalized) {
-      if (!isObjectId(it.productId)) continue;
-
-      const product = await Product.findById(it.productId).lean();
+      const product = productMap.get(String(it.productId));
       if (!product) continue;
 
-      const snap = buildCartItemFromProduct(product, it.variantId, it.qty);
-      snapshots.push(snap);
+      items.push(buildCartItemFromProduct(product, it.variantId, it.qty));
     }
 
-    // If you want to strictly require items:
-    // if (!snapshots.length) return res.status(400).json({ success:false, message:"No valid items" });
+    /* ---------------- COUPON + PRICING ---------------- */
 
-    const coupon = payload.coupon && typeof payload.coupon === "object"
-      ? { code: safe(payload.coupon.code), discount: Number(payload.coupon.discount || 0) }
-      : { code: "", discount: 0 };
+    const coupon =
+      payload.coupon && typeof payload.coupon === "object"
+        ? {
+            code: safe(payload.coupon.code),
+            discount: Number(payload.coupon.discount || 0),
+          }
+        : { code: "", discount: 0 };
 
-    const pricing = computePricing(snapshots, payload?.pricing?.currency || "INR", coupon);
+    const pricing = computePricing(
+      items,
+      payload?.pricing?.currency || "INR",
+      coupon
+    );
+
+    /* ---------------- UPDATE PAYLOAD ---------------- */
 
     const update = {
       // identifiers
@@ -197,48 +229,48 @@ export const upsertAbandonedCart = async (req, res) => {
       customerEmail,
       customerPhone,
 
-      // snapshots
-      items: snapshots,
+      // snapshot
+      items,
       coupon,
       pricing,
 
-      // attribution / context
-      utm: payload.utm && typeof payload.utm === "object" ? {
-        source: safe(payload.utm.source),
-        medium: safe(payload.utm.medium),
-        campaign: safe(payload.utm.campaign),
-        term: safe(payload.utm.term),
-        content: safe(payload.utm.content),
-      } : undefined,
-
-      context: payload.context && typeof payload.context === "object" ? {
-        lastPageUrl: safe(payload.context.lastPageUrl),
-        referrer: safe(payload.context.referrer),
-        device: safe(payload.context.device),
-        userAgent: safe(payload.context.userAgent),
-        ip: safe(payload.context.ip),
-      } : undefined,
+      // attribution
+      utm: payload.utm && typeof payload.utm === "object" ? payload.utm : undefined,
+      context:
+        payload.context && typeof payload.context === "object"
+          ? payload.context
+          : undefined,
 
       // lifecycle
-      status: payload.status ? safe(payload.status).toUpperCase() : undefined,
+      status: payload.status ? safe(payload.status).toLowerCase() : undefined,
       lastActivityAt: new Date(),
     };
 
-    // Don’t set undefined keys (keeps old values)
+    // remove undefined keys
     Object.keys(update).forEach((k) => update[k] === undefined && delete update[k]);
+
+    /* ---------------- UPSERT ---------------- */
 
     const cart = await AbandonedCart.findOneAndUpdate(
       identity,
-      { $set: update, $setOnInsert: { status: "ACTIVE" } },
+      { $set: update, $setOnInsert: { status: "active" } },
       { new: true, upsert: true }
     ).lean();
 
-    return res.json({ success: true, message: "Cart saved", cart });
+    return res.json({
+      success: true,
+      message: "Abandoned cart saved",
+      cart,
+    });
   } catch (err) {
     console.error("❌ upsertAbandonedCart:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
+
 
 /**
  * ✅ Mark cart as ABANDONED

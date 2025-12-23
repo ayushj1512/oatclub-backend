@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import mongoose from "mongoose";
 import { razorpay } from "./razorpay.instance.js";
-import Order from "../models/Orders.js";
+import Order from "../Orders/Orders.js";
 
 /**
  * POST /api/razorpay/create-order

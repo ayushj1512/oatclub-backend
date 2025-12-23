@@ -17,27 +17,50 @@ export const createUser = async (req, res) => {
   try {
     const payload = req.body || {};
 
-    // ✅ username required
-    const username = sanitizeUsername(payload.username);
-    if (!username) return res.status(400).json({ message: "username is required" });
+    /* ---------------- VALIDATION ---------------- */
 
-    // ✅ password required
+    const username = sanitizeUsername(payload.username);
+    if (!username) {
+      return res.status(400).json({ message: "username is required" });
+    }
+
     const pass = String(payload.password || "").trim();
     if (pass.length < MIN_PASS) {
-      return res.status(400).json({ message: `password is required (min ${MIN_PASS} chars)` });
+      return res
+        .status(400)
+        .json({ message: `password is required (min ${MIN_PASS} chars)` });
     }
+
+    /* ---------------- CREATE USER ---------------- */
 
     const created = await User.create({
       username,
-      password: pass, // ✅ will hash in pre('save')
+      password: pass, // 🔐 hashed by pre('save')
 
       role: payload.role ? String(payload.role) : "user",
       isActive: payload.isActive !== undefined ? !!payload.isActive : true,
       notes: payload.notes !== undefined ? sanitizeString(payload.notes) : "",
+
+      /* 🛒 CART ANALYTICS (INITIAL STATE) */
+      activeCartId: null,          // no cart yet
+      lastCartActivityAt: null,    // no activity yet
+      cartCount: 0,                // first cart will increment
     });
 
-    // password is select:false so it won't show
-    return res.status(201).json({ message: "User created", user: created });
+    /* ---------------- RESPONSE ---------------- */
+
+    return res.status(201).json({
+      message: "User created",
+      user: {
+        _id: created._id,
+        userId: created.userId,
+        username: created.username,
+        role: created.role,
+        isActive: created.isActive,
+        cartCount: created.cartCount,
+        createdAt: created.createdAt,
+      },
+    });
   } catch (err) {
     console.error("❌ createUser:", err);
 
@@ -105,42 +128,69 @@ export const getUser = async (req, res) => {
 };
 
 // Update by Mongo _id OR by userId
+
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
     const payload = req.body || {};
 
-    // ❌ never allow userId edits
-    if (payload.userId) delete payload.userId;
+    /* ❌ NEVER allow system / analytics fields */
+    delete payload.userId;
+    delete payload.activeCartId;
+    delete payload.lastCartActivityAt;
+    delete payload.cartCount;
 
-    // ✅ IMPORTANT: document.save() so password hashing runs if password changes
+    /* ---------------- FETCH USER ---------------- */
+    // select +password so hashing works if changed
     const user = await User.findOne(pickIdFilter(id)).select("+password");
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
-    // username update (optional)
+    /* ---------------- SAFE UPDATES ---------------- */
+
+    // username (optional)
     if (payload.username !== undefined) {
       const nextUsername = sanitizeUsername(payload.username);
-      if (!nextUsername) return res.status(400).json({ message: "username cannot be empty" });
+      if (!nextUsername) {
+        return res.status(400).json({ message: "username cannot be empty" });
+      }
       user.username = nextUsername;
     }
 
-    // password update (optional)
+    // password (optional)
     if (payload.password !== undefined) {
       const nextPass = String(payload.password || "").trim();
       if (nextPass.length < MIN_PASS) {
-        return res.status(400).json({ message: `password must be at least ${MIN_PASS} characters` });
+        return res.status(400).json({
+          message: `password must be at least ${MIN_PASS} characters`,
+        });
       }
-      user.password = nextPass; // hashed in pre('save')
+      user.password = nextPass; // 🔐 hashed in pre('save')
     }
 
-    if (payload.role !== undefined) user.role = String(payload.role || "user");
-    if (payload.isActive !== undefined) user.isActive = !!payload.isActive;
-    if (payload.notes !== undefined) user.notes = sanitizeString(payload.notes);
+    if (payload.role !== undefined) {
+      user.role = String(payload.role || "user");
+    }
 
+    if (payload.isActive !== undefined) {
+      user.isActive = !!payload.isActive;
+    }
+
+    if (payload.notes !== undefined) {
+      user.notes = sanitizeString(payload.notes);
+    }
+
+    /* ---------------- SAVE ---------------- */
     await user.save();
 
-    // return safe user (password not selected)
-    const safeUser = await User.findById(user._id).lean();
+    /* ---------------- SAFE RESPONSE ---------------- */
+    const safeUser = await User.findById(user._id)
+      .select(
+        "userId username role isActive notes cartCount activeCartId lastCartActivityAt createdAt"
+      )
+      .lean();
+
     return res.json({ message: "User updated", user: safeUser });
   } catch (err) {
     console.error("❌ updateUser:", err);
@@ -153,6 +203,7 @@ export const updateUser = async (req, res) => {
     return res.status(500).json({ message: err.message });
   }
 };
+
 
 // Delete by Mongo _id OR by userId
 export const deleteUser = async (req, res) => {

@@ -9,26 +9,26 @@ import morgan from "morgan";
 // --------------------------------------------------
 // ROUTES
 // --------------------------------------------------
-import addressRoutes from "./routes/addressRouter.js";
-import blogRoutes from "./routes/blogRouter.js";
-import categoryRoutes from "./routes/categoryRouter.js";
-import collectionRoutes from "./routes/collectionRouter.js";
-import couponRoutes from "./routes/couponRouter.js";
-import creditRoutes from "./routes/creditRouter.js";
-import customerRoutes from "./routes/customerRouter.js";
-import newsletterRoutes from "./routes/newsletterRouter.js";
-import offerRoutes from "./routes/offerRouter.js";
-import orderRoutes from "./routes/orderRouter.js";
-import productRoutes from "./routes/productRouter.js";
-import queryRoutes from "./routes/queryRouter.js";
-import reviewRoutes from "./routes/reviewRouter.js";
-import wishlistRoutes from "./routes/wishlistRouter.js";
+import addressRoutes from "./Address/addressRouter.js";
+import blogRoutes from "./Blogs/blogRouter.js";
+import categoryRoutes from "./Category/categoryRouter.js";
+import collectionRoutes from "./Collection/collectionRouter.js";
+import couponRoutes from "./Coupon/couponRouter.js";
+import creditRoutes from "./Credit/creditRouter.js";
+import customerRoutes from "./Customer/customerRouter.js";
+import newsletterRoutes from "./Newsletter/newsletterRouter.js";
+import offerRoutes from "./Offer/offerRouter.js";
+import orderRoutes from "./Orders/orderRouter.js";
+import productRoutes from "./Products/productRouter.js";
+import queryRoutes from "./Query/queryRouter.js";
+import reviewRoutes from "./Review/reviewRouter.js";
+import wishlistRoutes from "./Wishlist/wishlistRouter.js";
 
 import adminUserRoutes from "./routes/admin/adminUserRouter.js";
 import inventoryRoutes from "./routes/admin/inventoryRouter.js";
 import ticketRoutes from "./routes/admin/tickets.js";
 
-import attributeRoutes from "./routes/attributeRoutes.js";
+import attributeRoutes from "./Attribute/attributeRoutes.js";
 import pingRoutes from "./routes/pingRouter.js";
 import superadminRoutes from "./routes/superadmin.js";
 import shippingRoutes from "./shiprocket/shipping.routes.js";
@@ -68,10 +68,38 @@ dotenv.config();
 const app = express();
 
 // --------------------------------------------------
+// ✅ CORS CONFIG (CENTRALIZED)
+// --------------------------------------------------
+const ALLOWED_ORIGINS = [
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "https://miray-backend.onrender.com",
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow server-to-server, Postman, curl
+      if (!origin) return callback(null, true);
+
+      if (ALLOWED_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // ❌ Silently block other origins (no server error)
+      return callback(null, false);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
+// --------------------------------------------------
 // MIDDLEWARE
 // --------------------------------------------------
-app.use(cors());
 app.use(morgan("dev"));
+
 
 /**
  * ⚠️ Razorpay webhook must be BEFORE json parser
@@ -121,6 +149,7 @@ app.use("/api/coupons", couponRoutes);
 app.use("/api/credits", creditRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/newsletters", newsletterRoutes);
+
 app.use("/api/offers", offerRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/products", productRoutes);
