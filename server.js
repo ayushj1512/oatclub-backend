@@ -23,7 +23,8 @@ import productRoutes from "./Products/productRouter.js";
 import queryRoutes from "./Query/queryRouter.js";
 import reviewRoutes from "./Review/reviewRouter.js";
 import wishlistRoutes from "./Wishlist/wishlistRouter.js";
-
+import fabricRoutes from "./Fabric/fabric.routes.js";
+import sizeChartRoutes from "./SizeChart/sizeChartRoutes.js"
 import adminUserRoutes from "./routes/admin/adminUserRouter.js";
 import inventoryRoutes from "./routes/admin/inventoryRouter.js";
 import ticketRoutes from "./routes/admin/tickets.js";
@@ -31,7 +32,7 @@ import ticketRoutes from "./routes/admin/tickets.js";
 import attributeRoutes from "./Attribute/attributeRoutes.js";
 import pingRoutes from "./routes/pingRouter.js";
 import superadminRoutes from "./routes/superadmin.js";
-import shippingRoutes from "./shiprocket/shipping.routes.js";
+import shiprocketRoutes from "./shiprocket/shipping.routes.js";
 
 // ✅ NEW: PRODUCT VIEW ANALYTICS ROUTES
 import productViewAnalyticsRoutes from "./productviews/analytics.routes.js";
@@ -73,8 +74,15 @@ const app = express();
 const ALLOWED_ORIGINS = [
   "http://localhost:3000",
   "http://localhost:3001",
+
+  // ✅ FRONTEND
+  "https://www.mirayfashions.in",
+  "https://mirayfashions.in",
+
+  // backend self (optional)
   "https://miray-backend.onrender.com",
 ];
+
 
 app.use(
   cors({
@@ -140,7 +148,7 @@ mongoose
 // API ROUTES
 // --------------------------------------------------
 app.use("/api/ping", pingRoutes);
-
+app.use("/api/size-charts", sizeChartRoutes);
 app.use("/api/addresses", addressRoutes);
 app.use("/api/blogs", blogRoutes);
 app.use("/api/categories", categoryRoutes);
@@ -149,21 +157,20 @@ app.use("/api/coupons", couponRoutes);
 app.use("/api/credits", creditRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/newsletters", newsletterRoutes);
-
 app.use("/api/offers", offerRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/queries", queryRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/wishlist", wishlistRoutes);
-
+app.use("/api/fabrics", fabricRoutes);
 app.use("/api/admins", adminUserRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/tickets", ticketRoutes);
-
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/media", mediaRoutes);
-app.use("/api/shipping", shippingRoutes);
+app.use("/api", shiprocketRoutes);
+
 // --------------------------------------------------
 // ✅ PRODUCT VIEW ANALYTICS (NEW)
 // POST /api/analytics/product-view

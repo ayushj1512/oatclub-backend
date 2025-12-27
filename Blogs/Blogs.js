@@ -51,13 +51,22 @@ const blogSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // can be "" for preview blogs (like your frontend)
+    // can be "" for preview blogs
     content: {
       type: String,
       default: "",
     },
 
-    // optional (keep for later)
+    // ✅ NEW: Related Products (for blogs on products)
+    products: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Product",
+        index: true,
+      },
+    ],
+
+    // optional
     author: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
@@ -73,7 +82,7 @@ const blogSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// ✅ Search
+// ✅ Search index
 blogSchema.index({
   title: "text",
   excerpt: "text",

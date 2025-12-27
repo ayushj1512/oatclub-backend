@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 import Order from "./Orders.js";
 import Product from "../Products/Products.js";
 import Coupon from "../Coupon/Coupon.js";
+import { buildAddressSnapshot } from "./order.address.mapper.js";
+import { cancelShiprocketShipment } from "../shiprocket/shiprocket.cancel.js";
 
 /* ============================================================
    RMA POLICY (hardcoded backend)
@@ -160,8 +162,8 @@ export const createOrder = async (req, res) => {
   try {
     const {
       customerId,
-      shippingAddressSnapshot,
-      billingAddressSnapshot,
+      shippingAddressId,
+      billingAddressId,
       items,
       discount = 0,
       coupon,
@@ -174,18 +176,20 @@ export const createOrder = async (req, res) => {
     } = req.body;
 
     /* ------------------------------------------------
-       🔒 HARD VALIDATIONS (CRITICAL)
+       🔒 HARD VALIDATIONS
     ------------------------------------------------ */
-
     if (!customerId) {
       return res.status(400).json({ message: "customerId missing" });
+    }
+
+    if (!shippingAddressId) {
+      return res.status(400).json({ message: "shippingAddressId missing" });
     }
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Order items missing" });
     }
 
-    // 🔥 PAYMENT METHOD GUARD (THIS FIXES EVERYTHING)
     if (!["cod", "razorpay"].includes(paymentMethod)) {
       return res.status(400).json({
         message: "Invalid paymentMethod. Allowed: cod | razorpay",
@@ -193,6 +197,27 @@ export const createOrder = async (req, res) => {
     }
 
     await session.withTransaction(async () => {
+      /* ------------------------------------------------
+         0️⃣ ADDRESS SNAPSHOT (SERVER-SIDE ONLY)
+      ------------------------------------------------ */
+      const shippingAddress = await Address
+        .findById(shippingAddressId)
+        .session(session);
+
+      if (!shippingAddress) {
+        throw new Error("Shipping address not found");
+      }
+
+      const billingAddress = billingAddressId
+        ? await Address.findById(billingAddressId).session(session)
+        : shippingAddress;
+
+      const shippingAddressSnapshot =
+        buildAddressSnapshot(shippingAddress);
+
+      const billingAddressSnapshot =
+        buildAddressSnapshot(billingAddress);
+
       /* ------------------------------------------------
          1️⃣ FETCH PRODUCTS
       ------------------------------------------------ */
@@ -300,7 +325,7 @@ export const createOrder = async (req, res) => {
       }
 
       /* ------------------------------------------------
-         3️⃣ STOCK REDUCTION (ATOMIC)
+         3️⃣ STOCK REDUCTION
       ------------------------------------------------ */
       for (const it of normalizedItems) {
         const variantId = it?.variant?.variantId;
@@ -343,7 +368,7 @@ export const createOrder = async (req, res) => {
       };
 
       /* ------------------------------------------------
-         5️⃣ CREATE ORDER (SOURCE OF TRUTH)
+         5️⃣ CREATE ORDER
       ------------------------------------------------ */
       const order = await Order.create(
         [
@@ -362,8 +387,7 @@ export const createOrder = async (req, res) => {
             finalPayable,
 
             currency,
-
-            paymentMethod, // 🔒 cod | razorpay
+            paymentMethod,
             paymentStatus: "pending",
 
             source,
@@ -389,6 +413,7 @@ export const createOrder = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 /* ============================================================
@@ -742,5 +767,126 @@ export const getOrderByOrderNumber = async (req, res) => {
   } catch (error) {
     console.error("❌ Fetch Order By Number Error:", error);
     return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+
+// CANCEL ORDER
+export const cancelOrder = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  try {
+    const orderId = req.params.id;
+    const { reason = "cancelled_by_customer" } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    await session.withTransaction(async () => {
+      const order = await Order.findById(orderId).session(session);
+      if (!order) throw new Error("Order not found");
+
+      /* ------------------------------------------------
+         1️⃣ CANCELLATION GUARDS
+      ------------------------------------------------ */
+      const nonCancellableStatuses = [
+        "picked",
+        "shipped",
+        "out_for_delivery",
+        "delivered",
+      ];
+
+      if (nonCancellableStatuses.includes(order.fulfillmentStatus)) {
+        throw new Error(
+          "Order cannot be cancelled after pickup / shipment"
+        );
+      }
+
+      // Idempotent: already cancelled → no-op
+      if (order.fulfillmentStatus === "cancelled") {
+        return;
+      }
+
+      /* ------------------------------------------------
+         2️⃣ CANCEL SHIPROCKET (IF BOOKED & NOT PICKED)
+      ------------------------------------------------ */
+      const shipmentId = order?.shipment?.shiprocket?.shipmentId;
+
+      if (shipmentId) {
+        try {
+          await cancelShiprocketShipment(shipmentId);
+        } catch (err) {
+          console.error(
+            "⚠️ Shiprocket cancel failed:",
+            err?.response?.data || err
+          );
+          // Do NOT block cancellation
+        }
+      }
+
+      /* ------------------------------------------------
+         3️⃣ RESTORE STOCK (ATOMIC)
+      ------------------------------------------------ */
+      for (const it of order.items || []) {
+        const qty = Number(it.quantity || 0);
+        if (!qty) continue;
+
+        const variantId = it?.variant?.variantId;
+
+        if (variantId) {
+          await Product.updateOne(
+            {
+              _id: it.productId,
+              "variants._id": variantId,
+            },
+            { $inc: { "variants.$.stock": qty } }
+          ).session(session);
+        } else {
+          await Product.updateOne(
+            { _id: it.productId },
+            { $inc: { stock: qty } }
+          ).session(session);
+        }
+      }
+
+      /* ------------------------------------------------
+         4️⃣ PAYMENT STATE (REFUND MARKING)
+      ------------------------------------------------ */
+      if (
+        order.paymentMethod === "razorpay" &&
+        order.paymentStatus === "paid"
+      ) {
+        // actual refund handled async / webhook
+        order.paymentStatus = "refund_pending";
+      }
+
+      /* ------------------------------------------------
+         5️⃣ FINAL ORDER STATE
+      ------------------------------------------------ */
+      order.fulfillmentStatus = "cancelled";
+
+      order.shipment = {
+        ...(order.shipment || {}),
+        status: "cancelled",
+      };
+
+      order.adminRemarks = reason;
+
+      await order.save({ session });
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Order cancelled successfully",
+    });
+  } catch (error) {
+    console.error("❌ Cancel Order Error:", error);
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  } finally {
+    session.endSession();
   }
 };

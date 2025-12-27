@@ -7,40 +7,65 @@ import {
   updateOrder,
   updateOrderStatus,
   updateTracking,
-  deleteOrder,
   getOrderAnalytics,
   getOrderByOrderNumber,
-  // ✅ RMA (embedded in Order)
+
+  // RMA
   createRma,
   updateRma,
+
+  // Cancel
+  cancelOrder,
 } from "./orderController.js";
+
+// 🚚 Shiprocket
+import { bookWithShiprocket } from "../shiprocket/shipping.controller.js";
 
 const router = express.Router();
 
-// ------------------- Orders -------------------
+/* ============================================================
+   ORDERS
+============================================================ */
 router.post("/", createOrder);
 router.get("/", getAllOrders);
 router.get("/analytics/summary", getOrderAnalytics);
 router.get("/customer/:customerId", getOrdersByCustomer);
 
-// ✅ MUST be above "/:id"
+// ⚠️ MUST be above "/:id"
 router.get("/by-number/:orderNumber", getOrderByOrderNumber);
 
-// ------------------- RMA (embedded in Order) -------------------
-// Create RMA for an order (policy enforced in controller: 7 days, exchange fee)
+/* ============================================================
+   ORDER ACTIONS
+============================================================ */
+
+// 🚚 Book shipment with Shiprocket
+// POST /api/orders/:id/ship
+router.post("/:id/ship", bookWithShiprocket);
+
+// ❌ Cancel order
+// POST /api/orders/:id/cancel
+router.post("/:id/cancel", cancelOrder);
+
+/* ============================================================
+   RMA (Return / Exchange)
+============================================================ */
+
+// Create RMA
 // POST /api/orders/:id/rma
 router.post("/:id/rma", createRma);
 
-// Update RMA by rmaNumber (supports updating fee.status too)
+// Update RMA
 // PATCH /api/orders/:id/rma/:rmaNumber
 router.patch("/:id/rma/:rmaNumber", updateRma);
 
-// ------------------- Order by id -------------------
+/* ============================================================
+   ORDER BY ID
+============================================================ */
 router.get("/:id", getOrderById);
-
 router.put("/:id", updateOrder);
 router.patch("/:id/status", updateOrderStatus);
 router.patch("/:id/tracking", updateTracking);
-router.delete("/:id", deleteOrder);
+
+// ❌ deleteOrder intentionally removed (soft lifecycle only)
 
 export default router;

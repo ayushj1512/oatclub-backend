@@ -72,6 +72,42 @@ const productSchema = new mongoose.Schema(
     stock: { type: Number, default: 0 },
     isInStock: { type: Boolean, default: true },
 
+    /* ------------------------------------------------------------------
+   FABRIC ASSIGNMENT (NEW)
+------------------------------------------------------------------- */
+    /* ------------------------------------------------------------------
+   FABRIC ASSIGNMENT (MULTI-FABRIC READY)
+------------------------------------------------------------------- */
+    fabrics: [
+      {
+        fabricCode: {
+          type: String,
+          trim: true,
+          index: true,
+          required: true, // only required INSIDE array item
+        },
+
+        role: {
+          type: String,
+          trim: true,
+          default: "main",
+          // main | lining | contrast | padding | other
+        },
+
+        consumptionPerUnit: {
+          type: Number,
+          required: true,
+          min: 0.0001,
+        },
+
+        unit: {
+          type: String,
+          enum: ["meter", "kg"],
+          required: true,
+        },
+      },
+    ],
+
     /* ATTRIBUTES + VARIANTS */
     attributes: [
       {
@@ -103,8 +139,14 @@ const productSchema = new mongoose.Schema(
     reviews: [{ type: mongoose.Schema.Types.ObjectId, ref: "Review" }],
 
     /* OFFERS */
-    offer: { type: mongoose.Schema.Types.ObjectId, ref: "Offer", default: null },
-    couponsApplicable: [{ type: mongoose.Schema.Types.ObjectId, ref: "Coupon" }],
+    offer: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Offer",
+      default: null,
+    },
+    couponsApplicable: [
+      { type: mongoose.Schema.Types.ObjectId, ref: "Coupon" },
+    ],
 
     /* ANALYTICS */
     analytics: {
@@ -122,15 +164,15 @@ const productSchema = new mongoose.Schema(
       default: "simple",
     },
     externalURL: { type: String, default: "" },
-    
-  /* CROSS SELL PRODUCTS */
+
+    /* CROSS SELL PRODUCTS */
     crossSellProducts: [
-  {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Product",
-    index: true,
-  },
-],
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Product",
+        index: true,
+      },
+    ],
 
     /* SEO */
     metaTitle: { type: String, default: "" },
@@ -200,8 +242,10 @@ productSchema.pre("validate", function (next) {
       if (v?.sku) return v;
 
       const attrs = Array.isArray(v.attributes) ? v.attributes : [];
-      const size = attrs.find((a) => a.key?.toLowerCase() === "size")?.value || "";
-      const color = attrs.find((a) => a.key?.toLowerCase() === "color")?.value || "";
+      const size =
+        attrs.find((a) => a.key?.toLowerCase() === "size")?.value || "";
+      const color =
+        attrs.find((a) => a.key?.toLowerCase() === "color")?.value || "";
 
       return {
         ...v,

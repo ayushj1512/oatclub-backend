@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Counter from "../models/Counter.js";
 
+
 /**
  * ORDER ITEM SCHEMA
  * Snapshot of product/variant at purchase time (best practice)
@@ -290,6 +291,42 @@ const orderSchema = new mongoose.Schema(
       default: "processing",
       index: true,
     },
+
+    shipment: {
+  provider: {
+    type: String,
+    enum: ["shiprocket", "manual", "xpressbees", "ekart"],
+    default: "shiprocket",
+  },
+
+  shiprocket: {
+    orderId: { type: String, default: "" },     // shiprocket order_id
+    shipmentId: { type: String, default: "" },  // shipment_id
+    awb: { type: String, default: "", index: true },
+    courierName: { type: String, default: "" },
+    trackingUrl: { type: String, default: "" },
+  },
+
+  status: {
+    type: String,
+    enum: [
+      "pending",
+      "processing",
+      "packed",
+      "shipped",
+      "out_for_delivery",
+      "delivered",
+      "rto",
+      "cancelled",
+    ],
+    default: "pending",
+    index: true,
+  },
+
+  shippedAt: Date,
+  deliveredAt: Date,
+}
+,
 
     // 🔹 TRACKING
     trackingDetails: {
