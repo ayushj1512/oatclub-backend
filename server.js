@@ -79,9 +79,13 @@ const ALLOWED_ORIGINS = [
   "https://www.mirayfashions.in",
   "https://mirayfashions.in",
 
+  // ✅ ADMIN PANEL
+  "https://admin.mirayfashions.com",
+
   // backend self (optional)
   "https://miray-backend.onrender.com",
 ];
+
 
 
 app.use(

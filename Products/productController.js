@@ -315,6 +315,11 @@ export const createProduct = async (req, res) => {
   try {
     const data = { ...req.body };
 
+    /* =====================================================
+       BULK MODE FLAG
+    ===================================================== */
+    const isBulk = data.importSource === "bulk";
+
     /* ---------------- normalize inputs ---------------- */
     data.attributes = json(data.attributes, []);
     data.highlights = json(data.highlights, []);
@@ -323,17 +328,20 @@ export const createProduct = async (req, res) => {
     data.collections = arr(data.collections);
 
     /* ---------------- slug ---------------- */
-    data.slug = slugify(String(data.slug || data.title || ""), { lower: true });
+    data.slug = slugify(String(data.slug || data.title || ""), {
+      lower: true,
+    });
+
     if (await Product.exists({ slug: data.slug })) {
       return res.status(400).json({ message: "Slug already exists" });
     }
 
-    /* ---------------- category validation ---------------- */
+    /* ---------------- categories ---------------- */
     data.categories = Array.isArray(data.categories)
       ? data.categories
       : typeof data.categories === "string"
-        ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
-        : [];
+      ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
+      : [];
 
     if (!data.categories.length) {
       return res.status(400).json({
@@ -341,42 +349,45 @@ export const createProduct = async (req, res) => {
       });
     }
 
-    /* ---------------- attribute validation ---------------- */
-    await validateAttributes(data.attributes);
+    /* =====================================================
+       BULK PRODUCTS → FORCE SIMPLE + NO VARIANTS
+    ===================================================== */
+    if (isBulk) {
+      data.attributes = [];
+      data.variants = [];
+      data.productType = "simple";
+    } else {
+      /* ---------------- attribute validation ---------------- */
+      await validateAttributes(data.attributes);
 
-    if (Array.isArray(data.variants)) {
-      data.variants = data.variants.map(({ image, ...v }) => v);
+      if (Array.isArray(data.variants)) {
+        data.variants = data.variants.map(({ image, ...v }) => v);
+      }
+
+      /* ---------------- auto-generate variants ---------------- */
+      data.variants = generateVariants({
+        productAttributes: data.attributes,
+        existingVariants: [],
+        variantKeys: VARIANT_KEYS,
+      });
+
+      data.productType = data.variants.length > 0 ? "variable" : "simple";
     }
 
-    /* ---------------- auto-generate variants ---------------- */
-    data.variants = generateVariants({
-      productAttributes: data.attributes,
-      existingVariants: [],
-      variantKeys: VARIANT_KEYS,
-    });
-
-    /* ---------------- product type ---------------- */
-    data.productType = data.variants.length > 0 ? "variable" : "simple";
-
-    /* ------------------------------------------------------------------
-       ✅ CROSS-SELL PRODUCTS (NEW)
-    ------------------------------------------------------------------- */
+    /* =====================================================
+       CROSS-SELL PRODUCTS
+    ===================================================== */
     data.crossSellProducts = Array.isArray(data.crossSellProducts)
       ? data.crossSellProducts
       : typeof data.crossSellProducts === "string"
-        ? data.crossSellProducts.split(",").map((id) => id.trim())
-        : [];
+      ? data.crossSellProducts.split(",").map((id) => id.trim())
+      : [];
 
-    // validate ObjectIds
     data.crossSellProducts = data.crossSellProducts.filter(isValidObjectId);
 
-    /* ❗ OPTIONAL STRICT MODE (uncomment if needed)
-    if (data.crossSellProducts.length !== arr(req.body.crossSellProducts).length) {
-      return res.status(400).json({ message: "Invalid cross-sell product IDs" });
-    }
-    */
-
-    /* ---------------- uploads ---------------- */
+    /* =====================================================
+       MEDIA HANDLING
+    ===================================================== */
     const { images, thumbnail } = await mergeUploads(req, {
       images: data.images,
       thumbnail: data.thumbnail,
@@ -385,10 +396,21 @@ export const createProduct = async (req, res) => {
     data.images = images;
     data.thumbnail = thumbnail;
 
-    if (!data.images || !data.images.length) {
+    /* ❗ Images REQUIRED only for NON-bulk products */
+    if (!isBulk && (!data.images || !data.images.length)) {
       return res.status(400).json({
         message: "At least one product image is required",
       });
+    }
+
+    /* =====================================================
+       BULK FLAGS (VERY IMPORTANT)
+    ===================================================== */
+    if (isBulk) {
+      data.images = [];
+      data.thumbnail = "";
+      data.isDraft = true;
+      data.isActive = false;
     }
 
     /* ---------------- SKU handling ---------------- */
@@ -406,7 +428,9 @@ export const createProduct = async (req, res) => {
     const full = await pop(Product.findById(created._id));
 
     return res.status(201).json({
-      message: "Product created successfully",
+      message: isBulk
+        ? "Bulk draft product created"
+        : "Product created successfully",
       product: applyStockFromVariants(full),
     });
   } catch (e) {
