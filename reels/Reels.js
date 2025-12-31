@@ -3,6 +3,9 @@ import mongoose from "mongoose";
 
 const { Schema } = mongoose;
 
+/* -----------------------------
+   Helpers
+------------------------------ */
 const isUrl = (v) => {
   try {
     const u = new URL(String(v));
@@ -20,41 +23,62 @@ const slugify = (s) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
+/* =========================================================
+   Product Snapshot Schema
+========================================================= */
 const ReelProductSchema = new Schema(
   {
-    // Prefer linking your real Product model:
-    productId: { type: Schema.Types.ObjectId, ref: "Product", default: null, index: true },
+    // ✅ link to your real Product model
+    productId: {
+      type: Schema.Types.ObjectId,
+      ref: "Product",
+      default: null,
+      index: true,
+    },
 
-    // Snapshot fields (so reels still render even if product changes/deletes)
+    // ✅ snapshot fields (for safe render even if product deleted)
     name: { type: String, trim: true, default: "" },
     slug: { type: String, trim: true, lowercase: true, default: "" },
     image: { type: String, trim: true, default: "" },
-    price: { type: Number, default: 0 },
+    price: { type: Number, default: 0, min: 0 },
     currency: { type: String, default: "INR", trim: true },
 
-    // Optional deep link override (if you want to point to a custom URL)
+    // ✅ optional deep link override
     href: { type: String, trim: true, default: "" },
   },
   { _id: false }
 );
 
+/* =========================================================
+   Analytics Schema
+========================================================= */
 const ReelAnalyticsSchema = new Schema(
   {
-    views: { type: Number, default: 0, min: 0 },
-    clicks: { type: Number, default: 0, min: 0 },
+    // ✅ core counters
+    views: { type: Number, default: 0, min: 0 }, // reel opened / seen
+    uniqueViews: { type: Number, default: 0, min: 0 }, // optional: if you track uniq viewers
+    taps: { type: Number, default: 0, min: 0 }, // product CTA tap (click)
     likes: { type: Number, default: 0, min: 0 },
+    wishlist: { type: Number, default: 0, min: 0 },
     shares: { type: Number, default: 0, min: 0 },
 
+    // ✅ timestamps for last action
     lastViewedAt: { type: Date, default: null },
-    lastClickedAt: { type: Date, default: null },
+    lastTappedAt: { type: Date, default: null },
+    lastLikedAt: { type: Date, default: null },
+    lastWishlistedAt: { type: Date, default: null },
+    lastSharedAt: { type: Date, default: null },
   },
   { _id: false }
 );
 
+/* =========================================================
+   Reel Schema
+========================================================= */
 const ReelSchema = new Schema(
   {
-    // Core
-    title: { type: String, trim: true, default: "" }, // optional internal label
+    /* ---------------- CORE ---------------- */
+    title: { type: String, trim: true, default: "" }, // internal label
     src: {
       type: String,
       required: true,
@@ -63,6 +87,7 @@ const ReelSchema = new Schema(
     },
     poster: { type: String, trim: true, default: "" }, // optional poster image
     caption: { type: String, trim: true, default: "" },
+
     hashtags: {
       type: [String],
       default: [],
@@ -77,43 +102,44 @@ const ReelSchema = new Schema(
         ),
     },
 
-    // Product link/snapshot
+    /* ---------------- PRODUCT LINK ---------------- */
     product: { type: ReelProductSchema, default: () => ({}) },
 
-    // Status / visibility
-    isActive: { type: Boolean, default: true, index: true }, // ✅ active/inactive
+    /* ---------------- VISIBILITY ---------------- */
+    isActive: { type: Boolean, default: true, index: true },
     activeFrom: { type: Date, default: null },
     activeTo: { type: Date, default: null },
 
-    // Placement / ordering (for “Fashion In Motion” row)
+    /* ---------------- PLACEMENT / ORDERING ---------------- */
     placement: {
       type: String,
       enum: ["home_row", "product_page", "category_page", "global"],
       default: "home_row",
       index: true,
     },
-    priority: { type: Number, default: 0, index: true }, // higher first
-    tags: { type: [String], default: [] }, // backend/admin filters
+
+    // ✅ higher = earlier
+    priority: { type: Number, default: 0, index: true },
+
+    tags: { type: [String], default: [] }, // admin filters
     language: { type: String, default: "en", trim: true },
 
-    // Admin fields
+    /* ---------------- ADMIN ---------------- */
     slug: { type: String, trim: true, lowercase: true, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     updatedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
 
-    // Optional moderation/audit
     notes: { type: String, trim: true, default: "" },
 
-    // Basic analytics counters
+    /* ---------------- ANALYTICS ---------------- */
     analytics: { type: ReelAnalyticsSchema, default: () => ({}) },
   },
   { timestamps: true }
 );
 
-/**
- * ✅ Virtual "currentlyActive"
- * True only if isActive is true AND (activeFrom/activeTo window allows it)
- */
+/* =========================================================
+   Virtual: currentlyActive
+========================================================= */
 ReelSchema.virtual("currentlyActive").get(function () {
   if (!this.isActive) return false;
   const now = Date.now();
@@ -122,9 +148,9 @@ ReelSchema.virtual("currentlyActive").get(function () {
   return fromOk && toOk;
 });
 
-/**
- * ✅ Query helper: Reel.find().activeNow()
- */
+/* =========================================================
+   Query helper: activeNow
+========================================================= */
 ReelSchema.query.activeNow = function () {
   const now = new Date();
   return this.where({
@@ -136,12 +162,11 @@ ReelSchema.query.activeNow = function () {
   });
 };
 
-/**
- * Auto-generate slug if missing
- */
+/* =========================================================
+   Auto slug generation
+========================================================= */
 ReelSchema.pre("validate", function (next) {
   if (!this.slug) {
-    // Prefer title, else fall back to caption, else src tail
     const base =
       this.title ||
       this.caption ||
@@ -159,11 +184,19 @@ ReelSchema.pre("validate", function (next) {
   next();
 });
 
-/**
- * Useful compound index for your home row:
- * placement + isActive + priority + createdAt
- */
+/* =========================================================
+   Indexes
+========================================================= */
+
+// ✅ fast query for home row
 ReelSchema.index({ placement: 1, isActive: 1, priority: -1, createdAt: -1 });
 
-// Prevent model overwrite in dev/hot-reload
+// ✅ analytics sorting / reporting
+ReelSchema.index({ "analytics.views": -1 });
+ReelSchema.index({ "analytics.likes": -1 });
+ReelSchema.index({ "analytics.wishlist": -1 });
+ReelSchema.index({ "analytics.taps": -1 });
+ReelSchema.index({ "analytics.shares": -1 });
+
+// Prevent overwrite in dev
 export default mongoose.models.Reel || mongoose.model("Reel", ReelSchema);

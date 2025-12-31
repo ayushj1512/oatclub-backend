@@ -1,18 +1,21 @@
 // src/controllers/reels/Reels.js
 import mongoose from "mongoose";
+
+// ✅ IMPORTANT: Update path according to your project
+// Example: import Reel from "../../models/Reel.js";
 import Reel from "./Reels.js";
 
 const isObjectId = (v) => mongoose.Types.ObjectId.isValid(String(v || ""));
 
 /**
- * Small helper to keep product snapshot consistent.
- * You can pass either:
- *  - productId (ObjectId) and/or
- *  - snapshot fields in product.{name,slug,image,price,currency,href}
+ * ✅ Normalize product payload
+ * Supports:
+ *  - productId (ObjectId)
+ *  - snapshot fields: name, slug, image, price, currency, href
  */
 const normalizeProductPayload = (product = {}) => {
   const p = product && typeof product === "object" ? product : {};
-  const out = {
+  return {
     productId: isObjectId(p.productId) ? p.productId : null,
     name: String(p.name || "").trim(),
     slug: String(p.slug || "").trim().toLowerCase(),
@@ -21,7 +24,6 @@ const normalizeProductPayload = (product = {}) => {
     currency: String(p.currency || "INR").trim(),
     href: String(p.href || "").trim(),
   };
-  return out;
 };
 
 const parseBool = (v, fallback = undefined) => {
@@ -56,10 +58,8 @@ const parseStringArray = (v) => {
   return [];
 };
 
-const safeJson = (data) => data; // placeholder if you later want to sanitize output
-
 /* =========================================================
-   CREATE
+   CREATE REEL
    POST /api/reels
 ========================================================= */
 export async function createReel(req, res) {
@@ -86,14 +86,12 @@ export async function createReel(req, res) {
 
       product: normalizeProductPayload(body.product),
 
-      // optional audit: if you set req.user in auth middleware
       createdBy: req.user?._id || null,
       updatedBy: req.user?._id || null,
     });
 
-    return res.status(201).json({ reel: safeJson(doc) });
+    return res.status(201).json({ reel: doc });
   } catch (err) {
-    // Mongoose validation errors
     if (err?.name === "ValidationError") {
       return res.status(400).json({ message: err.message });
     }
@@ -103,15 +101,8 @@ export async function createReel(req, res) {
 }
 
 /* =========================================================
-   LIST (with filters + pagination)
+   LIST REELS (filters + pagination)
    GET /api/reels
-   Query:
-     - activeNow=true
-     - isActive=true/false
-     - placement=home_row
-     - q=search (title/caption/hashtags/tags/product.name)
-     - page, limit
-     - sort=priority|newest|oldest
 ========================================================= */
 export async function listReels(req, res) {
   try {
@@ -135,7 +126,8 @@ export async function listReels(req, res) {
       query = query.activeNow();
     } else {
       const isActiveBool = parseBool(isActive, undefined);
-      if (typeof isActiveBool === "boolean") query = query.where({ isActive: isActiveBool });
+      if (typeof isActiveBool === "boolean")
+        query = query.where({ isActive: isActiveBool });
     }
 
     if (placement) query = query.where({ placement: String(placement) });
@@ -154,11 +146,12 @@ export async function listReels(req, res) {
       });
     }
 
-    // sorting
     const sortMap = {
       priority: { priority: -1, createdAt: -1 },
       newest: { createdAt: -1 },
       oldest: { createdAt: 1 },
+      mostViewed: { "analytics.views": -1 },
+      mostLiked: { "analytics.likes": -1 },
     };
 
     const sortObj = sortMap[String(sort)] || sortMap.priority;
@@ -182,7 +175,7 @@ export async function listReels(req, res) {
 }
 
 /* =========================================================
-   GET ONE
+   GET ONE REEL
    GET /api/reels/:idOrSlug
 ========================================================= */
 export async function getReel(req, res) {
@@ -204,7 +197,7 @@ export async function getReel(req, res) {
 }
 
 /* =========================================================
-   UPDATE
+   UPDATE REEL
    PATCH /api/reels/:id
 ========================================================= */
 export async function updateReel(req, res) {
@@ -215,7 +208,6 @@ export async function updateReel(req, res) {
     const body = req.body || {};
     const patch = {};
 
-    // Only set if provided (keeps partial update clean)
     if (body.title !== undefined) patch.title = String(body.title || "").trim();
     if (body.src !== undefined) patch.src = String(body.src || "").trim();
     if (body.poster !== undefined) patch.poster = String(body.poster || "").trim();
@@ -258,7 +250,6 @@ export async function updateReel(req, res) {
 /* =========================================================
    TOGGLE ACTIVE
    PATCH /api/reels/:id/toggle
-   Body: { isActive: true/false } OR none (auto toggles)
 ========================================================= */
 export async function toggleReelActive(req, res) {
   try {
@@ -281,7 +272,7 @@ export async function toggleReelActive(req, res) {
 }
 
 /* =========================================================
-   DELETE
+   DELETE REEL
    DELETE /api/reels/:id
 ========================================================= */
 export async function deleteReel(req, res) {
@@ -300,9 +291,9 @@ export async function deleteReel(req, res) {
 }
 
 /* =========================================================
-   OPTIONAL: TRACK EVENTS
+   TRACK EVENTS
    POST /api/reels/:id/events
-   Body: { type: "view"|"click"|"like"|"share" }
+   Body: { type: "view"|"tap"|"like"|"wishlist"|"share", unique?: true }
 ========================================================= */
 export async function trackReelEvent(req, res) {
   try {
@@ -310,27 +301,43 @@ export async function trackReelEvent(req, res) {
     if (!isObjectId(id)) return res.status(400).json({ message: "Invalid reel id" });
 
     const type = String(req.body?.type || "").toLowerCase().trim();
+    const unique = parseBool(req.body?.unique, false);
+
     const inc = {};
+    const set = {};
+
+    const now = new Date();
 
     if (type === "view") {
       inc["analytics.views"] = 1;
-    } else if (type === "click") {
-      inc["analytics.clicks"] = 1;
+      set["analytics.lastViewedAt"] = now;
+
+      // ✅ optional
+      if (unique) inc["analytics.uniqueViews"] = 1;
+    } else if (type === "tap") {
+      inc["analytics.taps"] = 1;
+      set["analytics.lastTappedAt"] = now;
     } else if (type === "like") {
       inc["analytics.likes"] = 1;
+      set["analytics.lastLikedAt"] = now;
+    } else if (type === "wishlist") {
+      inc["analytics.wishlist"] = 1;
+      set["analytics.lastWishlistedAt"] = now;
     } else if (type === "share") {
       inc["analytics.shares"] = 1;
+      set["analytics.lastSharedAt"] = now;
     } else {
-      return res.status(400).json({ message: "Invalid event type" });
+      return res.status(400).json({
+        message: "Invalid event type. Use view|tap|like|wishlist|share",
+      });
     }
-
-    const set = {};
-    if (type === "view") set["analytics.lastViewedAt"] = new Date();
-    if (type === "click") set["analytics.lastClickedAt"] = new Date();
 
     const reel = await Reel.findByIdAndUpdate(
       id,
-      { $inc: inc, ...(Object.keys(set).length ? { $set: set } : {}) },
+      {
+        $inc: inc,
+        $set: set,
+      },
       { new: true }
     ).lean();
 

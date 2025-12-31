@@ -4,6 +4,7 @@ import Product from "../Products/Products.js";
 import Coupon from "../Coupon/Coupon.js";
 import { buildAddressSnapshot } from "./order.address.mapper.js";
 import { cancelShiprocketShipment } from "../shiprocket/shiprocket.cancel.js";
+import Address from "../Address/Address.js"; // <-- correct path
 
 /* ============================================================
    RMA POLICY (hardcoded backend)
@@ -178,13 +179,18 @@ export const createOrder = async (req, res) => {
     /* ------------------------------------------------
        🔒 HARD VALIDATIONS
     ------------------------------------------------ */
-    if (!customerId) {
-      return res.status(400).json({ message: "customerId missing" });
-    }
+if (!mongoose.Types.ObjectId.isValid(customerId)) {
+  return res.status(400).json({ message: "Invalid customerId" });
+}
 
-    if (!shippingAddressId) {
-      return res.status(400).json({ message: "shippingAddressId missing" });
-    }
+if (!mongoose.Types.ObjectId.isValid(shippingAddressId)) {
+  return res.status(400).json({ message: "Invalid shippingAddressId" });
+}
+
+if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
+  return res.status(400).json({ message: "Invalid billingAddressId" });
+}
+
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Order items missing" });
@@ -370,7 +376,7 @@ export const createOrder = async (req, res) => {
       /* ------------------------------------------------
          5️⃣ CREATE ORDER
       ------------------------------------------------ */
-      const order = await Order.create(
+      const [order] = await Order.create(
         [
           {
             customerId,
@@ -392,14 +398,13 @@ export const createOrder = async (req, res) => {
 
             source,
             isGiftOrder,
-            analytics,
             rmas: [],
           },
         ],
         { session }
       );
 
-      req.__createdOrder = order[0];
+      req.__createdOrder = order;
     });
 
     return res.status(201).json({
@@ -408,7 +413,9 @@ export const createOrder = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Create Order Error:", error);
-    return res.status(500).json({ message: error.message || "Server error" });
+    return res.status(400).json({
+      message: error.message || "Order creation failed",
+    });
   } finally {
     session.endSession();
   }

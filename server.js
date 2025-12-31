@@ -1,4 +1,6 @@
-// server.js (or app.js)
+// --------------------------------------------------
+// server.js (MIRAY FASHIONS Backend)
+// --------------------------------------------------
 
 import express from "express";
 import dotenv from "dotenv";
@@ -7,8 +9,10 @@ import cors from "cors";
 import morgan from "morgan";
 
 // --------------------------------------------------
-// ROUTES
+// ROUTES (MAIN)
 // --------------------------------------------------
+import pingRoutes from "./routes/pingRouter.js";
+
 import addressRoutes from "./Address/addressRouter.js";
 import blogRoutes from "./Blogs/blogRouter.js";
 import categoryRoutes from "./Category/categoryRouter.js";
@@ -24,81 +28,91 @@ import queryRoutes from "./Query/queryRouter.js";
 import reviewRoutes from "./Review/reviewRouter.js";
 import wishlistRoutes from "./Wishlist/wishlistRouter.js";
 import fabricRoutes from "./Fabric/fabric.routes.js";
-import sizeChartRoutes from "./SizeChart/sizeChartRoutes.js"
+import sizeChartRoutes from "./SizeChart/sizeChartRoutes.js";
+
+import attributeRoutes from "./Attribute/attributeRoutes.js";
+import shiprocketRoutes from "./shiprocket/shipping.routes.js";
+
+// --------------------------------------------------
+// ROUTES (ADMIN / SUPERADMIN)
+// --------------------------------------------------
 import adminUserRoutes from "./routes/admin/adminUserRouter.js";
 import inventoryRoutes from "./routes/admin/inventoryRouter.js";
 import ticketRoutes from "./routes/admin/tickets.js";
 
-import attributeRoutes from "./Attribute/attributeRoutes.js";
-import pingRoutes from "./routes/pingRouter.js";
 import superadminRoutes from "./routes/superadmin.js";
-import shiprocketRoutes from "./shiprocket/shipping.routes.js";
+import userRoutes from "./User/User.Routes.js";
 
-// ✅ NEW: PRODUCT VIEW ANALYTICS ROUTES
+// --------------------------------------------------
+// EXTRA FEATURES
+// --------------------------------------------------
+
+// ✅ Analytics
 import productViewAnalyticsRoutes from "./productviews/analytics.routes.js";
 
-// --------------------------------------------------
-// EXTRA / EXISTING FEATURES
-// --------------------------------------------------
-
-// Reels
+// ✅ Reels
 import reelsRoutes from "./reels/reels.router.js";
 
-// Razorpay
+// ✅ Razorpay
 import razorpayRoutes from "./Razorpay/razorpay.router.js";
 import { webhook as razorpayWebhook } from "./Razorpay/razorpay.controller.js";
 
-// Cloudinary
+// ✅ Cloudinary
 import { cloudinary } from "./config/cloudinary.js";
 import mediaRoutes from "./cloudinary/mediaRoutes.js";
 
-// Customer Support Tickets
+// ✅ Customer Support Tickets
 import customerTicketRoutes from "./CustomerTicket/customerTicket.routes.js";
 
-// Barcode
+// ✅ Barcode
 import barcodeItemRoutes from "./BarcodeItem/barcodeItem.routes.js";
 
-// Superadmin users
-import userRoutes from "./User/User.Routes.js";
-
-// Abandoned carts
+// ✅ Abandoned carts
 import abandonedCartRoutes from "./AbandonedCart/AbandonedCartRoutes.js";
 
+// ✅ Nodemailer Routes (NEW)
+import mailRoutes from "./nodemailer/routes.js";
+
+import homepageSettingsRoutes from "./HomepageSettings/homepageSettingsRoutes.js";
+
+// --------------------------------------------------
+// CONFIG
 // --------------------------------------------------
 dotenv.config();
 const app = express();
+
+// ✅ For deployment environments like Render/NGINX
+app.set("trust proxy", 1);
 
 // --------------------------------------------------
 // ✅ CORS CONFIG (CENTRALIZED)
 // --------------------------------------------------
 const ALLOWED_ORIGINS = [
+  // Local
   "http://localhost:3000",
   "http://localhost:3001",
 
-  // ✅ FRONTEND
+  // ✅ Frontend
   "https://www.mirayfashions.in",
   "https://mirayfashions.in",
 
-  // ✅ ADMIN PANEL
+  // ✅ Admin Panel
   "https://admin.mirayfashions.com",
 
-  // backend self (optional)
+  // ✅ Backend itself (optional)
   "https://miray-backend.onrender.com",
 ];
-
-
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow server-to-server, Postman, curl
+      // Allow Postman / server-to-server / curl
       if (!origin) return callback(null, true);
 
-      if (ALLOWED_ORIGINS.includes(origin)) {
-        return callback(null, true);
-      }
+      // Allow listed origins
+      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
 
-      // ❌ Silently block other origins (no server error)
+      // ❌ Block others silently
       return callback(null, false);
     },
     credentials: true,
@@ -112,9 +126,8 @@ app.use(
 // --------------------------------------------------
 app.use(morgan("dev"));
 
-
 /**
- * ⚠️ Razorpay webhook must be BEFORE json parser
+ * ✅ Razorpay webhook MUST be BEFORE JSON parser
  */
 app.post(
   "/api/razorpay/webhook",
@@ -127,7 +140,7 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // --------------------------------------------------
-// CLOUDINARY STARTUP CHECK
+// ✅ CLOUDINARY STARTUP CHECK (Non-blocking)
 // --------------------------------------------------
 (async () => {
   try {
@@ -139,19 +152,25 @@ app.use(express.urlencoded({ extended: true }));
 })();
 
 // --------------------------------------------------
-// DATABASE
+// ✅ DATABASE
 // --------------------------------------------------
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB connected"))
-  .catch((err) =>
-    console.error("❌ MongoDB connection error:", err)
-  );
+  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 // --------------------------------------------------
-// API ROUTES
+// ✅ API ROUTES
 // --------------------------------------------------
+
+// Health / Ping
 app.use("/api/ping", pingRoutes);
+
+// Nodemailer (NEW) ✅
+// Example: GET /api/mail/test?to=someone@gmail.com
+app.use("/api/mail", mailRoutes);
+
+// Core Modules
 app.use("/api/size-charts", sizeChartRoutes);
 app.use("/api/addresses", addressRoutes);
 app.use("/api/blogs", blogRoutes);
@@ -168,46 +187,53 @@ app.use("/api/queries", queryRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/fabrics", fabricRoutes);
+app.use("/api/attributes", attributeRoutes);
+
+// Admin
 app.use("/api/admins", adminUserRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/tickets", ticketRoutes);
-app.use("/api/attributes", attributeRoutes);
+app.use("/api/homepage-settings", homepageSettingsRoutes);
+
+// Media
 app.use("/api/media", mediaRoutes);
+
+// Shipping (Shiprocket)
 app.use("/api", shiprocketRoutes);
 
 // --------------------------------------------------
-// ✅ PRODUCT VIEW ANALYTICS (NEW)
+// ✅ PRODUCT VIEW ANALYTICS
 // POST /api/analytics/product-view
 // --------------------------------------------------
 app.use("/api/analytics", productViewAnalyticsRoutes);
 
 // --------------------------------------------------
-// REELS
+// ✅ REELS
 // --------------------------------------------------
 app.use("/api/reels", reelsRoutes);
 
 // --------------------------------------------------
-// CUSTOMER SUPPORT
+// ✅ CUSTOMER SUPPORT
 // --------------------------------------------------
 app.use("/api/support", customerTicketRoutes);
 
 // --------------------------------------------------
-// BARCODE
+// ✅ BARCODE
 // --------------------------------------------------
 app.use("/api", barcodeItemRoutes);
 
 // --------------------------------------------------
-// RAZORPAY
+// ✅ RAZORPAY
 // --------------------------------------------------
 app.use("/api/razorpay", razorpayRoutes);
 
 // --------------------------------------------------
-// ABANDONED CARTS
+// ✅ ABANDONED CARTS
 // --------------------------------------------------
 app.use("/api/abandoned-carts", abandonedCartRoutes);
 
 // --------------------------------------------------
-// SUPERADMIN
+// ✅ SUPERADMIN
 // --------------------------------------------------
 app.use("/superadmin", superadminRoutes);
 app.use("/superadmin", userRoutes);
@@ -216,11 +242,11 @@ app.use("/superadmin", userRoutes);
 // ROOT
 // --------------------------------------------------
 app.get("/", (req, res) => {
-  res.send("🛒 E-commerce API running...");
+  res.send("🛒 MIRAY FASHIONS API running...");
 });
 
 // --------------------------------------------------
-// CLOUDINARY TEST
+// ✅ CLOUDINARY TEST
 // --------------------------------------------------
 app.get("/api/cloudinary/test", async (req, res) => {
   try {
@@ -235,7 +261,7 @@ app.get("/api/cloudinary/test", async (req, res) => {
 });
 
 // --------------------------------------------------
-// 404 HANDLER
+// ✅ 404 HANDLER (Always last route)
 // --------------------------------------------------
 app.use((req, res) => {
   res.status(404).json({
@@ -245,7 +271,7 @@ app.use((req, res) => {
 });
 
 // --------------------------------------------------
-// GLOBAL ERROR HANDLER
+// ✅ GLOBAL ERROR HANDLER
 // --------------------------------------------------
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -256,7 +282,7 @@ app.use((err, req, res, next) => {
 });
 
 // --------------------------------------------------
-// START SERVER
+// ✅ START SERVER
 // --------------------------------------------------
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
