@@ -21,38 +21,40 @@ export const createCoupon = async (req, res) => {
       validFrom,
       validTill,
       usageLimit,
-      usageLimitPerCustomer, // NEW
+      usageLimitPerCustomer,
       isActive,
     } = req.body;
 
-    // Check if code already exists
-    const existingCoupon = await Coupon.findOne({ code: code.toUpperCase() });
+    if (!code || !validTill || !discountType || discountValue == null) {
+      return res.status(400).json({ message: "Missing required coupon fields." });
+    }
+
+    const couponCode = String(code).trim().toUpperCase();
+
+    const existingCoupon = await Coupon.findOne({ code: couponCode });
     if (existingCoupon) {
       return res.status(400).json({ message: "Coupon code already exists." });
     }
 
     const coupon = await Coupon.create({
-      code,
+      code: couponCode,
       type,
       description,
       discountType,
       discountValue,
       minPurchase,
       maxDiscount,
-      influencerId,
-      issuedBy,
+      influencerId: influencerId || null,
+      issuedBy: issuedBy || null,
       validFrom,
       validTill,
       usageLimit,
-      usageLimitPerCustomer, // NEW
+      usageLimitPerCustomer,
       isActive,
-      usedBy: [], // NEW — Track customer usage list
+      usedBy: [],
     });
 
-    res.status(201).json({
-      message: "Coupon created successfully",
-      data: coupon,
-    });
+    res.status(201).json({ message: "Coupon created successfully", data: coupon });
   } catch (error) {
     console.error("Error creating coupon:", error);
     res.status(500).json({ message: "Server error", error: error.message });
@@ -98,7 +100,7 @@ export const getCouponByIdOrCode = async (req, res) => {
     if (mongoose.Types.ObjectId.isValid(idOrCode)) {
       coupon = await Coupon.findById(idOrCode);
     } else {
-      coupon = await Coupon.findOne({ code: idOrCode.toUpperCase() });
+      coupon = await Coupon.findOne({ code: String(idOrCode).trim().toUpperCase() });
     }
 
     if (!coupon) {
@@ -120,7 +122,9 @@ export const getCouponByIdOrCode = async (req, res) => {
 export const updateCoupon = async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
+    const updates = { ...req.body };
+
+    if (updates.code) updates.code = String(updates.code).trim().toUpperCase();
 
     const coupon = await Coupon.findByIdAndUpdate(id, updates, {
       new: true,
@@ -131,16 +135,12 @@ export const updateCoupon = async (req, res) => {
       return res.status(404).json({ message: "Coupon not found" });
     }
 
-    // Auto-deactivate if expired
     if (coupon.validTill < new Date()) {
       coupon.isActive = false;
       await coupon.save();
     }
 
-    res.status(200).json({
-      message: "Coupon updated successfully",
-      data: coupon,
-    });
+    res.status(200).json({ message: "Coupon updated successfully", data: coupon });
   } catch (error) {
     console.error("Error updating coupon:", error);
     res.status(500).json({ message: "Server error", error: error.message });
@@ -169,7 +169,6 @@ export const deleteCoupon = async (req, res) => {
   }
 };
 
-
 /**
  * @desc Apply coupon for a customer
  * @route POST /api/coupons/apply
@@ -179,71 +178,61 @@ export const applyCoupon = async (req, res) => {
   try {
     const { code, customerId, cartTotal } = req.body;
 
-    if (!code || !customerId || !cartTotal) {
-      return res.status(400).json({
-        message: "code, customerId and cartTotal are required.",
-      });
+    // ✅ allow 0 cartTotal check correctly
+    if (!code || !customerId || cartTotal == null) {
+      return res.status(400).json({ message: "code, customerId and cartTotal are required." });
     }
 
-    const coupon = await Coupon.findOne({ code: code.toUpperCase() });
+    const couponCode = String(code).trim().toUpperCase();
+    const cid = String(customerId).trim();
+
+    const coupon = await Coupon.findOne({ code: couponCode });
 
     if (!coupon) {
       return res.status(404).json({ message: "Invalid coupon code." });
     }
 
-    // Check active
     if (!coupon.isActive) {
       return res.status(400).json({ message: "Coupon is not active." });
     }
 
-    // Check expired
     if (new Date() > coupon.validTill) {
       return res.status(400).json({ message: "Coupon has expired." });
     }
 
-    // Minimum purchase
     if (cartTotal < coupon.minPurchase) {
-      return res.status(400).json({
-        message: `Minimum purchase required is ₹${coupon.minPurchase}`,
-      });
+      return res.status(400).json({ message: `Minimum purchase required is ₹${coupon.minPurchase}` });
     }
 
-    // GLOBAL usage limit
     if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
-      return res.status(400).json({
-        message: "Coupon usage limit has been reached.",
-      });
+      return res.status(400).json({ message: "Coupon usage limit has been reached." });
     }
 
-    // PER-CUSTOMER usage limit (default = 1)
-    if (coupon.usedBy.includes(customerId)) {
-      return res.status(400).json({
-        message: "You have already used this coupon.",
-      });
+    // ✅ PER CUSTOMER LIMIT (supports usageLimitPerCustomer)
+    const perUserLimit = coupon.usageLimitPerCustomer || 1;
+    const usedTimes = (coupon.usedBy || []).filter((x) => String(x) === cid).length;
+
+    if (usedTimes >= perUserLimit) {
+      return res.status(400).json({ message: "You have already used this coupon." });
     }
 
-    // Calculate discount
+    // ✅ Calculate discount
     let discountAmount = 0;
 
     if (coupon.discountType === "percentage") {
       discountAmount = (cartTotal * coupon.discountValue) / 100;
-
-      if (coupon.maxDiscount > 0) {
-        discountAmount = Math.min(discountAmount, coupon.maxDiscount);
-      }
+      if (coupon.maxDiscount > 0) discountAmount = Math.min(discountAmount, coupon.maxDiscount);
     } else if (coupon.discountType === "flat") {
       discountAmount = coupon.discountValue;
     }
 
-    // Ensure discount is not negative
     if (discountAmount <= 0) {
-      return res.status(400).json({
-        message: "Invalid discount calculation.",
-      });
+      return res.status(400).json({ message: "Invalid discount calculation." });
     }
 
-    // Apply usage tracking
-    coupon.usedBy.push(customerId);
+    // ✅ Track usage (STRING)
+    coupon.usedBy = coupon.usedBy || [];
+    coupon.usedBy.push(cid);
     coupon.usedCount += 1;
 
     await coupon.save();
@@ -258,5 +247,3 @@ export const applyCoupon = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
-
-

@@ -166,8 +166,8 @@ export const createOrder = async (req, res) => {
       shippingAddressId,
       billingAddressId,
       items,
-      discount = 0,
-      coupon,
+      discount = 0, // fallback
+      coupon, // ✅ now object snapshot
       shippingFee = 0,
       tax = 0,
       paymentMethod = "cod",
@@ -179,18 +179,17 @@ export const createOrder = async (req, res) => {
     /* ------------------------------------------------
        🔒 HARD VALIDATIONS
     ------------------------------------------------ */
-if (!mongoose.Types.ObjectId.isValid(customerId)) {
-  return res.status(400).json({ message: "Invalid customerId" });
-}
+    if (!mongoose.Types.ObjectId.isValid(customerId)) {
+      return res.status(400).json({ message: "Invalid customerId" });
+    }
 
-if (!mongoose.Types.ObjectId.isValid(shippingAddressId)) {
-  return res.status(400).json({ message: "Invalid shippingAddressId" });
-}
+    if (!mongoose.Types.ObjectId.isValid(shippingAddressId)) {
+      return res.status(400).json({ message: "Invalid shippingAddressId" });
+    }
 
-if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
-  return res.status(400).json({ message: "Invalid billingAddressId" });
-}
-
+    if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
+      return res.status(400).json({ message: "Invalid billingAddressId" });
+    }
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "Order items missing" });
@@ -202,27 +201,43 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
       });
     }
 
+    // ✅ sanitize coupon snapshot (no ObjectId casting issues ever)
+    let couponSnapshot = null;
+    let computedDiscount = Number(discount || 0);
+
+    if (coupon && typeof coupon === "object") {
+      const code = String(coupon.code || "").trim().toUpperCase();
+      const couponDiscount = Number(coupon.discount || 0);
+      const finalTotal = Number(coupon.finalTotal || 0);
+
+      if (code && couponDiscount > 0) {
+        couponSnapshot = {
+          couponId: mongoose.Types.ObjectId.isValid(coupon.couponId)
+            ? coupon.couponId
+            : null,
+          code,
+          discount: couponDiscount,
+          finalTotal,
+        };
+
+        // ✅ override discount with coupon discount
+        computedDiscount = couponDiscount;
+      }
+    }
+
     await session.withTransaction(async () => {
       /* ------------------------------------------------
          0️⃣ ADDRESS SNAPSHOT (SERVER-SIDE ONLY)
       ------------------------------------------------ */
-      const shippingAddress = await Address
-        .findById(shippingAddressId)
-        .session(session);
-
-      if (!shippingAddress) {
-        throw new Error("Shipping address not found");
-      }
+      const shippingAddress = await Address.findById(shippingAddressId).session(session);
+      if (!shippingAddress) throw new Error("Shipping address not found");
 
       const billingAddress = billingAddressId
         ? await Address.findById(billingAddressId).session(session)
         : shippingAddress;
 
-      const shippingAddressSnapshot =
-        buildAddressSnapshot(shippingAddress);
-
-      const billingAddressSnapshot =
-        buildAddressSnapshot(billingAddress);
+      const shippingAddressSnapshot = buildAddressSnapshot(shippingAddress);
+      const billingAddressSnapshot = buildAddressSnapshot(billingAddress);
 
       /* ------------------------------------------------
          1️⃣ FETCH PRODUCTS
@@ -230,13 +245,9 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
       const productIds = items.map((i) => i?.productId).filter(Boolean);
 
       const invalidProductId = productIds.find((id) => !isObjectId(id));
-      if (invalidProductId) {
-        throw new Error(`Invalid productId: ${invalidProductId}`);
-      }
+      if (invalidProductId) throw new Error(`Invalid productId: ${invalidProductId}`);
 
-      const products = await Product.find({
-        _id: { $in: productIds },
-      })
+      const products = await Product.find({ _id: { $in: productIds } })
         .session(session)
         .lean();
 
@@ -253,9 +264,7 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
         if (!item?.productId) throw new Error("productId missing");
 
         const qty = Number(item.quantity || 0);
-        if (!Number.isFinite(qty) || qty < 1) {
-          throw new Error("Invalid quantity");
-        }
+        if (!Number.isFinite(qty) || qty < 1) throw new Error("Invalid quantity");
 
         const product = productMap.get(String(item.productId));
         if (!product) throw new Error("Product not found");
@@ -267,28 +276,18 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
         let variant = null;
 
         if (isVariable) {
-          if (!item.variantId) {
-            throw new Error(`${product.title} - variantId missing`);
-          }
+          if (!item.variantId) throw new Error(`${product.title} - variantId missing`);
 
           variant = findVariantById(product, item.variantId);
-          if (!variant) {
-            throw new Error(`${product.title} - variant not found`);
-          }
+          if (!variant) throw new Error(`${product.title} - variant not found`);
 
-          if (Number(variant.stock ?? 0) < qty) {
-            throw new Error(`${product.title} out of stock`);
-          }
+          if (Number(variant.stock ?? 0) < qty) throw new Error(`${product.title} out of stock`);
         } else {
-          if (Number(product.stock ?? 0) < qty) {
-            throw new Error(`${product.title} out of stock`);
-          }
+          if (Number(product.stock ?? 0) < qty) throw new Error(`${product.title} out of stock`);
         }
 
         const unitPrice =
-          variant && Number(variant.price) > 0
-            ? Number(variant.price)
-            : Number(product.price || 0);
+          variant && Number(variant.price) > 0 ? Number(variant.price) : Number(product.price || 0);
 
         const itemSubtotal = unitPrice * qty;
         totalQty += qty;
@@ -305,9 +304,7 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
             images: Array.isArray(product.images) ? product.images : [],
             category: product.category || null,
             subcategory: product.subcategory || null,
-            productType:
-              product.productType ||
-              (product?.variants?.length ? "variable" : "simple"),
+            productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
             sku: product.sku || "",
             tags: Array.isArray(product.tags) ? product.tags : [],
             weight: Number(product.weight ?? 0),
@@ -324,8 +321,7 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
 
           quantity: qty,
           price: unitPrice,
-          compareAtPrice:
-            variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
+          compareAtPrice: variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
           subtotal: itemSubtotal,
         });
       }
@@ -350,9 +346,7 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
               { $inc: { stock: -it.quantity } }
             ).session(session);
 
-        if (!result.modifiedCount) {
-          throw new Error("Stock update failed");
-        }
+        if (!result.modifiedCount) throw new Error("Stock update failed");
       }
 
       /* ------------------------------------------------
@@ -360,21 +354,20 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
       ------------------------------------------------ */
       const subtotal = computedSubtotal;
       const totalAmount = subtotal + Number(shippingFee) + Number(tax);
-      const finalPayable = Math.max(0, totalAmount - Number(discount));
+
+      const finalPayable = Math.max(0, totalAmount - Number(computedDiscount || 0));
 
       const analytics = {
         totalItems: totalQty,
         averageItemPrice: totalQty ? subtotal / totalQty : 0,
-        couponApplied: Boolean(coupon),
+        couponApplied: Boolean(couponSnapshot?.code),
         creditsUsed: false,
         categoryBreakdown: computeCategoryBreakdown(normalizedItems),
-        tagsUsed: uniqStrings(
-          normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])
-        ),
+        tagsUsed: uniqStrings(normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])),
       };
 
       /* ------------------------------------------------
-         5️⃣ CREATE ORDER
+         5️⃣ CREATE ORDER ✅ FIXED COUPON SNAPSHOT
       ------------------------------------------------ */
       const [order] = await Order.create(
         [
@@ -385,8 +378,8 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
             items: normalizedItems,
 
             subtotal,
-            discount,
-            coupon: coupon || null,
+            discount: computedDiscount,
+            coupon: couponSnapshot, // ✅ now object
             shippingFee,
             tax,
             totalAmount,
@@ -398,6 +391,7 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
 
             source,
             isGiftOrder,
+            analytics,
             rmas: [],
           },
         ],
@@ -422,177 +416,6 @@ if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
 };
 
 
-
-/* ============================================================
-   CREATE RMA (Customer/Admin)
-   POST /api/orders/:id/rma
-   Body: { type, reason, customerNote, items: [{orderItemIndex, quantity}] }
-
-   ✅ POLICY ENFORCED:
-   - delivered only
-   - within 7 days from deliveredAt
-   - exchange fee: 1st free, 2nd+ = 199 (stored in rma.fee)
-============================================================ */
-export const createRma = async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    const { type = "return", reason = "other", customerNote = "", items } = req.body;
-
-    if (!isObjectId(orderId)) return res.status(400).json({ message: "Invalid order id" });
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: "RMA items missing" });
-    }
-
-    const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ message: "Order not found" });
-
-    // Must be delivered
-    if (order.fulfillmentStatus !== "delivered") {
-      return res.status(400).json({ message: "Return/Exchange allowed only for delivered orders" });
-    }
-
-    // Must have deliveredAt for 7-day policy
-    const deliveredAt = order?.trackingDetails?.deliveredAt;
-    if (!deliveredAt) {
-      return res.status(400).json({ message: "Delivery date missing (deliveredAt). Cannot create RMA." });
-    }
-
-    // 7-day window
-    if (!isWithinRmaWindow(deliveredAt)) {
-      return res.status(400).json({
-        message: `Return/Exchange window expired. Allowed within ${RMA_POLICY.windowDays} days from delivery.`,
-      });
-    }
-
-    // Prevent over-return
-    const remaining = computeRemainingQtyByIndex(order);
-    for (const ri of items) {
-      const idx = String(Number(ri?.orderItemIndex));
-      const qty = Number(ri?.quantity || 0);
-      const rem = remaining.get(idx);
-
-      if (rem == null) return res.status(400).json({ message: `Invalid orderItemIndex: ${idx}` });
-      if (qty < 1) return res.status(400).json({ message: "Invalid RMA quantity" });
-      if (qty > rem) {
-        return res.status(400).json({ message: `Return qty exceeds remaining for item index ${idx}` });
-      }
-    }
-
-    const rmaItemsSnapshots = buildRmaItemsSnapshots(order, items);
-
-    // Exchange fee policy
-    let fee = { amount: 0, currency: "INR", status: "waived" };
-    if (type === "exchange") {
-      const prevExchanges = countPreviousExchanges(order);
-      const amount = computeExchangeFee(prevExchanges);
-      fee = {
-        amount,
-        currency: "INR",
-        status: amount > 0 ? "unpaid" : "waived",
-      };
-    }
-
-    order.rmas = order.rmas || [];
-    order.rmas.push({
-      type,
-      reason,
-      customerNote,
-      items: rmaItemsSnapshots,
-      status: "requested",
-      resolution: "pending",
-      fee, // ✅ stored
-    });
-
-    // schema hook auto-generates rmaNumber
-    await order.save();
-
-    const created = order.rmas[order.rmas.length - 1];
-    return res.status(201).json({
-      message: "RMA created",
-      rma: created,
-      orderId: order._id,
-      policy: {
-        windowDays: RMA_POLICY.windowDays,
-        exchange: RMA_POLICY.exchange,
-      },
-    });
-  } catch (error) {
-    console.error("❌ Create RMA Error:", error);
-    return res.status(500).json({ message: error?.message || "Server error" });
-  }
-};
-
-/* ============================================================
-   UPDATE RMA STATUS / DETAILS (Admin)
-   PATCH /api/orders/:id/rma/:rmaNumber
-
-   ✅ Added support to update fee status (paid/unpaid/waived)
-============================================================ */
-export const updateRma = async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    const rmaNumber = String(req.params.rmaNumber || "").trim();
-
-    if (!isObjectId(orderId)) return res.status(400).json({ message: "Invalid order id" });
-    if (!rmaNumber) return res.status(400).json({ message: "rmaNumber missing" });
-
-    const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ message: "Order not found" });
-
-    const idx = (order.rmas || []).findIndex((r) => String(r.rmaNumber) === rmaNumber);
-    if (idx === -1) return res.status(404).json({ message: "RMA not found" });
-
-    const rma = order.rmas[idx];
-
-    const {
-      status,
-      adminNote,
-      resolution,
-      refund, // {amount, mode, status, referenceId}
-      reverseShipment, // {orderId, shipmentId, awb, courierName, trackingUrl, pickupScheduledAt, ...}
-      fee, // ✅ {amount, currency, status}
-    } = req.body;
-
-    if (status) rma.status = status;
-    if (adminNote != null) rma.adminNote = String(adminNote);
-    if (resolution) rma.resolution = resolution;
-
-    if (refund && typeof refund === "object") {
-      rma.refund = rma.refund || {};
-      if (refund.amount != null) rma.refund.amount = Number(refund.amount || 0);
-      if (refund.mode) rma.refund.mode = refund.mode;
-      if (refund.status) rma.refund.status = refund.status;
-      if (refund.referenceId != null) rma.refund.referenceId = String(refund.referenceId || "");
-    }
-
-    if (fee && typeof fee === "object") {
-      rma.fee = rma.fee || { amount: 0, currency: "INR", status: "waived" };
-      if (fee.amount != null) rma.fee.amount = Number(fee.amount || 0);
-      if (fee.currency != null) rma.fee.currency = String(fee.currency || "INR");
-      if (fee.status != null) rma.fee.status = String(fee.status || (rma.fee.amount > 0 ? "unpaid" : "waived"));
-    }
-
-    if (reverseShipment && typeof reverseShipment === "object") {
-      rma.reverseShipment = rma.reverseShipment || {};
-      const fields = ["orderId", "shipmentId", "awb", "courierName", "trackingUrl"];
-      for (const f of fields) {
-        if (reverseShipment[f] != null) rma.reverseShipment[f] = String(reverseShipment[f] || "");
-      }
-      const dateFields = ["pickupScheduledAt", "pickedAt", "receivedAt"];
-      for (const df of dateFields) {
-        if (reverseShipment[df] != null) rma.reverseShipment[df] = reverseShipment[df];
-      }
-    }
-
-    await order.save();
-
-    return res.status(200).json({ message: "RMA updated", rma: order.rmas[idx] });
-  } catch (error) {
-    console.error("❌ Update RMA Error:", error);
-    return res.status(500).json({ message: error?.message || "Server error" });
-  }
-};
-
 /* ============================================================
    GET ALL ORDERS (ADMIN)
 ============================================================ */
@@ -607,7 +430,6 @@ export const getAllOrders = async (req, res) => {
 
     const orders = await Order.find(filters)
       .populate("customerId", "name email phone")
-      .populate("coupon", "code discountType discountValue")
       .populate("items.productId")
       .sort({ createdAt: -1 });
 
@@ -618,6 +440,7 @@ export const getAllOrders = async (req, res) => {
   }
 };
 
+
 /* ============================================================
    GET ORDER BY ID
 ============================================================ */
@@ -625,7 +448,6 @@ export const getOrderById = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
       .populate("customerId", "name email phone")
-      .populate("coupon", "code discountType discountValue")
       .populate("items.productId");
 
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -657,7 +479,14 @@ export const getOrdersByCustomer = async (req, res) => {
 ============================================================ */
 export const updateOrder = async (req, res) => {
   try {
-    const updatedOrder = await Order.findByIdAndUpdate(req.params.id, req.body, {
+    const body = { ...req.body };
+
+    // ✅ If coupon object updated manually, sync discount too
+    if (body.coupon && typeof body.coupon === "object" && body.coupon.code) {
+      body.discount = Number(body.coupon.discount || 0);
+    }
+
+    const updatedOrder = await Order.findByIdAndUpdate(req.params.id, body, {
       new: true,
       runValidators: true,
     });
@@ -670,6 +499,7 @@ export const updateOrder = async (req, res) => {
   }
 };
 
+
 /* ============================================================
    UPDATE ORDER STATUS ONLY
 ============================================================ */
@@ -680,7 +510,26 @@ export const updateOrderStatus = async (req, res) => {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    if (fulfillmentStatus) order.fulfillmentStatus = fulfillmentStatus;
+    // ✅ Update fulfillment status
+    if (fulfillmentStatus) {
+      order.fulfillmentStatus = fulfillmentStatus;
+
+      // ✅ AUTO-SET deliveredAt if marked delivered
+      if (fulfillmentStatus === "delivered") {
+        order.trackingDetails = order.trackingDetails || {};
+        if (!order.trackingDetails.deliveredAt) {
+          order.trackingDetails.deliveredAt = new Date();
+        }
+
+        // optional (nice)
+        order.shipment = order.shipment || {};
+        if (!order.shipment.deliveredAt) {
+          order.shipment.deliveredAt = new Date();
+        }
+      }
+    }
+
+    // ✅ Update payment status
     if (paymentStatus) order.paymentStatus = paymentStatus;
 
     await order.save();
@@ -691,6 +540,7 @@ export const updateOrderStatus = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 
 /* ============================================================
    UPDATE TRACKING
@@ -711,6 +561,11 @@ export const updateTracking = async (req, res) => {
       expectedDelivery: expectedDelivery ?? order.trackingDetails?.expectedDelivery,
     };
 
+    // ✅ If deliveredAt set -> auto mark delivered
+    if (deliveredAt) {
+      order.fulfillmentStatus = "delivered";
+    }
+
     await order.save();
 
     return res.status(200).json({ message: "Tracking updated", order });
@@ -719,6 +574,7 @@ export const updateTracking = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 
 /* ============================================================
    DELETE ORDER
@@ -766,7 +622,6 @@ export const getOrderByOrderNumber = async (req, res) => {
 
     const order = await Order.findOne({ orderNumber })
       .populate("customerId", "name email phone")
-      .populate("coupon", "code discountType discountValue")
       .populate("items.productId");
 
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -776,6 +631,7 @@ export const getOrderByOrderNumber = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 
 
 // CANCEL ORDER

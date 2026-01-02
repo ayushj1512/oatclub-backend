@@ -1,4 +1,8 @@
 import express from "express";
+
+/* ===========================
+   ORDER CONTROLLER (Orders)
+=========================== */
 import {
   createOrder,
   getAllOrders,
@@ -9,63 +13,82 @@ import {
   updateTracking,
   getOrderAnalytics,
   getOrderByOrderNumber,
-
-  // RMA
-  createRma,
-  updateRma,
-
-  // Cancel
   cancelOrder,
 } from "./orderController.js";
 
-// 🚚 Shiprocket
+/* ===========================
+   RMA CONTROLLER (RMA Only)
+=========================== */
+import {
+  createRma,
+  updateRma,
+  getRmasByOrder,
+  getRmaByNumber,
+  getAllRmasAdmin, // ✅ NEW
+} from "./orderRmaController.js";
+
+/* ===========================
+   SHIPROCKET
+=========================== */
 import { bookWithShiprocket } from "../shiprocket/shipping.controller.js";
 
 const router = express.Router();
 
 /* ============================================================
-   ORDERS
+   ORDERS (Collection)
 ============================================================ */
+
+// Create order
 router.post("/", createOrder);
+
+// Admin: all orders (supports query filters)
 router.get("/", getAllOrders);
+
+// Analytics summary
 router.get("/analytics/summary", getOrderAnalytics);
+
+// Customer orders
 router.get("/customer/:customerId", getOrdersByCustomer);
 
-// ⚠️ MUST be above "/:id"
+// Lookup by orderNumber (⚠️ keep above "/:id")
 router.get("/by-number/:orderNumber", getOrderByOrderNumber);
 
 /* ============================================================
-   ORDER ACTIONS
+   ORDER ACTIONS (Ship / Cancel)
 ============================================================ */
 
-// 🚚 Book shipment with Shiprocket
-// POST /api/orders/:id/ship
+// Book shipment
 router.post("/:id/ship", bookWithShiprocket);
 
-// ❌ Cancel order
-// POST /api/orders/:id/cancel
+// Cancel order
 router.post("/:id/cancel", cancelOrder);
 
 /* ============================================================
    RMA (Return / Exchange)
 ============================================================ */
 
-// Create RMA
-// POST /api/orders/:id/rma
+// ✅ ADMIN: Get all RMAs (global list)
+router.get("/rma", getAllRmasAdmin);
+
+// Create RMA (return / exchange)
 router.post("/:id/rma", createRma);
 
-// Update RMA
-// PATCH /api/orders/:id/rma/:rmaNumber
+// Get all RMAs of an order
+router.get("/:id/rma", getRmasByOrder);
+
+// Get single RMA by number
+router.get("/:id/rma/:rmaNumber", getRmaByNumber);
+
+// Admin update RMA
 router.patch("/:id/rma/:rmaNumber", updateRma);
 
 /* ============================================================
-   ORDER BY ID
+   ORDER BY ID (Keep at bottom)
 ============================================================ */
+
 router.get("/:id", getOrderById);
 router.put("/:id", updateOrder);
 router.patch("/:id/status", updateOrderStatus);
 router.patch("/:id/tracking", updateTracking);
-
-// ❌ deleteOrder intentionally removed (soft lifecycle only)
 
 export default router;

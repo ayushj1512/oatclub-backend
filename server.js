@@ -36,12 +36,10 @@ import shiprocketRoutes from "./shiprocket/shipping.routes.js";
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
 // --------------------------------------------------
-import adminUserRoutes from "./routes/admin/adminUserRouter.js";
 import inventoryRoutes from "./routes/admin/inventoryRouter.js";
 import ticketRoutes from "./routes/admin/tickets.js";
 
 import superadminRoutes from "./routes/superadmin.js";
-import userRoutes from "./User/User.Routes.js";
 
 // --------------------------------------------------
 // EXTRA FEATURES
@@ -74,6 +72,7 @@ import abandonedCartRoutes from "./AbandonedCart/AbandonedCartRoutes.js";
 import mailRoutes from "./nodemailer/routes.js";
 
 import homepageSettingsRoutes from "./HomepageSettings/homepageSettingsRoutes.js";
+import adminUserRoutes from "./AdminUsers/adminUserRoutes.js"; // ✅ import routes
 
 // --------------------------------------------------
 // CONFIG
@@ -188,9 +187,8 @@ app.use("/api/reviews", reviewRoutes);
 app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/fabrics", fabricRoutes);
 app.use("/api/attributes", attributeRoutes);
-
+app.use("/api/admin-users", adminUserRoutes);
 // Admin
-app.use("/api/admins", adminUserRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/homepage-settings", homepageSettingsRoutes);
@@ -236,7 +234,6 @@ app.use("/api/abandoned-carts", abandonedCartRoutes);
 // ✅ SUPERADMIN
 // --------------------------------------------------
 app.use("/superadmin", superadminRoutes);
-app.use("/superadmin", userRoutes);
 
 // --------------------------------------------------
 // ROOT

@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
+import crypto from "crypto";
 import Counter from "../models/Counter.js";
-
 
 /**
  * ORDER ITEM SCHEMA
@@ -8,6 +8,9 @@ import Counter from "../models/Counter.js";
  */
 const orderItemSchema = new mongoose.Schema(
   {
+    // ✅ stable id for RMA linking (no index-based bugs)
+    lineId: { type: String, required: true, index: true },
+
     productId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Product",
@@ -73,8 +76,12 @@ const orderItemSchema = new mongoose.Schema(
 
 const rmaItemSchema = new mongoose.Schema(
   {
-    // simplest link: index of item in order.items[]
-    orderItemIndex: { type: Number, required: true, min: 0 },
+    // ✅ stable link to order item
+    orderLineId: { type: String, required: true, index: true },
+
+    // ✅ keep index optional for backward compatibility
+    orderItemIndex: { type: Number, default: null },
+
     quantity: { type: Number, required: true, min: 1 },
 
     // convenience snapshot (optional but useful for admin)
@@ -142,9 +149,20 @@ const rmaSchema = new mongoose.Schema(
       default: "pending",
     },
 
-    // ✅ NEW: Exchange fee policy support
-    // - First exchange fee can be 0 (waived)
-    // - Second+ exchange fee can be 199 (unpaid -> paid)
+    // ✅ NEW: Exchange details (this is what was missing!)
+    exchangeRequest: {
+      productId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Product",
+        default: null,
+      },
+      variantId: { type: mongoose.Schema.Types.ObjectId, default: null },
+      variantSku: { type: String, default: "" },
+      attributes: [{ key: String, value: String }],
+      note: { type: String, default: "" },
+    },
+
+    // ✅ Exchange fee policy support
     fee: {
       amount: { type: Number, default: 0 },
       currency: { type: String, default: "INR" },
@@ -170,11 +188,9 @@ const rmaSchema = new mongoose.Schema(
       referenceId: { type: String, default: "" },
     },
 
-    // Shiprocket reverse pickup / tracking (store ids here)
+    // Shiprocket reverse pickup / tracking
     reverseShipment: {
       provider: { type: String, default: "shiprocket" },
-
-      // shiprocket response fields (names may vary by API version; keep generic strings)
       orderId: { type: String, default: "" },
       shipmentId: { type: String, default: "" },
       awb: { type: String, default: "" },
@@ -194,7 +210,6 @@ const rmaSchema = new mongoose.Schema(
  */
 const orderSchema = new mongoose.Schema(
   {
-    // 🔹 CUSTOMER
     customerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
@@ -202,7 +217,6 @@ const orderSchema = new mongoose.Schema(
       index: true,
     },
 
-    // 🔹 ADDRESS SNAPSHOT
     shippingAddressSnapshot: {
       fullName: String,
       phone: String,
@@ -227,108 +241,106 @@ const orderSchema = new mongoose.Schema(
       pincode: String,
     },
 
-    // 🔹 ORDER ITEMS SNAPSHOT
     items: { type: [orderItemSchema], required: true },
 
-    // ✅ RMA embedded (no new order)
+    // ✅ RMA embedded
     rmas: { type: [rmaSchema], default: [] },
 
-    // 🔹 PAYMENT TOTALS
     subtotal: { type: Number, required: true },
     discount: { type: Number, default: 0 },
 
     coupon: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Coupon",
-      default: null,
+      code: String,
+      discount: Number,
+      finalTotal: Number,
     },
 
     shippingFee: { type: Number, default: 0 },
     tax: { type: Number, default: 0 },
 
-    totalAmount: { type: Number, required: true }, // subtotal + tax + shippingFee
-    finalPayable: { type: Number, required: true }, // totalAmount - discount
+    totalAmount: { type: Number, required: true },
+    finalPayable: { type: Number, required: true },
 
     currency: { type: String, default: "INR" },
 
     razorpay: {
-      orderId: { type: String, default: "" }, // rzp_order_xxx
-      paymentId: { type: String, default: "" }, // rzp_payment_xxx
+      orderId: { type: String, default: "" },
+      paymentId: { type: String, default: "" },
       signature: { type: String, default: "" },
-
-      amount: { type: Number, default: 0 }, // in paise
+      amount: { type: Number, default: 0 },
       currency: { type: String, default: "INR" },
-
       paidAt: { type: Date, default: null },
     },
 
     paymentMethod: {
-  type: String,
-  enum: ["cod", "razorpay"],
-  default: "cod",
-},
+      type: String,
+      enum: ["cod", "razorpay"],
+      default: "cod",
+    },
 
+    // ✅ FIX: added refund_pending to prevent crashes
     paymentStatus: {
+      type: String,
+      enum: ["pending", "paid", "failed", "refunded", "refund_pending"],
+      default: "pending",
+      index: true,
+    },
+
+    fulfillmentStatus: {
   type: String,
-  enum: ["pending", "paid", "failed", "refunded"],
-  default: "pending",
+  enum: [
+    "processing",         // order placed / confirmed
+    "packed",             // packed
+    "picked",             // courier picked
+    "shipped",            // in transit
+    "out_for_delivery",   // out for delivery
+    "delivered",          // delivered ✅ (sets deliveredAt)
+    "return_requested",   // customer raised RMA return
+    "exchange_requested", // customer raised RMA exchange
+    "returned",           // return completed
+    "cancelled",          // cancelled
+    "rto",                // delivery failed, returned to origin
+  ],
+  default: "processing",
   index: true,
 },
 
 
-    // 🔹 ORDER STATUS
-    fulfillmentStatus: {
-      type: String,
-      enum: [
-        "processing",
-        "packed",
-        "shipped",
-        "out_for_delivery",
-        "delivered",
-        "returned",
-        "cancelled",
-      ],
-      default: "processing",
-      index: true,
+    shipment: {
+      provider: {
+        type: String,
+        enum: ["shiprocket", "manual", "xpressbees", "ekart"],
+        default: "shiprocket",
+      },
+
+      shiprocket: {
+        orderId: { type: String, default: "" },
+        shipmentId: { type: String, default: "" },
+        awb: { type: String, default: "", index: true },
+        courierName: { type: String, default: "" },
+        trackingUrl: { type: String, default: "" },
+      },
+
+      status: {
+        type: String,
+        enum: [
+          "pending",
+          "processing",
+          "packed",
+          "shipped",
+          "out_for_delivery",
+          "delivered",
+          "rto",
+          "cancelled",
+        ],
+        default: "pending",
+        index: true,
+      },
+
+      shippedAt: Date,
+      deliveredAt: Date,
     },
 
-    shipment: {
-  provider: {
-    type: String,
-    enum: ["shiprocket", "manual", "xpressbees", "ekart"],
-    default: "shiprocket",
-  },
-
-  shiprocket: {
-    orderId: { type: String, default: "" },     // shiprocket order_id
-    shipmentId: { type: String, default: "" },  // shipment_id
-    awb: { type: String, default: "", index: true },
-    courierName: { type: String, default: "" },
-    trackingUrl: { type: String, default: "" },
-  },
-
-  status: {
-    type: String,
-    enum: [
-      "pending",
-      "processing",
-      "packed",
-      "shipped",
-      "out_for_delivery",
-      "delivered",
-      "rto",
-      "cancelled",
-    ],
-    default: "pending",
-    index: true,
-  },
-
-  shippedAt: Date,
-  deliveredAt: Date,
-}
-,
-
-    // 🔹 TRACKING
     trackingDetails: {
       trackingId: { type: String, default: "" },
       courierName: { type: String, default: "" },
@@ -337,23 +349,18 @@ const orderSchema = new mongoose.Schema(
       expectedDelivery: Date,
     },
 
-    // 🔹 COMMUNICATION
     customerMessage: { type: String, default: "" },
     adminRemarks: { type: String, default: "" },
 
-    // 🔹 LINK TO SUPPORT TICKET
     queryRef: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Query",
       default: null,
     },
 
-    // 🔹 ENTERPRISE ORDER NUMBER (SEQUENTIAL)
     orderNumber: { type: String, unique: true, required: true, index: true },
-
     orderDate: { type: Date, default: Date.now, index: true },
 
-    // 🔹 HOW CUSTOMER PLACED ORDER
     source: {
       type: String,
       enum: ["website", "mobile_app", "social_media", "manual"],
@@ -362,7 +369,6 @@ const orderSchema = new mongoose.Schema(
 
     isGiftOrder: { type: Boolean, default: false },
 
-    // 🔹 ANALYTICS
     analytics: {
       categoryBreakdown: [
         {
@@ -372,7 +378,6 @@ const orderSchema = new mongoose.Schema(
         },
       ],
 
-      // ✅ tags are strings now (no Tag model)
       tagsUsed: [{ type: String, default: [] }],
 
       couponApplied: { type: Boolean, default: false },
@@ -385,6 +390,23 @@ const orderSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// ========================================================================================
+// ✅ AUTO-GENERATE lineId for items (stable linking)
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    if (Array.isArray(this.items)) {
+      this.items = this.items.map((it) => {
+        if (!it.lineId) it.lineId = crypto.randomUUID();
+        return it;
+      });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // ========================================================================================
 // ⭐ AUTO-GENERATE SEQUENTIAL ORDER NUMBER
@@ -414,7 +436,6 @@ orderSchema.pre("validate", async function (next) {
   try {
     if (!Array.isArray(this.rmas) || this.rmas.length === 0) return next();
 
-    // only generate for RMAs that don't have rmaNumber yet
     const need = this.rmas.filter((r) => !r?.rmaNumber);
     if (need.length === 0) return next();
 
@@ -430,7 +451,7 @@ orderSchema.pre("validate", async function (next) {
       const padded = String(counter.sequence).padStart(6, "0");
       this.rmas[i].rmaNumber = `RMA-${padded}`;
 
-      // ✅ ensure fee defaults are sane for old callers
+      // ✅ ensure fee defaults are sane
       if (!this.rmas[i].fee) {
         this.rmas[i].fee = { amount: 0, currency: "INR", status: "waived" };
       } else {
@@ -449,11 +470,10 @@ orderSchema.pre("validate", async function (next) {
 });
 
 // ========================================================================================
-// ✅ AUTO-CALC TOTALS (keeps createOrder controller simpler/safer)
+// ✅ AUTO-CALC TOTALS
 // ========================================================================================
 orderSchema.pre("validate", function (next) {
   try {
-    // ensure item subtotals
     if (Array.isArray(this.items)) {
       this.items = this.items.map((it) => {
         const qty = Math.max(1, Number(it.quantity || 1));
@@ -475,11 +495,11 @@ orderSchema.pre("validate", function (next) {
     this.totalAmount = subtotal + shippingFee + tax;
     this.finalPayable = Math.max(0, this.totalAmount - discount);
 
-    // analytics basics
     const totalItems = (this.items || []).reduce(
       (sum, it) => sum + Number(it.quantity || 0),
       0
     );
+
     this.analytics = this.analytics || {};
     this.analytics.totalItems = totalItems;
     this.analytics.averageItemPrice = totalItems ? subtotal / totalItems : 0;
@@ -492,11 +512,13 @@ orderSchema.pre("validate", function (next) {
 
 // Indexes
 orderSchema.index({ "trackingDetails.trackingId": 1 });
+orderSchema.index({ "items.lineId": 1 });
 
 // Helpful indexes for RMA queries
 orderSchema.index({ "rmas.rmaNumber": 1 });
 orderSchema.index({ "rmas.status": 1 });
-orderSchema.index({ "rmas.fee.status": 1 }); // ✅ NEW
+orderSchema.index({ "rmas.items.orderLineId": 1 });
+orderSchema.index({ "rmas.fee.status": 1 });
 orderSchema.index({ "rmas.reverseShipment.awb": 1 });
 orderSchema.index({ "rmas.reverseShipment.shipmentId": 1 });
 

@@ -23,7 +23,6 @@ const couponSchema = new mongoose.Schema(
       default: "",
     },
 
-    // DISCOUNT
     discountType: {
       type: String,
       enum: ["percentage", "flat"],
@@ -44,10 +43,9 @@ const couponSchema = new mongoose.Schema(
 
     maxDiscount: {
       type: Number,
-      default: 0, // 0 = no cap
+      default: 0,
     },
 
-    // TARGETING
     influencerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
@@ -59,7 +57,6 @@ const couponSchema = new mongoose.Schema(
       default: null,
     },
 
-    // VALIDITY
     validFrom: {
       type: Date,
       default: Date.now,
@@ -70,10 +67,9 @@ const couponSchema = new mongoose.Schema(
       required: [true, "Coupon expiry date is required"],
     },
 
-    // USAGE LIMITS
     usageLimit: {
       type: Number,
-      default: 0, // 0 = unlimited global usage
+      default: 0,
     },
 
     usedCount: {
@@ -81,21 +77,19 @@ const couponSchema = new mongoose.Schema(
       default: 0,
     },
 
-    // 🔥 NEW — Only once per customer
     usageLimitPerCustomer: {
       type: Number,
-      default: 1, // allow once per user
+      default: 1,
     },
 
-    // 🔥 NEW — Track which customers have used it
+    // ✅ FIXED: store Firebase UID / customerId as STRING
     usedBy: [
       {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Customer",
+        type: String,
+        trim: true,
       },
     ],
 
-    // STATUS
     isActive: {
       type: Boolean,
       default: true,
@@ -104,7 +98,6 @@ const couponSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// 🔥 Auto-deactivate expired coupons
 couponSchema.pre("save", function (next) {
   if (this.validTill < new Date()) {
     this.isActive = false;
@@ -112,7 +105,6 @@ couponSchema.pre("save", function (next) {
   next();
 });
 
-// 🔥 Indexes for performance
 couponSchema.index({ code: 1 });
 couponSchema.index({ type: 1 });
 couponSchema.index({ influencerId: 1 });
