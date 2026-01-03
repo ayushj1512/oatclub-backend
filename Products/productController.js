@@ -888,3 +888,35 @@ export const bulkImportProducts = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
+export const bulkUpdatePricing = async (req, res) => {
+  try {
+    const { updates = [] } = req.body;
+
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ message: "No updates provided" });
+    }
+
+    const ops = updates.map((u) => ({
+      updateOne: {
+        filter: { _id: u._id },
+        update: {
+          ...(u.price !== undefined ? { price: Number(u.price) } : {}),
+          ...(u.compareAtPrice !== undefined
+            ? { compareAtPrice: u.compareAtPrice === "" ? null : Number(u.compareAtPrice) }
+            : {}),
+        },
+      },
+    }));
+
+    const result = await Product.bulkWrite(ops);
+
+    return res.json({
+      message: "Pricing updated successfully",
+      modifiedCount: result.modifiedCount || 0,
+    });
+  } catch (e) {
+    console.error("❌ Bulk Pricing Update Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};

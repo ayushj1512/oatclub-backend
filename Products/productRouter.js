@@ -14,6 +14,7 @@ import {
   updateVariantStock,
   incrementProductAnalytics,
   updateProductRatings,
+  bulkUpdatePricing
 } from "./productController.js";
 
 /* ---------------- BULK CONTROLLER ---------------- */
@@ -74,8 +75,12 @@ router.patch("/:id/analytics", incrementProductAnalytics);
 router.patch("/:id/variant-stock", updateVariantStock);
 
 router.post("/", createProduct);
-router.put("/:id", updateProduct);
+
+router.patch("/:id", updateProduct); // ✅ ADD THIS
+router.put("/:id", updateProduct);   // optional (keep for full update)
 router.delete("/:id", deleteProduct);
+router.patch("/bulk/pricing", bulkUpdatePricing);
+
 
 /* ===========================================================
    FALLBACK (Slug OR ID)
