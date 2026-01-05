@@ -15,7 +15,6 @@ const abandonedCartItemSchema = new mongoose.Schema(
     productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", default: null },
 
     // IMPORTANT: variantId refers to the _id of the embedded variant in Product.variants[]
-    // (still stored as ObjectId)
     variantId: { type: mongoose.Schema.Types.ObjectId, default: null },
 
     // snapshots from your Product model
@@ -31,8 +30,8 @@ const abandonedCartItemSchema = new mongoose.Schema(
     thumbnail: { type: String, trim: true, default: "" },
     image: { type: String, trim: true, default: "" },
 
-    // pricing snapshot (your Product uses price + compareAtPrice)
-    unitPrice: { type: Number, default: 0 }, // current effective selling price at time
+    // pricing snapshot
+    unitPrice: { type: Number, default: 0 }, // selling price at time
     compareAtPrice: { type: Number, default: null }, // MRP-like
 
     currency: { type: String, trim: true, default: "INR" },
@@ -40,10 +39,10 @@ const abandonedCartItemSchema = new mongoose.Schema(
     // qty
     qty: { type: Number, default: 1, min: 1 },
 
-    // attribute snapshot in your style (works for variable products)
+    // attributes snapshot
     attributes: { type: [cartItemAttributeSchema], default: [] },
 
-    // optional inventory snapshot (helps retargeting / urgency messaging)
+    // optional inventory snapshot
     stock: { type: Number, default: null },
     isInStock: { type: Boolean, default: null },
   },
@@ -52,18 +51,23 @@ const abandonedCartItemSchema = new mongoose.Schema(
 
 const abandonedCartSchema = new mongoose.Schema(
   {
-    // link to customer (optional but ideal for populate)
-    customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", default: null, index: true },
+    // link to customer
+    customerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Customer",
+      default: null,
+      index: true,
+    },
 
-    // store both keys to avoid dependency on one
+    // store both keys
     customerFirebaseUID: { type: String, trim: true, index: true, default: "" },
     customerEmail: { type: String, trim: true, lowercase: true, index: true, default: "" },
     customerPhone: { type: String, trim: true, index: true, default: "" },
 
-    // cart identifiers (for guests + matching)
-    cartId: { type: String, trim: true, index: true, default: "" }, // your cart id if you have one
-    sessionId: { type: String, trim: true, index: true, default: "" }, // browser session id
-    fingerprint: { type: String, trim: true, index: true, default: "" }, // optional
+    // cart identifiers
+    cartId: { type: String, trim: true, index: true, default: "" },
+    sessionId: { type: String, trim: true, index: true, default: "" },
+    fingerprint: { type: String, trim: true, index: true, default: "" },
 
     // cart snapshot
     items: { type: [abandonedCartItemSchema], default: [] },
@@ -100,27 +104,37 @@ const abandonedCartSchema = new mongoose.Schema(
     },
 
     cartRef: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "Cart",
-  default: null,
-  index: true,
-},
-
-
-    // lifecycle
-    status: {
-      type: String,
-     enum: ["active", "abandoned", "recovered", "expired"],
-default: "active",
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Cart",
+      default: null,
       index: true,
     },
 
-    isSnapshot: {
-  type: Boolean,
-  default: true,
-  immutable: true,
-},
+    // ✅ lifecycle status
+    status: {
+      type: String,
+      enum: [
+        "active",
+        "abandoned",
+        "recovered",
+        "expired",
+        // ✅ allow uppercase too (frontend might send)
+        "ACTIVE",
+        "ABANDONED",
+        "RECOVERED",
+        "EXPIRED",
+      ],
+      default: "active",
+      lowercase: true, // ✅ always store lowercase
+      index: true,
+    },
 
+    // snapshot flag
+    isSnapshot: {
+      type: Boolean,
+      default: true,
+      immutable: true,
+    },
 
     lastActivityAt: { type: Date, default: Date.now, index: true },
     abandonedAt: { type: Date, default: null, index: true },
@@ -151,6 +165,10 @@ abandonedCartSchema.pre("save", function (next) {
   if (this.customerFirebaseUID) this.customerFirebaseUID = String(this.customerFirebaseUID).trim();
   if (this.cartId) this.cartId = String(this.cartId).trim();
   if (this.sessionId) this.sessionId = String(this.sessionId).trim();
+
+  // ✅ normalize status in case frontend sends ABANDONED
+  if (this.status) this.status = String(this.status).trim().toLowerCase();
+
   next();
 });
 

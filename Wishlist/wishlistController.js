@@ -1,29 +1,21 @@
 import Wishlist from "./Wishlist.js";
 
 /* ------------------------------------------------------
-   GET WISHLIST BY FIREBASE UID
+   ✅ GET WISHLIST BY FIREBASE UID
    GET /api/wishlist/firebase/:firebaseUID
 ------------------------------------------------------ */
 export const getWishlistByFirebaseUID = async (req, res) => {
   try {
     const { firebaseUID } = req.params;
-
-    if (!firebaseUID) {
-      return res.status(400).json({ message: "Firebase UID is required" });
-    }
+    if (!firebaseUID)
+      return res.status(400).json({ success: false, message: "Firebase UID is required" });
 
     const wishlist = await Wishlist.findOne({ firebaseUID });
 
-    if (!wishlist) {
-      return res.status(200).json({
-        success: true,
-        message: "Wishlist empty",
-        wishlist: { firebaseUID, productIds: [] }
-      });
-    }
-
-    res.status(200).json({ success: true, wishlist });
-
+    return res.status(200).json({
+      success: true,
+      wishlist: wishlist || { firebaseUID, productIds: [] },
+    });
   } catch (error) {
     console.error("❌ Error fetching wishlist:", error);
     res.status(500).json({
@@ -36,47 +28,37 @@ export const getWishlistByFirebaseUID = async (req, res) => {
 
 
 /* ------------------------------------------------------
-   ADD PRODUCT TO WISHLIST (firebaseUID)
+   ✅ ADD PRODUCT TO WISHLIST (backend only)
    POST /api/wishlist/firebase/:firebaseUID/add
 ------------------------------------------------------ */
 export const addToWishlist = async (req, res) => {
   try {
     const { firebaseUID } = req.params;
-    const { productId, customerId } = req.body;
+    const { productId } = req.body;
 
-    if (!firebaseUID) {
-      return res.status(400).json({ message: "Firebase UID is required" });
-    }
+    if (!firebaseUID)
+      return res.status(400).json({ success: false, message: "Firebase UID is required" });
 
-    if (!productId) {
-      return res.status(400).json({ message: "Product ID is required" });
-    }
+    if (!productId)
+      return res.status(400).json({ success: false, message: "Product ID is required" });
 
-    let wishlist = await Wishlist.findOne({ firebaseUID });
+    // ✅ customerId NEVER null: fallback to firebaseUID
+    const customerId = req.body.customerId || firebaseUID;
 
-    // Create wishlist if not exists
-    if (!wishlist) {
-      wishlist = await Wishlist.create({
-        firebaseUID,
-        customerId: customerId || null,
-        productIds: [productId],
-      });
-    } else {
-      // Avoid duplicates
-      if (wishlist.productIds.includes(productId)) {
-        return res.status(400).json({ message: "Product already in wishlist" });
-      }
+    // ✅ upsert + addToSet -> creates wishlist if missing, avoids duplicates
+    const wishlist = await Wishlist.findOneAndUpdate(
+      { firebaseUID },
+      {
+        $setOnInsert: { firebaseUID, customerId }, // only on create
+        $addToSet: { productIds: productId },      // prevents duplicate product
+      },
+      { new: true, upsert: true }
+    );
 
-      wishlist.productIds.push(productId);
-      await wishlist.save();
-    }
-
-    const updatedWishlist = await Wishlist.findOne({ firebaseUID });
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Product added to wishlist",
-      wishlist: updatedWishlist,
+      wishlist,
     });
 
   } catch (error) {
@@ -91,7 +73,7 @@ export const addToWishlist = async (req, res) => {
 
 
 /* ------------------------------------------------------
-   REMOVE PRODUCT FROM WISHLIST
+   ✅ REMOVE PRODUCT FROM WISHLIST
    POST /api/wishlist/firebase/:firebaseUID/remove
 ------------------------------------------------------ */
 export const removeFromWishlist = async (req, res) => {
@@ -99,32 +81,26 @@ export const removeFromWishlist = async (req, res) => {
     const { firebaseUID } = req.params;
     const { productId } = req.body;
 
-    if (!firebaseUID) {
-      return res.status(400).json({ message: "Firebase UID is required" });
-    }
+    if (!firebaseUID)
+      return res.status(400).json({ success: false, message: "Firebase UID is required" });
 
-    if (!productId) {
-      return res.status(400).json({ message: "Product ID is required" });
-    }
+    if (!productId)
+      return res.status(400).json({ success: false, message: "Product ID is required" });
 
-    const wishlist = await Wishlist.findOne({ firebaseUID });
-
-    if (!wishlist) {
-      return res.status(404).json({ message: "Wishlist not found" });
-    }
-
-    wishlist.productIds = wishlist.productIds.filter(
-      (id) => id !== productId
+    // ✅ pull removes item if exists
+    const wishlist = await Wishlist.findOneAndUpdate(
+      { firebaseUID },
+      { $pull: { productIds: productId } },
+      { new: true }
     );
 
-    await wishlist.save();
+    if (!wishlist)
+      return res.status(404).json({ success: false, message: "Wishlist not found" });
 
-    const updatedWishlist = await Wishlist.findOne({ firebaseUID });
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Product removed from wishlist",
-      wishlist: updatedWishlist,
+      wishlist,
     });
 
   } catch (error) {
@@ -139,29 +115,29 @@ export const removeFromWishlist = async (req, res) => {
 
 
 /* ------------------------------------------------------
-   CLEAR WISHLIST
+   ✅ CLEAR WISHLIST
    DELETE /api/wishlist/firebase/:firebaseUID
 ------------------------------------------------------ */
 export const clearWishlist = async (req, res) => {
   try {
     const { firebaseUID } = req.params;
 
-    if (!firebaseUID) {
-      return res.status(400).json({ message: "Firebase UID is required" });
-    }
+    if (!firebaseUID)
+      return res.status(400).json({ success: false, message: "Firebase UID is required" });
 
-    const wishlist = await Wishlist.findOne({ firebaseUID });
+    const wishlist = await Wishlist.findOneAndUpdate(
+      { firebaseUID },
+      { $set: { productIds: [] } },
+      { new: true }
+    );
 
-    if (!wishlist) {
-      return res.status(404).json({ message: "Wishlist not found" });
-    }
+    if (!wishlist)
+      return res.status(404).json({ success: false, message: "Wishlist not found" });
 
-    wishlist.productIds = [];
-    await wishlist.save();
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Wishlist cleared successfully",
+      wishlist,
     });
 
   } catch (error) {

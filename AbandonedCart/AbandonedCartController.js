@@ -1,8 +1,11 @@
 // AbandonedCart/AbandonedCart.js
-// ✅ Model + Controller in same file (as you requested)
+// ✅ Controller file (Model can be separate)
 
 import mongoose from "mongoose";
-import AbandonedCart from "./AbandonedCart.js"; // ⚠️ If this file itself IS the model, remove this import and use the model at bottom.
+import AbandonedCart from "./AbandonedCart.js"; 
+// ⚠️ If this file itself IS the model, remove the import above
+// and directly use mongoose.model("AbandonedCart", schema) at bottom.
+
 import Customer from "../Customer/Customer.js";
 import Product from "../Products/Products.js";
 
@@ -29,7 +32,10 @@ function pickCartIdentityFilter(payload = {}) {
 }
 
 function computePricing(items = [], currency = "INR", coupon = null) {
-  const subtotal = items.reduce((sum, it) => sum + (Number(it.unitPrice || 0) * Number(it.qty || 1)), 0);
+  const subtotal = items.reduce(
+    (sum, it) => sum + Number(it.unitPrice || 0) * Number(it.qty || 1),
+    0
+  );
   const discount = Number(coupon?.discount || 0);
   const shipping = 0;
   const tax = 0;
@@ -62,12 +68,10 @@ function buildCartItemFromProduct(product, variantId, qty) {
     v = product.variants.find((x) => String(x?._id) === String(variantId)) || null;
   }
 
-  // If variable product but no variant matched, you can choose to throw instead.
-  // We'll allow it but snapshot will be product-level.
   const thumbnail = safe(product?.thumbnail) || safe(product?.images?.[0]) || "";
   const image = safe(v?.image) || thumbnail;
 
-  const productSku = safe(product?.sku); // simple products typically have sku
+  const productSku = safe(product?.sku);
   const variantSku = safe(v?.sku);
 
   const unitPrice = v ? Number(v.price || 0) : Number(product?.price || 0);
@@ -105,7 +109,6 @@ function buildCartItemFromProduct(product, variantId, qty) {
 
     attributes: attrs,
 
-    // optional inventory snapshot
     stock: v ? Number(v.stock ?? null) : Number(product?.stock ?? null),
     isInStock: v ? !!v.isInStock : !!product?.isInStock,
   };
@@ -118,21 +121,6 @@ function buildCartItemFromProduct(product, variantId, qty) {
 /**
  * ✅ UPSERT cart (create/update)
  * POST /api/abandoned-carts/upsert
- *
- * Body example:
- * {
- *   "cartId": "CART-123",              // optional
- *   "sessionId": "SID-abc",            // optional
- *   "customerFirebaseUID": "uid...",   // optional
- *   "customerEmail": "a@b.com",        // optional
- *   "customerPhone": "9999...",        // optional
- *   "items": [
- *     { "productId": "...", "variantId": "...", "qty": 2 }
- *   ],
- *   "coupon": { "code": "SAVE10", "discount": 100 },
- *   "utm": { "source": "fb", "campaign": "retarget" },
- *   "context": { "lastPageUrl": "...", "referrer": "..." }
- * }
  */
 export const upsertAbandonedCart = async (req, res) => {
   try {
@@ -149,14 +137,15 @@ export const upsertAbandonedCart = async (req, res) => {
       });
     }
 
-    // ❗ prevent modifying snapshot once abandoned/recovered
+    /* ---------------- EXISTING CART CHECK ---------------- */
+
     const existing = await AbandonedCart.findOne(identity).lean();
-    if (existing && existing.status !== "active") {
-      return res.status(409).json({
-        success: false,
-        message: "Cannot modify abandoned or recovered cart snapshot",
-      });
-    }
+    const existingStatus = safeLower(existing?.status);
+
+    // ✅ If existing cart is locked (abandoned/recovered/expired),
+    // we create a NEW active snapshot instead of throwing 409.
+    const lockedStatuses = ["abandoned", "recovered", "expired"];
+    const shouldCreateNew = existing && lockedStatuses.includes(existingStatus);
 
     /* ---------------- NORMALIZE IDS ---------------- */
 
@@ -185,7 +174,6 @@ export const upsertAbandonedCart = async (req, res) => {
       .map(normalizeItemInput)
       .filter((i) => isObjectId(i.productId));
 
-    // 🚀 FIX: single product query (no N+1)
     const productIds = [...new Set(normalized.map((i) => String(i.productId)))];
 
     const products = await Product.find({
@@ -198,7 +186,6 @@ export const upsertAbandonedCart = async (req, res) => {
     for (const it of normalized) {
       const product = productMap.get(String(it.productId));
       if (!product) continue;
-
       items.push(buildCartItemFromProduct(product, it.variantId, it.qty));
     }
 
@@ -212,16 +199,11 @@ export const upsertAbandonedCart = async (req, res) => {
           }
         : { code: "", discount: 0 };
 
-    const pricing = computePricing(
-      items,
-      payload?.pricing?.currency || "INR",
-      coupon
-    );
+    const pricing = computePricing(items, payload?.pricing?.currency || "INR", coupon);
 
     /* ---------------- UPDATE PAYLOAD ---------------- */
 
     const update = {
-      // identifiers
       cartId,
       sessionId,
       customerId,
@@ -229,37 +211,37 @@ export const upsertAbandonedCart = async (req, res) => {
       customerEmail,
       customerPhone,
 
-      // snapshot
       items,
       coupon,
       pricing,
 
-      // attribution
       utm: payload.utm && typeof payload.utm === "object" ? payload.utm : undefined,
       context:
-        payload.context && typeof payload.context === "object"
-          ? payload.context
-          : undefined,
+        payload.context && typeof payload.context === "object" ? payload.context : undefined,
 
-      // lifecycle
       status: payload.status ? safe(payload.status).toLowerCase() : undefined,
       lastActivityAt: new Date(),
     };
 
-    // remove undefined keys
     Object.keys(update).forEach((k) => update[k] === undefined && delete update[k]);
 
     /* ---------------- UPSERT ---------------- */
 
+    // ✅ If locked cart exists, force creation of a NEW document
+    // by using a new _id filter (ensures it doesn't update old abandoned snapshot).
+    const finalFilter = shouldCreateNew
+      ? { _id: new mongoose.Types.ObjectId() }
+      : identity;
+
     const cart = await AbandonedCart.findOneAndUpdate(
-      identity,
+      finalFilter,
       { $set: update, $setOnInsert: { status: "active" } },
       { new: true, upsert: true }
     ).lean();
 
     return res.json({
       success: true,
-      message: "Abandoned cart saved",
+      message: shouldCreateNew ? "New cart snapshot created" : "Abandoned cart saved",
       cart,
     });
   } catch (err) {
@@ -271,9 +253,8 @@ export const upsertAbandonedCart = async (req, res) => {
   }
 };
 
-
 /**
- * ✅ Mark cart as ABANDONED
+ * ✅ Mark cart as abandoned
  * PATCH /api/abandoned-carts/:id/abandon
  */
 export const markCartAbandoned = async (req, res) => {
@@ -284,7 +265,7 @@ export const markCartAbandoned = async (req, res) => {
     const cart = await AbandonedCart.findOne(filter);
     if (!cart) return res.status(404).json({ success: false, message: "Cart not found" });
 
-    cart.status = "ABANDONED";
+    cart.status = "abandoned";
     cart.abandonedAt = cart.abandonedAt || new Date();
     cart.lastActivityAt = new Date();
     await cart.save();
@@ -297,7 +278,7 @@ export const markCartAbandoned = async (req, res) => {
 };
 
 /**
- * ✅ Mark cart as RECOVERED (optionally attach orderId)
+ * ✅ Mark cart as recovered
  * PATCH /api/abandoned-carts/:id/recover
  * Body: { orderId?: "...mongoId..." }
  */
@@ -311,7 +292,7 @@ export const markCartRecovered = async (req, res) => {
     const cart = await AbandonedCart.findOne(filter);
     if (!cart) return res.status(404).json({ success: false, message: "Cart not found" });
 
-    cart.status = "RECOVERED";
+    cart.status = "recovered";
     cart.recoveredAt = new Date();
     cart.lastActivityAt = new Date();
     if (orderId && isObjectId(orderId)) cart.recoveredOrderId = orderId;
@@ -325,17 +306,15 @@ export const markCartRecovered = async (req, res) => {
 };
 
 /**
- * ✅ List carts for retargeting (filter by status/date/email/uid)
- * GET /api/abandoned-carts?status=ABANDONED&page=1&limit=20&q=...
- *
- * q searches: cartId, email, uid, phone
+ * ✅ List carts
+ * GET /api/abandoned-carts?status=abandoned&page=1&limit=20&q=...
  */
 export const listAbandonedCarts = async (req, res) => {
   try {
     const { status = "", page = 1, limit = 20, q = "" } = req.query;
 
     const filter = {};
-    if (status) filter.status = safe(status).toUpperCase();
+    if (status) filter.status = safe(status).toLowerCase();
 
     const qq = safe(q);
     if (qq) {
@@ -376,7 +355,6 @@ export const listAbandonedCarts = async (req, res) => {
 /**
  * ✅ Get single cart
  * GET /api/abandoned-carts/:id
- * (id can be Mongo _id OR cartId)
  */
 export const getAbandonedCart = async (req, res) => {
   try {
@@ -396,7 +374,7 @@ export const getAbandonedCart = async (req, res) => {
 };
 
 /**
- * ✅ Update retarget attempt metadata
+ * ✅ Mark retargeted
  * PATCH /api/abandoned-carts/:id/retargeted
  */
 export const markRetargeted = async (req, res) => {
@@ -438,7 +416,7 @@ export const deleteAbandonedCart = async (req, res) => {
 };
 
 /* ------------------------------------------------------------------ */
-/* OPTIONAL: Routes helper (if you want to mount quickly) */
+/* OPTIONAL: Routes helper */
 /* ------------------------------------------------------------------ */
 /*
 import express from "express";

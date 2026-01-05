@@ -2,21 +2,26 @@ import mongoose from "mongoose";
 
 const wishlistSchema = new mongoose.Schema(
   {
+    // ✅ Firebase UID = main identifier (unique)
     firebaseUID: {
       type: String,
       required: true,
-      index: true,
       unique: true,
       trim: true,
+      index: true,
     },
 
+    // ✅ Store firebaseUID here too (optional but avoids null + duplicate key bug)
+    // If you don't need it, you can remove this field entirely.
     customerId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Customer",
-      default: null,
+      type: String,          // ✅ was ObjectId → caused cast error
+      required: true,        // ✅ avoid null
+      unique: true,          // ✅ ensure one wishlist per customer
+      trim: true,
+      index: true,
     },
 
-    // 🔥 Product IDs as STRING (temporary or permanent flexible structure)
+    // ✅ Product IDs as string array
     productIds: [
       {
         type: String,
@@ -27,16 +32,13 @@ const wishlistSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Remove duplicates automatically
+// ✅ Remove duplicates automatically (extra safety)
 wishlistSchema.pre("save", function (next) {
-  if (this.productIds?.length) {
-    this.productIds = [...new Set(this.productIds)];
+  if (Array.isArray(this.productIds)) {
+    this.productIds = [...new Set(this.productIds.map(String))];
   }
   next();
 });
 
-// Indexes
-wishlistSchema.index({ firebaseUID: 1 });
-wishlistSchema.index({ customerId: 1 });
-
-export default mongoose.model("Wishlist", wishlistSchema);
+export default mongoose.models.Wishlist ||
+  mongoose.model("Wishlist", wishlistSchema);
