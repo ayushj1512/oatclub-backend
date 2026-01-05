@@ -416,12 +416,13 @@ orderSchema.pre("validate", async function (next) {
 
   try {
     const counter = await Counter.findOneAndUpdate(
-      { id: "order" },
-      { $inc: { sequence: 1 } },
-      { new: true, upsert: true }
-    );
+  { name: "order" },
+  { $inc: { seq: 1 } },
+  { new: true, upsert: true }
+);
 
-    const padded = String(counter.sequence).padStart(6, "0");
+const padded = String(counter.seq).padStart(6, "0");
+
     this.orderNumber = `MIRAY-${padded}`;
     next();
   } catch (err) {
@@ -443,12 +444,13 @@ orderSchema.pre("validate", async function (next) {
       if (this.rmas[i]?.rmaNumber) continue;
 
       const counter = await Counter.findOneAndUpdate(
-        { id: "rma" },
-        { $inc: { sequence: 1 } },
-        { new: true, upsert: true }
-      );
+  { name: "rma" },
+  { $inc: { seq: 1 } },
+  { new: true, upsert: true }
+);
 
-      const padded = String(counter.sequence).padStart(6, "0");
+const padded = String(counter.seq).padStart(6, "0");
+
       this.rmas[i].rmaNumber = `RMA-${padded}`;
 
       // ✅ ensure fee defaults are sane

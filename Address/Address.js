@@ -2,12 +2,18 @@ import mongoose from "mongoose";
 
 const addressSchema = new mongoose.Schema(
   {
-    // 🔑 Preferred Primary Keys for your business logic
+    /**
+     * ✅ firebaseUID is OPTIONAL now
+     * - Logged-in users: firebaseUID stored
+     * - Guest users: firebaseUID = null
+     */
     firebaseUID: {
       type: String,
-      required: [true, "Firebase UID is required"],
+      required: false,
+      default: null,
       index: true,
       trim: true,
+      sparse: true, // ✅ allows many docs with null firebaseUID
     },
 
     email: {
@@ -18,7 +24,10 @@ const addressSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // (Optional but recommended) Keep customerId for DB relationships
+    /**
+     * ✅ Always required (both guest + logged in)
+     * This is your actual relational key
+     */
     customerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
@@ -119,8 +128,13 @@ const addressSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Index for your primary keys
+/**
+ * ✅ Index for fast lookup
+ * - Logged-in users: firebaseUID + email
+ * - Guest users: firebaseUID = null but email indexed works
+ */
 addressSchema.index({ firebaseUID: 1, email: 1 });
+addressSchema.index({ customerId: 1 });
 
 export default mongoose.models.Address ||
   mongoose.model("Address", addressSchema);

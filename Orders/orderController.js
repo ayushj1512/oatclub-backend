@@ -211,18 +211,15 @@ export const createOrder = async (req, res) => {
       const finalTotal = Number(coupon.finalTotal || 0);
 
       if (code && couponDiscount > 0) {
-        couponSnapshot = {
-          couponId: mongoose.Types.ObjectId.isValid(coupon.couponId)
-            ? coupon.couponId
-            : null,
-          code,
-          discount: couponDiscount,
-          finalTotal,
-        };
+    couponSnapshot = {
+      code,
+      discount: couponDiscount,
+      finalTotal,
+    };
 
-        // ✅ override discount with coupon discount
-        computedDiscount = couponDiscount;
-      }
+    // ✅ override discount with coupon discount
+    computedDiscount = couponDiscount;
+  }
     }
 
     await session.withTransaction(async () => {
@@ -242,7 +239,7 @@ export const createOrder = async (req, res) => {
       /* ------------------------------------------------
          1️⃣ FETCH PRODUCTS
       ------------------------------------------------ */
-      const productIds = items.map((i) => i?.productId).filter(Boolean);
+const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boolean))];
 
       const invalidProductId = productIds.find((id) => !isObjectId(id));
       if (invalidProductId) throw new Error(`Invalid productId: ${invalidProductId}`);

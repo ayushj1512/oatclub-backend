@@ -1,16 +1,29 @@
 import mongoose from "mongoose";
+import Counter from "../models/Counter.js"; // ✅ Import from models/Counter.js
 
+/**
+ * ✅ Customer Schema
+ */
 const customerSchema = new mongoose.Schema(
   {
-    // 🔐 Only reliable required value from Firebase Auth
-    firebaseUID: {
+    // ✅ New: Customer ID like 0001, 0002...
+    customerId: {
       type: String,
-      required: true,
       unique: true,
-      trim: true,
+      index: true,
     },
 
-    // 👤 Basic Profile — optional for OAuth
+    // 🔐 Firebase UID — now OPTIONAL for guest checkout
+    firebaseUID: {
+      type: String,
+      required: false,
+      unique: true,
+      sparse: true, // ✅ Allows multiple docs without firebaseUID
+      trim: true,
+      default: null,
+    },
+
+    // 👤 Basic Profile — optional for OAuth/Guest
     name: {
       type: String,
       trim: true,
@@ -35,7 +48,7 @@ const customerSchema = new mongoose.Schema(
       default: "",
     },
 
-    // 🎂 Optional data (customer may fill later)
+    // 🎂 Optional data
     dateOfBirth: {
       type: Date,
       default: null,
@@ -53,7 +66,7 @@ const customerSchema = new mongoose.Schema(
       default: "Unknown",
     },
 
-    // 🌍 Location fields — optional & editable anytime
+    // 🌍 Location fields
     country: {
       type: String,
       trim: true,
@@ -71,42 +84,41 @@ const customerSchema = new mongoose.Schema(
     },
 
     cart: {
-  activeCartId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Cart",
-    default: null,
-    index: true,
-  },
+      activeCartId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Cart",
+        default: null,
+        index: true,
+      },
 
-  activeCartType: {
-    type: String,
-    enum: ["cart", "abandoned"],
-    default: "cart",
-  },
+      activeCartType: {
+        type: String,
+        enum: ["cart", "abandoned"],
+        default: "cart",
+      },
 
-  cartCount: {
-    type: Number,
-    default: 0,
-  },
+      cartCount: {
+        type: Number,
+        default: 0,
+      },
 
-  abandonedCartCount: {
-    type: Number,
-    default: 0,
-  },
+      abandonedCartCount: {
+        type: Number,
+        default: 0,
+      },
 
-  lastCartActivityAt: {
-    type: Date,
-    default: null,
-    index: true,
-  },
+      lastCartActivityAt: {
+        type: Date,
+        default: null,
+        index: true,
+      },
 
-  lastAbandonedCartId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "AbandonedCart",
-    default: null,
-  },
-},
-
+      lastAbandonedCartId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "AbandonedCart",
+        default: null,
+      },
+    },
 
     // 🧩 Referral system
     referralCode: {
@@ -121,7 +133,7 @@ const customerSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ❤️ Preferences (user may fill/update later)
+    // ❤️ Preferences
     preferences: {
       categories: [{ type: mongoose.Schema.Types.ObjectId, ref: "Category" }],
       favoriteBrands: [{ type: String, trim: true }],
@@ -131,7 +143,7 @@ const customerSchema = new mongoose.Schema(
       },
     },
 
-    // 📊 Analytics — always optional & auto-calculated
+    // 📊 Analytics
     analytics: {
       totalOrders: { type: Number, default: 0 },
       totalSpend: { type: Number, default: 0 },
@@ -155,25 +167,47 @@ const customerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Automatically set age group when DOB is added
-customerSchema.pre("save", function (next) {
-  if (this.dateOfBirth) {
-    const age = Math.floor(
-      (Date.now() - this.dateOfBirth.getTime()) /
-        (365.25 * 24 * 60 * 60 * 1000)
-    );
+/**
+ * ✅ Auto-generate customerId like 0001, 0002...
+ */
+customerSchema.pre("save", async function (next) {
+  try {
+    // ✅ Assign customerId only when creating new customer
+    if (this.isNew && !this.customerId) {
+      const counter = await Counter.findOneAndUpdate(
+        { name: "customerId" },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+      );
 
-    if (age <= 13) this.ageGroup = "Gen Alpha";
-    else if (age <= 27) this.ageGroup = "Gen Z";
-    else if (age <= 42) this.ageGroup = "Millennial";
-    else if (age <= 57) this.ageGroup = "Gen X";
-    else if (age <= 75) this.ageGroup = "Boomer";
-    else this.ageGroup = "Unknown";
+      this.customerId = String(counter.seq).padStart(4, "0");
+    }
+
+    // ✅ Automatically set age group when DOB exists
+    if (this.dateOfBirth) {
+      const age = Math.floor(
+        (Date.now() - this.dateOfBirth.getTime()) /
+          (365.25 * 24 * 60 * 60 * 1000)
+      );
+
+      if (age <= 13) this.ageGroup = "Gen Alpha";
+      else if (age <= 27) this.ageGroup = "Gen Z";
+      else if (age <= 42) this.ageGroup = "Millennial";
+      else if (age <= 57) this.ageGroup = "Gen X";
+      else if (age <= 75) this.ageGroup = "Boomer";
+      else this.ageGroup = "Unknown";
+    }
+
+    next();
+  } catch (err) {
+    next(err);
   }
-  next();
 });
 
-// Indexes for fast querying
+/**
+ * ✅ Indexes for fast querying
+ */
+customerSchema.index({ customerId: 1 });
 customerSchema.index({ firebaseUID: 1 });
 customerSchema.index({ email: 1 });
 customerSchema.index({ ageGroup: 1 });

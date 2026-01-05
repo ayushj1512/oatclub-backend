@@ -1,14 +1,14 @@
 import Customer from "./Customer.js";
 
 /**
- * Create or update customer (ideal for OAuth logins)
+ * Create or update customer (OAuth login + Guest Checkout)
  * @route POST /api/customers
- * @access Public (after Firebase login)
+ * @access Public
  */
 export const createCustomer = async (req, res) => {
   try {
     const {
-      firebaseUID,
+      firebaseUID = null,
       email,
       name = "",
       phone = "",
@@ -17,42 +17,96 @@ export const createCustomer = async (req, res) => {
       referredBy,
     } = req.body;
 
-    /* ---------------- VALIDATION ---------------- */
-
-    if (!firebaseUID) {
-      return res.status(400).json({ message: "Firebase UID is required." });
-    }
-
     const safeEmail = email ? String(email).trim().toLowerCase() : "";
     const safePhone = phone ? String(phone).trim() : "";
 
-    /* ---------------- FIND EXISTING ---------------- */
+    /**
+     * ✅ CASE 1: Firebase Login (OAuth)
+     */
+    if (firebaseUID) {
+      let customer = await Customer.findOne({ firebaseUID });
 
-    let customer = await Customer.findOne({ firebaseUID });
+      if (customer) {
+        // Update only login/profile fields
+        if (safeEmail) customer.email = safeEmail;
+        if (name) customer.name = name;
+        if (safePhone) customer.phone = safePhone;
+        if (profileImage) customer.profileImage = profileImage;
 
-    if (customer) {
-      // Update only login/profile fields
-      if (safeEmail) customer.email = safeEmail;
-      if (name) customer.name = name;
-      if (safePhone) customer.phone = safePhone;
-      if (profileImage) customer.profileImage = profileImage;
+        await customer.save();
 
-      await customer.save();
+        return res.status(200).json({
+          message: "Customer updated",
+          customer,
+        });
+      }
 
-      return res.status(200).json({
-        message: "Customer updated",
+      // Create new user with firebaseUID
+      const finalReferralCode =
+        referralCode ||
+        Math.random().toString(36).substring(2, 10).toUpperCase();
+
+      customer = await Customer.create({
+        firebaseUID,
+        email: safeEmail,
+        name,
+        phone: safePhone,
+        profileImage,
+        referralCode: finalReferralCode,
+        referredBy: referredBy || null,
+
+        cart: {
+          activeCartId: null,
+          activeCartType: "cart",
+          cartCount: 0,
+          abandonedCartCount: 0,
+          lastCartActivityAt: null,
+          lastAbandonedCartId: null,
+        },
+      });
+
+      return res.status(201).json({
+        message: "Customer created",
         customer,
       });
     }
 
-    /* ---------------- CREATE NEW ---------------- */
+    /**
+     * ✅ CASE 2: Guest Checkout (no firebaseUID)
+     * We still create a customer so we have customerId for orders.
+     */
+    let existingCustomer = null;
 
+    // ✅ Optional: If guest provides email/phone, try to find existing customer
+    if (safeEmail) {
+      existingCustomer = await Customer.findOne({ email: safeEmail });
+    } else if (safePhone) {
+      existingCustomer = await Customer.findOne({ phone: safePhone });
+    }
+
+    if (existingCustomer) {
+      // ✅ Update minimal fields if new guest info provided
+      if (name && !existingCustomer.name) existingCustomer.name = name;
+      if (safePhone && !existingCustomer.phone)
+        existingCustomer.phone = safePhone;
+      if (profileImage && !existingCustomer.profileImage)
+        existingCustomer.profileImage = profileImage;
+
+      await existingCustomer.save();
+
+      return res.status(200).json({
+        message: "Guest customer already exists",
+        customer: existingCustomer,
+      });
+    }
+
+    // ✅ Create new guest customer
     const finalReferralCode =
       referralCode ||
       Math.random().toString(36).substring(2, 10).toUpperCase();
 
-    customer = await Customer.create({
-      firebaseUID,
+    const guestCustomer = await Customer.create({
+      firebaseUID: null,
       email: safeEmail,
       name,
       phone: safePhone,
@@ -60,7 +114,6 @@ export const createCustomer = async (req, res) => {
       referralCode: finalReferralCode,
       referredBy: referredBy || null,
 
-      /* 🛒 CART ANALYTICS INIT (IMPORTANT) */
       cart: {
         activeCartId: null,
         activeCartType: "cart",
@@ -72,13 +125,13 @@ export const createCustomer = async (req, res) => {
     });
 
     return res.status(201).json({
-      message: "Customer created",
-      customer,
+      message: "Guest customer created",
+      customer: guestCustomer,
     });
   } catch (error) {
     console.error("Create Customer Error:", error);
 
-    // handle duplicate firebaseUID / email safely
+    // handle duplicate safely
     if (error?.code === 11000) {
       const field = Object.keys(error.keyValue || {})[0] || "field";
       return res.status(409).json({
@@ -93,7 +146,49 @@ export const createCustomer = async (req, res) => {
   }
 };
 
+/**
+ * ✅ NEW: Get customer by customerId (0001, 0002...)
+ * @route GET /api/customers/by-customer-id/:customerId
+ * @access Admin
+ */
+export const getCustomerByCustomerId = async (req, res) => {
+  try {
+    const { customerId } = req.params;
 
+    const customer = await Customer.findOne({ customerId }).lean();
+
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    res.json(customer);
+  } catch (err) {
+    console.error("Get Customer By CustomerId Error:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+/**
+ * ✅ NEW: Get customer by firebaseUID
+ * @route GET /api/customers/by-firebase/:firebaseUID
+ * @access Admin
+ */
+export const getCustomerByFirebaseUID = async (req, res) => {
+  try {
+    const { firebaseUID } = req.params;
+
+    const customer = await Customer.findOne({ firebaseUID }).lean();
+
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    res.json(customer);
+  } catch (err) {
+    console.error("Get Customer By FirebaseUID Error:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
 
 /**
  * Get all customers with optional filters + search
@@ -120,6 +215,8 @@ export const getAllCustomers = async (req, res) => {
           { name: new RegExp(search, "i") },
           { email: new RegExp(search, "i") },
           { phone: new RegExp(search, "i") },
+          { customerId: new RegExp(search, "i") },
+          { firebaseUID: new RegExp(search, "i") }, // ✅ now searchable
         ],
       }),
     };
@@ -148,8 +245,6 @@ export const getAllCustomers = async (req, res) => {
   }
 };
 
-
-
 /**
  * Get a single customer with populated refs
  * @route GET /api/customers/:id
@@ -161,7 +256,8 @@ export const getCustomerById = async (req, res) => {
       .populate("referredBy", "name email")
       .populate("preferences.categories", "name");
 
-    if (!customer) return res.status(404).json({ message: "Customer not found" });
+    if (!customer)
+      return res.status(404).json({ message: "Customer not found" });
 
     res.json(customer);
   } catch (error) {
@@ -169,7 +265,6 @@ export const getCustomerById = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
-
 
 /**
  * Update customer profile/preferences
@@ -182,14 +277,14 @@ export const updateCustomer = async (req, res) => {
 
     // ❌ protect system-controlled fields
     delete payload.firebaseUID;
+    delete payload.customerId;
     delete payload.cart;
     delete payload.analytics;
 
-    const customer = await Customer.findByIdAndUpdate(
-      req.params.id,
-      payload,
-      { new: true, runValidators: true }
-    );
+    const customer = await Customer.findByIdAndUpdate(req.params.id, payload, {
+      new: true,
+      runValidators: true,
+    });
 
     if (!customer) {
       return res.status(404).json({ message: "Customer not found" });
@@ -202,8 +297,6 @@ export const updateCustomer = async (req, res) => {
   }
 };
 
-
-
 /**
  * Update analytics (orders, spend, wishlist, credits)
  * @route PATCH /api/customers/:id/analytics
@@ -212,6 +305,7 @@ export const updateCustomer = async (req, res) => {
 export const updateCustomerAnalytics = async (req, res) => {
   try {
     const customer = await Customer.findById(req.params.id);
+
     if (!customer) {
       return res.status(404).json({ message: "Customer not found" });
     }
@@ -248,8 +342,6 @@ export const updateCustomerAnalytics = async (req, res) => {
   }
 };
 
-
-
 /**
  * Delete a customer
  * @route DELETE /api/customers/:id
@@ -258,7 +350,9 @@ export const updateCustomerAnalytics = async (req, res) => {
 export const deleteCustomer = async (req, res) => {
   try {
     const deleted = await Customer.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ message: "Customer not found" });
+
+    if (!deleted)
+      return res.status(404).json({ message: "Customer not found" });
 
     res.json({ message: "Customer deleted successfully" });
   } catch (error) {

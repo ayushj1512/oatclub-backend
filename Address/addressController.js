@@ -9,37 +9,40 @@ import Address from "./Address.js";
 export const createAddress = async (req, res) => {
   try {
     const {
-      firebaseUID,
+      firebaseUID = null,
       email,
       customerId,
       isDefaultShipping,
       isDefaultBilling,
     } = req.body;
 
-    if (!firebaseUID || !email || !customerId) {
+    // ✅ firebaseUID OPTIONAL now
+    if (!email || !customerId) {
       return res.status(400).json({
         success: false,
-        message: "firebaseUID, email, and customerId are required",
+        message: "email and customerId are required",
       });
     }
 
-    // If default shipping → remove for others
+    // ✅ Use customerId to manage defaults (works for guest + login)
     if (isDefaultShipping) {
       await Address.updateMany(
-        { firebaseUID, email },
+        { customerId },
         { isDefaultShipping: false }
       );
     }
 
-    // If default billing → remove for others
     if (isDefaultBilling) {
       await Address.updateMany(
-        { firebaseUID, email },
+        { customerId },
         { isDefaultBilling: false }
       );
     }
 
-    const address = await Address.create(req.body);
+    const address = await Address.create({
+      ...req.body,
+      firebaseUID: firebaseUID || null, // ✅ ensure null for guest
+    });
 
     res.status(201).json({
       success: true,
@@ -54,8 +57,8 @@ export const createAddress = async (req, res) => {
 
 /**
  * ---------------------------------------------------------
- * GET ALL ADDRESSES (firebaseUID + email preferred)
- * @route GET /api/addresses/list/:firebaseUID
+ * GET ALL ADDRESSES (Logged-in)
+ * @route GET /api/addresses/firebase/:firebaseUID
  * ---------------------------------------------------------
  */
 export const getAddressesByFirebaseUID = async (req, res) => {
@@ -81,7 +84,7 @@ export const getAddressesByFirebaseUID = async (req, res) => {
 
 /**
  * ---------------------------------------------------------
- * GET ADDRESSES BY CUSTOMER ID (optional)
+ * GET ADDRESSES BY CUSTOMER ID (Guest + Login both)
  * @route GET /api/addresses/customer/:customerId
  * ---------------------------------------------------------
  */
@@ -110,7 +113,6 @@ export const getAddressesByCustomer = async (req, res) => {
  * ---------------------------------------------------------
  * GET SINGLE ADDRESS
  * @route GET /api/addresses/:id
- * (Still uses Mongo _id internally — safe + recommended)
  * ---------------------------------------------------------
  */
 export const getAddressById = async (req, res) => {
@@ -139,24 +141,22 @@ export const getAddressById = async (req, res) => {
 export const updateAddress = async (req, res) => {
   try {
     const {
-      firebaseUID,
-      email,
+      customerId,
       isDefaultShipping,
       isDefaultBilling,
     } = req.body;
 
-    // Handle new default shipping
-    if (isDefaultShipping && firebaseUID && email) {
+    // ✅ default management should always be customerId based
+    if (customerId && isDefaultShipping) {
       await Address.updateMany(
-        { firebaseUID, email },
+        { customerId },
         { isDefaultShipping: false }
       );
     }
 
-    // Handle new default billing
-    if (isDefaultBilling && firebaseUID && email) {
+    if (customerId && isDefaultBilling) {
       await Address.updateMany(
-        { firebaseUID, email },
+        { customerId },
         { isDefaultBilling: false }
       );
     }
