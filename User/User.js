@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
-import Counter from "../models/Counter.js"; // ✅ adjust path if needed (from User/User.js)
+import Counter from "../models/Counter.js";
 
 /**
  * User schema/model
@@ -25,7 +25,12 @@ const userSchema = new mongoose.Schema(
     // ✅ password (hashed)
     password: { type: String, required: true, select: false, minlength: 4 },
 
-    role: { type: String, enum: ["user", "admin", "superadmin"], default: "user", index: true },
+    role: {
+      type: String,
+      enum: ["user", "admin", "superadmin"],
+      default: "user",
+      index: true,
+    },
 
     /* 🛒 CART METRICS */
     activeCartId: {
@@ -45,7 +50,7 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    
+
     isActive: { type: Boolean, default: true, index: true },
 
     notes: { type: String, default: "", trim: true },
@@ -56,21 +61,37 @@ const userSchema = new mongoose.Schema(
 userSchema.index({ createdAt: -1 });
 
 /**
- * Generates next userId like U-000001
- * Uses your existing Counter schema:
- *   { id: "user", sequence: 0 }
+ * ✅ Generates next userId like U-000001
+ * Supports BOTH counter formats:
+ * 1) { id: "user", sequence: 1 }
+ * 2) { name: "user", seq: 1 }
  */
 userSchema.pre("validate", async function (next) {
   try {
     if (this.userId) return next();
 
-    const doc = await Counter.findOneAndUpdate(
-      { id: "user" }, // ✅ matches Counter.js
+    // ✅ Try old format (id/sequence)
+    let doc = await Counter.findOneAndUpdate(
+      { id: "user" },
       { $inc: { sequence: 1 } },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
-    const padded = String(doc.sequence).padStart(6, "0");
+    let seq = doc?.sequence;
+
+    // ✅ fallback if schema is using name/seq instead
+    if (seq == null) {
+      doc = await Counter.findOneAndUpdate(
+        { name: "user" },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+      seq = doc?.seq;
+    }
+
+    if (seq == null) throw new Error("Counter sequence not found for user");
+
+    const padded = String(seq).padStart(6, "0");
     this.userId = `U-${padded}`;
 
     return next();

@@ -685,7 +685,7 @@ export const updateProduct = async (req, res) => {
     /* ---------------- VARIANTS ---------------- */
     if (Array.isArray(data.variants)) {
       data.variants = data.variants.map((v) => ({
-        _id: v._id,
+  ...(v._id ? { _id: v._id } : {}),   // ✅ include only if exists
         sku: v.sku,
         price: Number(v.price ?? 0),
         stock: Number(v.stock ?? 0),

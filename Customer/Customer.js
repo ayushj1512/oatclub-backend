@@ -1,29 +1,29 @@
 import mongoose from "mongoose";
-import Counter from "../models/Counter.js"; // ✅ Import from models/Counter.js
+import Counter from "../models/Counter.js";
 
 /**
  * ✅ Customer Schema
  */
 const customerSchema = new mongoose.Schema(
   {
-    // ✅ New: Customer ID like 0001, 0002...
+    // ✅ Customer ID like 0001, 0002...
     customerId: {
       type: String,
       unique: true,
       index: true,
     },
 
-    // 🔐 Firebase UID — now OPTIONAL for guest checkout
+    /**
+     * 🔐 Firebase UID — OPTIONAL (guest checkout allowed)
+     * ✅ No default null (important!)
+     */
     firebaseUID: {
       type: String,
-      required: false,
-      unique: true,
-      sparse: true, // ✅ Allows multiple docs without firebaseUID
       trim: true,
-      default: null,
+      index: true,
     },
 
-    // 👤 Basic Profile — optional for OAuth/Guest
+    // 👤 Basic Profile
     name: {
       type: String,
       trim: true,
@@ -35,6 +35,7 @@ const customerSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
       default: "",
+      index: true,
     },
 
     phone: {
@@ -48,7 +49,7 @@ const customerSchema = new mongoose.Schema(
       default: "",
     },
 
-    // 🎂 Optional data
+    // 🎂 Optional
     dateOfBirth: {
       type: Date,
       default: null,
@@ -66,22 +67,10 @@ const customerSchema = new mongoose.Schema(
       default: "Unknown",
     },
 
-    // 🌍 Location fields
-    country: {
-      type: String,
-      trim: true,
-      default: "India",
-    },
-    state: {
-      type: String,
-      trim: true,
-      default: "",
-    },
-    city: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+    // 🌍 Location
+    country: { type: String, trim: true, default: "India" },
+    state: { type: String, trim: true, default: "" },
+    city: { type: String, trim: true, default: "" },
 
     cart: {
       activeCartId: {
@@ -97,21 +86,10 @@ const customerSchema = new mongoose.Schema(
         default: "cart",
       },
 
-      cartCount: {
-        type: Number,
-        default: 0,
-      },
+      cartCount: { type: Number, default: 0 },
+      abandonedCartCount: { type: Number, default: 0 },
 
-      abandonedCartCount: {
-        type: Number,
-        default: 0,
-      },
-
-      lastCartActivityAt: {
-        type: Date,
-        default: null,
-        index: true,
-      },
+      lastCartActivityAt: { type: Date, default: null, index: true },
 
       lastAbandonedCartId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -120,12 +98,8 @@ const customerSchema = new mongoose.Schema(
       },
     },
 
-    // 🧩 Referral system
-    referralCode: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+    // 🧩 Referral
+    referralCode: { type: String, trim: true, default: "" },
 
     referredBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -153,16 +127,9 @@ const customerSchema = new mongoose.Schema(
       creditsEarned: { type: Number, default: 0 },
     },
 
-    // 🚀 Account status
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
-
-    joinedAt: {
-      type: Date,
-      default: Date.now,
-    },
+    // 🚀 Status
+    isActive: { type: Boolean, default: true },
+    joinedAt: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );
@@ -172,7 +139,6 @@ const customerSchema = new mongoose.Schema(
  */
 customerSchema.pre("save", async function (next) {
   try {
-    // ✅ Assign customerId only when creating new customer
     if (this.isNew && !this.customerId) {
       const counter = await Counter.findOneAndUpdate(
         { name: "customerId" },
@@ -183,7 +149,7 @@ customerSchema.pre("save", async function (next) {
       this.customerId = String(counter.seq).padStart(4, "0");
     }
 
-    // ✅ Automatically set age group when DOB exists
+    // ✅ Auto set ageGroup if DOB exists
     if (this.dateOfBirth) {
       const age = Math.floor(
         (Date.now() - this.dateOfBirth.getTime()) /
@@ -205,10 +171,21 @@ customerSchema.pre("save", async function (next) {
 });
 
 /**
- * ✅ Indexes for fast querying
+ * ✅ INDEX FIX FOR GUEST CHECKOUT
+ * Unique firebaseUID ONLY if it exists
+ */
+customerSchema.index(
+  { firebaseUID: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { firebaseUID: { $type: "string" } },
+  }
+);
+
+/**
+ * ✅ Other Indexes
  */
 customerSchema.index({ customerId: 1 });
-customerSchema.index({ firebaseUID: 1 });
 customerSchema.index({ email: 1 });
 customerSchema.index({ ageGroup: 1 });
 customerSchema.index({ country: 1 });

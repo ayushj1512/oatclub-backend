@@ -1,15 +1,17 @@
 import Customer from "./Customer.js";
 
 /**
- * Create or update customer (OAuth login + Guest Checkout)
+ * ---------------------------------------------------------
+ * ✅ Create or update customer (OAuth login + Guest Checkout)
  * @route POST /api/customers
  * @access Public
+ * ---------------------------------------------------------
  */
 export const createCustomer = async (req, res) => {
   try {
     const {
       firebaseUID = null,
-      email,
+      email = "",
       name = "",
       phone = "",
       profileImage = "",
@@ -20,14 +22,22 @@ export const createCustomer = async (req, res) => {
     const safeEmail = email ? String(email).trim().toLowerCase() : "";
     const safePhone = phone ? String(phone).trim() : "";
 
+    // ✅ referral code fallback
+    const finalReferralCode =
+      referralCode ||
+      Math.random().toString(36).substring(2, 10).toUpperCase();
+
     /**
+     * ---------------------------------------------------------
      * ✅ CASE 1: Firebase Login (OAuth)
+     * ---------------------------------------------------------
      */
     if (firebaseUID) {
+      // ✅ find by firebaseUID
       let customer = await Customer.findOne({ firebaseUID });
 
       if (customer) {
-        // Update only login/profile fields
+        // ✅ update login/profile fields
         if (safeEmail) customer.email = safeEmail;
         if (name) customer.name = name;
         if (safePhone) customer.phone = safePhone;
@@ -41,11 +51,29 @@ export const createCustomer = async (req, res) => {
         });
       }
 
-      // Create new user with firebaseUID
-      const finalReferralCode =
-        referralCode ||
-        Math.random().toString(36).substring(2, 10).toUpperCase();
+      /**
+       * ✅ Edge Case: If firebaseUID not found but email already exists
+       * link that customer to firebaseUID
+       */
+      if (safeEmail) {
+        const existingByEmail = await Customer.findOne({ email: safeEmail });
 
+        if (existingByEmail) {
+          existingByEmail.firebaseUID = firebaseUID;
+          if (name) existingByEmail.name = name;
+          if (safePhone) existingByEmail.phone = safePhone;
+          if (profileImage) existingByEmail.profileImage = profileImage;
+
+          await existingByEmail.save();
+
+          return res.status(200).json({
+            message: "Customer linked to firebase login",
+            customer: existingByEmail,
+          });
+        }
+      }
+
+      // ✅ create fresh customer for firebase login
       customer = await Customer.create({
         firebaseUID,
         email: safeEmail,
@@ -72,21 +100,32 @@ export const createCustomer = async (req, res) => {
     }
 
     /**
+     * ---------------------------------------------------------
      * ✅ CASE 2: Guest Checkout (no firebaseUID)
-     * We still create a customer so we have customerId for orders.
+     * ---------------------------------------------------------
+     * ✅ Find OR Create customer by email/phone safely
      */
-    let existingCustomer = null;
 
-    // ✅ Optional: If guest provides email/phone, try to find existing customer
-    if (safeEmail) {
-      existingCustomer = await Customer.findOne({ email: safeEmail });
-    } else if (safePhone) {
-      existingCustomer = await Customer.findOne({ phone: safePhone });
+    // ✅ must have at least email OR phone
+    if (!safeEmail && !safePhone) {
+      return res.status(400).json({
+        message: "Email or phone is required for guest checkout",
+      });
     }
 
+    // ✅ Find by email OR phone (both checked)
+    let existingCustomer = await Customer.findOne({
+      $or: [
+        ...(safeEmail ? [{ email: safeEmail }] : []),
+        ...(safePhone ? [{ phone: safePhone }] : []),
+      ],
+    });
+
     if (existingCustomer) {
-      // ✅ Update minimal fields if new guest info provided
+      // ✅ fill missing fields silently (NO overwrite)
       if (name && !existingCustomer.name) existingCustomer.name = name;
+      if (safeEmail && !existingCustomer.email)
+        existingCustomer.email = safeEmail;
       if (safePhone && !existingCustomer.phone)
         existingCustomer.phone = safePhone;
       if (profileImage && !existingCustomer.profileImage)
@@ -100,44 +139,55 @@ export const createCustomer = async (req, res) => {
       });
     }
 
-    // ✅ Create new guest customer
-    const finalReferralCode =
-      referralCode ||
-      Math.random().toString(36).substring(2, 10).toUpperCase();
+    /**
+     * ✅ Create new guest customer
+     * ✅ Handle race condition duplicate key safely
+     */
+    try {
+      const guestCustomer = await Customer.create({
+        firebaseUID: null,
+        email: safeEmail,
+        name,
+        phone: safePhone,
+        profileImage,
+        referralCode: finalReferralCode,
+        referredBy: referredBy || null,
 
-    const guestCustomer = await Customer.create({
-      firebaseUID: null,
-      email: safeEmail,
-      name,
-      phone: safePhone,
-      profileImage,
-      referralCode: finalReferralCode,
-      referredBy: referredBy || null,
+        cart: {
+          activeCartId: null,
+          activeCartType: "cart",
+          cartCount: 0,
+          abandonedCartCount: 0,
+          lastCartActivityAt: null,
+          lastAbandonedCartId: null,
+        },
+      });
 
-      cart: {
-        activeCartId: null,
-        activeCartType: "cart",
-        cartCount: 0,
-        abandonedCartCount: 0,
-        lastCartActivityAt: null,
-        lastAbandonedCartId: null,
-      },
-    });
+      return res.status(201).json({
+        message: "Guest customer created",
+        customer: guestCustomer,
+      });
+    } catch (err) {
+      // ✅ race condition: duplicate key created by another request
+      if (err?.code === 11000) {
+        const fallback = await Customer.findOne({
+          $or: [
+            ...(safeEmail ? [{ email: safeEmail }] : []),
+            ...(safePhone ? [{ phone: safePhone }] : []),
+          ],
+        });
 
-    return res.status(201).json({
-      message: "Guest customer created",
-      customer: guestCustomer,
-    });
+        if (fallback) {
+          return res.status(200).json({
+            message: "Guest customer already exists",
+            customer: fallback,
+          });
+        }
+      }
+      throw err;
+    }
   } catch (error) {
     console.error("Create Customer Error:", error);
-
-    // handle duplicate safely
-    if (error?.code === 11000) {
-      const field = Object.keys(error.keyValue || {})[0] || "field";
-      return res.status(409).json({
-        message: `${field} already exists`,
-      });
-    }
 
     return res.status(500).json({
       message: "Server error",
@@ -147,9 +197,10 @@ export const createCustomer = async (req, res) => {
 };
 
 /**
- * ✅ NEW: Get customer by customerId (0001, 0002...)
+ * ---------------------------------------------------------
+ * ✅ Get customer by customerId
  * @route GET /api/customers/by-customer-id/:customerId
- * @access Admin
+ * ---------------------------------------------------------
  */
 export const getCustomerByCustomerId = async (req, res) => {
   try {
@@ -169,9 +220,10 @@ export const getCustomerByCustomerId = async (req, res) => {
 };
 
 /**
- * ✅ NEW: Get customer by firebaseUID
+ * ---------------------------------------------------------
+ * ✅ Get customer by firebaseUID
  * @route GET /api/customers/by-firebase/:firebaseUID
- * @access Admin
+ * ---------------------------------------------------------
  */
 export const getCustomerByFirebaseUID = async (req, res) => {
   try {
@@ -191,9 +243,10 @@ export const getCustomerByFirebaseUID = async (req, res) => {
 };
 
 /**
- * Get all customers with optional filters + search
+ * ---------------------------------------------------------
+ * ✅ Get all customers with filters + search
  * @route GET /api/customers
- * @access Admin
+ * ---------------------------------------------------------
  */
 export const getAllCustomers = async (req, res) => {
   try {
@@ -216,7 +269,7 @@ export const getAllCustomers = async (req, res) => {
           { email: new RegExp(search, "i") },
           { phone: new RegExp(search, "i") },
           { customerId: new RegExp(search, "i") },
-          { firebaseUID: new RegExp(search, "i") }, // ✅ now searchable
+          { firebaseUID: new RegExp(search, "i") },
         ],
       }),
     };
@@ -246,9 +299,10 @@ export const getAllCustomers = async (req, res) => {
 };
 
 /**
- * Get a single customer with populated refs
+ * ---------------------------------------------------------
+ * ✅ Get single customer (populated)
  * @route GET /api/customers/:id
- * @access Admin
+ * ---------------------------------------------------------
  */
 export const getCustomerById = async (req, res) => {
   try {
@@ -267,15 +321,15 @@ export const getCustomerById = async (req, res) => {
 };
 
 /**
- * Update customer profile/preferences
+ * ---------------------------------------------------------
+ * ✅ Update customer profile/preferences
  * @route PUT /api/customers/:id
- * @access Private
+ * ---------------------------------------------------------
  */
 export const updateCustomer = async (req, res) => {
   try {
     const payload = { ...req.body };
 
-    // ❌ protect system-controlled fields
     delete payload.firebaseUID;
     delete payload.customerId;
     delete payload.cart;
@@ -298,9 +352,10 @@ export const updateCustomer = async (req, res) => {
 };
 
 /**
- * Update analytics (orders, spend, wishlist, credits)
+ * ---------------------------------------------------------
+ * ✅ Update analytics fields
  * @route PATCH /api/customers/:id/analytics
- * @access System/Admin
+ * ---------------------------------------------------------
  */
 export const updateCustomerAnalytics = async (req, res) => {
   try {
@@ -318,14 +373,12 @@ export const updateCustomerAnalytics = async (req, res) => {
       "creditsEarned",
     ];
 
-    // update only whitelisted analytics fields
     for (const key of allowed) {
       if (req.body[key] !== undefined) {
         customer.analytics[key] = Number(req.body[key]) || 0;
       }
     }
 
-    // auto-calc AOV
     const { totalOrders, totalSpend } = customer.analytics;
     customer.analytics.avgOrderValue =
       totalOrders > 0 ? totalSpend / totalOrders : 0;
@@ -343,9 +396,10 @@ export const updateCustomerAnalytics = async (req, res) => {
 };
 
 /**
- * Delete a customer
+ * ---------------------------------------------------------
+ * ✅ Delete customer
  * @route DELETE /api/customers/:id
- * @access Admin
+ * ---------------------------------------------------------
  */
 export const deleteCustomer = async (req, res) => {
   try {

@@ -1,23 +1,26 @@
 import mongoose from "mongoose";
-import User from "./User.js"; // ✅ adjust path if needed
+import User from "./User.js";
 
 const isObjectId = (value) => mongoose.Types.ObjectId.isValid(String(value));
-const pickIdFilter = (id) => (isObjectId(id) ? { _id: id } : { userId: String(id) });
+
+const pickIdFilter = (id) => {
+  const str = String(id || "").trim();
+
+  // ✅ if looks like sequential userId, always treat as userId
+  if (str.startsWith("U-")) return { userId: str };
+
+  return isObjectId(str) ? { _id: str } : { userId: str };
+};
 
 const sanitizeString = (v) => String(v ?? "").trim();
-
-/**
- * Normalize username: trim + lowercase
- */
 const sanitizeUsername = (v) => String(v ?? "").trim().toLowerCase();
 
 const MIN_PASS = 4;
+const ALLOWED_ROLES = ["user", "admin", "superadmin"];
 
 export const createUser = async (req, res) => {
   try {
     const payload = req.body || {};
-
-    /* ---------------- VALIDATION ---------------- */
 
     const username = sanitizeUsername(payload.username);
     if (!username) {
@@ -31,23 +34,23 @@ export const createUser = async (req, res) => {
         .json({ message: `password is required (min ${MIN_PASS} chars)` });
     }
 
-    /* ---------------- CREATE USER ---------------- */
+    // ✅ role safe
+    const role = ALLOWED_ROLES.includes(String(payload.role))
+      ? String(payload.role)
+      : "user";
 
     const created = await User.create({
       username,
-      password: pass, // 🔐 hashed by pre('save')
+      password: pass,
 
-      role: payload.role ? String(payload.role) : "user",
+      role,
       isActive: payload.isActive !== undefined ? !!payload.isActive : true,
       notes: payload.notes !== undefined ? sanitizeString(payload.notes) : "",
 
-      /* 🛒 CART ANALYTICS (INITIAL STATE) */
-      activeCartId: null,          // no cart yet
-      lastCartActivityAt: null,    // no activity yet
-      cartCount: 0,                // first cart will increment
+      activeCartId: null,
+      lastCartActivityAt: null,
+      cartCount: 0,
     });
-
-    /* ---------------- RESPONSE ---------------- */
 
     return res.status(201).json({
       message: "User created",
@@ -79,10 +82,12 @@ export const listUsers = async (req, res) => {
 
     const filter = {};
 
-    if (role) filter.role = String(role);
+    if (role && ALLOWED_ROLES.includes(String(role))) {
+      filter.role = String(role);
+    }
+
     if (isActive !== "") filter.isActive = String(isActive) === "true";
 
-    // ✅ search userId + username + notes
     if (q) {
       const qq = String(q);
       filter.$or = [
@@ -112,7 +117,6 @@ export const listUsers = async (req, res) => {
   }
 };
 
-// Get by Mongo _id OR by userId like "U-000123"
 export const getUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -127,29 +131,21 @@ export const getUser = async (req, res) => {
   }
 };
 
-// Update by Mongo _id OR by userId
-
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
     const payload = req.body || {};
 
-    /* ❌ NEVER allow system / analytics fields */
     delete payload.userId;
     delete payload.activeCartId;
     delete payload.lastCartActivityAt;
     delete payload.cartCount;
 
-    /* ---------------- FETCH USER ---------------- */
-    // select +password so hashing works if changed
     const user = await User.findOne(pickIdFilter(id)).select("+password");
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    /* ---------------- SAFE UPDATES ---------------- */
-
-    // username (optional)
     if (payload.username !== undefined) {
       const nextUsername = sanitizeUsername(payload.username);
       if (!nextUsername) {
@@ -158,7 +154,6 @@ export const updateUser = async (req, res) => {
       user.username = nextUsername;
     }
 
-    // password (optional)
     if (payload.password !== undefined) {
       const nextPass = String(payload.password || "").trim();
       if (nextPass.length < MIN_PASS) {
@@ -166,11 +161,15 @@ export const updateUser = async (req, res) => {
           message: `password must be at least ${MIN_PASS} characters`,
         });
       }
-      user.password = nextPass; // 🔐 hashed in pre('save')
+      user.password = nextPass;
     }
 
     if (payload.role !== undefined) {
-      user.role = String(payload.role || "user");
+      const role = String(payload.role);
+      if (!ALLOWED_ROLES.includes(role)) {
+        return res.status(400).json({ message: "Invalid role" });
+      }
+      user.role = role;
     }
 
     if (payload.isActive !== undefined) {
@@ -181,14 +180,10 @@ export const updateUser = async (req, res) => {
       user.notes = sanitizeString(payload.notes);
     }
 
-    /* ---------------- SAVE ---------------- */
     await user.save();
 
-    /* ---------------- SAFE RESPONSE ---------------- */
     const safeUser = await User.findById(user._id)
-      .select(
-        "userId username role isActive notes cartCount activeCartId lastCartActivityAt createdAt"
-      )
+      .select("userId username role isActive notes cartCount activeCartId lastCartActivityAt createdAt")
       .lean();
 
     return res.json({ message: "User updated", user: safeUser });
@@ -204,8 +199,6 @@ export const updateUser = async (req, res) => {
   }
 };
 
-
-// Delete by Mongo _id OR by userId
 export const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -220,7 +213,6 @@ export const deleteUser = async (req, res) => {
   }
 };
 
-// Quick active toggle
 export const toggleUserActive = async (req, res) => {
   try {
     const { id } = req.params;
@@ -238,11 +230,6 @@ export const toggleUserActive = async (req, res) => {
   }
 };
 
-/**
- * ✅ Dedicated endpoint:
- * PATCH /superadmin/users/:id/password
- * Body: { password: "newpass" }
- */
 export const updateUserPassword = async (req, res) => {
   try {
     const { id } = req.params;
@@ -250,13 +237,15 @@ export const updateUserPassword = async (req, res) => {
 
     const nextPass = String(password || "").trim();
     if (nextPass.length < MIN_PASS) {
-      return res.status(400).json({ message: `password is required (min ${MIN_PASS} chars)` });
+      return res.status(400).json({
+        message: `password is required (min ${MIN_PASS} chars)`,
+      });
     }
 
     const user = await User.findOne(pickIdFilter(id)).select("+password");
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    user.password = nextPass; // hashed in pre('save')
+    user.password = nextPass;
     await user.save();
 
     return res.json({ message: "Password updated" });
