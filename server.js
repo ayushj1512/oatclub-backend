@@ -12,7 +12,7 @@ import morgan from "morgan";
 // ROUTES (MAIN)
 // --------------------------------------------------
 import pingRoutes from "./routes/pingRouter.js";
-
+import newsletterRouter from "./Newsletter/newsletterRouter.js";
 import addressRoutes from "./Address/addressRouter.js";
 import blogRoutes from "./Blogs/blogRouter.js";
 import categoryRoutes from "./Category/categoryRouter.js";
@@ -183,6 +183,7 @@ app.use("/api/admin-users", adminUserRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/homepage-settings", homepageSettingsRoutes);
+app.use("/api/newsletters", newsletterRouter);
 
 // Media
 app.use("/api/media", mediaRoutes);
