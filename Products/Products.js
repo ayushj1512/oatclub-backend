@@ -208,11 +208,13 @@ productSchema.pre("validate", async function (next) {
   try {
     if (!this.productCode) {
       const counter = await Counter.findOneAndUpdate(
-        { id: "product" },
-        { $inc: { sequence: 1 } },
-        { new: true, upsert: true }
-      );
-      this.productCode = String(counter.sequence).padStart(5, "0");
+  { name: "product" },            // ✅ matches your schema
+  { $inc: { seq: 1 } },           // ✅ matches your schema
+  { new: true, upsert: true, setDefaultsOnInsert: true }
+);
+
+this.productCode = String(counter.seq).padStart(5, "0"); // ✅ matches schema
+
     }
     next();
   } catch (e) {

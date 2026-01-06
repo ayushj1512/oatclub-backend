@@ -12,6 +12,23 @@ export async function bookWithShiprocket(req, res) {
     const orderId = req.params.id;
 
     /* ------------------------------------------------
+       0️⃣ ENV CHECKS (prevent silent failures)
+    ------------------------------------------------ */
+    if (!process.env.SHIPROCKET_PICKUP_PINCODE) {
+      return res.status(500).json({
+        success: false,
+        message: "SHIPROCKET_PICKUP_PINCODE not configured in env",
+      });
+    }
+
+    if (!process.env.SHIPROCKET_PICKUP_LOCATION) {
+      return res.status(500).json({
+        success: false,
+        message: "SHIPROCKET_PICKUP_LOCATION not configured in env",
+      });
+    }
+
+    /* ------------------------------------------------
        1️⃣ FETCH ORDER
     ------------------------------------------------ */
     const order = await Order.findById(orderId);
@@ -25,8 +42,6 @@ export async function bookWithShiprocket(req, res) {
     /* ------------------------------------------------
        2️⃣ VALIDATIONS
     ------------------------------------------------ */
-
-    // Allow shipping only once
     if (order.shipment?.shiprocket?.awb) {
       return res.status(400).json({
         success: false,
@@ -34,7 +49,6 @@ export async function bookWithShiprocket(req, res) {
       });
     }
 
-    // Status check
     if (order.fulfillmentStatus !== "processing") {
       return res.status(400).json({
         success: false,
@@ -42,11 +56,7 @@ export async function bookWithShiprocket(req, res) {
       });
     }
 
-    // Payment guard
-    if (
-      order.paymentMethod === "razorpay" &&
-      order.paymentStatus !== "paid"
-    ) {
+    if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
       return res.status(400).json({
         success: false,
         message: "Prepaid order must be paid before shipping",
@@ -60,6 +70,13 @@ export async function bookWithShiprocket(req, res) {
       });
     }
 
+    if (!Array.isArray(order.items) || order.items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Order has no items to ship",
+      });
+    }
+
     /* ------------------------------------------------
        3️⃣ COMPUTE TOTAL WEIGHT
     ------------------------------------------------ */
@@ -69,18 +86,36 @@ export async function bookWithShiprocket(req, res) {
           Number(it.variant?.weight) ||
           Number(it.productSnapshot?.weight) ||
           0.5;
-        return sum + itemWeight * Number(it.quantity || 1);
+
+        const qty = Number(it.quantity || 1);
+        return sum + itemWeight * qty;
       }, 0) || 0.5;
 
     /* ------------------------------------------------
        4️⃣ SERVICEABILITY CHECK
     ------------------------------------------------ */
-    const couriers = await checkServiceability({
-      pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE,
-      deliveryPincode: order.shippingAddressSnapshot.pincode,
-      weight: totalWeight,
-      cod: order.paymentMethod === "cod",
+    const deliveryPincode = String(order.shippingAddressSnapshot.pincode).trim();
+    const pickupPincode = String(process.env.SHIPROCKET_PICKUP_PINCODE).trim();
+    const isCod = order.paymentMethod === "cod";
+
+    console.log("🚚 Shiprocket Serviceability Params:", {
+      pickupPincode,
+      deliveryPincode,
+      totalWeight,
+      isCod,
     });
+
+    const couriers = await checkServiceability({
+      pickupPincode,
+      deliveryPincode,
+      weight: totalWeight,
+      cod: isCod,
+    });
+
+    console.log(
+      "✅ Available Couriers Count:",
+      Array.isArray(couriers) ? couriers.length : 0
+    );
 
     if (!Array.isArray(couriers) || couriers.length === 0) {
       return res.status(400).json({
@@ -93,14 +128,25 @@ export async function bookWithShiprocket(req, res) {
        5️⃣ CREATE SHIPMENT
     ------------------------------------------------ */
     const payload = buildShiprocketPayload(order);
+
+    // 🔍 Debug payload (VERY IMPORTANT)
+    console.log("📦 Shiprocket Forward Payload:", JSON.stringify(payload, null, 2));
+
     const shipment = await createShipment(payload);
+
+    // 🔍 Debug response (VERY IMPORTANT)
+    console.log("✅ Shiprocket Forward Response:", JSON.stringify(shipment, null, 2));
 
     const awb = shipment?.awb_code || "";
     const courierName = shipment?.courier_name || "";
     const trackingUrl = shipment?.tracking_url || "";
 
     if (!awb) {
-      throw new Error("Shiprocket did not return AWB");
+      throw new Error(
+        shipment?.message ||
+          shipment?.error ||
+          "Shiprocket did not return AWB (courier assignment failed)"
+      );
     }
 
     /* ------------------------------------------------
@@ -114,6 +160,8 @@ export async function bookWithShiprocket(req, res) {
         awb,
         courierName,
         trackingUrl,
+        status: "shipped",
+        lastUpdatedAt: new Date(),
       },
 
       status: "shipped",
@@ -122,7 +170,6 @@ export async function bookWithShiprocket(req, res) {
 
     order.fulfillmentStatus = "shipped";
 
-    // Preserve existing tracking fields if any
     order.trackingDetails = {
       ...(order.trackingDetails || {}),
       trackingId: awb,
@@ -146,78 +193,115 @@ export async function bookWithShiprocket(req, res) {
       },
     });
   } catch (err) {
-    console.error(
-      "❌ Shiprocket booking failed:",
-      err?.response?.data || err
-    );
+    const shiprocketError = err?.response?.data || null;
+
+    console.error("❌ Shiprocket booking failed:", shiprocketError || err.message);
 
     return res.status(500).json({
       success: false,
       message: "Shiprocket booking failed",
-      error: err?.response?.data || err.message,
+      error: shiprocketError || err.message,
     });
   }
 }
 
+/**
+ * POST /api/shiprocket/reverse/:orderId/:rmaNumber
+ * Schedule reverse pickup
+ */
 export async function createReversePickup(req, res) {
   try {
     const { orderId, rmaNumber } = req.params;
 
+    /* ------------------------------------------------
+       1️⃣ FETCH ORDER
+    ------------------------------------------------ */
     const order = await Order.findById(orderId);
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
     }
 
-    const rma = order.rmas.find(
+    const rma = order.rmas?.find(
       (r) => String(r.rmaNumber) === String(rmaNumber)
     );
 
     if (!rma) {
-      return res.status(404).json({ message: "RMA not found" });
+      return res.status(404).json({
+        success: false,
+        message: "RMA not found",
+      });
     }
 
-    // Guards
+    /* ------------------------------------------------
+       2️⃣ GUARDS
+    ------------------------------------------------ */
     if (rma.status !== "approved") {
       return res.status(400).json({
+        success: false,
         message: "RMA must be approved before pickup",
       });
     }
 
     if (rma.reverseShipment?.awb) {
       return res.status(400).json({
+        success: false,
         message: "Reverse pickup already created",
       });
     }
 
     /* ------------------------------------------------
-       CREATE REVERSE SHIPMENT
+       3️⃣ CREATE REVERSE SHIPMENT
     ------------------------------------------------ */
     const payload = buildReverseShiprocketPayload({ order, rma });
+
+    console.log("📦 Shiprocket Reverse Payload:", JSON.stringify(payload, null, 2));
+
     const shipment = await createShipment(payload);
+
+    console.log("✅ Shiprocket Reverse Response:", JSON.stringify(shipment, null, 2));
+
+    const reverseAwb = shipment?.awb_code || "";
+
+    if (!reverseAwb) {
+      throw new Error(
+        shipment?.message ||
+          shipment?.error ||
+          "Shiprocket did not return reverse AWB (reverse booking failed)"
+      );
+    }
 
     rma.reverseShipment = {
       provider: "shiprocket",
       orderId: shipment.order_id,
       shipmentId: shipment.shipment_id,
-      awb: shipment.awb_code,
+      awb: reverseAwb,
       courierName: shipment.courier_name,
       trackingUrl: shipment.tracking_url,
       pickupScheduledAt: new Date(),
+      status: "pickup_scheduled",
+      lastUpdatedAt: new Date(),
     };
 
     rma.status = "pickup_scheduled";
     await order.save();
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       message: "Reverse pickup scheduled",
       reverseShipment: rma.reverseShipment,
     });
   } catch (error) {
-    console.error("❌ Reverse Pickup Error:", error);
+    const shiprocketError = error?.response?.data || null;
+
+    console.error("❌ Reverse Pickup Error:", shiprocketError || error.message);
+
     return res.status(500).json({
+      success: false,
       message: "Reverse pickup failed",
-      error: error.message,
+      error: shiprocketError || error.message,
     });
   }
 }

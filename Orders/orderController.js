@@ -5,6 +5,8 @@ import Coupon from "../Coupon/Coupon.js";
 import { buildAddressSnapshot } from "./order.address.mapper.js";
 import { cancelShiprocketShipment } from "../shiprocket/shiprocket.cancel.js";
 import Address from "../Address/Address.js"; // <-- correct path
+import { checkServiceability, createShipment, assignAwb } from "../shiprocket/index.js";
+import { buildShiprocketPayload } from "../shiprocket/shiprocket.payload.js";
 
 /* ============================================================
    RMA POLICY (hardcoded backend)
@@ -155,7 +157,7 @@ const computeRemainingQtyByIndex = (order) => {
 
 /* ============================================================
    CREATE ORDER
-   Expect each item: { productId, quantity, variantId? }
+  Expect each item: { productId, quantity, variantId? }
 ============================================================ */
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
@@ -166,8 +168,8 @@ export const createOrder = async (req, res) => {
       shippingAddressId,
       billingAddressId,
       items,
-      discount = 0, // fallback
-      coupon, // ✅ now object snapshot
+      discount = 0,
+      coupon,
       shippingFee = 0,
       tax = 0,
       paymentMethod = "cod",
@@ -176,32 +178,25 @@ export const createOrder = async (req, res) => {
       currency = "INR",
     } = req.body;
 
-    /* ------------------------------------------------
-       🔒 HARD VALIDATIONS
-    ------------------------------------------------ */
-    if (!mongoose.Types.ObjectId.isValid(customerId)) {
+    // 🔒 HARD VALIDATIONS
+    if (!mongoose.Types.ObjectId.isValid(customerId))
       return res.status(400).json({ message: "Invalid customerId" });
-    }
 
-    if (!mongoose.Types.ObjectId.isValid(shippingAddressId)) {
+    if (!mongoose.Types.ObjectId.isValid(shippingAddressId))
       return res.status(400).json({ message: "Invalid shippingAddressId" });
-    }
 
-    if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId)) {
+    if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId))
       return res.status(400).json({ message: "Invalid billingAddressId" });
-    }
 
-    if (!Array.isArray(items) || items.length === 0) {
+    if (!Array.isArray(items) || items.length === 0)
       return res.status(400).json({ message: "Order items missing" });
-    }
 
-    if (!["cod", "razorpay"].includes(paymentMethod)) {
+    if (!["cod", "razorpay"].includes(paymentMethod))
       return res.status(400).json({
         message: "Invalid paymentMethod. Allowed: cod | razorpay",
       });
-    }
 
-    // ✅ sanitize coupon snapshot (no ObjectId casting issues ever)
+    // ✅ Coupon snapshot
     let couponSnapshot = null;
     let computedDiscount = Number(discount || 0);
 
@@ -211,21 +206,13 @@ export const createOrder = async (req, res) => {
       const finalTotal = Number(coupon.finalTotal || 0);
 
       if (code && couponDiscount > 0) {
-    couponSnapshot = {
-      code,
-      discount: couponDiscount,
-      finalTotal,
-    };
-
-    // ✅ override discount with coupon discount
-    computedDiscount = couponDiscount;
-  }
+        couponSnapshot = { code, discount: couponDiscount, finalTotal };
+        computedDiscount = couponDiscount;
+      }
     }
 
+    // ✅ Transaction: Create order + stock update
     await session.withTransaction(async () => {
-      /* ------------------------------------------------
-         0️⃣ ADDRESS SNAPSHOT (SERVER-SIDE ONLY)
-      ------------------------------------------------ */
       const shippingAddress = await Address.findById(shippingAddressId).session(session);
       if (!shippingAddress) throw new Error("Shipping address not found");
 
@@ -236,23 +223,13 @@ export const createOrder = async (req, res) => {
       const shippingAddressSnapshot = buildAddressSnapshot(shippingAddress);
       const billingAddressSnapshot = buildAddressSnapshot(billingAddress);
 
-      /* ------------------------------------------------
-         1️⃣ FETCH PRODUCTS
-      ------------------------------------------------ */
-const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boolean))];
-
+      const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boolean))];
       const invalidProductId = productIds.find((id) => !isObjectId(id));
       if (invalidProductId) throw new Error(`Invalid productId: ${invalidProductId}`);
 
-      const products = await Product.find({ _id: { $in: productIds } })
-        .session(session)
-        .lean();
-
+      const products = await Product.find({ _id: { $in: productIds } }).session(session).lean();
       const productMap = new Map(products.map((p) => [String(p._id), p]));
 
-      /* ------------------------------------------------
-         2️⃣ NORMALIZE ITEMS + SNAPSHOTS
-      ------------------------------------------------ */
       const normalizedItems = [];
       let computedSubtotal = 0;
       let totalQty = 0;
@@ -292,7 +269,6 @@ const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boo
 
         normalizedItems.push({
           productId: product._id,
-
           productSnapshot: {
             productCode: product.productCode || "",
             title: product.title,
@@ -307,7 +283,6 @@ const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boo
             weight: Number(product.weight ?? 0),
             currency: product.currency || currency,
           },
-
           variant: {
             variantId: variant?._id || null,
             sku: variant?.sku || "",
@@ -315,7 +290,6 @@ const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boo
             image: variant?.image || product.thumbnail || "",
             weight: Number(variant?.weight ?? 0),
           },
-
           quantity: qty,
           price: unitPrice,
           compareAtPrice: variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
@@ -323,19 +297,13 @@ const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boo
         });
       }
 
-      /* ------------------------------------------------
-         3️⃣ STOCK REDUCTION
-      ------------------------------------------------ */
+      // ✅ Stock reduction
       for (const it of normalizedItems) {
         const variantId = it?.variant?.variantId;
 
         const result = variantId
           ? await Product.updateOne(
-              {
-                _id: it.productId,
-                "variants._id": variantId,
-                "variants.stock": { $gte: it.quantity },
-              },
+              { _id: it.productId, "variants._id": variantId, "variants.stock": { $gte: it.quantity } },
               { $inc: { "variants.$.stock": -it.quantity } }
             ).session(session)
           : await Product.updateOne(
@@ -346,12 +314,8 @@ const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boo
         if (!result.modifiedCount) throw new Error("Stock update failed");
       }
 
-      /* ------------------------------------------------
-         4️⃣ TOTALS + ANALYTICS
-      ------------------------------------------------ */
       const subtotal = computedSubtotal;
       const totalAmount = subtotal + Number(shippingFee) + Number(tax);
-
       const finalPayable = Math.max(0, totalAmount - Number(computedDiscount || 0));
 
       const analytics = {
@@ -363,9 +327,6 @@ const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boo
         tagsUsed: uniqStrings(normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])),
       };
 
-      /* ------------------------------------------------
-         5️⃣ CREATE ORDER ✅ FIXED COUPON SNAPSHOT
-      ------------------------------------------------ */
       const [order] = await Order.create(
         [
           {
@@ -373,19 +334,17 @@ const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boo
             shippingAddressSnapshot,
             billingAddressSnapshot,
             items: normalizedItems,
-
             subtotal,
             discount: computedDiscount,
-            coupon: couponSnapshot, // ✅ now object
+            coupon: couponSnapshot,
             shippingFee,
             tax,
             totalAmount,
             finalPayable,
-
             currency,
             paymentMethod,
             paymentStatus: "pending",
-
+            fulfillmentStatus: "processing",
             source,
             isGiftOrder,
             analytics,
@@ -398,10 +357,19 @@ const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boo
       req.__createdOrder = order;
     });
 
-    return res.status(201).json({
-      message: "Order created successfully",
-      order: req.__createdOrder,
-    });
+    // ✅ AUTO SHIPROCKET BOOKING (OUTSIDE TRANSACTION)
+    try {
+      const freshOrder = await Order.findById(req.__createdOrder._id);
+      await autoBookShiprocketForOrder(freshOrder);
+    } catch (e) {
+      console.error("❌ Auto booking wrapper failed:", e?.response?.data || e.message);
+    }
+
+    const finalOrder = await Order.findById(req.__createdOrder._id);
+return res.status(201).json({
+  message: "Order created successfully",
+  order: finalOrder,
+});
   } catch (error) {
     console.error("❌ Create Order Error:", error);
     return res.status(400).json({
@@ -411,6 +379,8 @@ const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boo
     session.endSession();
   }
 };
+
+
 
 
 /* ============================================================
@@ -750,3 +720,238 @@ export const cancelOrder = async (req, res) => {
     session.endSession();
   }
 };
+
+// SHIPROCKET AUTOBOOK
+async function autoBookShiprocketForOrder(order) {
+  const TAG = "🚀[AUTO-SHIPROCKET]";
+
+  try {
+    console.log(`${TAG} START`, {
+      orderNumber: order?.orderNumber,
+      orderId: order?._id?.toString(),
+      paymentMethod: order?.paymentMethod,
+      paymentStatus: order?.paymentStatus,
+    });
+
+    // ------------------------------------------------
+    // 0) Guards
+    // ------------------------------------------------
+    if (!order?.shippingAddressSnapshot?.pincode) {
+      console.log(`${TAG} ❌ SKIP: shipping pincode missing`);
+      return;
+    }
+
+    if (!process.env.SHIPROCKET_PICKUP_PINCODE) {
+      console.log(`${TAG} ❌ SKIP: SHIPROCKET_PICKUP_PINCODE missing in env`);
+      return;
+    }
+
+    if (order.shipment?.shiprocket?.awb) {
+      console.log(`${TAG} ✅ SKIP: AWB already exists`, {
+        awb: order.shipment.shiprocket.awb,
+      });
+      return;
+    }
+
+    if (order.shipment?.shiprocket?.shipmentId) {
+      console.log(`${TAG} ℹ️ ShipmentId already exists on order`, {
+        shipmentId: order.shipment.shiprocket.shipmentId,
+      });
+    }
+
+    // Payment guard: prepaid only after paid
+    if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
+      console.log(`${TAG} ⏳ SKIP: prepaid not paid yet`);
+      return;
+    }
+
+    // ------------------------------------------------
+    // 1) Calculate Weight
+    // ------------------------------------------------
+    const totalWeight =
+      order.items.reduce((sum, it) => {
+        const w =
+          Number(it.variant?.weight) ||
+          Number(it.productSnapshot?.weight) ||
+          0.5;
+        return sum + w * Number(it.quantity || 1);
+      }, 0) || 0.5;
+
+    console.log(`${TAG} 📦 Weight computed`, {
+      totalWeight,
+      itemCount: order?.items?.length || 0,
+      pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE,
+      deliveryPincode: order.shippingAddressSnapshot.pincode,
+      isCOD: order.paymentMethod === "cod",
+    });
+
+    // ------------------------------------------------
+    // 2) Serviceability
+    // ------------------------------------------------
+    console.log(`${TAG} 🔎 Checking serviceability...`);
+
+    const couriers = await checkServiceability({
+      pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE,
+      deliveryPincode: order.shippingAddressSnapshot.pincode,
+      weight: totalWeight,
+      cod: order.paymentMethod === "cod" ? 1 : 0,
+    });
+
+    console.log(`${TAG} ✅ Serviceability result`, {
+      courierCount: Array.isArray(couriers) ? couriers.length : 0,
+      sample: Array.isArray(couriers)
+        ? couriers.slice(0, 3).map((c) => ({
+            courier_name: c?.courier_name,
+            courier_company_id: c?.courier_company_id,
+            rate: c?.rate,
+            etd: c?.etd,
+          }))
+        : "INVALID_RESPONSE",
+    });
+
+    if (!Array.isArray(couriers) || couriers.length === 0) {
+      console.log(`${TAG} ⚠️ SKIP: No courier available`);
+      return;
+    }
+
+    // ------------------------------------------------
+    // 3) Create Shipment (Adhoc)
+    // ------------------------------------------------
+    const payload = buildShiprocketPayload(order);
+
+    console.log(`${TAG} 📦 Create shipment payload`, {
+      order_id: payload?.order_id,
+      pickup_location: payload?.pickup_location,
+      payment_method: payload?.payment_method,
+      weight: payload?.weight,
+      delivery_pincode: payload?.billing_pincode,
+    });
+
+    const shipment = await createShipment(payload);
+
+    console.log(`${TAG} ✅ Create shipment response`, {
+      shiprocket_order_id: shipment?.order_id,
+      shipment_id: shipment?.shipment_id,
+      status: shipment?.status,
+      awb_code: shipment?.awb_code,
+      courier_name: shipment?.courier_name,
+    });
+
+    const shipmentId = shipment?.shipment_id ? String(shipment.shipment_id) : "";
+    const shiprocketOrderId = shipment?.order_id ? String(shipment.order_id) : "";
+    let awb = (shipment?.awb_code || "").trim();
+
+    if (!shipmentId) {
+      console.log(`${TAG} ❌ FAIL: shipment_id missing in Shiprocket response`);
+      return;
+    }
+
+    // ------------------------------------------------
+    // 4) Save shipment snapshot even if AWB missing ✅
+    // ------------------------------------------------
+    order.shipment = {
+      ...(order.shipment || {}),
+      provider: "shiprocket",
+      shiprocket: {
+        ...(order.shipment?.shiprocket || {}),
+        shipmentId,
+        orderId: shiprocketOrderId,
+        awb: order.shipment?.shiprocket?.awb || "",
+        courierName:
+          shipment?.courier_name || order.shipment?.shiprocket?.courierName || "",
+        trackingUrl:
+          shipment?.tracking_url || order.shipment?.shiprocket?.trackingUrl || "",
+        status: "processing",
+        lastUpdatedAt: new Date(),
+      },
+      status: "processing",
+    };
+
+    await order.save();
+
+    console.log(`${TAG} ✅ Saved shipment snapshot to DB`, {
+      orderNumber: order.orderNumber,
+      shipmentId: order.shipment?.shiprocket?.shipmentId,
+      existingAwb: order.shipment?.shiprocket?.awb,
+    });
+
+    // ------------------------------------------------
+    // 5) If AWB missing, try assign AWB (optional auto step)
+    // ------------------------------------------------
+    if (!awb) {
+      console.log(`${TAG} 📌 AWB missing. Attempting /courier/assign/awb...`);
+
+      try {
+        const assigned = await assignAwb(shipmentId);
+
+        console.log(`${TAG} ✅ Assign AWB response`, {
+          awb_code: assigned?.awb_code,
+          courier_name: assigned?.courier_name,
+          courier_company_id: assigned?.courier_company_id,
+          raw: assigned,
+        });
+
+        awb = (assigned?.awb_code || assigned?.awb || "").trim();
+
+        if (awb) {
+          order.shipment.shiprocket.awb = awb;
+          order.shipment.shiprocket.courierName =
+            assigned?.courier_name || order.shipment.shiprocket.courierName;
+
+          order.shipment.shiprocket.trackingUrl =
+            assigned?.tracking_url ||
+            order.shipment.shiprocket.trackingUrl ||
+            `https://shiprocket.co/tracking/${awb}`;
+
+          order.shipment.shiprocket.status = "processing";
+          order.shipment.status = "processing";
+
+          order.trackingDetails = {
+            ...(order.trackingDetails || {}),
+            trackingId: awb,
+            courierName: order.shipment.shiprocket.courierName,
+          };
+
+          await order.save();
+
+          console.log(`${TAG} ✅ AWB assigned & saved to DB`, {
+            orderNumber: order.orderNumber,
+            shipmentId,
+            awb,
+            courierName: order.shipment.shiprocket.courierName,
+            trackingUrl: order.shipment.shiprocket.trackingUrl,
+          });
+        } else {
+          console.log(
+            `${TAG} ⚠️ Assign AWB success but awb_code missing (panel/webhook will update later)`
+          );
+        }
+      } catch (e) {
+        console.log(`${TAG} ⚠️ Assign AWB failed (will rely on webhook/panel)`, {
+          message: e?.message,
+          status: e?.response?.status,
+          data: e?.response?.data,
+          url: e?.config?.url,
+        });
+      }
+    } else {
+      console.log(`${TAG} ✅ AWB already returned in create shipment response`, { awb });
+    }
+
+    console.log(`${TAG} END ✅`, {
+      orderNumber: order.orderNumber,
+      shipmentId: order.shipment?.shiprocket?.shipmentId,
+      awb: order.shipment?.shiprocket?.awb,
+      status: order.shipment?.status,
+    });
+  } catch (err) {
+    console.error(`${TAG} ❌ ERROR`, {
+      message: err?.message,
+      status: err?.response?.status,
+      data: err?.response?.data,
+      url: err?.config?.url,
+    });
+  }
+}
+
+

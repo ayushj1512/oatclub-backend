@@ -68,8 +68,7 @@ import barcodeItemRoutes from "./BarcodeItem/barcodeItem.routes.js";
 // ✅ Abandoned carts
 import abandonedCartRoutes from "./AbandonedCart/AbandonedCartRoutes.js";
 
-// ✅ Nodemailer Routes (NEW)
-import mailRoutes from "./nodemailer/routes.js";
+
 
 import homepageSettingsRoutes from "./HomepageSettings/homepageSettingsRoutes.js";
 import adminUserRoutes from "./AdminUsers/adminUserRoutes.js"; // ✅ import routes
@@ -162,14 +161,7 @@ mongoose
 // ✅ API ROUTES
 // --------------------------------------------------
 
-// Health / Ping
 app.use("/api/ping", pingRoutes);
-
-// Nodemailer (NEW) ✅
-// Example: GET /api/mail/test?to=someone@gmail.com
-app.use("/api/mail", mailRoutes);
-
-// Core Modules
 app.use("/api/size-charts", sizeChartRoutes);
 app.use("/api/addresses", addressRoutes);
 app.use("/api/blogs", blogRoutes);
@@ -178,7 +170,6 @@ app.use("/api/collections", collectionRoutes);
 app.use("/api/coupons", couponRoutes);
 app.use("/api/credits", creditRoutes);
 app.use("/api/customers", customerRoutes);
-app.use("/api/newsletters", newsletterRoutes);
 app.use("/api/offers", offerRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/products", productRoutes);

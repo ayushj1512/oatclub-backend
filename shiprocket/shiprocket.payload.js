@@ -1,4 +1,3 @@
-
 export function buildShiprocketPayload(order) {
   const shipping = order.shippingAddressSnapshot;
 
@@ -6,8 +5,11 @@ export function buildShiprocketPayload(order) {
     order_id: order.orderNumber,
     order_date: new Date().toISOString(),
 
+    pickup_location: process.env.SHIPROCKET_PICKUP_LOCATION,
+
     billing_customer_name: shipping.fullName,
-    billing_last_name: "",
+    billing_last_name:
+      shipping.fullName?.split(" ").slice(1).join(" ") || "NA",
     billing_address: shipping.line1,
     billing_address_2: shipping.line2 || "",
     billing_city: shipping.city,

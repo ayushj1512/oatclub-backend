@@ -1,22 +1,21 @@
-import transporter from "./transporter.js";
+import nodemailer from "nodemailer";
 
-export const sendEmail = async ({ to, subject, text, html }) => {
-  try {
-    const fromName = process.env.MAIL_FROM_NAME || "MIRAY FASHIONS";
-    const fromEmail = process.env.MAIL_FROM_EMAIL || process.env.MAIL_USER;
+const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
+  auth: {
+    user: process.env.MAIL_USER,
+    pass: process.env.MAIL_PASS, // App Password
+  },
+});
 
-    const info = await transporter.sendMail({
-      from: `${fromName} <${fromEmail}>`,
-      replyTo: process.env.MAIL_REPLY_TO || fromEmail,
-      to,
-      subject,
-      text,
-      html,
-    });
-
-    return info;
-  } catch (error) {
-    console.error("❌ Email Send Error:", error.message);
-    throw error;
-  }
-};
+export async function sendMail({ to, subject, html, text }) {
+  return transporter.sendMail({
+    from: process.env.MAIL_FROM,
+    to,
+    subject,
+    text,
+    html,
+  });
+}

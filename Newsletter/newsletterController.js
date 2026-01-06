@@ -1,48 +1,66 @@
 import NewsletterSubscription from "../Newsletter/NewsletterSubscription.js";
 import { sendBulkNewsletter } from "../utility/newsletterMailer.js";
+import { newsletterWarmWelcomeTemplate } from "../nodemailer/template/NewsletterWelcomeTemplate.js";
+
+/* --------------------------------------------------
+   HELPERS
+-------------------------------------------------- */
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const normalizeEmails = (input = []) => {
+  const list = Array.isArray(input) ? input : [input];
+
+  return [
+    ...new Set(
+      list
+        .map((e) => String(e || "").toLowerCase().trim())
+        .filter((e) => EMAIL_REGEX.test(e))
+    ),
+  ];
+};
 
 /**
  * --------------------------------------------------
- * SUBSCRIBE (SINGLE / BULK)
+ * ✅ SUBSCRIBE (SINGLE / BULK)
  * --------------------------------------------------
  * POST /api/newsletters/subscribe
+ *
+ * Body:
+ *  { email: "a@b.com", source:"modal", tags:["sale"] }
+ *  OR
+ *  { emails: ["a@b.com", "b@c.com"], source:"footer" }
  */
 export const addSubscription = async (req, res) => {
   try {
-    const { email, emails } = req.body;
+    const { email, emails, source = "modal", tags = [] } = req.body;
 
-    const list = Array.isArray(emails)
-      ? emails
-      : email
-      ? [email]
-      : [];
-
-    if (!list.length) {
-      return res.status(400).json({ message: "Email(s) required" });
-    }
-
-    const validEmails = [
-      ...new Set(
-        list
-          .map((e) => String(e || "").toLowerCase().trim())
-          .filter((e) =>
-            /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)
-          )
-      ),
-    ];
+    const validEmails = normalizeEmails(emails || email);
 
     if (!validEmails.length) {
-      return res.status(400).json({ message: "No valid emails found" });
+      return res.status(400).json({ message: "Valid email(s) required" });
     }
 
     const now = new Date();
+    const safeTags = Array.isArray(tags)
+      ? [...new Set(tags.map((t) => String(t).trim()).filter(Boolean))]
+      : [];
 
     const ops = validEmails.map((email) => ({
       updateOne: {
         filter: { email },
         update: {
-          $setOnInsert: { subscribedAt: now },
-          $set: { isActive: true, unsubscribedAt: null },
+          $setOnInsert: {
+            subscribedAt: now,
+            source,
+          },
+          $set: {
+            isActive: true,
+            unsubscribedAt: null,
+          },
+          ...(safeTags.length
+            ? { $addToSet: { tags: { $each: safeTags } } }
+            : {}),
         },
         upsert: true,
       },
@@ -56,7 +74,7 @@ export const addSubscription = async (req, res) => {
       success: true,
       message: "Subscription processed",
       summary: {
-        input: list.length,
+        received: Array.isArray(emails) ? emails.length : email ? 1 : 0,
         valid: validEmails.length,
         inserted: result.upsertedCount || 0,
         updated: result.modifiedCount || 0,
@@ -70,17 +88,64 @@ export const addSubscription = async (req, res) => {
 
 /**
  * --------------------------------------------------
- * GET ALL SUBSCRIBERS (ADMIN)
+ * ✅ GET ALL SUBSCRIBERS (ADMIN)
  * --------------------------------------------------
  * GET /api/newsletters/subscribers
+ *
+ * Query Params (optional):
+ *  ?page=1&limit=50
+ *  ?active=true
+ *  ?verified=true
+ *  ?suppressed=false
+ *  ?tag=sale
+ *  ?source=modal
+ *  ?search=gmail
  */
-export const getAllSubscriptions = async (_req, res) => {
+export const getAllSubscriptions = async (req, res) => {
   try {
-    const subscriptions = await NewsletterSubscription.find()
-      .sort({ subscribedAt: -1 })
-      .select("-verificationToken -__v");
+    const {
+      page = 1,
+      limit = 50,
+      active,
+      verified,
+      suppressed,
+      tag,
+      source,
+      search,
+    } = req.query;
 
-    return res.status(200).json(subscriptions);
+    const filters = {};
+
+    if (active !== undefined) filters.isActive = active === "true";
+    if (verified !== undefined) filters.isVerified = verified === "true";
+    if (suppressed !== undefined) filters.isSuppressed = suppressed === "true";
+    if (tag) filters.tags = tag;
+    if (source) filters.source = source;
+
+    if (search) {
+      filters.email = { $regex: search, $options: "i" };
+    }
+
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const [subscriptions, total] = await Promise.all([
+      NewsletterSubscription.find(filters)
+        .sort({ subscribedAt: -1 })
+        .skip(skip)
+        .limit(Number(limit))
+        .select(
+          "email isActive isVerified isSuppressed source tags subscribedAt unsubscribedAt analytics lastSentAt createdAt updatedAt"
+        ),
+      NewsletterSubscription.countDocuments(filters),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      subscriptions,
+    });
   } catch (err) {
     console.error("Fetch subscriptions error:", err);
     return res.status(500).json({ message: "Server error" });
@@ -93,41 +158,54 @@ export const getAllSubscriptions = async (_req, res) => {
  * --------------------------------------------------
  * POST /api/newsletters/send
  *
- * body:
+ * Body:
  * {
- *   subject: "Winter Sale is Live",
- *   html: "<h1>Flat 40% OFF</h1>"
+ *   subject: "Winter Sale Live ❄️",
+ *   data: {
+ *     title: "Winter Sale is LIVE!",
+ *     message: "Flat 40% OFF for limited time only.",
+ *     buttonText: "Shop Now",
+ *     buttonLink: "https://mirayfashions.com/sale"
+ *   }
  * }
+ *
+ * ✅ NO active / verified checks
+ * ✅ jitne DB me emails hain sabko jayega
  */
 export const sendBulkNewsletterUpdate = async (req, res) => {
   try {
-    const { subject, html } = req.body;
+    const {
+      subject,
+      data = {}, // extra template fields
+    } = req.body;
 
-    if (!subject || !html) {
-      return res.status(400).json({
-        message: "Subject and HTML content are required",
-      });
-    }
+    /* ---------------- FETCH ALL USERS (NO FILTERS) ---------------- */
+    const subscribers = await NewsletterSubscription.find({}).select("email");
 
-    /* ---------------- FETCH TARGET USERS ---------------- */
-    const subscribers = await NewsletterSubscription.find({
-      isActive: true,
-      isSuppressed: false,
-    }).select("email");
-
-    const emails = subscribers.map((s) => s.email);
+    const emails = [...new Set(subscribers.map((s) => s.email))];
 
     if (!emails.length) {
       return res.status(400).json({
-        message: "No active subscribers found",
+        message: "No subscribers found",
       });
     }
+
+    /* ---------------- GENERATE TEMPLATE HTML ---------------- */
+    // ✅ Use your premium welcome template
+    const templatePayload = newsletterWarmWelcomeTemplate({
+      ...data,
+    });
+
+    const finalSubject = subject || templatePayload.subject;
+    const html = templatePayload.html;
+    const text = templatePayload.text;
 
     /* ---------------- SEND MAIL ---------------- */
     const result = await sendBulkNewsletter({
       recipients: emails,
-      subject,
+      subject: finalSubject,
       html,
+      text,
     });
 
     /* ---------------- ANALYTICS UPDATE ---------------- */
@@ -142,7 +220,9 @@ export const sendBulkNewsletterUpdate = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Newsletter sent successfully",
+      totalRecipients: emails.length,
       stats: result,
+      subjectUsed: finalSubject,
     });
   } catch (err) {
     console.error("Bulk newsletter send error:", err);
