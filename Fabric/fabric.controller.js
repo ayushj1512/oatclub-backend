@@ -6,13 +6,14 @@ import Counter from "../models/Counter.js";
 ============================================================ */
 const generateFabricCode = async () => {
   const counter = await Counter.findOneAndUpdate(
-    { key: "fabric" },
+    { name: "fabric" },
     { $inc: { seq: 1 } },
-    { new: true, upsert: true }
+    { new: true, upsert: true, setDefaultsOnInsert: true }
   );
 
   return `FAB-${String(counter.seq).padStart(6, "0")}`;
 };
+
 
 /* ============================================================
    CREATE FABRIC
