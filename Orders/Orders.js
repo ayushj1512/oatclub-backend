@@ -59,7 +59,9 @@ const orderItemSchema = new mongoose.Schema(
       image: { type: String, default: "" },
       weight: { type: Number, default: 0 },
     },
-
+// ✅ easy access for frontend (no need to parse attributes array)
+selectedSize: { type: String, default: "" },
+selectedColor: { type: String, default: "" },
     quantity: { type: Number, required: true, min: 1 },
 
     // ✅ locked at purchase time
@@ -470,6 +472,45 @@ const padded = String(counter.seq).padStart(6, "0");
     next(err);
   }
 });
+
+
+// ✅ AUTO-FILL selectedSize / selectedColor from variant.attributes
+orderSchema.pre("validate", function (next) {
+  try {
+    if (!Array.isArray(this.items)) return next();
+
+    this.items = this.items.map((it) => {
+      const attrs = Array.isArray(it?.variant?.attributes)
+        ? it.variant.attributes
+        : [];
+
+      const size =
+        attrs.find((a) => String(a?.key || "").toLowerCase() === "size")?.value ||
+        attrs.find((a) => String(a?.key || "").toLowerCase() === "sizes")?.value ||
+        "";
+
+      const color =
+        attrs.find((a) => String(a?.key || "").toLowerCase() === "color")?.value ||
+        attrs.find((a) => String(a?.key || "").toLowerCase() === "colour")?.value ||
+        "";
+
+      // ✅ store flat (clean)
+      if (!String(it.selectedSize || "").trim() && size)
+  it.selectedSize = String(size);
+
+if (!String(it.selectedColor || "").trim() && color)
+  it.selectedColor = String(color);
+
+
+      return it;
+    });
+
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 
 // ========================================================================================
 // ✅ AUTO-CALC TOTALS

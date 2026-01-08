@@ -1,11 +1,14 @@
 import mongoose from "mongoose";
 import Order from "./Orders.js";
 import Product from "../Products/Products.js";
-import Coupon from "../Coupon/Coupon.js";
 import { buildAddressSnapshot } from "./order.address.mapper.js";
 import { cancelShiprocketShipment } from "../shiprocket/shiprocket.cancel.js";
 import Address from "../Address/Address.js"; // <-- correct path
-import { checkServiceability, createShipment, assignAwb } from "../shiprocket/index.js";
+import {
+  checkServiceability,
+  createShipment,
+  assignAwb,
+} from "../shiprocket/index.js";
 import { buildShiprocketPayload } from "../shiprocket/shiprocket.payload.js";
 
 /* ============================================================
@@ -50,12 +53,16 @@ const findVariantById = (product, variantId) => {
 };
 
 const uniqStrings = (arr) =>
-  Array.from(new Set((arr || []).map((x) => String(x || "").trim()).filter(Boolean)));
+  Array.from(
+    new Set((arr || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
 
 const computeCategoryBreakdown = (normalizedItems) => {
   const map = new Map();
   for (const it of normalizedItems || []) {
-    const catId = it?.productSnapshot?.category ? String(it.productSnapshot.category) : null;
+    const catId = it?.productSnapshot?.category
+      ? String(it.productSnapshot.category)
+      : null;
     if (!catId) continue;
 
     const prev = map.get(catId) || {
@@ -77,6 +84,15 @@ const daysDiff = (fromDate, toDate) => {
   const b = new Date(toDate).getTime();
   return Math.floor((a - b) / (1000 * 60 * 60 * 24));
 };
+
+const pickAttr = (attrs = [], keys = []) => {
+  const kset = keys.map((k) => String(k).trim().toLowerCase());
+  const found = (attrs || []).find((a) =>
+    kset.includes(String(a?.key || "").trim().toLowerCase())
+  );
+  return found?.value ? String(found.value) : "";
+};
+
 
 const isWithinRmaWindow = (deliveredAt) => {
   if (!deliveredAt) return false;
@@ -109,8 +125,10 @@ const buildRmaItemsSnapshots = (order, rmaItems) => {
     const idx = Number(ri?.orderItemIndex);
     const qty = Number(ri?.quantity);
 
-    if (!Number.isInteger(idx) || idx < 0) throw new Error("Invalid orderItemIndex in RMA items");
-    if (!Number.isFinite(qty) || qty < 1) throw new Error("Invalid quantity in RMA items");
+    if (!Number.isInteger(idx) || idx < 0)
+      throw new Error("Invalid orderItemIndex in RMA items");
+    if (!Number.isFinite(qty) || qty < 1)
+      throw new Error("Invalid quantity in RMA items");
 
     const orderItem = Array.isArray(order?.items) ? order.items[idx] : null;
     if (!orderItem) throw new Error(`Order item not found at index: ${idx}`);
@@ -162,6 +180,85 @@ const computeRemainingQtyByIndex = (order) => {
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
 
+  /* =========================================================
+     ✅ Helpers: Attribute normalize + extract
+  ========================================================= */
+  const str = (v) => (v == null ? "" : String(v));
+
+  const pickAttr = (attrs = [], keys = []) => {
+    const wanted = keys.map((k) => str(k).toLowerCase());
+    const found = (Array.isArray(attrs) ? attrs : []).find((a) =>
+      wanted.includes(str(a?.key).toLowerCase())
+    );
+    return found?.value ? str(found.value) : "";
+  };
+
+  const normalizeVariantAttributes = (variant) => {
+    const raw = variant?.attributes;
+
+    // ✅ Case 1: already array format [{key,value}]
+    if (Array.isArray(raw)) {
+      return raw
+        .filter((a) => a?.key != null && a?.value != null)
+        .map((a) => ({ key: str(a.key), value: str(a.value) }));
+    }
+
+    // ✅ Case 2: object format { size: "M", color: "black" }
+    if (raw && typeof raw === "object") {
+      return Object.entries(raw).map(([k, v]) => ({
+        key: str(k),
+        value: str(v),
+      }));
+    }
+
+    return [];
+  };
+
+  // ✅ SKU fallback: pick last size token from SKU
+  const getSizeFromSku = (sku) => {
+    const parts = str(sku).toUpperCase().split("-");
+    const sizeOrder = [
+      "XXS",
+      "XS",
+      "S",
+      "M",
+      "L",
+      "XL",
+      "XXL",
+      "3XL",
+      "4XL",
+      "5XL",
+    ];
+    for (let i = parts.length - 1; i >= 0; i--) {
+      if (sizeOrder.includes(parts[i])) return parts[i];
+    }
+    return "";
+  };
+
+  // ✅ SKU fallback: color token = 2nd last usually
+  const getColorFromSku = (sku) => {
+    const parts = str(sku).toUpperCase().split("-");
+    if (parts.length < 2) return "";
+
+    const sizeOrder = [
+      "XXS",
+      "XS",
+      "S",
+      "M",
+      "L",
+      "XL",
+      "XXL",
+      "3XL",
+      "4XL",
+      "5XL",
+    ];
+
+    const maybeColor = parts[parts.length - 2];
+    if (sizeOrder.includes(maybeColor)) return "";
+
+    return maybeColor.toLowerCase();
+  };
+
   try {
     const {
       customerId,
@@ -178,7 +275,11 @@ export const createOrder = async (req, res) => {
       currency = "INR",
     } = req.body;
 
-    // 🔒 HARD VALIDATIONS
+    const pm = str(paymentMethod).toLowerCase();
+
+    /* =========================================================
+       ✅ Hard Validations
+    ========================================================= */
     if (!mongoose.Types.ObjectId.isValid(customerId))
       return res.status(400).json({ message: "Invalid customerId" });
 
@@ -191,17 +292,19 @@ export const createOrder = async (req, res) => {
     if (!Array.isArray(items) || items.length === 0)
       return res.status(400).json({ message: "Order items missing" });
 
-    if (!["cod", "razorpay"].includes(paymentMethod))
+    if (!["cod", "razorpay"].includes(pm))
       return res.status(400).json({
         message: "Invalid paymentMethod. Allowed: cod | razorpay",
       });
 
-    // ✅ Coupon snapshot
+    /* =========================================================
+       ✅ Coupon Snapshot (if any)
+    ========================================================= */
     let couponSnapshot = null;
     let computedDiscount = Number(discount || 0);
 
     if (coupon && typeof coupon === "object") {
-      const code = String(coupon.code || "").trim().toUpperCase();
+      const code = str(coupon.code).trim().toUpperCase();
       const couponDiscount = Number(coupon.discount || 0);
       const finalTotal = Number(coupon.finalTotal || 0);
 
@@ -211,9 +314,14 @@ export const createOrder = async (req, res) => {
       }
     }
 
-    // ✅ Transaction: Create order + stock update
+    /* =========================================================
+       ✅ Transaction: Create Order + Reduce Stock
+    ========================================================= */
     await session.withTransaction(async () => {
-      const shippingAddress = await Address.findById(shippingAddressId).session(session);
+      // ✅ fetch address
+      const shippingAddress = await Address.findById(shippingAddressId).session(
+        session
+      );
       if (!shippingAddress) throw new Error("Shipping address not found");
 
       const billingAddress = billingAddressId
@@ -223,24 +331,37 @@ export const createOrder = async (req, res) => {
       const shippingAddressSnapshot = buildAddressSnapshot(shippingAddress);
       const billingAddressSnapshot = buildAddressSnapshot(billingAddress);
 
-      const productIds = [...new Set(items.map((i) => String(i?.productId)).filter(Boolean))];
-      const invalidProductId = productIds.find((id) => !isObjectId(id));
-      if (invalidProductId) throw new Error(`Invalid productId: ${invalidProductId}`);
+      // ✅ validate product ids
+      const productIds = [
+        ...new Set(items.map((i) => str(i?.productId)).filter(Boolean)),
+      ];
 
-      const products = await Product.find({ _id: { $in: productIds } }).session(session).lean();
-      const productMap = new Map(products.map((p) => [String(p._id), p]));
+      const invalidProductId = productIds.find((id) => !isObjectId(id));
+      if (invalidProductId)
+        throw new Error(`Invalid productId: ${invalidProductId}`);
+
+      // ✅ fetch products
+      const products = await Product.find({ _id: { $in: productIds } })
+        .session(session)
+        .lean();
+
+      const productMap = new Map(products.map((p) => [str(p._id), p]));
 
       const normalizedItems = [];
       let computedSubtotal = 0;
       let totalQty = 0;
 
+      /* =========================================================
+         ✅ Normalize Items (product snapshot + variant snapshot)
+      ========================================================= */
       for (const item of items) {
         if (!item?.productId) throw new Error("productId missing");
 
         const qty = Number(item.quantity || 0);
-        if (!Number.isFinite(qty) || qty < 1) throw new Error("Invalid quantity");
+        if (!Number.isFinite(qty) || qty < 1)
+          throw new Error("Invalid quantity");
 
-        const product = productMap.get(String(item.productId));
+        const product = productMap.get(str(item.productId));
         if (!product) throw new Error("Product not found");
 
         const isVariable =
@@ -249,26 +370,46 @@ export const createOrder = async (req, res) => {
 
         let variant = null;
 
+        // ✅ Resolve variant
         if (isVariable) {
-          if (!item.variantId) throw new Error(`${product.title} - variantId missing`);
+          if (!item.variantId)
+            throw new Error(`${product.title} - variantId missing`);
 
           variant = findVariantById(product, item.variantId);
           if (!variant) throw new Error(`${product.title} - variant not found`);
 
-          if (Number(variant.stock ?? 0) < qty) throw new Error(`${product.title} out of stock`);
+          if (Number(variant.stock ?? 0) < qty)
+            throw new Error(`${product.title} out of stock`);
         } else {
-          if (Number(product.stock ?? 0) < qty) throw new Error(`${product.title} out of stock`);
+          if (Number(product.stock ?? 0) < qty)
+            throw new Error(`${product.title} out of stock`);
         }
 
+        // ✅ price resolve
         const unitPrice =
-          variant && Number(variant.price) > 0 ? Number(variant.price) : Number(product.price || 0);
+          variant && Number(variant.price) > 0
+            ? Number(variant.price)
+            : Number(product.price || 0);
 
         const itemSubtotal = unitPrice * qty;
         totalQty += qty;
         computedSubtotal += itemSubtotal;
 
+        // ✅ variant attributes snapshot
+        const attrs = normalizeVariantAttributes(variant);
+
+        // ✅ size/color from attrs OR fallback to SKU
+        let selectedSize =
+          pickAttr(attrs, ["size", "sizes", "shirt_size"]) ||
+          getSizeFromSku(variant?.sku);
+
+        let selectedColor =
+          pickAttr(attrs, ["color", "colour", "color_name"]) ||
+          getColorFromSku(variant?.sku);
+
         normalizedItems.push({
           productId: product._id,
+
           productSnapshot: {
             productCode: product.productCode || "",
             title: product.title,
@@ -277,33 +418,47 @@ export const createOrder = async (req, res) => {
             images: Array.isArray(product.images) ? product.images : [],
             category: product.category || null,
             subcategory: product.subcategory || null,
-            productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
+            productType:
+              product.productType ||
+              (product?.variants?.length ? "variable" : "simple"),
             sku: product.sku || "",
             tags: Array.isArray(product.tags) ? product.tags : [],
             weight: Number(product.weight ?? 0),
             currency: product.currency || currency,
           },
+
           variant: {
             variantId: variant?._id || null,
             sku: variant?.sku || "",
-            attributes: normalizeVariantAttributes(variant),
+            attributes: attrs, // ✅ FIXED
             image: variant?.image || product.thumbnail || "",
             weight: Number(variant?.weight ?? 0),
           },
+
+          selectedSize,
+          selectedColor,
+
           quantity: qty,
           price: unitPrice,
-          compareAtPrice: variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
+          compareAtPrice:
+            variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
           subtotal: itemSubtotal,
         });
       }
 
-      // ✅ Stock reduction
+      /* =========================================================
+         ✅ Stock Reduction (atomic)
+      ========================================================= */
       for (const it of normalizedItems) {
         const variantId = it?.variant?.variantId;
 
         const result = variantId
           ? await Product.updateOne(
-              { _id: it.productId, "variants._id": variantId, "variants.stock": { $gte: it.quantity } },
+              {
+                _id: it.productId,
+                "variants._id": variantId,
+                "variants.stock": { $gte: it.quantity },
+              },
               { $inc: { "variants.$.stock": -it.quantity } }
             ).session(session)
           : await Product.updateOne(
@@ -314,9 +469,15 @@ export const createOrder = async (req, res) => {
         if (!result.modifiedCount) throw new Error("Stock update failed");
       }
 
+      /* =========================================================
+         ✅ Final totals
+      ========================================================= */
       const subtotal = computedSubtotal;
       const totalAmount = subtotal + Number(shippingFee) + Number(tax);
-      const finalPayable = Math.max(0, totalAmount - Number(computedDiscount || 0));
+      const finalPayable = Math.max(
+        0,
+        totalAmount - Number(computedDiscount || 0)
+      );
 
       const analytics = {
         totalItems: totalQty,
@@ -324,9 +485,14 @@ export const createOrder = async (req, res) => {
         couponApplied: Boolean(couponSnapshot?.code),
         creditsUsed: false,
         categoryBreakdown: computeCategoryBreakdown(normalizedItems),
-        tagsUsed: uniqStrings(normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])),
+        tagsUsed: uniqStrings(
+          normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])
+        ),
       };
 
+      /* =========================================================
+         ✅ Create order
+      ========================================================= */
       const [order] = await Order.create(
         [
           {
@@ -342,7 +508,7 @@ export const createOrder = async (req, res) => {
             totalAmount,
             finalPayable,
             currency,
-            paymentMethod,
+            paymentMethod: pm,
             paymentStatus: "pending",
             fulfillmentStatus: "processing",
             source,
@@ -357,19 +523,31 @@ export const createOrder = async (req, res) => {
       req.__createdOrder = order;
     });
 
-    // ✅ AUTO SHIPROCKET BOOKING (OUTSIDE TRANSACTION)
+    /* =========================================================
+       ✅ Auto Book Shiprocket (COD only immediately)
+       - Razorpay orders will be booked when paymentStatus becomes "paid"
+       - via updateOrderStatus (add call there)
+    ========================================================= */
     try {
-      const freshOrder = await Order.findById(req.__createdOrder._id);
-      await autoBookShiprocketForOrder(freshOrder);
+      const createdOrder = await Order.findById(req.__createdOrder._id);
+
+      if (createdOrder?.paymentMethod === "cod") {
+        await autoBookShiprocketForOrder(createdOrder);
+      }
     } catch (e) {
-      console.error("❌ Auto booking wrapper failed:", e?.response?.data || e.message);
+      console.error("⚠️ Auto Shiprocket booking failed:", e?.message || e);
+      // Do not block order creation
     }
 
-    const finalOrder = await Order.findById(req.__createdOrder._id);
-return res.status(201).json({
-  message: "Order created successfully",
-  order: finalOrder,
-});
+    /* =========================================================
+       ✅ Return final order
+    ========================================================= */
+    const finalOrder = await Order.findById(req.__createdOrder._id).lean();
+
+    return res.status(201).json({
+      message: "Order created successfully",
+      order: finalOrder,
+    });
   } catch (error) {
     console.error("❌ Create Order Error:", error);
     return res.status(400).json({
@@ -403,10 +581,11 @@ export const getAllOrders = async (req, res) => {
     return res.status(200).json(orders);
   } catch (error) {
     console.error("❌ Fetch Orders Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
-
 
 /* ============================================================
    GET ORDER BY ID
@@ -421,7 +600,9 @@ export const getOrderById = async (req, res) => {
     return res.status(200).json(order);
   } catch (error) {
     console.error("❌ Fetch Order Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -437,7 +618,9 @@ export const getOrdersByCustomer = async (req, res) => {
     return res.status(200).json(orders);
   } catch (error) {
     console.error("❌ Customer Orders Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -458,14 +641,18 @@ export const updateOrder = async (req, res) => {
       runValidators: true,
     });
 
-    if (!updatedOrder) return res.status(404).json({ message: "Order not found" });
-    return res.status(200).json({ message: "Order updated", order: updatedOrder });
+    if (!updatedOrder)
+      return res.status(404).json({ message: "Order not found" });
+    return res
+      .status(200)
+      .json({ message: "Order updated", order: updatedOrder });
   } catch (error) {
     console.error("❌ Update Order Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
-
 
 /* ============================================================
    UPDATE ORDER STATUS ONLY
@@ -504,17 +691,24 @@ export const updateOrderStatus = async (req, res) => {
     return res.status(200).json({ message: "Order status updated", order });
   } catch (error) {
     console.error("❌ Update Status Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
-
 
 /* ============================================================
    UPDATE TRACKING
 ============================================================ */
 export const updateTracking = async (req, res) => {
   try {
-    const { trackingId, courierName, shippedAt, deliveredAt, expectedDelivery } = req.body;
+    const {
+      trackingId,
+      courierName,
+      shippedAt,
+      deliveredAt,
+      expectedDelivery,
+    } = req.body;
 
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -525,7 +719,8 @@ export const updateTracking = async (req, res) => {
       courierName: courierName ?? order.trackingDetails?.courierName,
       shippedAt: shippedAt ?? order.trackingDetails?.shippedAt,
       deliveredAt: deliveredAt ?? order.trackingDetails?.deliveredAt,
-      expectedDelivery: expectedDelivery ?? order.trackingDetails?.expectedDelivery,
+      expectedDelivery:
+        expectedDelivery ?? order.trackingDetails?.expectedDelivery,
     };
 
     // ✅ If deliveredAt set -> auto mark delivered
@@ -538,10 +733,11 @@ export const updateTracking = async (req, res) => {
     return res.status(200).json({ message: "Tracking updated", order });
   } catch (error) {
     console.error("❌ Tracking Update Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
-
 
 /* ============================================================
    DELETE ORDER
@@ -549,12 +745,15 @@ export const updateTracking = async (req, res) => {
 export const deleteOrder = async (req, res) => {
   try {
     const deletedOrder = await Order.findByIdAndDelete(req.params.id);
-    if (!deletedOrder) return res.status(404).json({ message: "Order not found" });
+    if (!deletedOrder)
+      return res.status(404).json({ message: "Order not found" });
 
     return res.status(200).json({ message: "Order deleted" });
   } catch (error) {
     console.error("❌ Delete Order Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -564,10 +763,14 @@ export const deleteOrder = async (req, res) => {
 export const getOrderAnalytics = async (req, res) => {
   try {
     const totalOrders = await Order.countDocuments();
-    const totalRevenue = await Order.aggregate([{ $group: { _id: null, sum: { $sum: "$finalPayable" } } }]);
+    const totalRevenue = await Order.aggregate([
+      { $group: { _id: null, sum: { $sum: "$finalPayable" } } },
+    ]);
 
     const codOrders = await Order.countDocuments({ paymentMethod: "cod" });
-    const prepaidOrders = await Order.countDocuments({ paymentMethod: { $ne: "cod" } });
+    const prepaidOrders = await Order.countDocuments({
+      paymentMethod: { $ne: "cod" },
+    });
 
     return res.status(200).json({
       totalOrders,
@@ -577,7 +780,9 @@ export const getOrderAnalytics = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Analytics Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -585,7 +790,8 @@ export const getOrderAnalytics = async (req, res) => {
 export const getOrderByOrderNumber = async (req, res) => {
   try {
     const orderNumber = String(req.params.orderNumber || "").trim();
-    if (!orderNumber) return res.status(400).json({ message: "orderNumber missing" });
+    if (!orderNumber)
+      return res.status(400).json({ message: "orderNumber missing" });
 
     const order = await Order.findOne({ orderNumber })
       .populate("customerId", "name email phone")
@@ -595,11 +801,11 @@ export const getOrderByOrderNumber = async (req, res) => {
     return res.status(200).json(order);
   } catch (error) {
     console.error("❌ Fetch Order By Number Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
-
-
 
 // CANCEL ORDER
 export const cancelOrder = async (req, res) => {
@@ -628,9 +834,7 @@ export const cancelOrder = async (req, res) => {
       ];
 
       if (nonCancellableStatuses.includes(order.fulfillmentStatus)) {
-        throw new Error(
-          "Order cannot be cancelled after pickup / shipment"
-        );
+        throw new Error("Order cannot be cancelled after pickup / shipment");
       }
 
       // Idempotent: already cancelled → no-op
@@ -837,8 +1041,12 @@ async function autoBookShiprocketForOrder(order) {
       courier_name: shipment?.courier_name,
     });
 
-    const shipmentId = shipment?.shipment_id ? String(shipment.shipment_id) : "";
-    const shiprocketOrderId = shipment?.order_id ? String(shipment.order_id) : "";
+    const shipmentId = shipment?.shipment_id
+      ? String(shipment.shipment_id)
+      : "";
+    const shiprocketOrderId = shipment?.order_id
+      ? String(shipment.order_id)
+      : "";
     let awb = (shipment?.awb_code || "").trim();
 
     if (!shipmentId) {
@@ -858,9 +1066,13 @@ async function autoBookShiprocketForOrder(order) {
         orderId: shiprocketOrderId,
         awb: order.shipment?.shiprocket?.awb || "",
         courierName:
-          shipment?.courier_name || order.shipment?.shiprocket?.courierName || "",
+          shipment?.courier_name ||
+          order.shipment?.shiprocket?.courierName ||
+          "",
         trackingUrl:
-          shipment?.tracking_url || order.shipment?.shiprocket?.trackingUrl || "",
+          shipment?.tracking_url ||
+          order.shipment?.shiprocket?.trackingUrl ||
+          "",
         status: "processing",
         lastUpdatedAt: new Date(),
       },
@@ -927,15 +1139,21 @@ async function autoBookShiprocketForOrder(order) {
           );
         }
       } catch (e) {
-        console.log(`${TAG} ⚠️ Assign AWB failed (will rely on webhook/panel)`, {
-          message: e?.message,
-          status: e?.response?.status,
-          data: e?.response?.data,
-          url: e?.config?.url,
-        });
+        console.log(
+          `${TAG} ⚠️ Assign AWB failed (will rely on webhook/panel)`,
+          {
+            message: e?.message,
+            status: e?.response?.status,
+            data: e?.response?.data,
+            url: e?.config?.url,
+          }
+        );
       }
     } else {
-      console.log(`${TAG} ✅ AWB already returned in create shipment response`, { awb });
+      console.log(
+        `${TAG} ✅ AWB already returned in create shipment response`,
+        { awb }
+      );
     }
 
     console.log(`${TAG} END ✅`, {
@@ -953,5 +1171,3 @@ async function autoBookShiprocketForOrder(order) {
     });
   }
 }
-
-
