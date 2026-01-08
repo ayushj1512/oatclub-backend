@@ -1,28 +1,33 @@
-// nodemailer/test-newsletter-welcome.js
+// nodemailer/test-promo-preview.js
 import "dotenv/config";
 
 import { sendMail } from "./mailer.js";
-import { newsletterWarmWelcomeTemplate } from "./template/NewsletterWelcomeTemplate.js";
+import { PromoPreviewTemplate } from "./template/PromoPreviewTemplate.js";
 
-async function runNewsletterWelcomeTest() {
-  console.log("\n🚀 Sending Newsletter Welcome Template Test...\n");
+async function runPromoPreviewTest() {
+  console.log("\n🚀 Sending Promo Preview Template Test...\n");
 
   const recipients = [
     "miray.ayushjuneja@gmail.com",
-    "mr.creativeabhiii@gmail.com"
+    // "mr.creativeabhiii@gmail.com",
   ];
 
-  const { subject, text, html } = newsletterWarmWelcomeTemplate({
-    name: "Ayush",
-    couponCode: "WELCOME10",
+  const { subject, text, html, utmUrl } = PromoPreviewTemplate({
+    subject: "✨ Welcome Offer — Extra 10% OFF | MIRAY Fashions",
 
-    // CTA + Links
-    ctaUrl: "https://mirayfashions.com/",
-    heroLink: "https://mirayfashions.com/product-category/featured/",
+    baseUrl: "https://mirayfashions.com",
+    imageUrl:
+      "https://res.cloudinary.com/djtva6hec/image/upload/v1767863578/miray/media/dr06bw6oqa511xr2dsve.jpg",
 
-    // Unsubscribe (placeholder)
-    unsubscribeUrl: "https://mirayfashions.com/unsubscribe?email=test",
+    utm: {
+      source: "miray",
+      medium: "email",
+      campaign: "welcome10_offer_test",
+      content: "promo_banner",
+    },
   });
+
+  console.log("🔗 UTM Tracking URL:", utmUrl);
 
   await sendMail({
     to: recipients,
@@ -31,9 +36,9 @@ async function runNewsletterWelcomeTest() {
     html,
   });
 
-  console.log("✅ Newsletter Welcome email sent to:", recipients.join(", "));
+  console.log("✅ Promo Preview email sent to:", recipients.join(", "));
 }
 
-runNewsletterWelcomeTest().catch((err) => {
-  console.error("❌ Newsletter Welcome Test failed:", err);
+runPromoPreviewTest().catch((err) => {
+  console.error("❌ Promo Preview Test failed:", err);
 });
