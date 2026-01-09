@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
-import Order from "./Orders.js"; // ✅ same as your current import path
+import Order from "./Orders.js";
+import { triggerRmaEmails } from "./order.emails.js";
 
 /* ============================================================
    RMA POLICY
@@ -25,6 +26,11 @@ const RMA_POLICY = {
    HELPERS
 ============================================================ */
 const isObjectId = (v) => mongoose.Types.ObjectId.isValid(String(v || ""));
+
+const badRequest = (res, message) => res.status(400).json({ message });
+const notFound = (res, message) => res.status(404).json({ message });
+
+const normalize = (s) => String(s || "").trim().toLowerCase();
 
 const daysDiff = (fromDate, toDate) => {
   const a = new Date(fromDate).getTime();
@@ -96,7 +102,7 @@ const buildRmaItemsSnapshots = (order, rmaItems) => {
 
     out.push({
       orderLineId: lineId,
-      orderItemIndex: index, // optional for admin UI
+      orderItemIndex: index,
       quantity: qty,
       productId: orderItem.productId || null,
       productCode: orderItem?.productSnapshot?.productCode || "",
@@ -108,90 +114,78 @@ const buildRmaItemsSnapshots = (order, rmaItems) => {
   return out;
 };
 
+const makeRmaNumber = () =>
+  "RMA-" +
+  Date.now().toString().slice(-6) +
+  "-" +
+  Math.floor(Math.random() * 90 + 10);
+
+const safeDate = (v) => {
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 /* ============================================================
-   ✅ CREATE RMA (Return / Exchange)
-   POST /api/orders/:id/rma
+   ✅ CREATE RMA
 ============================================================ */
 export const createRma = async (req, res) => {
   try {
     const orderId = req.params.id;
-    const {
-      type = "return",
-      reason = "other",
-      customerNote = "",
-      items,
-      exchangeTo,
-    } = req.body;
+    const { type = "return", reason = "other", customerNote = "", items, exchangeTo } =
+      req.body;
 
-    if (!isObjectId(orderId))
-      return res.status(400).json({ message: "Invalid order id" });
+    console.log("📦 [CREATE RMA] Request:", { orderId, type, reason });
 
-    if (!Array.isArray(items) || items.length === 0)
-      return res.status(400).json({ message: "RMA items missing" });
-
-    if (!["return", "exchange"].includes(type))
-      return res.status(400).json({ message: "Invalid RMA type" });
+    if (!isObjectId(orderId)) return badRequest(res, "Invalid order id");
+    if (!Array.isArray(items) || !items.length) return badRequest(res, "RMA items missing");
+    if (!["return", "exchange"].includes(type)) return badRequest(res, "Invalid RMA type");
 
     const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!order) return notFound(res, "Order not found");
 
-    // ✅ Must be delivered
+    console.log("✅ [CREATE RMA] Order found:", {
+      orderNumber: order?.orderNumber,
+      fulfillmentStatus: order?.fulfillmentStatus,
+      customerEmail: order?.shippingAddressSnapshot?.email,
+    });
+
     if (order.fulfillmentStatus !== "delivered") {
-      return res
-        .status(400)
-        .json({ message: "Return/Exchange allowed only for delivered orders" });
+      return badRequest(res, "Return/Exchange allowed only for delivered orders");
     }
 
-    // ✅ deliveredAt check
     const deliveredAt = order?.trackingDetails?.deliveredAt;
     if (!deliveredAt) {
-      return res.status(400).json({
-        message: "Delivery date missing (deliveredAt). Cannot create RMA.",
-      });
+      return badRequest(res, "Delivery date missing (deliveredAt). Cannot create RMA.");
     }
 
-    // ✅ window check
     if (!isWithinRmaWindow(deliveredAt)) {
-      return res.status(400).json({
-        message: `Return/Exchange window expired. Allowed within ${RMA_POLICY.windowDays} days.`,
-      });
+      return badRequest(
+        res,
+        `Return/Exchange window expired. Allowed within ${RMA_POLICY.windowDays} days.`
+      );
     }
 
-    // ✅ Remaining qty check
     const remaining = computeRemainingQtyByLineId(order);
     for (const ri of items) {
       const lineId = String(ri?.orderLineId || "").trim();
       const qty = Number(ri?.quantity || 0);
-
       const rem = remaining.get(lineId);
-      if (!lineId)
-        return res.status(400).json({ message: "orderLineId missing" });
 
-      if (rem == null)
-        return res.status(400).json({ message: `Invalid orderLineId: ${lineId}` });
-
-      if (!Number.isFinite(qty) || qty < 1)
-        return res.status(400).json({ message: "Invalid RMA quantity" });
-
+      if (!lineId) return badRequest(res, "orderLineId missing");
+      if (rem == null) return badRequest(res, `Invalid orderLineId: ${lineId}`);
+      if (!Number.isFinite(qty) || qty < 1) return badRequest(res, "Invalid RMA quantity");
       if (qty > rem)
-        return res.status(400).json({
-          message: `Qty exceeds remaining for lineId: ${lineId}`,
-        });
+        return badRequest(res, `Qty exceeds remaining for lineId: ${lineId}`);
     }
 
-    // ✅ Build snapshots
     const rmaItemsSnapshots = buildRmaItemsSnapshots(order, items);
 
-    // ✅ Exchange logic
     let fee = { amount: 0, currency: "INR", status: "waived" };
     let exchangeRequest = null;
 
     if (type === "exchange") {
-      if (!exchangeTo || typeof exchangeTo !== "object" || !exchangeTo.variantId) {
-        return res
-          .status(400)
-          .json({ message: "exchangeTo.variantId missing for exchange" });
-      }
+      if (!exchangeTo?.variantId)
+        return badRequest(res, "exchangeTo.variantId missing for exchange");
 
       const prevExchanges = countPreviousExchanges(order);
       const amount = computeExchangeFee(prevExchanges);
@@ -207,9 +201,11 @@ export const createRma = async (req, res) => {
       };
     }
 
-    // ✅ Push RMA
+    const rmaNumber = makeRmaNumber();
+
     order.rmas = order.rmas || [];
     order.rmas.push({
+      rmaNumber,
       type,
       reason,
       customerNote,
@@ -220,13 +216,25 @@ export const createRma = async (req, res) => {
       exchangeRequest,
     });
 
-    // ✅ IMPORTANT FIX: update order fulfillment status
-    if (type === "return") order.fulfillmentStatus = "return_requested";
-    if (type === "exchange") order.fulfillmentStatus = "exchange_requested";
+    // Update order status
+    order.fulfillmentStatus = type === "exchange" ? "exchange_requested" : "return_requested";
 
     await order.save();
-
     const created = order.rmas[order.rmas.length - 1];
+
+    console.log("✅ [CREATE RMA] RMA Created:", {
+      orderNumber: order.orderNumber,
+      rmaNumber: created?.rmaNumber,
+      customerEmail: order?.shippingAddressSnapshot?.email,
+    });
+
+    // ✅ Trigger emails properly (signature FIX)
+    try {
+      console.log("📩 [CREATE RMA] Triggering RMA emails...");
+      triggerRmaEmails({ order: order.toObject(), rma: created, policy: RMA_POLICY });
+    } catch (e) {
+      console.error("⚠️ [CREATE RMA] triggerRmaEmails failed:", e?.message || e);
+    }
 
     return res.status(201).json({
       message: "RMA created",
@@ -241,29 +249,30 @@ export const createRma = async (req, res) => {
   }
 };
 
-
 /* ============================================================
    ✅ UPDATE RMA (Admin)
-   PATCH /api/orders/:id/rma/:rmaNumber
 ============================================================ */
 export const updateRma = async (req, res) => {
   try {
     const orderId = req.params.id;
     const rmaNumber = String(req.params.rmaNumber || "").trim();
 
-    if (!isObjectId(orderId))
-      return res.status(400).json({ message: "Invalid order id" });
-
-    if (!rmaNumber)
-      return res.status(400).json({ message: "rmaNumber missing" });
+    if (!isObjectId(orderId)) return badRequest(res, "Invalid order id");
+    if (!rmaNumber) return badRequest(res, "rmaNumber missing");
 
     const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!order) return notFound(res, "Order not found");
 
     const idx = (order.rmas || []).findIndex((r) => String(r.rmaNumber) === rmaNumber);
-    if (idx === -1) return res.status(404).json({ message: "RMA not found" });
+    if (idx === -1) return notFound(res, "RMA not found");
 
     const rma = order.rmas[idx];
+
+    const prevStatus = String(rma.status || "");
+    const prevResolution = String(rma.resolution || "");
+    const prevFeeStatus = String(rma?.fee?.status || "");
+    const prevFeeAmount = Number(rma?.fee?.amount || 0);
+
     const { status, adminNote, resolution, refund, reverseShipment, fee } = req.body;
 
     // Fee update
@@ -271,11 +280,15 @@ export const updateRma = async (req, res) => {
       rma.fee = rma.fee || { amount: 0, currency: "INR", status: "waived" };
       if (fee.amount != null) rma.fee.amount = Number(fee.amount || 0);
       if (fee.currency != null) rma.fee.currency = String(fee.currency || "INR");
-      if (fee.status != null) rma.fee.status = String(fee.status || "waived");
+      if (fee.status != null) rma.fee.status = normalize(fee.status || "waived");
     }
 
-    // Fee gating
-    if (rma.type === "exchange" && rma.fee?.amount > 0 && rma.fee.status !== "paid") {
+    // Fee gating for exchange
+    if (
+      rma.type === "exchange" &&
+      Number(rma?.fee?.amount || 0) > 0 &&
+      normalize(rma?.fee?.status) !== "paid"
+    ) {
       const blocked = [
         "approved",
         "pickup_scheduled",
@@ -285,46 +298,71 @@ export const updateRma = async (req, res) => {
         "replacement_shipped",
         "closed",
       ];
-      if (status && blocked.includes(status)) {
-        return res
-          .status(400)
-          .json({ message: "Exchange fee unpaid. Cannot proceed until paid." });
+      if (status && blocked.includes(normalize(status))) {
+        return badRequest(res, "Exchange fee unpaid. Cannot proceed until paid.");
       }
     }
 
     // Main updates
-    if (status) rma.status = status;
-    if (adminNote != null) rma.adminNote = String(adminNote);
-    if (resolution) rma.resolution = resolution;
+    if (status) {
+      rma.status = normalize(status);
+      rma.statusUpdatedAt = new Date();
+    }
+
+    if (adminNote != null) rma.adminNote = String(adminNote || "");
+    if (resolution) rma.resolution = normalize(resolution);
 
     // Refund object
     if (refund && typeof refund === "object") {
       rma.refund = rma.refund || {};
       if (refund.amount != null) rma.refund.amount = Number(refund.amount || 0);
-      if (refund.mode) rma.refund.mode = refund.mode;
-      if (refund.status) rma.refund.status = refund.status;
-      if (refund.referenceId != null)
-        rma.refund.referenceId = String(refund.referenceId || "");
+      if (refund.mode != null) rma.refund.mode = String(refund.mode || "");
+      if (refund.status != null) rma.refund.status = String(refund.status || "");
+      if (refund.referenceId != null) rma.refund.referenceId = String(refund.referenceId || "");
     }
 
     // Reverse pickup object
     if (reverseShipment && typeof reverseShipment === "object") {
       rma.reverseShipment = rma.reverseShipment || {};
       ["orderId", "shipmentId", "awb", "courierName", "trackingUrl"].forEach((f) => {
-        if (reverseShipment[f] != null)
-          rma.reverseShipment[f] = String(reverseShipment[f] || "");
+        if (reverseShipment[f] != null) rma.reverseShipment[f] = String(reverseShipment[f] || "");
       });
+
       ["pickupScheduledAt", "pickedAt", "receivedAt"].forEach((df) => {
-        if (reverseShipment[df] != null) rma.reverseShipment[df] = reverseShipment[df];
+        if (reverseShipment[df] != null) rma.reverseShipment[df] = safeDate(reverseShipment[df]);
       });
     }
 
     await order.save();
 
+    const didStatusChange = status && prevStatus !== rma.status;
+    const didResolutionChange = resolution && prevResolution !== rma.resolution;
+    const didFeeChange =
+      fee &&
+      (prevFeeStatus !== String(rma?.fee?.status || "") ||
+        prevFeeAmount !== Number(rma?.fee?.amount || 0));
+
+    console.log("✅ [UPDATE RMA] Updated:", {
+      orderNumber: order.orderNumber,
+      rmaNumber,
+      status: rma.status,
+      resolution: rma.resolution,
+    });
+
+    // ✅ Trigger emails only if meaningful changes happened
+    if (didStatusChange || didResolutionChange || didFeeChange) {
+      try {
+        console.log("📩 [UPDATE RMA] Triggering RMA emails...");
+        triggerRmaEmails({ order: order.toObject(), rma: rma.toObject(), policy: RMA_POLICY });
+      } catch (e) {
+        console.error("⚠️ [UPDATE RMA] triggerRmaEmails failed:", e?.message || e);
+      }
+    }
+
     return res.status(200).json({
       message: "RMA updated",
       rma: order.rmas[idx],
-      order, // ✅ helpful for frontend refresh
+      order,
     });
   } catch (err) {
     console.error("❌ Update RMA Error:", err);
@@ -334,12 +372,11 @@ export const updateRma = async (req, res) => {
 
 /* ============================================================
    ✅ GET RMAs by Order
-   GET /api/orders/:id/rma
 ============================================================ */
 export const getRmasByOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!order) return notFound(res, "Order not found");
     return res.status(200).json({ rmas: order.rmas || [] });
   } catch (err) {
     return res.status(500).json({ message: err.message || "Server error" });
@@ -348,34 +385,33 @@ export const getRmasByOrder = async (req, res) => {
 
 /* ============================================================
    ✅ GET single RMA
-   GET /api/orders/:id/rma/:rmaNumber
 ============================================================ */
 export const getRmaByNumber = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!order) return notFound(res, "Order not found");
 
     const rma = (order.rmas || []).find(
       (r) => String(r.rmaNumber) === String(req.params.rmaNumber)
     );
 
-    if (!rma) return res.status(404).json({ message: "RMA not found" });
-
+    if (!rma) return notFound(res, "RMA not found");
     return res.status(200).json({ rma });
   } catch (err) {
     return res.status(500).json({ message: err.message || "Server error" });
   }
 };
 
+/* ============================================================
+   ✅ GET All RMAs (Admin)
+============================================================ */
 export const getAllRmasAdmin = async (req, res) => {
   try {
     const { status, type, search } = req.query;
 
     const match = { rmas: { $exists: true, $ne: [] } };
-
-    // filter by status / type (optional)
-    if (status) match["rmas.status"] = status;
-    if (type) match["rmas.type"] = type;
+    if (status) match["rmas.status"] = normalize(status);
+    if (type) match["rmas.type"] = normalize(type);
 
     const orders = await Order.find(match)
       .populate("customerId", "name email phone")
@@ -386,7 +422,6 @@ export const getAllRmasAdmin = async (req, res) => {
 
     for (const order of orders) {
       for (const rma of order.rmas || []) {
-        // optional search by orderNumber or rmaNumber
         if (search) {
           const q = String(search).toLowerCase();
           const ok =
@@ -409,8 +444,6 @@ export const getAllRmasAdmin = async (req, res) => {
     return res.status(200).json({ rmas: allRmas });
   } catch (err) {
     console.error("❌ Fetch All RMAs Error:", err);
-    return res.status(500).json({
-      message: err.message || "Server error",
-    });
+    return res.status(500).json({ message: err.message || "Server error" });
   }
 };

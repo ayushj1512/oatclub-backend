@@ -1,4 +1,4 @@
-// nodemailer/OrderTemplate.js
+// nodemailer/OrderConfirmationTemplate.js
 
 export function orderConfirmationTemplate({
   name = "Customer",
@@ -8,9 +8,18 @@ export function orderConfirmationTemplate({
   const orderId = order?.orderId || order?.orderNumber || order?._id || "—";
   const currency = order?.currency || "INR";
 
-  const paymentMethod = String(order?.paymentMethod || "cod").toUpperCase();
-  const paymentStatus = String(order?.paymentStatus || "pending").toUpperCase();
-  const fulfillmentStatus = String(order?.fulfillmentStatus || "processing").toUpperCase();
+  const paymentMethod = up(order?.paymentMethod || "cod");
+  const paymentStatus = up(order?.paymentStatus || "pending");
+  const fulfillmentStatus = up(order?.fulfillmentStatus || "processing");
+
+  const fulfillmentSub =
+    fulfillmentStatus === "SHIPPED"
+      ? "On the way"
+      : fulfillmentStatus === "DELIVERED"
+      ? "Delivered"
+      : fulfillmentStatus === "CANCELLED"
+      ? "Cancelled"
+      : "In progress";
 
   const subtotal = num(order?.subtotal);
   const discount = num(order?.discount);
@@ -19,15 +28,16 @@ export function orderConfirmationTemplate({
   const finalPayable = num(order?.finalPayable);
 
   const couponCode = order?.coupon?.code ? String(order.coupon.code) : null;
-
   const items = Array.isArray(order?.items) ? order.items : [];
 
   const shipping = order?.shippingAddressSnapshot || {};
   const shippingName =
-    shipping?.name ||
-    [shipping?.firstName, shipping?.lastName].filter(Boolean).join(" ") ||
-    name ||
-    "Customer";
+  shipping?.fullName ||
+  shipping?.name ||
+  [shipping?.firstName, shipping?.lastName].filter(Boolean).join(" ") ||
+  name ||
+  "Customer";
+  
 
   const shippingPhone = shipping?.phone || shipping?.mobile || "";
   const shippingLine1 = shipping?.line1 || shipping?.address1 || "";
@@ -36,6 +46,8 @@ export function orderConfirmationTemplate({
   const shippingState = shipping?.state || "";
   const shippingZip = shipping?.pincode || shipping?.zip || "";
   const shippingCountry = shipping?.country || "India";
+
+  const hasValidCta = Boolean(ctaUrl && ctaUrl !== "#");
 
   const subject = `Order Confirmed — #${orderId} 🖤`;
 
@@ -50,22 +62,23 @@ Fulfillment: ${fulfillmentStatus}
 Payable: ${money(finalPayable, currency)}
 
 Items:
-${items.map((it, i) => formatItemText(it, i + 1, currency)).join("\n")}
+${items.map((it, i) => formatItemText(it, i + 1, currency)).join("\n") || "—"}
 
 Summary:
 Subtotal: ${money(subtotal, currency)}
-Discount: -${money(discount, currency)}
-Shipping: ${money(shippingFee, currency)}
+${discount > 0 ? `Discount: -${money(discount, currency)}\n` : ""}${
+    couponCode ? `Coupon: ${couponCode}\n` : ""
+  }Shipping: ${money(shippingFee, currency)}
 Tax: ${money(tax, currency)}
 Total Payable: ${money(finalPayable, currency)}
-${couponCode ? `Coupon: ${couponCode}\n` : ""}
 
 Shipping Address:
 ${shippingName}
-${shippingLine1}${shippingLine2 ? `, ${shippingLine2}` : ""}
-${shippingCity}${shippingState ? `, ${shippingState}` : ""} ${shippingZip}
+${[shippingLine1, shippingLine2].filter(Boolean).join(", ")}
+${[shippingCity, shippingState, shippingZip].filter(Boolean).join(", ")}
 ${shippingCountry}${shippingPhone ? `\nPhone: ${shippingPhone}` : ""}
 
+${hasValidCta ? `View Order: ${ctaUrl}\n` : ""}
 With regards,
 Team Miray Fashions
 `;
@@ -76,7 +89,9 @@ Team Miray Fashions
         <p style="margin:0;font-size:13px;color:rgba(0,0,0,0.75);">No items found.</p>
       </div>`;
 
-  const discountLabel = couponCode ? `Discount (${escapeHtml(couponCode)})` : "Discount";
+  const discountLabel = couponCode
+    ? `Discount (${escapeHtml(couponCode)})`
+    : "Discount";
 
   const html = `
   <div style="background:#ffffff;color:#000000;padding:40px 20px;">
@@ -118,8 +133,8 @@ Team Miray Fashions
           <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;">
             <tr>
               ${statusCard("Payment", paymentMethod, paymentStatus)}
-              ${statusCard("Fulfillment", fulfillmentStatus, "Preparing")}
-              ${statusCard("Payable", money(finalPayable, currency), currency)}
+              ${statusCard("Fulfillment", fulfillmentStatus, fulfillmentSub)}
+              ${statusCard("Payable", money(finalPayable, currency), "Final Amount")}
             </tr>
           </table>
         </div>
@@ -143,7 +158,8 @@ Team Miray Fashions
 
           <div style="margin-top:16px;border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:20px;">
             ${summaryRow("Subtotal", money(subtotal, currency))}
-            ${summaryRow(discountLabel, `-${money(discount, currency)}`)}
+            ${discount > 0 ? summaryRow(discountLabel, `-${money(discount, currency)}`) : ""}
+            ${couponCode ? summaryRow("Coupon", couponCode) : ""}
             ${summaryRow("Shipping", money(shippingFee, currency))}
             ${summaryRow("Tax", money(tax, currency))}
             <div style="height:1px;background:rgba(0,0,0,0.10);margin:12px 0;"></div>
@@ -164,7 +180,7 @@ Team Miray Fashions
             <p style="margin:0;font-size:13px;line-height:24px;color:rgba(0,0,0,0.80);">
               ${escapeHtml(shippingName)}<br/>
               ${escapeHtml(shippingLine1)}${shippingLine2 ? `<br/>${escapeHtml(shippingLine2)}` : ""}<br/>
-              ${escapeHtml([shippingCity, shippingState].filter(Boolean).join(", "))} ${escapeHtml(shippingZip)}<br/>
+              ${escapeHtml([shippingCity, shippingState, shippingZip].filter(Boolean).join(", "))}<br/>
               ${escapeHtml(shippingCountry)}
               ${shippingPhone ? `<br/>Phone: ${escapeHtml(shippingPhone)}` : ""}
             </p>
@@ -172,17 +188,21 @@ Team Miray Fashions
         </div>
 
         <!-- CTA -->
-        <div style="margin-top:40px;text-align:center;">
-          <a
-            href="${escapeAttr(ctaUrl)}"
-            style="display:inline-block;border:1px solid #000000;border-radius:9999px;padding:12px 32px;font-size:13px;font-weight:600;letter-spacing:0.03em;color:#000000;text-decoration:none;"
-          >
-            View Order Details
-          </a>
-          <p style="margin:12px 0 0 0;font-size:11px;letter-spacing:0.03em;color:rgba(0,0,0,0.45);">
-            Tracking will be available once shipped.
-          </p>
-        </div>
+        ${
+          hasValidCta
+            ? `<div style="margin-top:40px;text-align:center;">
+                <a
+                  href="${escapeAttr(ctaUrl)}"
+                  style="display:inline-block;border:1px solid #000000;border-radius:9999px;padding:12px 32px;font-size:13px;font-weight:600;letter-spacing:0.03em;color:#000000;text-decoration:none;"
+                >
+                  View Order Details
+                </a>
+                <p style="margin:12px 0 0 0;font-size:11px;letter-spacing:0.03em;color:rgba(0,0,0,0.45);">
+                  Tracking will be available once shipped.
+                </p>
+              </div>`
+            : ""
+        }
 
         <!-- Signature -->
         <div style="margin-top:40px;">
@@ -210,6 +230,10 @@ Team Miray Fashions
 }
 
 /* ------------------------- Helpers ------------------------- */
+
+function up(s) {
+  return String(s || "").toUpperCase();
+}
 
 function statusCard(label, main, sub) {
   return `
@@ -244,7 +268,6 @@ function summaryRowStrong(label, value) {
 function renderItemCard(it, currency) {
   const snap = it?.productSnapshot || {};
   const variant = it?.variant || {};
-
   const title = snap?.title || "Item";
   const qty = num(it?.quantity);
   const price = num(it?.price);
@@ -292,10 +315,10 @@ function renderItemCard(it, currency) {
 
 function formatAttrs(attrs) {
   if (!attrs || typeof attrs !== "object") return "";
-  const pairs = Object.entries(attrs)
+  return Object.entries(attrs)
     .filter(([_, v]) => v !== null && v !== undefined && String(v).trim() !== "")
-    .map(([k, v]) => `${capitalize(k)}: ${String(v)}`);
-  return pairs.join(" • ");
+    .map(([k, v]) => `${capitalize(k)}: ${String(v)}`)
+    .join(" • ");
 }
 
 function capitalize(s) {
@@ -314,8 +337,7 @@ function formatItemText(it, i, currency) {
 
 function money(value, currency = "INR") {
   const n = num(value);
-  if (currency === "INR") return `₹${formatNumber(n)}`;
-  return `${currency} ${formatNumber(n)}`;
+  return currency === "INR" ? `₹${formatNumber(n)}` : `${currency} ${formatNumber(n)}`;
 }
 
 function formatNumber(n) {

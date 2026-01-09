@@ -7,7 +7,7 @@ import { sendMail } from "./mailer.js";
 import { onboardingTemplate } from "./OnboardingEmailTempalte.js";
 import { orderConfirmationTemplate } from "./OrderConfirmationTemplate.js";
 import { orderReceivedTemplate } from "./OrderReceivedTemplate.js";
-import { rmaCreatedTemplate } from "./RmaEmailTemplate.js";
+import { rmaCreatedTemplate } from "./events/RmaEmailTemplate.js";
 
 // ✅ Fixed recipients for ORDER_RECEIVED (NO .env)
 const ORDER_RECEIVED_RECIPIENTS = [

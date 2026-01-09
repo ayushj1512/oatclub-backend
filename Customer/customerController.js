@@ -1,4 +1,5 @@
 import Customer from "./Customer.js";
+import { Mailer } from "../nodemailer/events/mailer.js"; // ✅ adjust relative path if needed
 
 /**
  * ---------------------------------------------------------
@@ -19,25 +20,60 @@ export const createCustomer = async (req, res) => {
       referredBy,
     } = req.body;
 
+    // ✅ Normalize
     const safeEmail = email ? String(email).trim().toLowerCase() : "";
     const safePhone = phone ? String(phone).trim() : "";
 
-    // ✅ referral code fallback
+    // ✅ Referral Code
     const finalReferralCode =
       referralCode ||
       Math.random().toString(36).substring(2, 10).toUpperCase();
 
+    // ✅ helper: send onboarding mail (only if email exists + mail enabled)
+    const sendOnboardingIfPossible = async (customer) => {
+      try {
+        if (process.env.MAIL_ENABLED !== "true") {
+          console.log("📭 Onboarding skipped: MAIL_ENABLED not true");
+          return;
+        }
+
+        if (!customer?.email) {
+          console.log("📭 Onboarding skipped: customer.email missing");
+          return;
+        }
+
+        await Mailer.sendUserOnboarding({
+          to: customer.email,
+          name: customer?.name || "Customer",
+          ctaUrl: `${process.env.CLIENT_URL}/account`,
+          brandName: "Miray Fashions",
+          supportEmail: process.env.MAIL_REPLY_TO || "support@mirayfashions.com",
+        });
+
+        console.log(`✅ Onboarding email sent to: ${customer.email}`);
+      } catch (err) {
+        console.error("❌ Onboarding Mail Error FULL:", err);
+      }
+    };
+
     /**
-     * ---------------------------------------------------------
-     * ✅ CASE 1: Firebase Login (OAuth)
-     * ---------------------------------------------------------
+     * ✅ RULE:
+     * Send onboarding ONLY when:
+     * - New customer created OR
+     * - Existing customer had no email before and now email is set
      */
+
+    // ---------------------------------------------------------
+    // ✅ CASE 1: Firebase Login (OAuth)
+    // ---------------------------------------------------------
     if (firebaseUID) {
-      // ✅ find by firebaseUID
+      // 1) Find by firebaseUID
       let customer = await Customer.findOne({ firebaseUID });
 
+      // ✅ If exists, update fields (send onboarding ONLY if email was missing and now set)
       if (customer) {
-        // ✅ update login/profile fields
+        const wasEmailMissing = !customer.email;
+
         if (safeEmail) customer.email = safeEmail;
         if (name) customer.name = name;
         if (safePhone) customer.phone = safePhone;
@@ -45,26 +81,37 @@ export const createCustomer = async (req, res) => {
 
         await customer.save();
 
+        // ✅ Send onboarding only if email got added now
+        if (wasEmailMissing && customer.email) {
+          // fire & forget but safe
+          sendOnboardingIfPossible(customer);
+        }
+
         return res.status(200).json({
           message: "Customer updated",
           customer,
         });
       }
 
-      /**
-       * ✅ Edge Case: If firebaseUID not found but email already exists
-       * link that customer to firebaseUID
-       */
+      // 2) Edge: firebaseUID not found but email exists → link account
       if (safeEmail) {
         const existingByEmail = await Customer.findOne({ email: safeEmail });
 
         if (existingByEmail) {
+          const wasEmailMissing = !existingByEmail.email; // usually false since found by email
+
           existingByEmail.firebaseUID = firebaseUID;
           if (name) existingByEmail.name = name;
           if (safePhone) existingByEmail.phone = safePhone;
           if (profileImage) existingByEmail.profileImage = profileImage;
 
           await existingByEmail.save();
+
+          // In linking case, onboarding usually not needed, but safe:
+          // if email was missing earlier and now set (rare) -> send
+          if (wasEmailMissing && existingByEmail.email) {
+            sendOnboardingIfPossible(existingByEmail);
+          }
 
           return res.status(200).json({
             message: "Customer linked to firebase login",
@@ -73,10 +120,10 @@ export const createCustomer = async (req, res) => {
         }
       }
 
-      // ✅ create fresh customer for firebase login
+      // 3) Create NEW firebase customer
       customer = await Customer.create({
         firebaseUID,
-        email: safeEmail,
+        email: safeEmail || "", // allow empty if user logged in without email
         name,
         phone: safePhone,
         profileImage,
@@ -92,6 +139,9 @@ export const createCustomer = async (req, res) => {
           lastAbandonedCartId: null,
         },
       });
+
+      // ✅ send onboarding (if email exists)
+      sendOnboardingIfPossible(customer);
 
       return res.status(201).json({
         message: "Customer created",
@@ -99,21 +149,16 @@ export const createCustomer = async (req, res) => {
       });
     }
 
-    /**
-     * ---------------------------------------------------------
-     * ✅ CASE 2: Guest Checkout (no firebaseUID)
-     * ---------------------------------------------------------
-     * ✅ Find OR Create customer by email/phone safely
-     */
-
-    // ✅ must have at least email OR phone
+    // ---------------------------------------------------------
+    // ✅ CASE 2: Guest Checkout (no firebaseUID)
+    // ---------------------------------------------------------
     if (!safeEmail && !safePhone) {
       return res.status(400).json({
         message: "Email or phone is required for guest checkout",
       });
     }
 
-    // ✅ Find by email OR phone (both checked)
+    // ✅ Find existing guest by email/phone
     let existingCustomer = await Customer.findOne({
       $or: [
         ...(safeEmail ? [{ email: safeEmail }] : []),
@@ -121,17 +166,27 @@ export const createCustomer = async (req, res) => {
       ],
     });
 
+    // ✅ Guest exists → update (send onboarding ONLY if email was missing and now set)
     if (existingCustomer) {
-      // ✅ fill missing fields silently (NO overwrite)
+      const wasEmailMissing = !existingCustomer.email;
+
       if (name && !existingCustomer.name) existingCustomer.name = name;
+
       if (safeEmail && !existingCustomer.email)
         existingCustomer.email = safeEmail;
+
       if (safePhone && !existingCustomer.phone)
         existingCustomer.phone = safePhone;
+
       if (profileImage && !existingCustomer.profileImage)
         existingCustomer.profileImage = profileImage;
 
       await existingCustomer.save();
+
+      // ✅ send onboarding only if email got added now
+      if (wasEmailMissing && existingCustomer.email) {
+        sendOnboardingIfPossible(existingCustomer);
+      }
 
       return res.status(200).json({
         message: "Guest customer already exists",
@@ -139,14 +194,11 @@ export const createCustomer = async (req, res) => {
       });
     }
 
-    /**
-     * ✅ Create new guest customer
-     * ✅ Handle race condition duplicate key safely
-     */
+    // ✅ Create NEW guest customer
     try {
       const guestCustomer = await Customer.create({
         firebaseUID: null,
-        email: safeEmail,
+        email: safeEmail || "",
         name,
         phone: safePhone,
         profileImage,
@@ -163,12 +215,15 @@ export const createCustomer = async (req, res) => {
         },
       });
 
+      // ✅ send onboarding (if email exists)
+      sendOnboardingIfPossible(guestCustomer);
+
       return res.status(201).json({
         message: "Guest customer created",
         customer: guestCustomer,
       });
     } catch (err) {
-      // ✅ race condition: duplicate key created by another request
+      // ✅ Handle duplicate key race condition safely
       if (err?.code === 11000) {
         const fallback = await Customer.findOne({
           $or: [
@@ -184,10 +239,11 @@ export const createCustomer = async (req, res) => {
           });
         }
       }
+
       throw err;
     }
   } catch (error) {
-    console.error("Create Customer Error:", error);
+    console.error("Create Customer Error FULL:", error);
 
     return res.status(500).json({
       message: "Server error",
@@ -195,6 +251,9 @@ export const createCustomer = async (req, res) => {
     });
   }
 };
+
+
+
 
 /**
  * ---------------------------------------------------------

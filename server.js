@@ -2,8 +2,10 @@
 // server.js (MIRAY FASHIONS Backend)
 // --------------------------------------------------
 
+// ✅ MUST BE FIRST LINE (ESM SAFE)
+import "dotenv/config";
+
 import express from "express";
-import dotenv from "dotenv";
 import mongoose from "mongoose";
 import cors from "cors";
 import morgan from "morgan";
@@ -20,7 +22,6 @@ import collectionRoutes from "./Collection/collectionRouter.js";
 import couponRoutes from "./Coupon/couponRouter.js";
 import creditRoutes from "./Credit/creditRouter.js";
 import customerRoutes from "./Customer/customerRouter.js";
-import newsletterRoutes from "./Newsletter/newsletterRouter.js";
 import offerRoutes from "./Offer/offerRouter.js";
 import orderRoutes from "./Orders/orderRouter.js";
 import productRoutes from "./Products/productRouter.js";
@@ -38,7 +39,6 @@ import shiprocketRoutes from "./shiprocket/shipping.routes.js";
 // --------------------------------------------------
 import inventoryRoutes from "./routes/admin/inventoryRouter.js";
 import ticketRoutes from "./routes/admin/tickets.js";
-
 import superadminRoutes from "./routes/superadmin.js";
 
 // --------------------------------------------------
@@ -68,15 +68,23 @@ import barcodeItemRoutes from "./BarcodeItem/barcodeItem.routes.js";
 // ✅ Abandoned carts
 import abandonedCartRoutes from "./AbandonedCart/AbandonedCartRoutes.js";
 
-
-
 import homepageSettingsRoutes from "./HomepageSettings/homepageSettingsRoutes.js";
-import adminUserRoutes from "./AdminUsers/adminUserRoutes.js"; // ✅ import routes
+import adminUserRoutes from "./AdminUsers/adminUserRoutes.js";
+
+// --------------------------------------------------
+// ✅ ENV DEBUG (VERY IMPORTANT)
+// --------------------------------------------------
+console.log("✅ ENV LOADED @ server.js:", {
+  MAIL_ENABLED: process.env.MAIL_ENABLED,
+  MAIL_USER: process.env.MAIL_USER,
+  MAIL_PASS: process.env.MAIL_PASS ? "✅ present" : "❌ missing",
+  MAIL_HOST: process.env.MAIL_HOST,
+  MAIL_PORT: process.env.MAIL_PORT,
+});
 
 // --------------------------------------------------
 // CONFIG
 // --------------------------------------------------
-dotenv.config();
 const app = express();
 
 // ✅ For deployment environments like Render/NGINX
@@ -97,20 +105,15 @@ const ALLOWED_ORIGINS = [
   // ✅ Admin Panel
   "https://admin.mirayfashions.com",
 
-  // ✅ Backend itself (optional)
+  // ✅ Backend itself
   "https://miray-backend.onrender.com",
 ];
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow Postman / server-to-server / curl
       if (!origin) return callback(null, true);
-
-      // Allow listed origins
       if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-
-      // ❌ Block others silently
       return callback(null, false);
     },
     credentials: true,
@@ -160,7 +163,6 @@ mongoose
 // --------------------------------------------------
 // ✅ API ROUTES
 // --------------------------------------------------
-
 app.use("/api/ping", pingRoutes);
 app.use("/api/size-charts", sizeChartRoutes);
 app.use("/api/addresses", addressRoutes);
@@ -179,6 +181,7 @@ app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/fabrics", fabricRoutes);
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/admin-users", adminUserRoutes);
+
 // Admin
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/tickets", ticketRoutes);
@@ -188,55 +191,36 @@ app.use("/api/newsletters", newsletterRouter);
 // Media
 app.use("/api/media", mediaRoutes);
 
-// Shipping (Shiprocket)
+// Shipping
 app.use("/api", shiprocketRoutes);
 
-// --------------------------------------------------
-// ✅ PRODUCT VIEW ANALYTICS
-// POST /api/analytics/product-view
-// --------------------------------------------------
+// Analytics
 app.use("/api/analytics", productViewAnalyticsRoutes);
 
-// --------------------------------------------------
-// ✅ REELS
-// --------------------------------------------------
+// Reels
 app.use("/api/reels", reelsRoutes);
 
-// --------------------------------------------------
-// ✅ CUSTOMER SUPPORT
-// --------------------------------------------------
+// Support
 app.use("/api/support", customerTicketRoutes);
 
-// --------------------------------------------------
-// ✅ BARCODE
-// --------------------------------------------------
+// Barcode
 app.use("/api", barcodeItemRoutes);
 
-// --------------------------------------------------
-// ✅ RAZORPAY
-// --------------------------------------------------
+// Razorpay
 app.use("/api/razorpay", razorpayRoutes);
 
-// --------------------------------------------------
-// ✅ ABANDONED CARTS
-// --------------------------------------------------
+// Abandoned carts
 app.use("/api/abandoned-carts", abandonedCartRoutes);
 
-// --------------------------------------------------
-// ✅ SUPERADMIN
-// --------------------------------------------------
+// Superadmin
 app.use("/superadmin", superadminRoutes);
 
-// --------------------------------------------------
-// ROOT
-// --------------------------------------------------
+// Root
 app.get("/", (req, res) => {
   res.send("🛒 MIRAY FASHIONS API running...");
 });
 
-// --------------------------------------------------
-// ✅ CLOUDINARY TEST
-// --------------------------------------------------
+// Cloudinary test
 app.get("/api/cloudinary/test", async (req, res) => {
   try {
     const r = await cloudinary.api.ping();
@@ -249,9 +233,7 @@ app.get("/api/cloudinary/test", async (req, res) => {
   }
 });
 
-// --------------------------------------------------
-// ✅ 404 HANDLER (Always last route)
-// --------------------------------------------------
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -259,9 +241,7 @@ app.use((req, res) => {
   });
 });
 
-// --------------------------------------------------
-// ✅ GLOBAL ERROR HANDLER
-// --------------------------------------------------
+// Global error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(err.status || 500).json({
@@ -274,6 +254,13 @@ app.use((err, req, res, next) => {
 // ✅ START SERVER
 // --------------------------------------------------
 const PORT = process.env.PORT || 5000;
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+
+  console.log("📨 MAIL_ENABLED:", process.env.MAIL_ENABLED);
+  console.log("SMTP HOST:", process.env.MAIL_HOST);
+  console.log("SMTP PORT:", process.env.MAIL_PORT);
+  console.log("SMTP USER:", process.env.MAIL_USER);
+  console.log("SMTP PASS:", process.env.MAIL_PASS ? "✅ present" : "❌ missing");
 });

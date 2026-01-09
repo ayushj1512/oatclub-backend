@@ -10,6 +10,60 @@ import {
   assignAwb,
 } from "../shiprocket/index.js";
 import { buildShiprocketPayload } from "../shiprocket/shiprocket.payload.js";
+import { Mailer } from "../nodemailer/events/mailer.js"; // ✅ adjust relative path if needed
+// ✅ Centralized email triggers
+import {
+  triggerOrderEmails,
+  triggerOrderCancellationEmails,
+  triggerRmaEmails,
+} from "./order.emails.js";
+
+const ADMIN_ORDER_ALERT_EMAILS = [
+  "finance@mirayfashions.com",
+  "support@mirayfashions.com",
+  "miray.ayushjuneja@gmail.com",
+].filter(Boolean);
+
+
+const sendAdminOrderReceivedMail = async (order) => {
+  try {
+    if (process.env.MAIL_ENABLED !== "true") {
+      console.log("📭 Admin order mail skipped: MAIL_ENABLED not true");
+      return;
+    }
+
+    // ✅ Remove duplicates + join safely for nodemailer
+    const recipients = [...new Set(ADMIN_ORDER_ALERT_EMAILS)]
+      .map((e) => String(e).trim().toLowerCase())
+      .filter(Boolean);
+
+    if (!recipients.length) {
+      console.log("📭 Admin order mail skipped: no admin recipients");
+      return;
+    }
+
+    // ✅ CTA: Prefer Admin panel if available else fallback
+    const baseAdminUrl =
+      process.env.ADMIN_PANEL_URL ||
+      process.env.CLIENT_URL ||
+      "http://localhost:3000";
+
+    const orderId = order?.orderId || order?.orderNumber || order?._id;
+    const ctaUrl = orderId ? `${baseAdminUrl}/admin/orders/${orderId}` : baseAdminUrl;
+
+    await Mailer.sendAdminOrderReceived({
+      to: recipients.join(","),
+      order,
+      ctaUrl,
+    });
+
+    console.log("✅ Admin Order Received mail sent to:", recipients.join(", "));
+  } catch (err) {
+    console.error("❌ Admin Order Received mail error FULL:", err);
+  }
+};
+
+
 
 /* ============================================================
    RMA POLICY (hardcoded backend)
@@ -536,14 +590,29 @@ export const createOrder = async (req, res) => {
       }
     } catch (e) {
       console.error("⚠️ Auto Shiprocket booking failed:", e?.message || e);
-      // Do not block order creation
+     
+    }
+
+    /* =========================================================
+       ✅ Fetch final order (lean)
+    ========================================================= */
+    const finalOrder = await Order.findById(req.__createdOrder._id).lean();
+
+    /* =========================================================
+       ✅ EMAILS (Non-blocking)
+       - Admin order received + Customer confirmation
+       - Never blocks response
+    ========================================================= */
+    try {
+      // ✅ fire-and-forget unified trigger
+      triggerOrderEmails(finalOrder);
+    } catch (e) {
+      console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
     }
 
     /* =========================================================
        ✅ Return final order
     ========================================================= */
-    const finalOrder = await Order.findById(req.__createdOrder._id).lean();
-
     return res.status(201).json({
       message: "Order created successfully",
       order: finalOrder,
@@ -557,6 +626,8 @@ export const createOrder = async (req, res) => {
     session.endSession();
   }
 };
+
+
 
 
 
@@ -658,44 +729,92 @@ export const updateOrder = async (req, res) => {
    UPDATE ORDER STATUS ONLY
 ============================================================ */
 export const updateOrderStatus = async (req, res) => {
+  const session = await mongoose.startSession();
+
   try {
-    const { fulfillmentStatus, paymentStatus } = req.body;
+    const { fulfillmentStatus, paymentStatus, reason = "cancelled_by_admin" } =
+      req.body;
 
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ message: "Order not found" });
+    const orderId = req.params.id;
 
-    // ✅ Update fulfillment status
-    if (fulfillmentStatus) {
-      order.fulfillmentStatus = fulfillmentStatus;
-
-      // ✅ AUTO-SET deliveredAt if marked delivered
-      if (fulfillmentStatus === "delivered") {
-        order.trackingDetails = order.trackingDetails || {};
-        if (!order.trackingDetails.deliveredAt) {
-          order.trackingDetails.deliveredAt = new Date();
-        }
-
-        // optional (nice)
-        order.shipment = order.shipment || {};
-        if (!order.shipment.deliveredAt) {
-          order.shipment.deliveredAt = new Date();
-        }
-      }
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
     }
 
-    // ✅ Update payment status
-    if (paymentStatus) order.paymentStatus = paymentStatus;
+    let updatedOrder = null;
 
-    await order.save();
+    await session.withTransaction(async () => {
+      // ✅ If cancelling → run full cancel flow
+      if (fulfillmentStatus === "cancelled") {
+        updatedOrder = await performOrderCancellation({
+          orderId,
+          reason,
+          session,
+        });
+        return;
+      }
 
-    return res.status(200).json({ message: "Order status updated", order });
+      // ✅ Normal status update flow
+      const order = await Order.findById(orderId).session(session);
+      if (!order) throw new Error("Order not found");
+
+      if (fulfillmentStatus) {
+        order.fulfillmentStatus = fulfillmentStatus;
+
+        // ✅ AUTO deliveredAt
+        if (fulfillmentStatus === "delivered") {
+          order.trackingDetails = order.trackingDetails || {};
+          if (!order.trackingDetails.deliveredAt) {
+            order.trackingDetails.deliveredAt = new Date();
+          }
+
+          order.shipment = order.shipment || {};
+          if (!order.shipment.deliveredAt) {
+            order.shipment.deliveredAt = new Date();
+          }
+        }
+      }
+
+      if (paymentStatus) order.paymentStatus = paymentStatus;
+
+      await order.save({ session });
+
+      updatedOrder = order;
+    });
+
+    // ✅ Fetch Lean for email trigger + response consistency
+    const finalOrder = await Order.findById(updatedOrder._id).lean();
+
+    /* =========================================================
+       ✅ If cancelled → trigger cancellation emails
+    ========================================================= */
+    try {
+      if (fulfillmentStatus === "cancelled") {
+        console.log("📩 Triggering cancellation emails from updateOrderStatus...");
+        triggerOrderCancellationEmails(finalOrder, reason);
+      }
+    } catch (e) {
+      console.error("⚠️ Cancellation email trigger failed:", e?.message || e);
+    }
+
+    return res.status(200).json({
+      message:
+        fulfillmentStatus === "cancelled"
+          ? "Order cancelled successfully"
+          : "Order status updated",
+      order: finalOrder,
+    });
   } catch (error) {
     console.error("❌ Update Status Error:", error);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  } finally {
+    session.endSession();
   }
 };
+
 
 /* ============================================================
    UPDATE TRACKING
@@ -810,18 +929,35 @@ export const getOrderByOrderNumber = async (req, res) => {
 // CANCEL ORDER
 export const cancelOrder = async (req, res) => {
   const session = await mongoose.startSession();
+  const TAG = "❌[CANCEL_ORDER]";
 
   try {
     const orderId = req.params.id;
     const { reason = "cancelled_by_customer" } = req.body;
 
+    console.log(`${TAG} Request received`, { orderId, reason });
+
     if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      console.log(`${TAG} Invalid orderId`);
       return res.status(400).json({ message: "Invalid order id" });
     }
 
+    let cancelledOrderId = null; // ✅ store for later email trigger
+
     await session.withTransaction(async () => {
+      console.log(`${TAG} Transaction started`);
+
       const order = await Order.findById(orderId).session(session);
-      if (!order) throw new Error("Order not found");
+      if (!order) {
+        console.log(`${TAG} Order not found inside txn`);
+        throw new Error("Order not found");
+      }
+
+      console.log(`${TAG} Order loaded`, {
+        fulfillmentStatus: order.fulfillmentStatus,
+        paymentStatus: order.paymentStatus,
+        paymentMethod: order.paymentMethod,
+      });
 
       /* ------------------------------------------------
          1️⃣ CANCELLATION GUARDS
@@ -834,11 +970,16 @@ export const cancelOrder = async (req, res) => {
       ];
 
       if (nonCancellableStatuses.includes(order.fulfillmentStatus)) {
+        console.log(`${TAG} Cannot cancel due to status`, {
+          fulfillmentStatus: order.fulfillmentStatus,
+        });
         throw new Error("Order cannot be cancelled after pickup / shipment");
       }
 
-      // Idempotent: already cancelled → no-op
+      // ✅ Idempotent: already cancelled → no-op
       if (order.fulfillmentStatus === "cancelled") {
+        console.log(`${TAG} Already cancelled -> no-op`);
+        cancelledOrderId = order._id;
         return;
       }
 
@@ -847,12 +988,17 @@ export const cancelOrder = async (req, res) => {
       ------------------------------------------------ */
       const shipmentId = order?.shipment?.shiprocket?.shipmentId;
 
+      console.log(`${TAG} Checking Shiprocket shipment`, { shipmentId });
+
       if (shipmentId) {
         try {
           await cancelShiprocketShipment(shipmentId);
+          console.log(`${TAG} ✅ Shiprocket cancellation successful`, {
+            shipmentId,
+          });
         } catch (err) {
           console.error(
-            "⚠️ Shiprocket cancel failed:",
+            `${TAG} ⚠️ Shiprocket cancel failed`,
             err?.response?.data || err
           );
           // Do NOT block cancellation
@@ -862,11 +1008,21 @@ export const cancelOrder = async (req, res) => {
       /* ------------------------------------------------
          3️⃣ RESTORE STOCK (ATOMIC)
       ------------------------------------------------ */
+      console.log(`${TAG} Restoring stock for items...`, {
+        itemsCount: order.items?.length || 0,
+      });
+
       for (const it of order.items || []) {
         const qty = Number(it.quantity || 0);
         if (!qty) continue;
 
         const variantId = it?.variant?.variantId;
+
+        console.log(`${TAG} Restoring stock`, {
+          productId: it.productId,
+          variantId: variantId || null,
+          qty,
+        });
 
         if (variantId) {
           await Product.updateOne(
@@ -884,6 +1040,8 @@ export const cancelOrder = async (req, res) => {
         }
       }
 
+      console.log(`${TAG} ✅ Stock restoration complete`);
+
       /* ------------------------------------------------
          4️⃣ PAYMENT STATE (REFUND MARKING)
       ------------------------------------------------ */
@@ -891,6 +1049,7 @@ export const cancelOrder = async (req, res) => {
         order.paymentMethod === "razorpay" &&
         order.paymentStatus === "paid"
       ) {
+        console.log(`${TAG} Razorpay paid -> marking refund_pending`);
         // actual refund handled async / webhook
         order.paymentStatus = "refund_pending";
       }
@@ -898,6 +1057,8 @@ export const cancelOrder = async (req, res) => {
       /* ------------------------------------------------
          5️⃣ FINAL ORDER STATE
       ------------------------------------------------ */
+      console.log(`${TAG} Updating order state to cancelled`);
+
       order.fulfillmentStatus = "cancelled";
 
       order.shipment = {
@@ -908,22 +1069,173 @@ export const cancelOrder = async (req, res) => {
       order.adminRemarks = reason;
 
       await order.save({ session });
+
+      console.log(`${TAG} ✅ Order cancelled saved in DB`, {
+        orderId: order._id,
+        fulfillmentStatus: order.fulfillmentStatus,
+      });
+
+      cancelledOrderId = order._id;
     });
+
+    /* =========================================================
+       ✅ Fetch cancelled order (lean)
+       - outside txn
+       - for email trigger + response consistency
+    ========================================================= */
+    let finalOrder = null;
+
+    try {
+      if (cancelledOrderId) {
+        finalOrder = await Order.findById(cancelledOrderId).lean();
+        console.log(`${TAG} ✅ Final order fetched outside txn`, {
+          cancelledOrderId,
+          fulfillmentStatus: finalOrder?.fulfillmentStatus,
+        });
+      }
+    } catch (e) {
+      console.error(`${TAG} ⚠️ Cancel order fetch failed`, e?.message || e);
+    }
+
+    /* =========================================================
+       ✅ EMAIL TRIGGER (Non-blocking)
+       - Customer cancellation email
+       - Admin FYI email (optional)
+       - Never block response
+    ========================================================= */
+    try {
+      if (finalOrder) {
+        console.log(`${TAG} Triggering cancellation emails...`, {
+          customerEmail:
+            finalOrder?.shippingAddressSnapshot?.email ||
+            finalOrder?.customerId?.email ||
+            finalOrder?.email ||
+            null,
+        });
+
+        triggerOrderCancellationEmails(finalOrder, reason);
+
+        console.log(`${TAG} ✅ triggerOrderCancellationEmails called`);
+      }
+    } catch (e) {
+      console.error(
+        `${TAG} ⚠️ triggerOrderCancellationEmails failed`,
+        e?.message || e
+      );
+    }
 
     return res.status(200).json({
       success: true,
-      message: "Order cancelled successfully",
+      message:
+        finalOrder?.fulfillmentStatus === "cancelled"
+          ? "Order cancelled successfully"
+          : "Order already cancelled",
+      order: finalOrder || undefined,
     });
   } catch (error) {
-    console.error("❌ Cancel Order Error:", error);
+    console.error(`${TAG} ❌ Cancel Order Error`, error);
     return res.status(400).json({
       success: false,
       message: error.message,
     });
   } finally {
+    console.log(`${TAG} Session ended`);
     session.endSession();
   }
 };
+
+async function performOrderCancellation({ orderId, reason, session }) {
+  const order = await Order.findById(orderId).session(session);
+  if (!order) throw new Error("Order not found");
+
+  const nonCancellableStatuses = [
+    "picked",
+    "shipped",
+    "out_for_delivery",
+    "delivered",
+  ];
+
+  if (nonCancellableStatuses.includes(order.fulfillmentStatus)) {
+    throw new Error("Order cannot be cancelled after pickup / shipment");
+  }
+
+  // ✅ Idempotent
+  if (order.fulfillmentStatus === "cancelled") {
+    return order;
+  }
+
+  /* ------------------------------------------------
+     2️⃣ CANCEL SHIPROCKET (IF BOOKED & NOT PICKED)
+  ------------------------------------------------ */
+  const shipmentId = order?.shipment?.shiprocket?.shipmentId;
+
+  if (shipmentId) {
+    try {
+      await cancelShiprocketShipment(shipmentId);
+    } catch (err) {
+      console.error("⚠️ Shiprocket cancel failed:", err?.response?.data || err);
+      // Do NOT block cancellation
+    }
+  }
+
+  /* ------------------------------------------------
+     3️⃣ RESTORE STOCK (ATOMIC)
+  ------------------------------------------------ */
+  for (const it of order.items || []) {
+    const qty = Number(it.quantity || 0);
+    if (!qty) continue;
+
+    const variantId = it?.variant?.variantId;
+
+    if (variantId) {
+      await Product.updateOne(
+        {
+          _id: it.productId,
+          "variants._id": variantId,
+        },
+        { $inc: { "variants.$.stock": qty } }
+      ).session(session);
+    } else {
+      await Product.updateOne(
+        { _id: it.productId },
+        { $inc: { stock: qty } }
+      ).session(session);
+    }
+  }
+
+  /* ------------------------------------------------
+     4️⃣ PAYMENT STATE (REFUND MARKING)
+  ------------------------------------------------ */
+  if (order.paymentMethod === "razorpay" && order.paymentStatus === "paid") {
+    // actual refund handled async / webhook
+    order.paymentStatus = "refund_pending";
+  }
+
+  /* ------------------------------------------------
+     5️⃣ FINAL ORDER STATE ✅ FIXED
+  ------------------------------------------------ */
+  order.fulfillmentStatus = "cancelled";
+
+  // ✅ Always ensure shipment + shiprocket objects exist
+  order.shipment = order.shipment || {};
+  order.shipment.shiprocket = order.shipment.shiprocket || {};
+
+  order.shipment = {
+    ...(order.shipment || {}),
+    shiprocket: {
+      ...(order.shipment.shiprocket || {}),
+    },
+    status: "cancelled",
+  };
+
+  order.adminRemarks = reason;
+
+  await order.save({ session });
+
+  return order;
+}
+
+
 
 // SHIPROCKET AUTOBOOK
 async function autoBookShiprocketForOrder(order) {

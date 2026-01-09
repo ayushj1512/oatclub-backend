@@ -15,6 +15,16 @@ export function rmaCreatedTemplate({
   const customerNote = String(rma?.customerNote || "");
   const windowDays = Number(policy?.windowDays || 7);
 
+  // ✅ FIX: name fallback from shipping snapshot
+  const shipping = order?.shippingAddressSnapshot || {};
+  const shippingName =
+    shipping?.fullName ||
+    shipping?.name ||
+    [shipping?.firstName, shipping?.lastName].filter(Boolean).join(" ") ||
+    "";
+
+  const finalName = String(shippingName || name || "Customer").trim();
+
   const feeAmount = num(rma?.fee?.amount);
   const feeCurrency = String(rma?.fee?.currency || "INR");
   const feeStatus = String(
@@ -23,10 +33,13 @@ export function rmaCreatedTemplate({
 
   const items = Array.isArray(rma?.items) ? rma.items : [];
 
-  const subject = `RMA Request Received — RMA#${rmaNumber} 🖤`;
+  // ✅ Better subject (order number also)
+  const subject = `RMA Request Received — ${type} | RMA#${rmaNumber} | Order #${orderNumber}`;
+
+  const hasValidCta = Boolean(ctaUrl && ctaUrl !== "#");
 
   // ✅ Plain text fallback
-  const text = `Hi ${name},
+  const text = `Hi ${finalName},
 
 Thank you — we’ve received your request and our team will assist you shortly.
 
@@ -37,7 +50,7 @@ Status: ${status}
 ${type === "EXCHANGE" ? `Exchange Fee: ${money(feeAmount, feeCurrency)} (${feeStatus})\n` : ""}
 
 Items:
-${items.map((it, i) => formatRmaItemText(it, i + 1)).join("\n")}
+${items.map((it, i) => formatRmaItemText(it, i + 1)).join("\n") || "—"}
 
 Reason: ${reason}
 ${customerNote ? `Customer Note: ${customerNote}\n` : ""}
@@ -46,6 +59,8 @@ What happens next?
 - Our team will review your request within 24 hours.
 - If approved, we will schedule a pickup from your address.
 - You will receive updates on this email.
+
+${hasValidCta ? `View RMA Details: ${ctaUrl}\n` : ""}
 
 With regards,
 Team Miray Fashions
@@ -86,7 +101,7 @@ Team Miray Fashions
 
         <!-- Greeting -->
         <h2 style="margin:0;font-size:20px;font-weight:600;letter-spacing:-0.02em;">
-          Hi ${escapeHtml(name)} ✨
+          Hi ${escapeHtml(finalName)} ✨
         </h2>
         <p style="margin:8px 0 0 0;font-size:13px;color:rgba(0,0,0,0.60);">
           Thank you — we’ve received your request and our team will assist you shortly.
@@ -154,17 +169,21 @@ Team Miray Fashions
         </div>
 
         <!-- CTA -->
-        <div style="margin-top:40px;text-align:center;">
-          <a
-            href="${escapeAttr(ctaUrl)}"
-            style="display:inline-block;border:1px solid #000000;border-radius:9999px;padding:12px 32px;font-size:13px;font-weight:600;letter-spacing:0.03em;color:#000000;text-decoration:none;"
-          >
-            View RMA Details
-          </a>
-          <p style="margin:12px 0 0 0;font-size:11px;letter-spacing:0.03em;color:rgba(0,0,0,0.45);">
-            Tracking will be available once pickup is scheduled.
-          </p>
-        </div>
+        ${
+          hasValidCta
+            ? `<div style="margin-top:40px;text-align:center;">
+                <a
+                  href="${escapeAttr(ctaUrl)}"
+                  style="display:inline-block;border:1px solid #000000;border-radius:9999px;padding:12px 32px;font-size:13px;font-weight:600;letter-spacing:0.03em;color:#000000;text-decoration:none;"
+                >
+                  View RMA Details
+                </a>
+                <p style="margin:12px 0 0 0;font-size:11px;letter-spacing:0.03em;color:rgba(0,0,0,0.45);">
+                  Tracking will be available once pickup is scheduled.
+                </p>
+              </div>`
+            : ""
+        }
 
         <!-- Signature -->
         <div style="margin-top:40px;">
