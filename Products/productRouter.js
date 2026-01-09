@@ -5,6 +5,7 @@ import {
   createProduct,
   getAllProducts,
   getProductsByTag,
+  getProductsByCategory,   // ✅ ADD THIS
   getProductByIdOrSlug,
   getProductBySKU,
   updateProduct,
@@ -33,16 +34,19 @@ const router = express.Router();
    🔓 PUBLIC ROUTES (CUSTOMERS)
 =========================================================== */
 
-// Products by tag(s)
+// ✅ Products by tag(s)
 router.get("/by-tag", getProductsByTag);
 
-// Get all products (filters, pagination, search)
+// ✅ Products by category (slug OR id OR name)
+router.get("/by-category/:category", getProductsByCategory);
+
+// ✅ Get all products (filters, pagination, search)
 router.get("/", getAllProducts);
 
-// Fetch by SKU (product or variant)
+// ✅ Fetch by SKU (product or variant)
 router.get("/sku/:sku", getProductBySKU);
 
-// Product details by slug OR id
+// ✅ Product details by slug OR id
 router.get("/details/:id", getProductByIdOrSlug);
 
 /* ===========================================================
@@ -62,9 +66,10 @@ router.post(
   bulkCreateDraftProducts
 );
 
-// Existing bulk operations
+// ✅ Existing bulk operations
 router.post("/bulk/delete", bulkDeleteProducts);
 router.post("/bulk/import", bulkImportProducts);
+router.patch("/bulk/pricing", bulkUpdatePricing); // ✅ better here (bulk route)
 
 /* ===========================================================
    🔐 ADMIN ROUTES (SINGLE PRODUCT OPS)
@@ -76,14 +81,12 @@ router.patch("/:id/variant-stock", updateVariantStock);
 
 router.post("/", createProduct);
 
-router.patch("/:id", updateProduct); // ✅ ADD THIS
-router.put("/:id", updateProduct);   // optional (keep for full update)
+router.patch("/:id", updateProduct); // ✅ partial update
+router.put("/:id", updateProduct);   // optional full update
 router.delete("/:id", deleteProduct);
-router.patch("/bulk/pricing", bulkUpdatePricing);
-
 
 /* ===========================================================
-   FALLBACK (Slug OR ID)
+   FALLBACK (Slug OR ID) — MUST ALWAYS BE LAST
 =========================================================== */
 
 router.get("/:id", getProductByIdOrSlug);

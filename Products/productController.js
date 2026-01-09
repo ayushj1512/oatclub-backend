@@ -7,6 +7,7 @@ import mongoose from "mongoose";
 import { uploadToCloudinary } from "../config/cloudinary.js";
 import { generateUniqueSKU } from "../utility/sku.js";
 import { generateVariants } from "../utility/variants.js";
+import Category from "../Category/Category.js";
 
 /* ---------------- tiny helpers ---------------- */
 const arr = (v) =>
@@ -917,6 +918,136 @@ export const bulkUpdatePricing = async (req, res) => {
     });
   } catch (e) {
     console.error("❌ Bulk Pricing Update Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};
+
+/* ============================================================
+   ✅ GET PRODUCTS BY CATEGORY (slug OR id OR name)
+   GET /api/products/by-category/:category
+   Example:
+   /api/products/by-category/mens-shirts
+============================================================ */
+export const getProductsByCategory = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      collection,
+      tags,
+      minPrice,
+      maxPrice,
+      isActive,
+      search,
+      sort,
+      sku,
+    } = req.query;
+
+    const categoryParam = req.params.category;
+
+    if (!categoryParam) {
+      return res.status(400).json({ message: "Category is required" });
+    }
+
+    /* ---------------------------------------------------------
+       ✅ Find category by slug OR _id OR name
+    --------------------------------------------------------- */
+    let catDoc = null;
+
+    if (mongoose.Types.ObjectId.isValid(categoryParam)) {
+      catDoc = await Category.findById(categoryParam);
+    }
+
+    if (!catDoc) {
+      catDoc = await Category.findOne({
+        $or: [
+          { slug: categoryParam.toLowerCase() },
+          { name: categoryParam },
+        ],
+      });
+    }
+
+    /* ---------------------------------------------------------
+       ✅ If category exists → match both slug + name
+       ✅ else fallback → match raw param as string in Product.categories
+    --------------------------------------------------------- */
+    const categoryMatch = catDoc
+      ? [catDoc.slug, catDoc.name]
+      : [categoryParam];
+
+    const filters = {
+      categories: { $in: categoryMatch },
+    };
+
+    /* ---------------- collections ---------------- */
+    if (collection) {
+      filters.collections = collection;
+    }
+
+    /* ---------------- tags ---------------- */
+    const t = tagsNorm(tags);
+    if (t.length) {
+      filters.tags = { $in: t };
+    }
+
+    /* ---------------- active ---------------- */
+    if (isActive !== undefined) {
+      filters.isActive = isActive === "true";
+    }
+
+    /* ---------------- SKU ---------------- */
+    if (sku) {
+      filters.$or = [
+        { sku: String(sku) },
+        { "variants.sku": String(sku) },
+      ];
+    }
+
+    /* ---------------- price ---------------- */
+    if (minPrice || maxPrice) {
+      filters.price = {};
+      if (minPrice) filters.price.$gte = Number(minPrice);
+      if (maxPrice) filters.price.$lte = Number(maxPrice);
+    }
+
+    /* ---------------- search ---------------- */
+    if (search) {
+      filters.$text = { $search: search };
+    }
+
+    /* ---------------- sorting ---------------- */
+    const sortMap = {
+      price_asc: { price: 1 },
+      price_desc: { price: -1 },
+      newest: { createdAt: -1 },
+      rating: { averageRating: -1 },
+      popularity: { "analytics.views": -1 },
+    };
+
+    const safeLimit = Math.min(200, Math.max(1, Number(limit)));
+    const skip = (Number(page) - 1) * safeLimit;
+    const sortObj = sortMap[sort] || { createdAt: -1 };
+
+    /* ---------------- query ---------------- */
+    const docs = await pop(Product.find(filters))
+      .sort(sortObj)
+      .skip(skip)
+      .limit(safeLimit);
+
+    const total = await Product.countDocuments(filters);
+
+    return res.json({
+      category: catDoc
+        ? { _id: catDoc._id, name: catDoc.name, slug: catDoc.slug }
+        : { raw: categoryParam },
+
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / safeLimit),
+      products: (docs || []).map(applyStockFromVariants),
+    });
+  } catch (e) {
+    console.error("❌ Get Products By Category Error:", e);
     return res.status(500).json({ message: e.message });
   }
 };

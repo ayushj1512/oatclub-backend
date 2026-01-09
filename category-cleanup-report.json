@@ -1,0 +1,3824 @@
+{
+  "updatedCount": 187,
+  "removedTotal": 310,
+  "report": [
+    {
+      "productId": "69611a1d34065e6eaa901f3c",
+      "title": "Black Sweetheart Neck Ruched Top with Flare Sleeves",
+      "slug": "black-sweetheart-neck-ruched-top-with-flare-sleeves",
+      "before": [
+        "6954c1f7887ba8222b9dbb65",
+        "6954c1f7887ba8222b9dbb7d",
+        "Top > Long Sleeve",
+        "migrate",
+        "6954c1f7887ba8222b9dbb78",
+        "6954c1f7887ba8222b9dbb68",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing"
+      ],
+      "removedCount": 7
+    },
+    {
+      "productId": "69592b354d54f633742f6282",
+      "title": "Women’s Halter Neck Crop Top ( set of 2 )",
+      "slug": "women's-halter-neck-crop-top-(-set-of-2-)",
+      "before": [
+        "All Clothing",
+        "Combo",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b354d54f633742f6294",
+      "title": "Women’s Wide Leg Lounge Pants – High Waist Drawstring Relaxed Fit (Grey & White)",
+      "slug": "women's-wide-leg-lounge-pants-high-waist-drawstring-relaxed-fit-(grey-and-white)",
+      "before": [
+        "All Clothing",
+        "Combo",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Track Pants",
+        "Trousers",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "new-arrivals",
+        "trousers"
+      ],
+      "removedCount": 4
+    },
+    {
+      "productId": "69592b354d54f633742f62a5",
+      "title": "Women’s V-Neck Button Front Corset Vest Top – Side Drawstring Waist Cincher (White & Navy)",
+      "slug": "women's-v-neck-button-front-corset-vest-top-side-drawstring-waist-cincher-(white-and-navy)",
+      "before": [
+        "All Clothing",
+        "Combo",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b354d54f633742f62b6",
+      "title": "Women’s Ruched Tie Strap Crop Top – Bow Shoulder Sleeveless Stretch Top (Black & White)",
+      "slug": "women's-ruched-tie-strap-crop-top-bow-shoulder-sleeveless-stretch-top-(black-and-white)",
+      "before": [
+        "All Clothing",
+        "Combo",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b354d54f633742f62c7",
+      "title": "Women’s V-Neck Ruched Front Crop Top – Short Sleeve Stretch Slim Fit Tee (Black, Pink & White)",
+      "slug": "women's-v-neck-ruched-front-crop-top-short-sleeve-stretch-slim-fit-tee-(black-pink-and-white)",
+      "before": [
+        "All Clothing",
+        "Combo",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b354d54f633742f62d8",
+      "title": "Women’s Tie Strap Crop Top – Ruched Sleeveless Camisole with Bow Shoulder Straps (Black, Pink & White)",
+      "slug": "women's-tie-strap-crop-top-ruched-sleeveless-camisole-with-bow-shoulder-straps-(black-pink-and-white)",
+      "before": [
+        "All Clothing",
+        "Combo",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b364d54f633742f62e9",
+      "title": "Women’s Wide Leg  Pants – High Waist Drawstring Loose Fit (Black & White)",
+      "slug": "women's-wide-leg-pants-high-waist-drawstring-loose-fit-(black-and-white)",
+      "before": [
+        "All Clothing",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Trousers",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "trousers"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b364d54f633742f62fa",
+      "title": "Women’s Black Sleeveless Bodycon Midi Dress – Elegant Slim Fit Party Dress",
+      "slug": "women's-black-sleeveless-bodycon-midi-dress-elegant-slim-fit-party-dress",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Party Wear",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b364d54f633742f6309",
+      "title": "Women’s Black Sleeveless Fit & Flare Mini Dress – Elegant A-Line Party Dress",
+      "slug": "women's-black-sleeveless-fit-and-flare-mini-dress-elegant-a-line-party-dress",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "party",
+        "Party Wear",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b364d54f633742f6318",
+      "title": "Women’s Maroon Sleeveless Fit & Flare Mini Dress – Elegant A-Line Party Dress",
+      "slug": "women's-maroon-sleeveless-fit-and-flare-mini-dress-elegant-a-line-party-dress",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "party",
+        "Party Wear",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b364d54f633742f6327",
+      "title": "Women’s Maroon One Shoulder Bodycon Mini Dress – Ruched Slim Fit Party Dress with Side Tie",
+      "slug": "women's-maroon-one-shoulder-bodycon-mini-dress-ruched-slim-fit-party-dress-with-side-tie",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "party",
+        "Party Wear",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b364d54f633742f6336",
+      "title": "Women’s Black One Shoulder Bodycon Mini Dress – Ruched Slim Fit Party Dress with Side Tie",
+      "slug": "women's-black-one-shoulder-bodycon-mini-dress-ruched-slim-fit-party-dress-with-side-tie",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "party",
+        "Party Wear",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b364d54f633742f6345",
+      "title": "Women’s Off Shoulder Ruched Long Sleeve Crop Top – Slim Fit Party & Casual Top",
+      "slug": "women's-off-shoulder-ruched-long-sleeve-crop-top-slim-fit-party-and-casual-top",
+      "before": [
+        "All Clothing",
+        "Featured",
+        "Top > Long Sleeve",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 4
+    },
+    {
+      "productId": "69592b364d54f633742f6378",
+      "title": "Women’s High Waist Wide Leg Trousers – Formal Straight Fit Palazzo Pants (Black & Maroon)",
+      "slug": "women's-high-waist-wide-leg-trousers-formal-straight-fit-palazzo-pants-(black-and-maroon)",
+      "before": [
+        "All Clothing",
+        "Combo",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Trousers",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "new-arrivals",
+        "trousers"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69592b364d54f633742f6387",
+      "title": "Women’s Black Backless Lace-Up Maxi Dress – Bodycon Mermaid Fit Party & Evening Gown",
+      "slug": "women's-black-backless-lace-up-maxi-dress-bodycon-mermaid-fit-party-and-evening-gown",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Party Wear",
+        "Uncategorized",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear"
+      ],
+      "removedCount": 4
+    },
+    {
+      "productId": "69592b374d54f633742f6396",
+      "title": "Blush Pink Wide-Leg Pants with Side Bow Tie Detail",
+      "slug": "blush-pink-wide-leg-pants-with-side-bow-tie-detail",
+      "before": [
+        "All Clothing",
+        "Bottom",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Track Pants",
+        "Trousers",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "bottom",
+        "featured",
+        "new-arrivals",
+        "trousers"
+      ],
+      "removedCount": 4
+    },
+    {
+      "productId": "69592b374d54f633742f63c3",
+      "title": "Black High-Waist Wide-Leg Pants with Side Tie Detail for Women",
+      "slug": "black-high-waist-wide-leg-pants-with-side-tie-detail-for-women",
+      "before": [
+        "All Clothing",
+        "Bottom",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Trousers",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "bottom",
+        "featured",
+        "new-arrivals",
+        "trousers"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1c34065e6eaa901dc5",
+      "title": "Set of 2: Ruched Tank Top & Knotted Ruched Split Maxi Skirt",
+      "slug": "set-of-2-ruched-tank-top-and-knotted-ruched-split-maxi-skirt",
+      "before": [
+        "All Clothing",
+        "Co-Ord Set",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "co-ord-set",
+        "featured",
+        "new-arrivals"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1c34065e6eaa901ddf",
+      "title": "Boat Neck Solid Ruched Split Maxi Dress",
+      "slug": "boat-neck-solid-ruched-split-maxi-dress",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1c34065e6eaa901df9",
+      "title": "Pack Of 2 : Solid Ruched Square Neck Crop Top",
+      "slug": "pack-of-2-solid-ruched-square-neck-crop-top",
+      "before": [
+        "All Clothing",
+        "Combo",
+        "Top > Crop Top",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 4
+    },
+    {
+      "productId": "69611a1c34065e6eaa901e12",
+      "title": "Women's Off-Shoulder Asymmetrical Ribbed Top - Elegant Cream Side-Tie Blouse",
+      "slug": "womens-off-shoulder-asymmetrical-ribbed-top-elegant-cream-side-tie-blouse",
+      "before": [
+        "All Clothing",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1c34065e6eaa901e2b",
+      "title": "Pack Of 2: Round Neck Solid Ruched Crop Tank Top",
+      "slug": "pack-of-2-round-neck-solid-ruched-crop-tank-top",
+      "before": [
+        "All Clothing",
+        "Combo",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1c34065e6eaa901e45",
+      "title": "Women’s Black Sweetheart Neck Ruched Front Crop Top - Chic Cap Sleeve Slim Fit Tee",
+      "slug": "womens-black-sweetheart-neck-ruched-front-crop-top-chic-cap-sleeve-slim-fit-tee",
+      "before": [
+        "All Clothing",
+        "Top > Crop Top",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 4
+    },
+    {
+      "productId": "69611a1c34065e6eaa901e5e",
+      "title": "Black Sleeveless Bow Tie Shoulder Tank Top",
+      "slug": "black-sleeveless-bow-tie-shoulder-tank-top",
+      "before": [
+        "All Clothing",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1c34065e6eaa901e77",
+      "title": "Midnight Navy Ruched Bodycon Maxi Dress",
+      "slug": "midnight-navy-ruched-bodycon-maxi-dress",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Party Wear",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1d34065e6eaa901e90",
+      "title": "Black Ruched Bodycon Maxi Dress",
+      "slug": "black-ruched-bodycon-maxi-dress",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Party Wear",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1d34065e6eaa901ea9",
+      "title": "Pink Rose Print Square Neck Maxi Dress",
+      "slug": "pink-rose-print-square-neck-maxi-dress",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Party Wear",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1d34065e6eaa901ec3",
+      "title": "The Midnight Muse Ruched Maxi Dress",
+      "slug": "the-midnight-muse-ruched-maxi-dress",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Party Wear",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1d34065e6eaa901edc",
+      "title": "Pearl White Ruched Maxi Dress",
+      "slug": "pearl-white-ruched-maxi-dress",
+      "before": [
+        "All Clothing",
+        "Dress",
+        "Evening Wear",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Party Wear",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "69611a1d34065e6eaa901ef4",
+      "title": "Long-Sleeve Black Top With Contrast White Oversized Bow",
+      "slug": "long-sleeve-black-top-with-contrast-white-oversized-bow",
+      "before": [
+        "All Clothing",
+        "Top > Crop Top",
+        "Featured",
+        "Top > Long Sleeve",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 5
+    },
+    {
+      "productId": "69611a1d34065e6eaa901f0c",
+      "title": "Black Ribbed Coquette Top with Gingham Ruffle Hem & Bow",
+      "slug": "black-ribbed-coquette-top-with-gingham-ruffle-hem-and-bow",
+      "before": [
+        "All Clothing",
+        "Top > Crop Top",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 4
+    },
+    {
+      "productId": "69611a1d34065e6eaa901f24",
+      "title": "Navy Blue Sweetheart Neck Ruched Top with Flare Sleeves",
+      "slug": "navy-blue-sweetheart-neck-ruched-top-with-flare-sleeves",
+      "before": [
+        "All Clothing",
+        "Featured",
+        "migrate",
+        "New Arrivals",
+        "Top",
+        "all-clothing",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "6954c53eae0a9762e888717b",
+      "title": "Georgette Multicolor Top",
+      "slug": "georgette-multicolor-top",
+      "before": [
+        "all-clothing",
+        "blouse",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c53fae0a9762e888717e",
+      "title": "Floral Print Dress",
+      "slug": "floral-print-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c53fae0a9762e8887181",
+      "title": "Floral Print Dress",
+      "slug": "floral-print-dress-2",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c53fae0a9762e8887184",
+      "title": "Lavender Flare Dress",
+      "slug": "lavender-flare-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c53fae0a9762e8887187",
+      "title": "Floral Print Short Dress",
+      "slug": "floral-print-short-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c53fae0a9762e888718a",
+      "title": "Floral Print Short Dress",
+      "slug": "floral-print-short-dress-2",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c53fae0a9762e888718d",
+      "title": "Floral Print Dress",
+      "slug": "floral-print-dress-3",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c53fae0a9762e8887190",
+      "title": "Floral Print Maxi Dress",
+      "slug": "floral-print-maxi-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c53fae0a9762e8887193",
+      "title": "Denim Mini Shirt Dress",
+      "slug": "denim-mini-shirt-dress",
+      "before": [
+        "all-clothing",
+        "camisole",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c53fae0a9762e8887196",
+      "title": "Floral Print Top",
+      "slug": "floral-print-top",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c53fae0a9762e8887199",
+      "title": "Women Floral Printed Dress",
+      "slug": "women-floral-printed-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c53fae0a9762e888719c",
+      "title": "Striped Casual Blazer",
+      "slug": "striped-casual-blazer",
+      "before": [
+        "all-clothing",
+        "blazer",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "blazer",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c53fae0a9762e888719f",
+      "title": "Full Sleeve Top",
+      "slug": "full-sleeve-top",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871a2",
+      "title": "Miray Sky Blue Full Sleeve Top",
+      "slug": "miray-sky-blue-full-sleeve-top",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871a5",
+      "title": "Green Print Top",
+      "slug": "green-print-top",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871a8",
+      "title": "Blue Stripe Shirt",
+      "slug": "blue-stripe-shirt",
+      "before": [
+        "all-clothing",
+        "sale",
+        "shirt",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale",
+        "shirt"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871ab",
+      "title": "Print Crochet Top",
+      "slug": "print-crochet-top",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871ae",
+      "title": "Georgette Printed Top",
+      "slug": "georgette-printed-top",
+      "before": [
+        "all-clothing",
+        "blouse",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c540ae0a9762e88871b1",
+      "title": "Floral Print Dress",
+      "slug": "floral-print-dress-4",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871b4",
+      "title": "Elegant Multicolor Top",
+      "slug": "elegant-multicolor-top",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871b7",
+      "title": "Pink Top with Deep Neck",
+      "slug": "pink-top-with-deep-neck",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871ba",
+      "title": "Black collar Top",
+      "slug": "black-collar-top",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871bd",
+      "title": "Maroon Color Top with Button",
+      "slug": "maroon-color-top-with-button",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871c0",
+      "title": "Crochet Multicolor Top",
+      "slug": "crochet-multicolor-top",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871c3",
+      "title": "Multicolor Top",
+      "slug": "multicolor-top",
+      "before": [
+        "all-clothing",
+        "sale",
+        "shirt",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale",
+        "shirt"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c540ae0a9762e88871c6",
+      "title": "Pink Western Dress",
+      "slug": "pink-western-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c541ae0a9762e88872c5",
+      "title": "The Chic Sleeveless Vest and Wide-Leg Trouser Set",
+      "slug": "the-chic-sleeveless-vest-and-wide-leg-trouser-set",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "co-ord-set",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "co-ord-set",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c543ae0a9762e8887420",
+      "title": "Floral Print Bust Lace Up Front Mini Dress",
+      "slug": "floral-print-bust-lace-up-front-mini-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c543ae0a9762e888742d",
+      "title": "Front Floral Flounce Dress",
+      "slug": "front-floral-flounce-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "sale",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "sale"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c544ae0a9762e888743a",
+      "title": "Crop T Shirt 98 tee",
+      "slug": "crop-t-shirt-98-tee",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c544ae0a9762e8887454",
+      "title": "Blue Ribbed Crop Top",
+      "slug": "blue-ribbed-crop-top",
+      "before": [
+        "all-clothing",
+        "blouse",
+        "crop-top",
+        "featured",
+        "sale",
+        "tank-top",
+        "top",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "featured",
+        "sale",
+        "tank-top",
+        "top"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "6954c544ae0a9762e8887461",
+      "title": "Marsala Full Sleeve Shirt",
+      "slug": "marsala-full-sleeve-shirt",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "sale",
+        "shirt",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "sale",
+        "shirt"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c544ae0a9762e8887488",
+      "title": "Black Short Sleeve T shirt",
+      "slug": "black-short-sleeve-t-shirt-3",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "6954c544ae0a9762e8887495",
+      "title": "Black Short Sleeve T shirt",
+      "slug": "black-short-sleeve-t-shirt-4",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "6954c545ae0a9762e88874fd",
+      "title": "Floral Printed Shirt",
+      "slug": "floral-printed-shirt",
+      "before": [
+        "all-clothing",
+        "sale",
+        "shirt",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale",
+        "shirt"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c545ae0a9762e8887558",
+      "title": "Yellow Short Sleeve T Shirt",
+      "slug": "yellow-short-sleeve-t-shirt-6",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c545ae0a9762e8887565",
+      "title": "White T Shirt",
+      "slug": "white-t-shirt-4",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "6954c545ae0a9762e8887572",
+      "title": "Yellow Short Sleeve T Shirt",
+      "slug": "yellow-short-sleeve-t-shirt-7",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "6954c545ae0a9762e888757f",
+      "title": "White Sleeveless T Shirt",
+      "slug": "white-sleeveless-t-shirt",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c546ae0a9762e88875a6",
+      "title": "White Cotton Fitted Shirt",
+      "slug": "white-cotton-fitted-shirt",
+      "before": [
+        "all-clothing",
+        "sale",
+        "shirt",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale",
+        "shirt"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c546ae0a9762e88875b3",
+      "title": "Sleeveless Crop T Shirt",
+      "slug": "sleeveless-crop-t-shirt",
+      "before": [
+        "all-clothing",
+        "blouse",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "6954c546ae0a9762e88875c0",
+      "title": "White Short Sleeve shirt",
+      "slug": "white-short-sleeve-shirt-2",
+      "before": [
+        "all-clothing",
+        "sale",
+        "shirt",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale",
+        "shirt"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c546ae0a9762e88875cd",
+      "title": "Brown Short Sleeve T Shirt",
+      "slug": "brown-short-sleeve-t-shirt",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c546ae0a9762e8887631",
+      "title": "Sleeveless Crop T Shirt",
+      "slug": "sleeveless-crop-t-shirt-2",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c546ae0a9762e8887655",
+      "title": "White Oversized T Shirt",
+      "slug": "white-oversized-t-shirt-4",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c547ae0a9762e88876ac",
+      "title": "Yellow Short T Shirt",
+      "slug": "yellow-short-t-shirt-3",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c547ae0a9762e88876db",
+      "title": "Black Short T Shirt",
+      "slug": "black-short-t-shirt-3",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c547ae0a9762e888770f",
+      "title": "Black Short T Shirt",
+      "slug": "black-short-t-shirt-5",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c547ae0a9762e888771c",
+      "title": "Black Short Sleeve T Shirt",
+      "slug": "black-short-sleeve-t-shirt-9",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c548ae0a9762e8887743",
+      "title": "White T Shirt",
+      "slug": "white-t-shirt-7",
+      "before": [
+        "all-clothing",
+        "sale",
+        "t-shirts",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "sale"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c548ae0a9762e8887786",
+      "title": "T-Shirt Combo Offer White-Black",
+      "slug": "t-shirt-combo-offer-white-black",
+      "before": [
+        "all-clothing",
+        "combo",
+        "sale",
+        "t-shirts",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "sale"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "6954c548ae0a9762e88877ba",
+      "title": "White T-shirt",
+      "slug": "white-t-shirt-9",
+      "before": [
+        "all-clothing",
+        "t-shirts",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing"
+      ],
+      "removedCount": 3
+    },
+    {
+      "productId": "6954c549ae0a9762e88877e4",
+      "title": "Black Light > Firelight Hoodie",
+      "slug": "black-light-greater-firelight-hoodie",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "new-arrivals",
+        "uncategorized",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c549ae0a9762e88877e7",
+      "title": "Thoda Swag, Thoda Sanskar Graphic Round Neckline Oversized  Hoodie",
+      "slug": "thoda-swag-thoda-sanskar-graphic-round-neckline-oversized-hoodie",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c549ae0a9762e88877ea",
+      "title": "CITY GIRL Graphic  Oversized Hoodie",
+      "slug": "city-girl-graphic-oversized-hoodie",
+      "before": [
+        "all-clothing",
+        "hoodies",
+        "new-arrivals",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "hoodies",
+        "new-arrivals"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c549ae0a9762e88877ed",
+      "title": "PEACE Graphic  Oversized Hoodie",
+      "slug": "peace-graphic-oversized-hoodie",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c549ae0a9762e88877f0",
+      "title": "Set of 2 California Graphic  Oversized Round Neck  Sweatshirt and Jogger",
+      "slug": "set-of-2-california-graphic-oversized-round-neck-sweatshirt-and-jogger",
+      "before": [
+        "all-clothing",
+        "combo",
+        "new-arrivals",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "new-arrivals",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c549ae0a9762e88877f3",
+      "title": "California Graphic  Jogger",
+      "slug": "california-graphic-jogger",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "bottom",
+        "new-arrivals",
+        "trousers",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "bottom",
+        "new-arrivals",
+        "trousers",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c549ae0a9762e88877f6",
+      "title": "Side Striped Bowknot  Sweatshirt & Solid Cropped  Cami Top",
+      "slug": "side-striped-bowknot-sweatshirt-and-solid-cropped-cami-top",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "blouse",
+        "crop-top",
+        "featured",
+        "new-arrivals",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "crop-top",
+        "featured",
+        "new-arrivals",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c549ae0a9762e88877f9",
+      "title": "Cat Graphic  Hoodie Oversized  Hoodie white",
+      "slug": "cat-graphic-hoodie-oversized-hoodie-white",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c549ae0a9762e88877fc",
+      "title": "Black Fleece Zip Through  Drawstring Sweatshirt",
+      "slug": "black-fleece-zip-through-drawstring-sweatshirt",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "sale",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "sale",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c549ae0a9762e88877ff",
+      "title": "Kitten Gang Graphic Hoodie Oversized  Hoodie white",
+      "slug": "kitten-gang-graphic-hoodie-oversized-hoodie-white",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c549ae0a9762e8887802",
+      "title": "Navy Blue Fleece  Zip Through  Drawstring Sweatshirt",
+      "slug": "navy-blue-fleece-zip-through-drawstring-sweatshirt",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "sale",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "sale",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e8887805",
+      "title": "Navy Blue Bow Graphic  Hoodie",
+      "slug": "navy-blue-bow-graphic-hoodie",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "sale",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "sale",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e8887808",
+      "title": "Black Bow Graphic  Hoodie",
+      "slug": "black-bow-graphic-hoodie",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e888780b",
+      "title": "Feel the fun Oversized Hoodie white",
+      "slug": "feel-the-fun-oversized-hoodie-white",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e888780e",
+      "title": "Hibiscus Graphic  Hoodie",
+      "slug": "hibiscus-graphic-hoodie",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "new-arrivals",
+        "sale",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "new-arrivals",
+        "sale",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e8887811",
+      "title": "Kitty Party Graphic Hoodie  Oversized Hoodie  white 1",
+      "slug": "kitty-party-graphic-hoodie-oversized-hoodie-white-1",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e8887814",
+      "title": "Leopard Star Oversized  Hoodie",
+      "slug": "leopard-star-oversized-hoodie",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "sale",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "sale",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e8887817",
+      "title": "Kitty Party Graphic Hoodie  Oversized Hoodie  Pastel Green",
+      "slug": "kitty-party-graphic-hoodie-oversized-hoodie-pastel-green",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e888781a",
+      "title": "Terry Mid Rise Bowknot  Elastic Waist Wide Leg  Trousers",
+      "slug": "terry-mid-rise-bowknot-elastic-waist-wide-leg-trousers",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "trousers",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "new-arrivals",
+        "trousers",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e888781d",
+      "title": "Kitten Gang Graphic Hoodie Oversized  Hoodie Pastel Green",
+      "slug": "kitten-gang-graphic-hoodie-oversized-hoodie-pastel-green",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e8887820",
+      "title": "MEOW Graphic Oversized Hoodie",
+      "slug": "meow-graphic-oversized-hoodie",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e8887823",
+      "title": "Grey Terry Mid Rise Bowknot  Elastic Waist Wide Leg  Trousers",
+      "slug": "grey-terry-mid-rise-bowknot-elastic-waist-wide-leg-trousers",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "bottom",
+        "sale",
+        "trousers",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "bottom",
+        "sale",
+        "trousers",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e8887826",
+      "title": "Cat Era Graphic Oversized  Cropped Sweatshirt back",
+      "slug": "cat-era-graphic-oversized-cropped-sweatshirt-back",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "sale",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e8887829",
+      "title": "Grey Cropped Hoodie With Pocket",
+      "slug": "grey-cropped-hoodie-with-pocket",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54aae0a9762e888782c",
+      "title": "Matcha Girlie Oversized  Hoodie Navy Blue",
+      "slug": "matcha-girlie-oversized-hoodie-navy-blue",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54bae0a9762e8887933",
+      "title": "Boat Neck Bowknot Ruched Long Sleeve Top",
+      "slug": "boat-neck-bowknot-ruched-long-sleeve-top",
+      "before": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54bae0a9762e8887936",
+      "title": "Asymmetrical Neck Solid Button Long Sleeve Top With Scarf",
+      "slug": "asymmetrical-neck-solid-button-long-sleeve-top-with-scarf",
+      "before": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54bae0a9762e888794d",
+      "title": "Graphic Terry Solid Lace Trim Hoodie",
+      "slug": "graphic-terry-solid-lace-trim-hoodie",
+      "before": [
+        "all-clothing",
+        "hoodies",
+        "new-arrivals",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "hoodies",
+        "new-arrivals",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54bae0a9762e888795a",
+      "title": "Round Neckline Twist Crop Top",
+      "slug": "round-neckline-twist-crop-top",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "crop-top",
+        "featured",
+        "new-arrivals",
+        "t-shirts",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "crop-top",
+        "featured",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c54bae0a9762e888795d",
+      "title": "Zip Up Drop Shoulder Sweatshirt",
+      "slug": "zip-up-drop-shoulder-sweatshirt",
+      "before": [
+        "all-clothing",
+        "new-arrivals",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "new-arrivals",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54bae0a9762e8887974",
+      "title": "Abstract Print Co-ord Set",
+      "slug": "abstract-print-co-ord-set",
+      "before": [
+        "all-clothing",
+        "co-ord-set",
+        "dress",
+        "new-arrivals",
+        "shirt",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "co-ord-set",
+        "dress",
+        "new-arrivals",
+        "shirt"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54bae0a9762e8887981",
+      "title": "Misty Mandalas Co-Ord",
+      "slug": "misty-mandalas-co-ord",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "co-ord-set",
+        "corset",
+        "new-arrivals",
+        "shirt",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "co-ord-set",
+        "new-arrivals",
+        "shirt"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c54bae0a9762e888798e",
+      "title": "Tropical Print Co-ord Set",
+      "slug": "tropical-print-co-ord-set",
+      "before": [
+        "all-clothing",
+        "co-ord-set",
+        "combo",
+        "new-arrivals",
+        "shirt",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "co-ord-set",
+        "combo",
+        "new-arrivals",
+        "shirt"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54bae0a9762e888799b",
+      "title": "Kaleidoscope Printed Co-ord",
+      "slug": "kaleidoscope-printed-co-ord",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "co-ord-set",
+        "combo",
+        "corset",
+        "new-arrivals",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "co-ord-set",
+        "combo",
+        "new-arrivals"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c54bae0a9762e88879a8",
+      "title": "Texture Asymmetrical Neck Ruched Top & Mid Rise Elastic Waist Straight Leg Trousers Set",
+      "slug": "texture-asymmetrical-neck-ruched-top-and-mid-rise-elastic-waist-straight-leg-trousers-set",
+      "before": [
+        "all-clothing",
+        "combo",
+        "corset",
+        "dress",
+        "featured",
+        "new-arrivals",
+        "trousers",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "dress",
+        "featured",
+        "new-arrivals",
+        "trousers"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c54bae0a9762e88879b5",
+      "title": "Square Neck Solid Contrasting Binding Tank Top & Mid Rise Wide Leg Trousers",
+      "slug": "square-neck-solid-contrasting-binding-tank-top-and-mid-rise-wide-leg-trousers",
+      "before": [
+        "all-clothing",
+        "best-sellers",
+        "co-ord-set",
+        "combo",
+        "corset",
+        "new-arrivals",
+        "trousers",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "best-sellers",
+        "co-ord-set",
+        "combo",
+        "new-arrivals",
+        "trousers"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c54bae0a9762e88879c2",
+      "title": "Cotton-blend Fleece Lined Mid Rise Elastic Waist Flared Trousers",
+      "slug": "cotton-blend-fleece-lined-mid-rise-elastic-waist-flared-trousers",
+      "before": [
+        "all-clothing",
+        "new-arrivals",
+        "trousers",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "new-arrivals",
+        "trousers",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54bae0a9762e88879cf",
+      "title": "Red Velvet Straight Leg Pants",
+      "slug": "red-velvet-straight-leg-pants",
+      "before": [
+        "all-clothing",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e88879d2",
+      "title": "Velvet Halter Neckline Ruched Cami Maxi Dress With Scarf",
+      "slug": "velvet-halter-neckline-ruched-cami-maxi-dress-with-scarf",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e88879df",
+      "title": "Mandarin Collar Rib Cardigan and Pencil Skirt Set",
+      "slug": "mandarin-collar-rib-cardigan-and-pencil-skirt-set",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e88879f6",
+      "title": "Lilac Velvet Ruched Mini Dress",
+      "slug": "lilac-velvet-ruched-mini-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e88879f9",
+      "title": "Square Neckline Velvet Dress With Bell Sleeves And Ribbon Ties",
+      "slug": "square-neckline-velvet-dress-with-bell-sleeves-and-ribbon-ties",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e8887a06",
+      "title": "Square Neckline Velvet Dress With Bell Sleeves And Ribbon Ties",
+      "slug": "square-neckline-velvet-dress-with-bell-sleeves-and-ribbon-ties-2",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e8887a09",
+      "title": "Velvet Square Neck Solid Ruched Mini Dress",
+      "slug": "velvet-square-neck-solid-ruched-mini-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e8887a16",
+      "title": "Velvet Halter Neckline Ruched Cami Maxi Dress With Scarf",
+      "slug": "velvet-halter-neckline-ruched-cami-maxi-dress-with-scarf-2",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "new-arrivals",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e8887a23",
+      "title": "Set Of 2 Lavender zip up hoodie with wide leg pants",
+      "slug": "set-of-2-lavender-zip-up-hoodie-with-wide-leg-pants",
+      "before": [
+        "all-clothing",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e8887a30",
+      "title": "Set Of 2- Black hoodie zip up jacket with pants.",
+      "slug": "set-of-2-black-hoodie-zip-up-jacket-with-pants",
+      "before": [
+        "all-clothing",
+        "evening-wear",
+        "featured",
+        "leggings",
+        "new-arrivals",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "evening-wear",
+        "featured",
+        "leggings",
+        "new-arrivals",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e8887a33",
+      "title": "Set Of 2 - White Hooded Zipper Sweatshirt With Pants Set",
+      "slug": "set-of-2-white-hooded-zipper-sweatshirt-with-pants-set",
+      "before": [
+        "all-clothing",
+        "new-arrivals",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "new-arrivals",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e8887a36",
+      "title": "Set of 2 - Khaki Color Hooded Zipper Sweatshirt with Pants Set",
+      "slug": "set-of-2-khaki-color-hooded-zipper-sweatshirt-with-pants-set",
+      "before": [
+        "all-clothing",
+        "new-arrivals",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "new-arrivals",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54cae0a9762e8887a6b",
+      "title": "Santa’s Favorite Christmas Hoodie",
+      "slug": "santas-favorite-christmas-hoodie",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887a78",
+      "title": "Sleigh My Way Christmas Hoodie",
+      "slug": "sleigh-my-way-christmas-hoodie",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887a85",
+      "title": "Happy Howlidays Christmas Sweatshirt",
+      "slug": "happy-howlidays-christmas-sweatshirt",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887a92",
+      "title": "Too Cute To Sleigh Christmas Sweatshirt",
+      "slug": "too-cute-to-sleigh-christmas-sweatshirt",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887a9f",
+      "title": "Fresh Starts & Cozy Hearts Sweatshirt",
+      "slug": "fresh-starts-and-cozy-hearts-sweatshirt",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887aac",
+      "title": "Too Cute To Sleigh Christmas Sweatshirt – Black",
+      "slug": "too-cute-to-sleigh-christmas-sweatshirt-black",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887ab9",
+      "title": "Good Energy, Good Year Hoodie",
+      "slug": "good-energy-good-year-hoodie",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887ac6",
+      "title": "Too Cute To Sleigh Christmas Hoodie",
+      "slug": "too-cute-to-sleigh-christmas-hoodie",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887ad3",
+      "title": "Flaws & Claus Christmas Hoodie",
+      "slug": "flaws-and-claus-christmas-hoodie",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887ae0",
+      "title": "Sleigh My Way Christmas Hoodie",
+      "slug": "sleigh-my-way-christmas-hoodie-2",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887aed",
+      "title": "Holly Jolly Season Christmas Hoodie",
+      "slug": "holly-jolly-season-christmas-hoodie",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887afa",
+      "title": "Santa’s Favorite Christmas Hoodie",
+      "slug": "santas-favorite-christmas-hoodie-2",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54dae0a9762e8887b07",
+      "title": "Merry Grinchmas Christmas Hoodie",
+      "slug": "merry-grinchmas-christmas-hoodie",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b14",
+      "title": "Disco Cherry Aesthetic Hoodie",
+      "slug": "disco-cherry-aesthetic-hoodie",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b21",
+      "title": "Manifesting Better Days Hoodie",
+      "slug": "manifesting-better-days-hoodie",
+      "before": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "christmas",
+        "festive-picks",
+        "hoodies",
+        "sweatshirt",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b2e",
+      "title": "Wine Red Sleeveless Velvet Bodycon Mini Dress for Women",
+      "slug": "wine-red-sleeveless-velvet-bodycon-mini-dress-for-women",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b3b",
+      "title": "Olive Green Velvet Ruched Mini Dress with Puff Sleeves",
+      "slug": "olive-green-velvet-ruched-mini-dress-with-puff-sleeves",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b48",
+      "title": "Wine Red Velvet Mini Dress with Full Sleeves",
+      "slug": "wine-red-velvet-mini-dress-with-full-sleeves",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b55",
+      "title": "Olive Green Velour Hooded Crop Jacket & Wide Leg Pants Co-Ord Set",
+      "slug": "olive-green-velour-hooded-crop-jacket-and-wide-leg-pants-co-ord-set",
+      "before": [
+        "all-clothing",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b62",
+      "title": "Multicolor Abstract Print Shirt & Straight Pants Co-Ord Set for Women",
+      "slug": "multicolor-abstract-print-shirt-and-straight-pants-co-ord-set-for-women",
+      "before": [
+        "all-clothing",
+        "co-ord-set",
+        "corset",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "co-ord-set"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b6f",
+      "title": "Royal Blue Sleeveless Crop Top & Wide Leg Pants Co-Ord Set",
+      "slug": "royal-blue-sleeveless-crop-top-and-wide-leg-pants-co-ord-set",
+      "before": [
+        "all-clothing",
+        "co-ord-set",
+        "corset",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "co-ord-set"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b7c",
+      "title": "White Cropped Zip-Up Hoodie for Women",
+      "slug": "white-cropped-zip-up-hoodie-for-women",
+      "before": [
+        "all-clothing",
+        "hoodies",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "hoodies",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b89",
+      "title": "Grey Cropped Zip-Up Hoodie with Frill Detail",
+      "slug": "grey-cropped-zip-up-hoodie-with-frill-detail",
+      "before": [
+        "all-clothing",
+        "jackets",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "jackets",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54eae0a9762e8887b96",
+      "title": "Black Graphic Printed Hoodie for Women – Festive But Chill",
+      "slug": "black-graphic-printed-hoodie-for-women-festive-but-chill",
+      "before": [
+        "all-clothing",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54eae0a9762e8887ba3",
+      "title": "Beige Graphic Printed Hoodie for Women – 99 Problems",
+      "slug": "beige-graphic-printed-hoodie-for-women-99-problems",
+      "before": [
+        "all-clothing",
+        "hoodies",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "hoodies",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54fae0a9762e8887bb0",
+      "title": "Beige Hooded Sweatshirt with Sleeve Print for Women",
+      "slug": "beige-hooded-sweatshirt-with-sleeve-print-for-women",
+      "before": [
+        "all-clothing",
+        "hoodies",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "hoodies",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54fae0a9762e8887bbd",
+      "title": "Women’s Red Asymmetric One-Shoulder Textured Jumpsuit with Drawstring Waist",
+      "slug": "womens-red-asymmetric-one-shoulder-textured-jumpsuit-with-drawstring-waist",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "party",
+        "party-wear"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54fae0a9762e8887bca",
+      "title": "Cobalt Blue Long Sleeve Ribbed Knit Top with Decorative Side Buttons",
+      "slug": "cobalt-blue-long-sleeve-ribbed-knit-top-with-decorative-side-buttons",
+      "before": [
+        "all-clothing",
+        "featured",
+        "long-sleeve",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "long-sleeve",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54fae0a9762e8887bd7",
+      "title": "Women’s Pastel Blue Wrap Top and Wide-Leg Trousers Two-Piece Co-ord Set",
+      "slug": "women's-pastel-blue-wrap-top-and-wide-leg-trousers-two-piece-co-ord-set",
+      "before": [
+        "all-clothing",
+        "co-ord-set",
+        "corset",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "co-ord-set"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c54fae0a9762e8887be4",
+      "title": "Beige High Waist Wide Leg Pants",
+      "slug": "beige-high-waist-wide-leg-pants",
+      "before": [
+        "all-clothing",
+        "trousers",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "trousers"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54fae0a9762e8887be7",
+      "title": "Long-Sleeved Ruched Maxi Dress in Beige",
+      "slug": "long-sleeved-ruched-maxi-dress-in-beige",
+      "before": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "evening-wear",
+        "featured"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54fae0a9762e8887bea",
+      "title": "Boat Neck Bowknot Ruched Long Sleeve Top in Blue",
+      "slug": "boat-neck-bowknot-ruched-long-sleeve-top-in-blue",
+      "before": [
+        "all-clothing",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c54fae0a9762e8887bed",
+      "title": "Set Of 2: White Zip Up Jacket With High Waist Jogger Set",
+      "slug": "set-of-2-white-zip-up-jacket-with-high-waist-jogger-set",
+      "before": [
+        "all-clothing",
+        "co-ord-set",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "co-ord-set"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54fae0a9762e8887bf0",
+      "title": "Set Of 2: Quarter-Zip Pullover And High-Waisted Wide-Leg Pants",
+      "slug": "set-of-2-quarter-zip-pullover-and-high-waisted-wide-leg-pants",
+      "before": [
+        "all-clothing",
+        "co-ord-set",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "co-ord-set"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54fae0a9762e8887bf6",
+      "title": "Black Ribbed Co-ord Set - Square Neck Ruched Top & Flare Trousers",
+      "slug": "black-ribbed-co-ord-set-square-neck-ruched-top-and-flare-trousers",
+      "before": [
+        "all-clothing",
+        "co-ord-set",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "co-ord-set"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c54fae0a9762e8887bf9",
+      "title": "Set Of 2 :Royal Blue Ribbed Co-ord Set - Side-Button Mock Neck Top & Wide-Leg Trousers",
+      "slug": "set-of-2-:royal-blue-ribbed-co-ord-set-side-button-mock-neck-top-and-wide-leg-trousers",
+      "before": [
+        "all-clothing",
+        "co-ord-set",
+        "new-arrivals",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "co-ord-set",
+        "new-arrivals"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887c10",
+      "title": "Ethereal Pink Floral Cut-Out Maxi Dress",
+      "slug": "ethereal-pink-floral-cut-out-maxi-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "featured",
+        "new-arrivals",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "featured",
+        "new-arrivals"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887c3b",
+      "title": "Lavender Dream Cut-Out Floral Maxi Dress",
+      "slug": "lavender-dream-cut-out-floral-maxi-dress",
+      "before": [
+        "all-clothing",
+        "dress",
+        "featured",
+        "new-arrivals",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "dress",
+        "featured",
+        "new-arrivals"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887c5c",
+      "title": "Front-Knot Graphic Crop Top",
+      "slug": "front-knot-graphic-crop-top",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "festive-picks",
+        "new-arrivals",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "festive-picks",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887c69",
+      "title": "Oversized Navy Blue Graphic Hoodie",
+      "slug": "oversized-navy-blue-graphic-hoodie",
+      "before": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887c76",
+      "title": "Manifesting My Main Character Year – Navy Blue Oversized Graphic Hoodie",
+      "slug": "manifesting-my-main-character-year-navy-blue-oversized-graphic-hoodie",
+      "before": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887c83",
+      "title": "\"Into 2026\" Graphic Knot-Front Crop Tee – White",
+      "slug": "\"into-2026\"-graphic-knot-front-crop-tee-white",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "festive-picks",
+        "new-arrivals",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "festive-picks",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887c90",
+      "title": "Y2K Silver Balloon Graphic Hoodie",
+      "slug": "y2k-silver-balloon-graphic-hoodie",
+      "before": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals",
+        "winter-drops"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887c9d",
+      "title": "\"Self-Care is My New Year Plan\" Graphic Tee",
+      "slug": "\"self-care-is-my-new-year-plan\"-graphic-tee",
+      "before": [
+        "all-clothing",
+        "crop-top",
+        "festive-picks",
+        "new-arrivals",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "crop-top",
+        "festive-picks",
+        "new-arrivals",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887caa",
+      "title": "2026 Disco Ball Graphic Hoodie with Lace Trim",
+      "slug": "2026-disco-ball-graphic-hoodie-with-lace-trim",
+      "before": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887cb7",
+      "title": "\"Into 2026\" Graphic Hoodie",
+      "slug": "\"into-2026\"-graphic-hoodie",
+      "before": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887cc4",
+      "title": "\"Goals? Maybe. Sleep? Definitely.\" Oversized Hoodie",
+      "slug": "\"goals-maybe.-sleep-definitely.\"-oversized-hoodie",
+      "before": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "festive-picks",
+        "hoodies",
+        "new-arrivals"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c550ae0a9762e8887cd1",
+      "title": "Square Neck Leopard Print Sequin Top",
+      "slug": "square-neck-leopard-print-sequin-top",
+      "before": [
+        "all-clothing",
+        "featured",
+        "prints",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "prints",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c551ae0a9762e8887cde",
+      "title": "V-Neck Leopard Print Sequin Buttoned Top",
+      "slug": "v-neck-leopard-print-sequin-buttoned-top",
+      "before": [
+        "all-clothing",
+        "featured",
+        "prints",
+        "top",
+        "uncategorized",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "prints",
+        "top"
+      ],
+      "removedCount": 2
+    },
+    {
+      "productId": "6954c551ae0a9762e8887ceb",
+      "title": "Leopard Print Sequin Sleeveless Top",
+      "slug": "leopard-print-sequin-sleeveless-top",
+      "before": [
+        "all-clothing",
+        "featured",
+        "prints",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "prints",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c551ae0a9762e8887cf8",
+      "title": "High Waist Leopard Print Sequin Maxi Skirt",
+      "slug": "high-waist-leopard-print-sequin-maxi-skirt",
+      "before": [
+        "all-clothing",
+        "featured",
+        "prints",
+        "skirt",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "featured",
+        "prints",
+        "skirt"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "6954c551ae0a9762e8887d12",
+      "title": "Ruched Front Cap Sleeve Crop Top Combo (Pack of 3)",
+      "slug": "ruched-front-cap-sleeve-crop-top-combo-(pack-of-3)",
+      "before": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "top",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "combo",
+        "featured",
+        "top"
+      ],
+      "removedCount": 1
+    },
+    {
+      "productId": "695e7e15f0b4c967089ee832",
+      "title": "test",
+      "slug": "test",
+      "before": [
+        "all-clothing",
+        "new-arrivals",
+        "All-clothing"
+      ],
+      "after": [
+        "all-clothing",
+        "new-arrivals"
+      ],
+      "removedCount": 1
+    }
+  ]
+}

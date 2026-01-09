@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { generateSKU } from "../utility/sku.js";
 import Counter from "../models/Counter.js";
+import Category from "../Category/Category.js";
 
 /* ------------------------------------------------------------------
    VARIANT SCHEMA (NO IMAGES ❌)
