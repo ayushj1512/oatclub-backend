@@ -1051,3 +1051,52 @@ export const getProductsByCategory = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
+
+/* ============================================================
+   ✅ GET PRODUCTS BY MULTIPLE IDS (single fetch)
+   POST /api/products/by-ids
+   body: { ids: ["id1","id2"] }  OR { ids: "id1,id2" }
+============================================================ */
+export const getProductsByIds = async (req, res) => {
+  try {
+    let { ids } = req.body;
+
+    // ✅ normalize ids
+    ids = Array.isArray(ids)
+      ? ids
+      : typeof ids === "string"
+        ? ids.split(",").map((x) => x.trim()).filter(Boolean)
+        : [];
+
+    if (!ids.length) {
+      return res.status(400).json({ message: "ids array is required" });
+    }
+
+    // ✅ validate ObjectIds
+    const validIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+    if (!validIds.length) {
+      return res.status(400).json({ message: "No valid ids found" });
+    }
+
+    // ✅ single fetch query (with populate)
+    const docs = await pop(
+      Product.find({ _id: { $in: validIds } })
+    );
+
+    // ✅ keep same order as ids input
+    const map = new Map(docs.map((d) => [String(d._id), d]));
+    const ordered = validIds.map((id) => map.get(String(id))).filter(Boolean);
+
+    return res.json({
+      requestedCount: ids.length,
+      validCount: validIds.length,
+      foundCount: ordered.length,
+      products: ordered.map(applyStockFromVariants),
+    });
+  } catch (e) {
+    console.error("❌ Get Products By IDs Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};

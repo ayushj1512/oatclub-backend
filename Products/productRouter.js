@@ -8,6 +8,10 @@ import {
   getProductsByCategory,   // ✅ ADD THIS
   getProductByIdOrSlug,
   getProductBySKU,
+
+  // ✅ NEW: multiple ids fetch
+  getProductsByIds,
+
   updateProduct,
   deleteProduct,
   bulkDeleteProducts,
@@ -39,6 +43,9 @@ router.get("/by-tag", getProductsByTag);
 
 // ✅ Products by category (slug OR id OR name)
 router.get("/by-category/:category", getProductsByCategory);
+
+// ✅ ✅ NEW: Products by multiple IDs (single fetch)
+router.post("/by-ids", getProductsByIds);
 
 // ✅ Get all products (filters, pagination, search)
 router.get("/", getAllProducts);
