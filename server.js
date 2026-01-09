@@ -98,9 +98,16 @@ const ALLOWED_ORIGINS = [
   "http://localhost:3000",
   "http://localhost:3001",
 
-  // ✅ Frontend
+  // ✅ Frontend (.in)
   "https://www.mirayfashions.in",
   "https://mirayfashions.in",
+
+  // ✅ Frontend (.com)
+  "https://www.mirayfashions.com",
+  "https://mirayfashions.com",
+
+  // ✅ Vercel Preview/Deployment
+  "https://miray-nine.vercel.app",
 
   // ✅ Admin Panel
   "https://admin.mirayfashions.com",
@@ -112,9 +119,13 @@ const ALLOWED_ORIGINS = [
 app.use(
   cors({
     origin: function (origin, callback) {
+      // ✅ Allow server-to-server / Postman / curl (no origin)
       if (!origin) return callback(null, true);
+
       if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-      return callback(null, false);
+
+      // ❌ Block everything else
+      return callback(new Error("Not allowed by CORS"), false);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
