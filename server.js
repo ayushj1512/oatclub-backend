@@ -125,7 +125,6 @@ app.use("/api/shiprocket/webhook", (req, res, next) => {
     "Access-Control-Allow-Headers",
     "Content-Type, Authorization, x-api-key, x-shiprocket-token, x-webhook-token"
   );
-res.header("Access-Control-Allow-Credentials", "true");
   if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
@@ -154,7 +153,11 @@ app.use(
 
   })
 );
-app.options("*", cors());
+
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
 
 // --------------------------------------------------
 // MIDDLEWARE
