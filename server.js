@@ -117,6 +117,20 @@ const ALLOWED_ORIGINS = [
   "https://miray-backend.onrender.com",
 ];
 
+// ✅ Allow Shiprocket webhook without CORS restrictions
+app.use("/api/shiprocket/webhook", (req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, x-api-key, x-shiprocket-token, x-webhook-token"
+  );
+res.header("Access-Control-Allow-Credentials", "true");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
+
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -130,9 +144,17 @@ app.use(
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: [
+  "Content-Type",
+  "Authorization",
+  "x-api-key",
+  "x-shiprocket-token",
+  "x-webhook-token",
+],
+
   })
 );
+app.options("*", cors());
 
 // --------------------------------------------------
 // MIDDLEWARE

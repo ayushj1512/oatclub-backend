@@ -4,23 +4,69 @@ import Order from "../Orders/Orders.js";
    SHIPROCKET STATUS → INTERNAL STATUS MAP
 ============================================================ */
 const STATUS_MAP = {
+  /* ------------------------------
+     Pickup / Manifest
+  ------------------------------ */
   PICKUP_GENERATED: { shipment: "processing" },
   PICKUP_SCHEDULED: { shipment: "processing" },
+  MANIFEST_GENERATED: { shipment: "processing" },
+  SHIPMENT_CREATED: { shipment: "processing" },
+  ORDER_CREATED: { shipment: "processing" },
 
+  /* ------------------------------
+     Picked up
+     Shiprocket often sends: "Shipment Picked Up"
+  ------------------------------ */
   PICKED_UP: { shipment: "picked", fulfillment: "shipped" },
+  SHIPMENT_PICKED_UP: { shipment: "picked", fulfillment: "shipped" },
 
+  /* ------------------------------
+     In Transit / Movement
+  ------------------------------ */
   IN_TRANSIT: { shipment: "in_transit", fulfillment: "shipped" },
-  OUT_FOR_DELIVERY: { shipment: "out_for_delivery", fulfillment: "out_for_delivery" },
+  SHIPMENT_IN_TRANSIT: { shipment: "in_transit", fulfillment: "shipped" },
+  SHIPMENT_ARRIVED: { shipment: "in_transit", fulfillment: "shipped" },
+  SHIPMENT_ARRIVED_AT_HUB: { shipment: "in_transit", fulfillment: "shipped" },
+  SHIPMENT_FURTHER_CONNECTED: { shipment: "in_transit", fulfillment: "shipped" },
 
+  /* ------------------------------
+     Out for delivery
+     scans can show: "SHIPMENT OUT FOR DELIVERY"
+  ------------------------------ */
+  OUT_FOR_DELIVERY: {
+    shipment: "out_for_delivery",
+    fulfillment: "out_for_delivery",
+  },
+  SHIPMENT_OUT_FOR_DELIVERY: {
+    shipment: "out_for_delivery",
+    fulfillment: "out_for_delivery",
+  },
+
+  /* ------------------------------
+     Delivered
+     scans can show: "SHIPMENT DELIVERED"
+  ------------------------------ */
   DELIVERED: { shipment: "delivered", fulfillment: "delivered" },
+  SHIPMENT_DELIVERED: { shipment: "delivered", fulfillment: "delivered" },
 
+  /* ------------------------------
+     RTO / Returned
+  ------------------------------ */
   RTO_INITIATED: { shipment: "rto", fulfillment: "returned" },
   RTO_IN_TRANSIT: { shipment: "rto", fulfillment: "returned" },
   RTO_DELIVERED: { shipment: "rto", fulfillment: "returned" },
+  RETURNED: { shipment: "rto", fulfillment: "returned" },
+  RETURN_DELIVERED: { shipment: "rto", fulfillment: "returned" },
 
+  /* ------------------------------
+     Cancelled
+  ------------------------------ */
   CANCELLED: { shipment: "cancelled", fulfillment: "cancelled" },
   CANCELED: { shipment: "cancelled", fulfillment: "cancelled" },
+  SHIPMENT_CANCELLED: { shipment: "cancelled", fulfillment: "cancelled" },
+  SHIPMENT_CANCELED: { shipment: "cancelled", fulfillment: "cancelled" },
 };
+
 
 const SHIPMENT_PRIORITY = {
   processing: 1,
