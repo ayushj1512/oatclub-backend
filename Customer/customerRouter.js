@@ -8,6 +8,9 @@ import {
   deleteCustomer,
   getCustomerByCustomerId,
   getCustomerByFirebaseUID,
+
+  // ✅ NEW
+  checkCustomerExists,
 } from "../Customer/customerController.js";
 
 const router = express.Router();
@@ -18,6 +21,14 @@ const router = express.Router();
  * - Guest checkout (firebaseUID missing)
  */
 router.post("/", createCustomer);
+
+/**
+ * ✅ Check if customer exists (Public)
+ * Example:
+ *  GET /api/customers/exists?email=test@gmail.com
+ *  GET /api/customers/exists?phone=9876543210
+ */
+router.get("/exists", checkCustomerExists);
 
 /**
  * ✅ Get all customers (Admin)

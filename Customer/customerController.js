@@ -473,3 +473,49 @@ export const deleteCustomer = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
+/**
+ * ---------------------------------------------------------
+ * ✅ Check if customer exists (email/phone)
+ * @route GET /api/customers/exists
+ * @access Public
+ * ---------------------------------------------------------
+ */
+export const checkCustomerExists = async (req, res) => {
+  try {
+    const { email = "", phone = "" } = req.query;
+
+    const safeEmail = email ? String(email).trim().toLowerCase() : "";
+    const safePhone = phone ? String(phone).trim() : "";
+
+    if (!safeEmail && !safePhone) {
+      return res.status(400).json({
+        message: "Email or phone is required",
+        exists: false,
+      });
+    }
+
+    const query = {
+      $or: [
+        ...(safeEmail ? [{ email: safeEmail }] : []),
+        ...(safePhone ? [{ phone: safePhone }] : []),
+      ],
+    };
+
+    const customer = await Customer.findOne(query)
+      .select("_id email phone name firebaseUID")
+      .lean();
+
+    return res.status(200).json({
+      exists: !!customer,
+      customer: customer || null,
+    });
+  } catch (err) {
+    console.error("Check Customer Exists Error:", err);
+    return res.status(500).json({
+      message: "Server error",
+      exists: false,
+      error: err.message,
+    });
+  }
+};
