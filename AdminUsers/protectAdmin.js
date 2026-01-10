@@ -3,14 +3,15 @@ import AdminUser from "./AdminUser.js";
 
 export const protectAdmin = async (req, res, next) => {
   try {
-    let token;
+    let token = null;
 
-    // ✅ Token should be like: Authorization: Bearer <token>
-    if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
-      token = req.headers.authorization.split(" ")[1];
+    // ✅ Token format: Authorization: Bearer <token>
+    const authHeader = req.headers.authorization || "";
+    if (authHeader.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1];
     }
 
-    // ❌ If token missing
+    // ❌ Token missing
     if (!token) {
       return res.status(401).json({
         success: false,
@@ -19,10 +20,20 @@ export const protectAdmin = async (req, res, next) => {
     }
 
     // ✅ Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({
+        success: false,
+        message: "Not authorized, invalid/expired token",
+      });
+    }
 
-    // ✅ Get admin from DB
-    const admin = await AdminUser.findById(decoded.id).select("-password");
+    // ✅ Fetch admin from DB
+    const admin = await AdminUser.findById(decoded.id)
+      .select("-password")
+      .lean();
 
     if (!admin) {
       return res.status(401).json({
@@ -39,8 +50,27 @@ export const protectAdmin = async (req, res, next) => {
       });
     }
 
-    // ✅ Attach admin in req
-    req.admin = admin;
+    // ✅ Block locked admins (lockUntil)
+    if (admin.lockUntil && admin.lockUntil > Date.now()) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Account locked temporarily due to failed attempts. Try again later.",
+      });
+    }
+
+    // ✅ Attach safe admin object to req
+    req.admin = {
+      _id: admin._id,
+      username: admin.username,
+      email: admin.email,
+      role: admin.role,
+      fullName: admin.fullName || "",
+      permissions: admin.permissions || [],
+      isActive: admin.isActive,
+      createdAt: admin.createdAt,
+      updatedAt: admin.updatedAt,
+    };
 
     next();
   } catch (error) {

@@ -14,6 +14,7 @@ import {
   getOrderAnalytics,
   getOrderByOrderNumber,
   cancelOrder,
+    confirmOrder, // ✅ NEW
 } from "./orderController.js";
 
 /* ===========================
@@ -62,6 +63,10 @@ router.post("/:id/ship", bookWithShiprocket);
 
 // Cancel order
 router.post("/:id/cancel", cancelOrder);
+
+// ✅ Confirm order (Admin / COD confirm)
+router.post("/:id/confirm", confirmOrder);
+
 
 /* ============================================================
    RMA (Return / Exchange)

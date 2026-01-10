@@ -1,41 +1,70 @@
 import AdminUser from "./AdminUser.js";
-import jwt from "jsonwebtoken"; // ✅ REQUIRED for token generation
+import jwt from "jsonwebtoken";
 
-/**
- * ✅ GET: /api/admin-users
- * List admin users with pagination, search, filters
- * For now: sab roles ko full access (no restriction)
- */
+/* ============================================================
+   ✅ Helpers
+============================================================ */
+const ALLOWED_ROLES = [
+  "superadmin",
+  "admin",
+  "staff",
+  "influencer",
+  "viewer",
+  "customer_care",
+];
+
+const normalize = (v) => String(v ?? "").trim();
+const normalizeLower = (v) => normalize(v).toLowerCase();
+
+const safePermissions = (p) => {
+  if (!Array.isArray(p)) return [];
+  return p.map((x) => normalize(x)).filter(Boolean);
+};
+
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "7d" });
+};
+
+/* ============================================================
+   ✅ GET: /api/admin-users
+   List admin users with pagination, search, filters
+============================================================ */
 export const getAdminUsers = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = "", role, isActive } = req.query;
+    const { page = 1, limit = 10, search = "", role = "", isActive = "" } =
+      req.query;
 
     const query = {};
 
     // 🔍 Search by username/email/fullName/phone
-    if (search) {
+    const s = normalize(search);
+    if (s) {
       query.$or = [
-        { username: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { fullName: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
+        { username: { $regex: s, $options: "i" } },
+        { email: { $regex: s, $options: "i" } },
+        { fullName: { $regex: s, $options: "i" } },
+        { phone: { $regex: s, $options: "i" } },
       ];
     }
 
     // 🎭 Role filter
-    if (role) query.role = role;
+    if (role && ALLOWED_ROLES.includes(String(role))) {
+      query.role = String(role);
+    }
 
     // ✅ Active filter
-    if (isActive !== undefined) query.isActive = isActive === "true";
+    if (isActive !== "") query.isActive = String(isActive) === "true";
 
-    const skip = (Number(page) - 1) * Number(limit);
+    const safeLimit = Math.min(200, Math.max(1, Number(limit)));
+    const skip = (Math.max(1, Number(page)) - 1) * safeLimit;
 
     const [users, total] = await Promise.all([
       AdminUser.find(query)
         .select("-password")
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(Number(limit)),
+        .limit(safeLimit)
+        .lean(),
       AdminUser.countDocuments(query),
     ]);
 
@@ -43,24 +72,29 @@ export const getAdminUsers = async (req, res) => {
       success: true,
       total,
       page: Number(page),
-      limit: Number(limit),
-      totalPages: Math.ceil(total / Number(limit)),
-      users,
+      limit: safeLimit,
+      totalPages: Math.ceil((total || 0) / safeLimit),
+      users: users || [],
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ✅ GET: /api/admin-users/:id
- * Get single admin user
- */
+/* ============================================================
+   ✅ GET: /api/admin-users/:id
+   Get single admin user
+============================================================ */
 export const getAdminUserById = async (req, res) => {
   try {
-    const user = await AdminUser.findById(req.params.id).select("-password");
+    const user = await AdminUser.findById(req.params.id)
+      .select("-password")
+      .lean();
+
     if (!user)
-      return res.status(404).json({ success: false, message: "Admin user not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin user not found" });
 
     res.status(200).json({ success: true, user });
   } catch (error) {
@@ -68,13 +102,26 @@ export const getAdminUserById = async (req, res) => {
   }
 };
 
-/**
- * ✅ POST: /api/admin-users
- * Create admin user
- */
+/* ============================================================
+   ✅ POST: /api/admin-users
+   Create admin user
+============================================================ */
 export const createAdminUser = async (req, res) => {
   try {
-    const { username, email, password, role, fullName, phone, profileImage, permissions } = req.body;
+    const payload = req.body || {};
+
+    const username = normalizeLower(payload.username);
+    const email = normalizeLower(payload.email);
+    const password = normalize(payload.password);
+
+    const role = ALLOWED_ROLES.includes(String(payload.role))
+      ? String(payload.role)
+      : "admin";
+
+    const fullName = normalize(payload.fullName);
+    const phone = normalize(payload.phone);
+    const profileImage = normalize(payload.profileImage);
+    const permissions = safePermissions(payload.permissions);
 
     if (!username || !email || !password) {
       return res.status(400).json({
@@ -83,26 +130,39 @@ export const createAdminUser = async (req, res) => {
       });
     }
 
-    const exists = await AdminUser.findOne({ $or: [{ username }, { email }] });
-    if (exists)
+    if (password.length < 6) {
       return res.status(400).json({
+        success: false,
+        message: "password must be at least 6 characters",
+      });
+    }
+
+    const exists = await AdminUser.findOne({
+      $or: [{ username }, { email }],
+    }).lean();
+
+    if (exists) {
+      return res.status(409).json({
         success: false,
         message: "Username or email already exists",
       });
+    }
 
     const user = await AdminUser.create({
       username,
       email,
-      password, // hashed by pre-save in schema
-      role: role || "admin",
+      password, // hashed by pre-save
+      role,
       fullName,
       phone,
       profileImage,
-      permissions: permissions || [],
+      permissions,
       createdBy: req.admin?._id || null,
     });
 
-    const createdUser = await AdminUser.findById(user._id).select("-password");
+    const createdUser = await AdminUser.findById(user._id)
+      .select("-password")
+      .lean();
 
     res.status(201).json({
       success: true,
@@ -110,75 +170,110 @@ export const createAdminUser = async (req, res) => {
       user: createdUser,
     });
   } catch (error) {
+    // ✅ duplicate key
+    if (error?.code === 11000) {
+      const field = Object.keys(error.keyValue || {})[0] || "field";
+      return res.status(409).json({
+        success: false,
+        message: `${field} already exists`,
+      });
+    }
+
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ✅ PATCH: /api/admin-users/:id
- * Update profile fields (not password)
- */
+/* ============================================================
+   ✅ PATCH: /api/admin-users/:id
+   Update profile fields (not password/role)
+============================================================ */
 export const updateAdminUser = async (req, res) => {
   try {
-    const { fullName, phone, profileImage, isActive } = req.body;
+    const payload = req.body || {};
+    const { fullName, phone, profileImage, isActive } = payload;
 
     const user = await AdminUser.findById(req.params.id).select("-password");
     if (!user)
-      return res.status(404).json({ success: false, message: "Admin user not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin user not found" });
 
-    if (fullName !== undefined) user.fullName = fullName;
-    if (phone !== undefined) user.phone = phone;
-    if (profileImage !== undefined) user.profileImage = profileImage;
-    if (isActive !== undefined) user.isActive = isActive;
+    if (fullName !== undefined) user.fullName = normalize(fullName);
+    if (phone !== undefined) user.phone = normalize(phone);
+    if (profileImage !== undefined) user.profileImage = normalize(profileImage);
+    if (isActive !== undefined) user.isActive = !!isActive;
 
     await user.save();
+
+    const safeUser = await AdminUser.findById(user._id)
+      .select("-password")
+      .lean();
 
     res.status(200).json({
       success: true,
       message: "Admin user updated successfully",
-      user,
+      user: safeUser,
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ✅ PATCH: /api/admin-users/:id/role
- * Update role + permissions
- */
+/* ============================================================
+   ✅ PATCH: /api/admin-users/:id/role
+   Update role + permissions
+============================================================ */
 export const updateAdminRoleAndPermissions = async (req, res) => {
   try {
-    const { role, permissions } = req.body;
+    const { role, permissions } = req.body || {};
 
     const user = await AdminUser.findById(req.params.id).select("-password");
     if (!user)
-      return res.status(404).json({ success: false, message: "Admin user not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin user not found" });
 
-    if (role) user.role = role;
-    if (permissions) user.permissions = permissions;
+    if (role !== undefined) {
+      const nextRole = String(role);
+      if (!ALLOWED_ROLES.includes(nextRole)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid role",
+        });
+      }
+      user.role = nextRole;
+    }
+
+    if (permissions !== undefined) {
+      user.permissions = safePermissions(permissions);
+    }
 
     await user.save();
+
+    const safeUser = await AdminUser.findById(user._id)
+      .select("-password")
+      .lean();
 
     res.status(200).json({
       success: true,
       message: "Role/permissions updated successfully",
-      user,
+      user: safeUser,
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ✅ PATCH: /api/admin-users/:id/password
- * Change password securely
- */
+/* ============================================================
+   ✅ PATCH: /api/admin-users/:id/password
+   Change password securely
+============================================================ */
 export const changeAdminPassword = async (req, res) => {
   try {
-    const { newPassword } = req.body;
+    const { newPassword } = req.body || {};
+    const nextPass = normalize(newPassword);
 
-    if (!newPassword || newPassword.length < 6) {
+    if (!nextPass || nextPass.length < 6) {
       return res.status(400).json({
         success: false,
         message: "New password must be at least 6 chars",
@@ -187,26 +282,32 @@ export const changeAdminPassword = async (req, res) => {
 
     const user = await AdminUser.findById(req.params.id).select("+password");
     if (!user)
-      return res.status(404).json({ success: false, message: "Admin user not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin user not found" });
 
-    user.password = newPassword; // hashed via pre-save
+    user.password = nextPass; // hashed via pre-save
     await user.save();
 
-    res.status(200).json({ success: true, message: "Password updated successfully" });
+    res
+      .status(200)
+      .json({ success: true, message: "Password updated successfully" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ✅ PATCH: /api/admin-users/:id/unlock
- * Reset login attempts & lockUntil
- */
+/* ============================================================
+   ✅ PATCH: /api/admin-users/:id/unlock
+   Reset login attempts & lockUntil
+============================================================ */
 export const unlockAdminUser = async (req, res) => {
   try {
     const user = await AdminUser.findById(req.params.id);
     if (!user)
-      return res.status(404).json({ success: false, message: "Admin user not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin user not found" });
 
     user.loginAttempts = 0;
     user.lockUntil = null;
@@ -214,63 +315,70 @@ export const unlockAdminUser = async (req, res) => {
 
     await user.save();
 
+    const safeUser = await AdminUser.findById(user._id)
+      .select("-password")
+      .lean();
+
     res.status(200).json({
       success: true,
       message: "Admin unlocked successfully",
-      user,
+      user: safeUser,
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ✅ DELETE: /api/admin-users/:id
- * Delete admin user (hard delete)
- */
+/* ============================================================
+   ✅ DELETE: /api/admin-users/:id
+   Delete admin user (hard delete)
+============================================================ */
 export const deleteAdminUser = async (req, res) => {
   try {
     const user = await AdminUser.findById(req.params.id);
     if (!user)
-      return res.status(404).json({ success: false, message: "Admin user not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin user not found" });
 
     await user.deleteOne();
 
-    res.status(200).json({ success: true, message: "Admin user deleted successfully" });
+    res
+      .status(200)
+      .json({ success: true, message: "Admin user deleted successfully" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
 /* ===========================================================
-   ✅ ADMIN LOGIN (same file)
+   ✅ ADMIN LOGIN
    POST /api/admin-auth/login
+   - username OR email allowed
 =========================================================== */
-
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "7d" });
-};
-
 export const adminLogin = async (req, res) => {
   try {
-    let { username, password } = req.body;
+    let { username, password } = req.body || {};
+
+    username = normalizeLower(username);
+    password = normalize(password);
 
     if (!username || !password) {
       return res.status(400).json({
         success: false,
-        message: "Username and password required",
+        message: "Username/email and password required",
       });
     }
 
-    // ✅ normalize username (helps if user types Admin / ADMIN)
-    username = username.trim();
-
-    const admin = await AdminUser.findOne({ username }).select("+password");
+    // ✅ allow login using username OR email
+    const admin = await AdminUser.findOne({
+      $or: [{ username }, { email: username }],
+    }).select("+password");
 
     if (!admin) {
       return res.status(401).json({
         success: false,
-        message: "Invalid username or password",
+        message: "Invalid username/email or password",
       });
     }
 
@@ -282,8 +390,8 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // ✅ lock check
-    if (admin.lockUntil && admin.lockUntil > Date.now()) {
+    // ✅ lock check (using schema method)
+    if (admin.isLocked && admin.isLocked()) {
       return res.status(403).json({
         success: false,
         message: "Account locked temporarily due to failed attempts. Try later.",
@@ -294,24 +402,17 @@ export const adminLogin = async (req, res) => {
     const isMatch = await admin.matchPassword(password);
 
     if (!isMatch) {
-      admin.loginAttempts = (admin.loginAttempts || 0) + 1;
-
-      // lock after 5 attempts
-      if (admin.loginAttempts >= 5) {
-        admin.lockUntil = Date.now() + 2 * 60 * 60 * 1000; // 2 hours
-      }
-
-      await admin.save();
+      if (admin.incrementLoginAttempts) await admin.incrementLoginAttempts();
 
       return res.status(401).json({
         success: false,
-        message: "Invalid username or password",
+        message: "Invalid username/email or password",
       });
     }
 
     // ✅ success: reset lock
-    admin.loginAttempts = 0;
-    admin.lockUntil = null;
+    if (admin.resetLoginAttempts) await admin.resetLoginAttempts();
+
     admin.lastLogin = new Date();
     await admin.save();
 
@@ -328,6 +429,8 @@ export const adminLogin = async (req, res) => {
         role: admin.role,
         fullName: admin.fullName || "",
         permissions: admin.permissions || [],
+        isActive: admin.isActive,
+        lastLogin: admin.lastLogin,
       },
     });
   } catch (error) {

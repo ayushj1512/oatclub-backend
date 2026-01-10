@@ -1,7 +1,7 @@
 import express from "express";
 
 import {
-  adminLogin, // ✅ IMPORTANT: include this
+  adminLogin,
   getAdminUsers,
   getAdminUserById,
   createAdminUser,
@@ -18,38 +18,45 @@ const router = express.Router();
 
 /**
  * ✅ BASE ROUTE: /api/admin-users
- * ✅ We will keep everything here (including /login)
  *
  * ⚠️ IMPORTANT:
  * Put /login BEFORE /:id routes
  * Otherwise "/login" will get caught by "/:id"
  */
 
+/* ============================================================
+   ✅ AUTH ROUTES
+============================================================ */
+
 /** ✅ LOGIN (public) */
 router.post("/login", adminLogin);
 
-/** ✅ List Admin Users (protected) */
+/* ============================================================
+   ✅ ADMIN USERS CRUD (protected)
+============================================================ */
+
+/** ✅ List Admin Users */
 router.get("/", protectAdmin, getAdminUsers);
 
-/** ✅ Create Admin User (protected) */
+/** ✅ Create Admin User */
 router.post("/", protectAdmin, createAdminUser);
 
-/** ✅ Update Role + Permissions (protected) */
-router.patch("/:id/role", protectAdmin, updateAdminRoleAndPermissions);
-
-/** ✅ Change Password (protected) */
-router.patch("/:id/password", protectAdmin, changeAdminPassword);
-
-/** ✅ Unlock User (protected) */
-router.patch("/:id/unlock", protectAdmin, unlockAdminUser);
-
-/** ✅ Update Admin User (protected) */
+/** ✅ Update Admin User (profile fields only) */
 router.patch("/:id", protectAdmin, updateAdminUser);
 
-/** ✅ Get Single Admin User (protected) */
+/** ✅ Update Role + Permissions */
+router.patch("/:id/role", protectAdmin, updateAdminRoleAndPermissions);
+
+/** ✅ Change Password */
+router.patch("/:id/password", protectAdmin, changeAdminPassword);
+
+/** ✅ Unlock Admin User */
+router.patch("/:id/unlock", protectAdmin, unlockAdminUser);
+
+/** ✅ Get Single Admin User */
 router.get("/:id", protectAdmin, getAdminUserById);
 
-/** ✅ Delete Admin User (protected) */
+/** ✅ Delete Admin User */
 router.delete("/:id", protectAdmin, deleteAdminUser);
 
 export default router;

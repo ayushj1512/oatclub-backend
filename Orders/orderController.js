@@ -227,6 +227,28 @@ const computeRemainingQtyByIndex = (order) => {
   return remaining;
 };
 
+// ========================================================================================
+// ✅ EASY CONFIRM: Mark order confirmed (manual / cod / admin action)
+// ========================================================================================
+const confirmOrderById = async ({ orderId, adminId = null, session = null }) => {
+  const update = {
+    isConfirmed: true,
+    confirmedAt: new Date(),
+  };
+
+  if (adminId) update.confirmedBy = adminId;
+
+  const query = Order.findByIdAndUpdate(orderId, update, {
+    new: true,
+    runValidators: true,
+  });
+
+  if (session) query.session(session);
+
+  return query;
+};
+
+
 /* ============================================================
    CREATE ORDER
   Expect each item: { productId, quantity, variantId? }
@@ -585,9 +607,9 @@ export const createOrder = async (req, res) => {
     try {
       const createdOrder = await Order.findById(req.__createdOrder._id);
 
-      if (createdOrder?.paymentMethod === "cod") {
-        await autoBookShiprocketForOrder(createdOrder);
-      }
+      // if (createdOrder?.paymentMethod === "cod") {
+      //   await autoBookShiprocketForOrder(createdOrder);
+      // }
     } catch (e) {
       console.error("⚠️ Auto Shiprocket booking failed:", e?.message || e);
      
@@ -637,12 +659,13 @@ export const createOrder = async (req, res) => {
 ============================================================ */
 export const getAllOrders = async (req, res) => {
   try {
-    const { customerId, paymentStatus, fulfillmentStatus } = req.query;
+    const { customerId, paymentStatus, fulfillmentStatus, isConfirmed } = req.query;
 
     const filters = {};
     if (customerId) filters.customerId = customerId;
     if (paymentStatus) filters.paymentStatus = paymentStatus;
     if (fulfillmentStatus) filters.fulfillmentStatus = fulfillmentStatus;
+    if (isConfirmed != null) filters.isConfirmed = isConfirmed === "true";
 
     const orders = await Order.find(filters)
       .populate("customerId", "name email phone")
@@ -652,11 +675,10 @@ export const getAllOrders = async (req, res) => {
     return res.status(200).json(orders);
   } catch (error) {
     console.error("❌ Fetch Orders Error:", error);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 
 /* ============================================================
    GET ORDER BY ID
@@ -732,8 +754,12 @@ export const updateOrderStatus = async (req, res) => {
   const session = await mongoose.startSession();
 
   try {
-    const { fulfillmentStatus, paymentStatus, reason = "cancelled_by_admin" } =
-      req.body;
+    const {
+      fulfillmentStatus,
+      paymentStatus,
+      isConfirmed,
+      reason = "cancelled_by_admin",
+    } = req.body;
 
     const orderId = req.params.id;
 
@@ -742,6 +768,7 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     let updatedOrder = null;
+    let shouldBookShiprocket = false; // ✅ triggers only when confirmed transition happens
 
     await session.withTransaction(async () => {
       // ✅ If cancelling → run full cancel flow
@@ -754,11 +781,63 @@ export const updateOrderStatus = async (req, res) => {
         return;
       }
 
-      // ✅ Normal status update flow
       const order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
+      const wasConfirmed = Boolean(order.isConfirmed);
+
+      // -----------------------------------------------
+      // ✅ 1) Payment status update
+      // -----------------------------------------------
+      if (paymentStatus) {
+        order.paymentStatus = paymentStatus;
+      }
+
+      // -----------------------------------------------
+      // ✅ 2) Manual confirm support (isConfirmed: true)
+      //    ✅ BUT: for razorpay prepaid, must be paid first
+      // -----------------------------------------------
+      if (isConfirmed === true && !order.isConfirmed) {
+        if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
+          throw new Error("Cannot confirm Razorpay order before payment is paid");
+        }
+
+        order.isConfirmed = true;
+        order.confirmedAt = new Date();
+      }
+
+      // -----------------------------------------------
+      // ✅ 3) AUTO-CONFIRM: Razorpay paid => confirmed
+      // -----------------------------------------------
+      if (
+        paymentStatus === "paid" &&
+        order.paymentMethod === "razorpay" &&
+        !order.isConfirmed
+      ) {
+        order.isConfirmed = true;
+        order.confirmedAt = new Date();
+      }
+
+      // ✅ detect confirm transition (after possible confirm changes)
+      const nowConfirmed = Boolean(order.isConfirmed);
+
+      // -----------------------------------------------
+      // ✅ 4) Fulfillment status update (guard shipping stages)
+      // -----------------------------------------------
       if (fulfillmentStatus) {
+        const shippingStages = [
+          "packed",
+          "picked",
+          "shipped",
+          "out_for_delivery",
+          "delivered",
+        ];
+
+        // ✅ IMPORTANT: guard based on FINAL confirmation state (nowConfirmed)
+        if (!nowConfirmed && shippingStages.includes(fulfillmentStatus)) {
+          throw new Error("Order must be confirmed before shipping stages");
+        }
+
         order.fulfillmentStatus = fulfillmentStatus;
 
         // ✅ AUTO deliveredAt
@@ -775,19 +854,43 @@ export const updateOrderStatus = async (req, res) => {
         }
       }
 
-      if (paymentStatus) order.paymentStatus = paymentStatus;
+      // -----------------------------------------------
+      // ✅ 5) Shiprocket booking trigger ONLY if:
+      // - was not confirmed and now confirmed
+      // - AND not already booked
+      // -----------------------------------------------
+      if (!wasConfirmed && nowConfirmed) {
+        const alreadyBooked =
+          order?.shipment?.shiprocket?.awb || order?.shipment?.shiprocket?.shipmentId;
+
+        if (!alreadyBooked) shouldBookShiprocket = true;
+      }
 
       await order.save({ session });
-
       updatedOrder = order;
     });
 
     // ✅ Fetch Lean for email trigger + response consistency
     const finalOrder = await Order.findById(updatedOrder._id).lean();
 
-    /* =========================================================
-       ✅ If cancelled → trigger cancellation emails
-    ========================================================= */
+    // -----------------------------------------------
+    // ✅ Book Shiprocket ONLY if order became confirmed
+    // -----------------------------------------------
+    try {
+      if (shouldBookShiprocket) {
+        const freshOrderDoc = await Order.findById(finalOrder._id); // doc needed
+        await autoBookShiprocketForOrder(freshOrderDoc);
+      }
+    } catch (e) {
+      console.error(
+        "⚠️ Auto Shiprocket booking after confirmation failed:",
+        e?.message || e
+      );
+    }
+
+    // -----------------------------------------------
+    // ✅ Cancellation emails
+    // -----------------------------------------------
     try {
       if (fulfillmentStatus === "cancelled") {
         console.log("📩 Triggering cancellation emails from updateOrderStatus...");
@@ -806,6 +909,84 @@ export const updateOrderStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Update Status Error:", error);
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+
+
+/* ============================================================
+   ✅ CONFIRM ORDER (ADMIN / COD)
+   - sets isConfirmed + confirmedAt + confirmedBy
+   - triggers Shiprocket booking
+============================================================ */
+export const confirmOrder = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  try {
+    const orderId = req.params.id;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    const adminId = req.user?._id || null; // if you have auth middleware
+
+    let updatedOrder = null;
+    let shouldBookShiprocket = false;
+
+    await session.withTransaction(async () => {
+      const order = await Order.findById(orderId).session(session);
+      if (!order) throw new Error("Order not found");
+
+      // ✅ prepaid guard (razorpay must be paid)
+      if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
+        throw new Error("Cannot confirm Razorpay order before payment is paid");
+      }
+
+      // ✅ idempotent: already confirmed
+      if (order.isConfirmed) {
+        updatedOrder = order;
+        return;
+      }
+
+      order.isConfirmed = true;
+      order.confirmedAt = new Date();
+      if (adminId) order.confirmedBy = adminId;
+
+      // ✅ book only if not already booked
+      const alreadyBooked =
+        order?.shipment?.shiprocket?.awb || order?.shipment?.shiprocket?.shipmentId;
+
+      if (!alreadyBooked) shouldBookShiprocket = true;
+
+      await order.save({ session });
+      updatedOrder = order;
+    });
+
+    // ✅ book shiprocket outside transaction
+    try {
+      if (shouldBookShiprocket) {
+        const freshOrderDoc = await Order.findById(updatedOrder._id);
+        await autoBookShiprocketForOrder(freshOrderDoc);
+      }
+    } catch (e) {
+      console.error("⚠️ Auto Shiprocket booking after confirm failed:", e?.message || e);
+    }
+
+    const finalOrder = await Order.findById(updatedOrder._id).lean();
+
+    return res.status(200).json({
+      message: "Order confirmed successfully",
+      order: finalOrder,
+    });
+  } catch (error) {
+    console.error("❌ Confirm Order Error:", error);
     return res.status(500).json({
       message: "Server error",
       error: error.message,
@@ -1247,11 +1428,19 @@ async function autoBookShiprocketForOrder(order) {
       orderId: order?._id?.toString(),
       paymentMethod: order?.paymentMethod,
       paymentStatus: order?.paymentStatus,
+      isConfirmed: order?.isConfirmed,
     });
 
     // ------------------------------------------------
     // 0) Guards
     // ------------------------------------------------
+
+    // ✅ CONFIRM GUARD: never book before confirmation
+    if (!order?.isConfirmed) {
+      console.log(`${TAG} 🚫 SKIP: Order not confirmed yet`);
+      return;
+    }
+
     if (!order?.shippingAddressSnapshot?.pincode) {
       console.log(`${TAG} ❌ SKIP: shipping pincode missing`);
       return;
@@ -1262,6 +1451,7 @@ async function autoBookShiprocketForOrder(order) {
       return;
     }
 
+    // ✅ Double booking guard: if AWB already exists, never book again
     if (order.shipment?.shiprocket?.awb) {
       console.log(`${TAG} ✅ SKIP: AWB already exists`, {
         awb: order.shipment.shiprocket.awb,
@@ -1269,13 +1459,68 @@ async function autoBookShiprocketForOrder(order) {
       return;
     }
 
+    // ✅ If shipmentId already exists, we should NOT create shipment again
+    // (we can still attempt assign awb later if needed, but do not create shipment)
     if (order.shipment?.shiprocket?.shipmentId) {
-      console.log(`${TAG} ℹ️ ShipmentId already exists on order`, {
+      console.log(`${TAG} ✅ SKIP: Shipment already created`, {
         shipmentId: order.shipment.shiprocket.shipmentId,
       });
+
+      // If shipment exists but AWB missing, we can attempt assign AWB here
+      const existingShipmentId = String(order.shipment.shiprocket.shipmentId || "").trim();
+
+      if (!existingShipmentId) return;
+
+      try {
+        console.log(`${TAG} 📌 Shipment exists but AWB missing. Attempting assign AWB...`);
+
+        const assigned = await assignAwb(existingShipmentId);
+        const awb = (assigned?.awb_code || assigned?.awb || "").trim();
+
+        if (awb) {
+          order.shipment.shiprocket.awb = awb;
+          order.shipment.shiprocket.courierName =
+            assigned?.courier_name || order.shipment.shiprocket.courierName;
+
+          order.shipment.shiprocket.trackingUrl =
+            assigned?.tracking_url ||
+            order.shipment.shiprocket.trackingUrl ||
+            `https://shiprocket.co/tracking/${awb}`;
+
+          order.shipment.shiprocket.status = "processing";
+          order.shipment.status = "processing";
+
+          order.trackingDetails = {
+            ...(order.trackingDetails || {}),
+            trackingId: awb,
+            courierName: order.shipment.shiprocket.courierName,
+          };
+
+          await order.save();
+
+          console.log(`${TAG} ✅ AWB assigned & saved (existing shipment)`, {
+            orderNumber: order.orderNumber,
+            shipmentId: existingShipmentId,
+            awb,
+          });
+        } else {
+          console.log(`${TAG} ⚠️ Assign AWB success but AWB missing`, {
+            shipmentId: existingShipmentId,
+          });
+        }
+      } catch (e) {
+        console.log(`${TAG} ⚠️ Assign AWB failed for existing shipment`, {
+          shipmentId: existingShipmentId,
+          message: e?.message,
+          status: e?.response?.status,
+          data: e?.response?.data,
+        });
+      }
+
+      return; // ✅ stop here (no createShipment)
     }
 
-    // Payment guard: prepaid only after paid
+    // ✅ Payment guard: prepaid only after paid
     if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
       console.log(`${TAG} ⏳ SKIP: prepaid not paid yet`);
       return;
@@ -1353,12 +1598,8 @@ async function autoBookShiprocketForOrder(order) {
       courier_name: shipment?.courier_name,
     });
 
-    const shipmentId = shipment?.shipment_id
-      ? String(shipment.shipment_id)
-      : "";
-    const shiprocketOrderId = shipment?.order_id
-      ? String(shipment.order_id)
-      : "";
+    const shipmentId = shipment?.shipment_id ? String(shipment.shipment_id) : "";
+    const shiprocketOrderId = shipment?.order_id ? String(shipment.order_id) : "";
     let awb = (shipment?.awb_code || "").trim();
 
     if (!shipmentId) {
@@ -1378,13 +1619,9 @@ async function autoBookShiprocketForOrder(order) {
         orderId: shiprocketOrderId,
         awb: order.shipment?.shiprocket?.awb || "",
         courierName:
-          shipment?.courier_name ||
-          order.shipment?.shiprocket?.courierName ||
-          "",
+          shipment?.courier_name || order.shipment?.shiprocket?.courierName || "",
         trackingUrl:
-          shipment?.tracking_url ||
-          order.shipment?.shiprocket?.trackingUrl ||
-          "",
+          shipment?.tracking_url || order.shipment?.shiprocket?.trackingUrl || "",
         status: "processing",
         lastUpdatedAt: new Date(),
       },
@@ -1412,7 +1649,6 @@ async function autoBookShiprocketForOrder(order) {
           awb_code: assigned?.awb_code,
           courier_name: assigned?.courier_name,
           courier_company_id: assigned?.courier_company_id,
-          raw: assigned,
         });
 
         awb = (assigned?.awb_code || assigned?.awb || "").trim();
@@ -1442,8 +1678,6 @@ async function autoBookShiprocketForOrder(order) {
             orderNumber: order.orderNumber,
             shipmentId,
             awb,
-            courierName: order.shipment.shiprocket.courierName,
-            trackingUrl: order.shipment.shiprocket.trackingUrl,
           });
         } else {
           console.log(
@@ -1451,21 +1685,16 @@ async function autoBookShiprocketForOrder(order) {
           );
         }
       } catch (e) {
-        console.log(
-          `${TAG} ⚠️ Assign AWB failed (will rely on webhook/panel)`,
-          {
-            message: e?.message,
-            status: e?.response?.status,
-            data: e?.response?.data,
-            url: e?.config?.url,
-          }
-        );
+        console.log(`${TAG} ⚠️ Assign AWB failed (will rely on webhook/panel)`, {
+          message: e?.message,
+          status: e?.response?.status,
+          data: e?.response?.data,
+        });
       }
     } else {
-      console.log(
-        `${TAG} ✅ AWB already returned in create shipment response`,
-        { awb }
-      );
+      console.log(`${TAG} ✅ AWB already returned in create shipment response`, {
+        awb,
+      });
     }
 
     console.log(`${TAG} END ✅`, {

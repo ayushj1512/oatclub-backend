@@ -26,11 +26,12 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: true, select: false, minlength: 4 },
 
     role: {
-      type: String,
-      enum: ["user", "admin", "superadmin"],
-      default: "user",
-      index: true,
-    },
+  type: String,
+  enum: ["user", "admin", "superadmin", "customer_care"],
+  default: "user",
+  index: true,
+},
+
 
     /* 🛒 CART METRICS */
     activeCartId: {

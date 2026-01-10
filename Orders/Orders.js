@@ -287,6 +287,7 @@ const orderSchema = new mongoose.Schema(
       default: "pending",
       index: true,
     },
+// ✅ order confirmation (separate from fulfillment)
 
     fulfillmentStatus: {
   type: String,
@@ -370,6 +371,14 @@ const orderSchema = new mongoose.Schema(
     },
 
     isGiftOrder: { type: Boolean, default: false },
+// ✅ order confirmation (separate from fulfillment)
+isConfirmed: { type: Boolean, default: false, index: true },
+confirmedAt: { type: Date, default: null },
+confirmedBy: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Admin",
+  default: null,
+},
 
     analytics: {
       categoryBreakdown: [
@@ -423,6 +432,7 @@ orderSchema.pre("validate", async function (next) {
   { new: true, upsert: true }
 );
 
+
 const padded = String(counter.seq).padStart(6, "0");
 
     this.orderNumber = `MIRAY-${padded}`;
@@ -431,6 +441,27 @@ const padded = String(counter.seq).padStart(6, "0");
     next(err);
   }
 });
+
+// ========================================================================================
+// ✅ AUTO-CONFIRM if Razorpay payment is paid
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    const isRazorpayPaid =
+      this.paymentMethod === "razorpay" &&
+      this.paymentStatus === "paid";
+
+    if (isRazorpayPaid && !this.isConfirmed) {
+      this.isConfirmed = true;
+      this.confirmedAt = new Date();
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
 
 // ========================================================================================
 // ⭐ AUTO-GENERATE RMA NUMBERS for any new RMA missing rmaNumber
@@ -553,9 +584,69 @@ orderSchema.pre("validate", function (next) {
   }
 });
 
+// ========================================================================================
+// ✅ PATCH 3: Manual confirm helper (for COD/Admin confirmation)
+// ========================================================================================
+orderSchema.statics.confirmOrder = async function (orderId, adminId = null) {
+  const update = {
+    isConfirmed: true,
+    confirmedAt: new Date(),
+  };
+
+  if (adminId) update.confirmedBy = adminId;
+
+return this.findByIdAndUpdate(orderId, update, { new: true, runValidators: true });
+};
+
+// ========================================================================================
+// ✅ PATCH 4: Safety guard — prevent shipping stages unless confirmed
+// ========================================================================================
+// ========================================================================================
+// ✅ PATCH 4: Safety guard — prevent shipping stages unless confirmed
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    const shippingStages = [
+      "packed",
+      "picked",
+      "shipped",
+      "out_for_delivery",
+      "delivered",
+    ];
+
+    if (!this.isConfirmed && shippingStages.includes(this.fulfillmentStatus)) {
+      return next(new Error("Order must be confirmed before shipping stages"));
+    }
+
+    if (
+      !this.isConfirmed &&
+      this.shipment?.status &&
+      shippingStages.includes(this.shipment.status)
+    ) {
+      return next(new Error("Order must be confirmed before shipment status moves"));
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
+
+
+
+
+
 // Indexes
 orderSchema.index({ "trackingDetails.trackingId": 1 });
 orderSchema.index({ "items.lineId": 1 });
+// ========================================================================================
+// ✅ PATCH 5: Helpful indexes for confirmation workflows
+// ========================================================================================
+orderSchema.index({ isConfirmed: 1, orderDate: -1 });
+orderSchema.index({ isConfirmed: 1, paymentStatus: 1 });
+orderSchema.index({ isConfirmed: 1, fulfillmentStatus: 1 });
+
 
 // Helpful indexes for RMA queries
 orderSchema.index({ "rmas.rmaNumber": 1 });
