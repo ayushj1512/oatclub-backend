@@ -30,6 +30,7 @@ import reviewRoutes from "./Review/reviewRouter.js";
 import wishlistRoutes from "./Wishlist/wishlistRouter.js";
 import fabricRoutes from "./Fabric/fabric.routes.js";
 import sizeChartRoutes from "./SizeChart/sizeChartRoutes.js";
+import proxyImageRoute from "./routes/imageProxy.route.js";
 
 import attributeRoutes from "./Attribute/attributeRoutes.js";
 import shiprocketRoutes from "./shiprocket/shipping.routes.js";
@@ -192,6 +193,7 @@ app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/fabrics", fabricRoutes);
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/admin-users", adminUserRoutes);
+app.use("/api/proxy-image", proxyImageRoute);
 
 // Admin
 app.use("/api/inventory", inventoryRoutes);

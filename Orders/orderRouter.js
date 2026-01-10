@@ -14,7 +14,7 @@ import {
   getOrderAnalytics,
   getOrderByOrderNumber,
   cancelOrder,
-    confirmOrder, // ✅ NEW
+  confirmOrder, // ✅ NEW
 } from "./orderController.js";
 
 /* ===========================
@@ -27,6 +27,15 @@ import {
   getRmaByNumber,
   getAllRmasAdmin, // ✅ NEW
 } from "./orderRmaController.js";
+
+/* ===========================
+   ✅ PRODUCTION CONTROLLER (Production Flow)
+=========================== */
+import {
+  getProductionQueue,
+  getProductionSummary,
+  markOrderShippedFromProduction,
+} from "./order.production.controller.js"; // ✅ NEW FILE
 
 /* ===========================
    SHIPROCKET
@@ -48,6 +57,19 @@ router.get("/", getAllOrders);
 // Analytics summary
 router.get("/analytics/summary", getOrderAnalytics);
 
+/* ============================================================
+   ✅ PRODUCTION ROUTES (CONFIRMED ONLY)
+============================================================ */
+
+// ✅ Production Summary
+router.get("/production/summary", getProductionSummary);
+
+// ✅ Production Queue (default = confirmed + processing)
+router.get("/production/queue", getProductionQueue);
+
+// ✅ Production complete -> mark shipped
+router.post("/production/:id/shipped", markOrderShippedFromProduction);
+
 // Customer orders
 router.get("/customer/:customerId", getOrdersByCustomer);
 
@@ -55,7 +77,7 @@ router.get("/customer/:customerId", getOrdersByCustomer);
 router.get("/by-number/:orderNumber", getOrderByOrderNumber);
 
 /* ============================================================
-   ORDER ACTIONS (Ship / Cancel)
+   ORDER ACTIONS (Ship / Cancel / Confirm)
 ============================================================ */
 
 // Book shipment
@@ -66,7 +88,6 @@ router.post("/:id/cancel", cancelOrder);
 
 // ✅ Confirm order (Admin / COD confirm)
 router.post("/:id/confirm", confirmOrder);
-
 
 /* ============================================================
    RMA (Return / Exchange)

@@ -1062,7 +1062,7 @@ export const getProductsByIds = async (req, res) => {
   try {
     let { ids } = req.body;
 
-    // ✅ normalize ids
+    // ✅ normalize ids (array/string)
     ids = Array.isArray(ids)
       ? ids
       : typeof ids === "string"
@@ -1073,25 +1073,40 @@ export const getProductsByIds = async (req, res) => {
       return res.status(400).json({ message: "ids array is required" });
     }
 
-    // ✅ validate ObjectIds
-    const validIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
+    // ✅ split into objectIds + productCodes
+    const validObjectIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const productCodes = ids.filter((id) => !mongoose.Types.ObjectId.isValid(id)); 
+    // (jo ObjectId valid nahi wo productCode consider)
 
-    if (!validIds.length) {
-      return res.status(400).json({ message: "No valid ids found" });
+    if (!validObjectIds.length && !productCodes.length) {
+      return res.status(400).json({ message: "No valid ids or product codes found" });
     }
 
-    // ✅ single fetch query (with populate)
+    // ✅ fetch using $or
     const docs = await pop(
-      Product.find({ _id: { $in: validIds } })
+      Product.find({
+        $or: [
+          ...(validObjectIds.length ? [{ _id: { $in: validObjectIds } }] : []),
+          ...(productCodes.length ? [{ productCode: { $in: productCodes } }] : []),
+        ],
+      })
     );
 
-    // ✅ keep same order as ids input
-    const map = new Map(docs.map((d) => [String(d._id), d]));
-    const ordered = validIds.map((id) => map.get(String(id))).filter(Boolean);
+    // ✅ map for ordering (both keys)
+    const map = new Map();
+
+    docs.forEach((d) => {
+      map.set(String(d._id), d);
+      if (d.productCode) map.set(String(d.productCode), d);
+    });
+
+    // ✅ keep same input order
+    const ordered = ids.map((x) => map.get(String(x))).filter(Boolean);
 
     return res.json({
       requestedCount: ids.length,
-      validCount: validIds.length,
+      objectIdCount: validObjectIds.length,
+      productCodeCount: productCodes.length,
       foundCount: ordered.length,
       products: ordered.map(applyStockFromVariants),
     });
@@ -1100,3 +1115,4 @@ export const getProductsByIds = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
