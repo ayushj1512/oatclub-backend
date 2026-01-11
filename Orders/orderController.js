@@ -607,9 +607,9 @@ export const createOrder = async (req, res) => {
     try {
       const createdOrder = await Order.findById(req.__createdOrder._id);
 
-      // if (createdOrder?.paymentMethod === "cod") {
-      //   await autoBookShiprocketForOrder(createdOrder);
-      // }
+      if (createdOrder?.paymentMethod === "cod") {
+        await autoBookShiprocketForOrder(createdOrder);
+      }
     } catch (e) {
       console.error("⚠️ Auto Shiprocket booking failed:", e?.message || e);
      
