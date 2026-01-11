@@ -328,10 +328,18 @@ export const createProduct = async (req, res) => {
     data.tags = tagsNorm(data.tags);
     data.collections = arr(data.collections);
 
+    // ✅ NEW: patternNumber + fabrics + avgFabricConsumption
+    if (data.patternNumber !== undefined)
+      data.patternNumber = String(data.patternNumber || "").trim();
+
+    data.fabrics = json(data.fabrics, []);
+    data.avgFabricConsumption = json(
+      data.avgFabricConsumption,
+      data.avgFabricConsumption
+    );
+
     /* ---------------- slug ---------------- */
-    data.slug = slugify(String(data.slug || data.title || ""), {
-      lower: true,
-    });
+    data.slug = slugify(String(data.slug || data.title || ""), { lower: true });
 
     if (await Product.exists({ slug: data.slug })) {
       return res.status(400).json({ message: "Slug already exists" });
@@ -345,9 +353,7 @@ export const createProduct = async (req, res) => {
       : [];
 
     if (!data.categories.length) {
-      return res.status(400).json({
-        message: "At least one category is required",
-      });
+      return res.status(400).json({ message: "At least one category is required" });
     }
 
     /* =====================================================
@@ -357,10 +363,17 @@ export const createProduct = async (req, res) => {
       data.attributes = [];
       data.variants = [];
       data.productType = "simple";
+
+      // ✅ optional: keep fabrics/pattern in bulk if provided (no change)
+      // If you want to clear them in bulk, uncomment:
+      // data.fabrics = [];
+      // data.avgFabricConsumption = { value: 0, unit: "meter" };
+      // data.patternNumber = "";
     } else {
       /* ---------------- attribute validation ---------------- */
       await validateAttributes(data.attributes);
 
+      // safety: strip variant image if any incoming
       if (Array.isArray(data.variants)) {
         data.variants = data.variants.map(({ image, ...v }) => v);
       }
@@ -399,9 +412,7 @@ export const createProduct = async (req, res) => {
 
     /* ❗ Images REQUIRED only for NON-bulk products */
     if (!isBulk && (!data.images || !data.images.length)) {
-      return res.status(400).json({
-        message: "At least one product image is required",
-      });
+      return res.status(400).json({ message: "At least one product image is required" });
     }
 
     /* =====================================================
@@ -429,9 +440,7 @@ export const createProduct = async (req, res) => {
     const full = await pop(Product.findById(created._id));
 
     return res.status(201).json({
-      message: isBulk
-        ? "Bulk draft product created"
-        : "Product created successfully",
+      message: isBulk ? "Bulk draft product created" : "Product created successfully",
       product: applyStockFromVariants(full),
     });
   } catch (e) {
@@ -439,6 +448,7 @@ export const createProduct = async (req, res) => {
     return res.status(400).json({ message: e.message });
   }
 };
+
 
 
 
@@ -636,6 +646,18 @@ export const updateProduct = async (req, res) => {
     if (data.tags !== undefined) data.tags = tagsNorm(data.tags);
     if (data.collections !== undefined) data.collections = arr(data.collections);
 
+    // ✅ NEW: patternNumber + fabrics + avgFabricConsumption
+    if (data.patternNumber !== undefined)
+      data.patternNumber = String(data.patternNumber || "").trim();
+
+    if (data.fabrics !== undefined) data.fabrics = json(data.fabrics, data.fabrics);
+
+    if (data.avgFabricConsumption !== undefined)
+      data.avgFabricConsumption = json(
+        data.avgFabricConsumption,
+        data.avgFabricConsumption
+      );
+
     /* ---------------- fetch existing ---------------- */
     const existing = await Product.findById(req.params.id);
     if (!existing) {
@@ -666,8 +688,8 @@ export const updateProduct = async (req, res) => {
       data.categories = Array.isArray(data.categories)
         ? data.categories
         : typeof data.categories === "string"
-          ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
-          : [];
+        ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
+        : [];
 
       if (!data.categories.length) {
         return res.status(400).json({
@@ -686,9 +708,8 @@ export const updateProduct = async (req, res) => {
     /* ---------------- VARIANTS ---------------- */
     if (Array.isArray(data.variants)) {
       data.variants = data.variants.map((v) => ({
-  ...(v._id ? { _id: v._id } : {}),   // ✅ include only if exists
+        ...(v._id ? { _id: v._id } : {}), // ✅ include only if exists
         sku: v.sku,
-        price: Number(v.price ?? 0),
         stock: Number(v.stock ?? 0),
         isInStock: Number(v.stock ?? 0) > 0,
         attributes: Array.isArray(v.attributes) ? v.attributes : [],
@@ -701,14 +722,14 @@ export const updateProduct = async (req, res) => {
     data.productType = data.variants.length > 0 ? "variable" : "simple";
 
     /* ------------------------------------------------------------------
-       ✅ CROSS-SELL PRODUCTS (NEW)
+       ✅ CROSS-SELL PRODUCTS
     ------------------------------------------------------------------- */
     if (data.crossSellProducts !== undefined) {
       data.crossSellProducts = Array.isArray(data.crossSellProducts)
         ? data.crossSellProducts
         : typeof data.crossSellProducts === "string"
-          ? data.crossSellProducts.split(",").map((id) => id.trim())
-          : [];
+        ? data.crossSellProducts.split(",").map((id) => id.trim())
+        : [];
 
       // validate ObjectIds
       data.crossSellProducts = data.crossSellProducts.filter(isValidObjectId);
@@ -759,6 +780,7 @@ export const updateProduct = async (req, res) => {
     res.status(500).json({ message: e.message });
   }
 };
+
 
 
 

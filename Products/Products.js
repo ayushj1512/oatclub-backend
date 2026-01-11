@@ -1,10 +1,9 @@
 import mongoose from "mongoose";
 import { generateSKU } from "../utility/sku.js";
 import Counter from "../models/Counter.js";
-import Category from "../Category/Category.js";
 
 /* ------------------------------------------------------------------
-   VARIANT SCHEMA (NO IMAGES ❌)
+  VARIANT SCHEMA (NO IMAGES ❌, NO PRICE ✅)
 ------------------------------------------------------------------- */
 const variantSchema = new mongoose.Schema(
   {
@@ -19,9 +18,6 @@ const variantSchema = new mongoose.Schema(
     sku: { type: String, unique: true, sparse: true, trim: true, index: true },
     barcode: { type: String, trim: true, default: "" },
 
-    price: { type: Number, default: 0 },
-    compareAtPrice: { type: Number, default: null },
-
     stock: { type: Number, default: 0 },
     isInStock: { type: Boolean, default: true },
 
@@ -31,19 +27,17 @@ const variantSchema = new mongoose.Schema(
 );
 
 /* ------------------------------------------------------------------
-   MAIN PRODUCT SCHEMA
+  PRODUCT SCHEMA
 ------------------------------------------------------------------- */
 const productSchema = new mongoose.Schema(
   {
     /* SEQUENTIAL PRODUCT CODE */
-    productCode: {
-      type: String,
-      unique: true,
-      required: true,
-      index: true,
-    },
+    productCode: { type: String, unique: true, required: true, index: true },
 
-    /* BASIC INFO */
+    /* PATTERN NUMBER (NOT UNIQUE ✅) */
+    patternNumber: { type: String, trim: true, default: "", index: true },
+
+    /* BASIC */
     title: { type: String, required: true, trim: true },
     slug: { type: String, required: true, unique: true, lowercase: true },
 
@@ -51,18 +45,14 @@ const productSchema = new mongoose.Schema(
     shortDescription: { type: String, default: "" },
     highlights: [{ type: String }],
 
-    /* CATEGORIES */
-    categories: {
-      type: [String],
-      default: [],
-    },
-
+    /* CATEGORIES / COLLECTIONS */
+    categories: { type: [String], default: [] },
     collections: [{ type: mongoose.Schema.Types.ObjectId, ref: "Collection" }],
 
     /* TAGS */
     tags: [{ type: String, trim: true, lowercase: true }],
 
-    /* PRICING */
+    /* PRICING (COMMON FOR ALL VARIANTS ✅) */
     price: { type: Number, required: true },
     compareAtPrice: { type: Number, default: null },
     currency: { type: String, default: "INR" },
@@ -73,41 +63,32 @@ const productSchema = new mongoose.Schema(
     stock: { type: Number, default: 0 },
     isInStock: { type: Boolean, default: true },
 
-    /* ------------------------------------------------------------------
-   FABRIC ASSIGNMENT (NEW)
-------------------------------------------------------------------- */
-    /* ------------------------------------------------------------------
-   FABRIC ASSIGNMENT (MULTI-FABRIC READY)
-------------------------------------------------------------------- */
-    fabrics: [
-      {
-        fabricCode: {
-          type: String,
-          trim: true,
-          index: true,
-          required: true, // only required INSIDE array item
-        },
+    /* FABRICS (MULTIPLE ✅) */
+    /* FABRICS (MULTIPLE ✅) — store by Fabric.code */
+fabrics: [
+  {
+    fabricCode: {
+      type: String,
+      trim: true,
+      required: true,
+      index: true,
+    },
 
-        role: {
-          type: String,
-          trim: true,
-          default: "main",
-          // main | lining | contrast | padding | other
-        },
+    role: {
+      type: String,
+      trim: true,
+      default: "main",
+      enum: ["main", "lining", "contrast", "padding", "other"],
+    },
+  },
+],
 
-        consumptionPerUnit: {
-          type: Number,
-          required: true,
-          min: 0.0001,
-        },
 
-        unit: {
-          type: String,
-          enum: ["meter", "kg"],
-          required: true,
-        },
-      },
-    ],
+    /* AVG FABRIC CONSUMPTION (PRODUCT LEVEL ✅) */
+    avgFabricConsumption: {
+      value: { type: Number, min: 0, default: 0 },
+unit: { type: String, enum: ["meter", "gram"], default: "meter" },
+    },
 
     /* ATTRIBUTES + VARIANTS */
     attributes: [
@@ -117,10 +98,9 @@ const productSchema = new mongoose.Schema(
         values: [String],
       },
     ],
-
     variants: [variantSchema],
 
-    /* MEDIA (PRODUCT LEVEL ONLY ✅) */
+    /* MEDIA (PRODUCT LEVEL ✅) */
     images: [{ type: String }],
     thumbnail: { type: String, default: "" },
     video: { type: String, default: "" },
@@ -140,14 +120,8 @@ const productSchema = new mongoose.Schema(
     reviews: [{ type: mongoose.Schema.Types.ObjectId, ref: "Review" }],
 
     /* OFFERS */
-    offer: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Offer",
-      default: null,
-    },
-    couponsApplicable: [
-      { type: mongoose.Schema.Types.ObjectId, ref: "Coupon" },
-    ],
+    offer: { type: mongoose.Schema.Types.ObjectId, ref: "Offer", default: null },
+    couponsApplicable: [{ type: mongoose.Schema.Types.ObjectId, ref: "Coupon" }],
 
     /* ANALYTICS */
     analytics: {
@@ -166,13 +140,9 @@ const productSchema = new mongoose.Schema(
     },
     externalURL: { type: String, default: "" },
 
-    /* CROSS SELL PRODUCTS */
+    /* CROSS SELL */
     crossSellProducts: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Product",
-        index: true,
-      },
+      { type: mongoose.Schema.Types.ObjectId, ref: "Product", index: true },
     ],
 
     /* SEO */
@@ -192,9 +162,11 @@ const productSchema = new mongoose.Schema(
 );
 
 /* ------------------------------------------------------------------
-   AUTO SET PRODUCT TYPE
+  HELPERS / HOOKS
 ------------------------------------------------------------------- */
-productSchema.pre("save", function (next) {
+
+// ✅ productType must be set BEFORE SKU logic
+productSchema.pre("validate", function (next) {
   this.productType =
     Array.isArray(this.variants) && this.variants.length > 0
       ? "variable"
@@ -202,20 +174,16 @@ productSchema.pre("save", function (next) {
   next();
 });
 
-/* ------------------------------------------------------------------
-   AUTO-GENERATE PRODUCT CODE
-------------------------------------------------------------------- */
+// ✅ productCode auto increment
 productSchema.pre("validate", async function (next) {
   try {
     if (!this.productCode) {
       const counter = await Counter.findOneAndUpdate(
-  { name: "product" },            // ✅ matches your schema
-  { $inc: { seq: 1 } },           // ✅ matches your schema
-  { new: true, upsert: true, setDefaultsOnInsert: true }
-);
-
-this.productCode = String(counter.seq).padStart(5, "0"); // ✅ matches schema
-
+        { name: "product" },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+      this.productCode = String(counter.seq).padStart(5, "0");
     }
     next();
   } catch (e) {
@@ -223,13 +191,13 @@ this.productCode = String(counter.seq).padStart(5, "0"); // ✅ matches schema
   }
 });
 
-/* ------------------------------------------------------------------
-   AUTO-GENERATE SKUs
-------------------------------------------------------------------- */
+// ✅ SKU generation
 productSchema.pre("validate", function (next) {
   try {
-    // SIMPLE PRODUCT
-    if (this.productType !== "variable" || !this.variants?.length) {
+    const isVariable = Array.isArray(this.variants) && this.variants.length > 0;
+
+    // SIMPLE
+    if (!isVariable) {
       if (!this.sku) {
         this.sku = generateSKU({
           brand: "MIR",
@@ -240,7 +208,7 @@ productSchema.pre("validate", function (next) {
       return next();
     }
 
-    // VARIABLE PRODUCT → VARIANT SKUs
+    // VARIABLE → VARIANT SKUs
     this.variants = this.variants.map((v) => {
       if (v?.sku) return v;
 
@@ -262,15 +230,18 @@ productSchema.pre("validate", function (next) {
       };
     });
 
-    this.sku = undefined;
+    this.sku = undefined; // product-level sku not used for variable
     next();
   } catch (e) {
     next(e);
   }
 });
 
-/* INDEXES */
+/* ------------------------------------------------------------------
+  INDEXES
+------------------------------------------------------------------- */
 productSchema.index({ productCode: 1 }, { unique: true });
+productSchema.index({ patternNumber: 1 });
 productSchema.index({ title: "text", description: "text" });
 productSchema.index({ keywords: 1 });
 productSchema.index({ categories: 1 });
@@ -280,6 +251,6 @@ productSchema.index({ price: 1 });
 productSchema.index({ sku: 1 }, { sparse: true });
 productSchema.index({ "variants.sku": 1 }, { sparse: true });
 productSchema.index({ tags: 1 });
+productSchema.index({ "fabrics.fabricCode": 1 });
 
-export default mongoose.models.Product ||
-  mongoose.model("Product", productSchema);
+export default mongoose.models.Product || mongoose.model("Product", productSchema);
