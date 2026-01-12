@@ -293,18 +293,7 @@ export const createOrder = async (req, res) => {
   // ✅ SKU fallback: pick last size token from SKU
   const getSizeFromSku = (sku) => {
     const parts = str(sku).toUpperCase().split("-");
-    const sizeOrder = [
-      "XXS",
-      "XS",
-      "S",
-      "M",
-      "L",
-      "XL",
-      "XXL",
-      "3XL",
-      "4XL",
-      "5XL",
-    ];
+    const sizeOrder = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
     for (let i = parts.length - 1; i >= 0; i--) {
       if (sizeOrder.includes(parts[i])) return parts[i];
     }
@@ -316,18 +305,7 @@ export const createOrder = async (req, res) => {
     const parts = str(sku).toUpperCase().split("-");
     if (parts.length < 2) return "";
 
-    const sizeOrder = [
-      "XXS",
-      "XS",
-      "S",
-      "M",
-      "L",
-      "XL",
-      "XXL",
-      "3XL",
-      "4XL",
-      "5XL",
-    ];
+    const sizeOrder = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
 
     const maybeColor = parts[parts.length - 2];
     if (sizeOrder.includes(maybeColor)) return "";
@@ -375,9 +353,12 @@ export const createOrder = async (req, res) => {
 
     /* =========================================================
        ✅ Coupon Snapshot (if any)
+       NOTE:
+       - We DO NOT trust frontend discount.
+       - We only accept coupon snapshot discount (server should ideally validate coupon).
     ========================================================= */
     let couponSnapshot = null;
-    let computedDiscount = Number(discount || 0);
+    let computedDiscount = 0; // ✅ default server-side discount
 
     if (coupon && typeof coupon === "object") {
       const code = str(coupon.code).trim().toUpperCase();
@@ -388,16 +369,24 @@ export const createOrder = async (req, res) => {
         couponSnapshot = { code, discount: couponDiscount, finalTotal };
         computedDiscount = couponDiscount;
       }
+    } else {
+      // ✅ If you still want to allow manual discount (admin/internal only),
+      // keep this. Otherwise remove this line.
+      computedDiscount = Number(discount || 0);
     }
+
+    /* =========================================================
+       ✅ Razorpay extra discount (5% OFF online)
+       We'll compute actual amount AFTER subtotal is computed.
+    ========================================================= */
+    let razorpayExtraDiscount = 0;
 
     /* =========================================================
        ✅ Transaction: Create Order + Reduce Stock
     ========================================================= */
     await session.withTransaction(async () => {
       // ✅ fetch address
-      const shippingAddress = await Address.findById(shippingAddressId).session(
-        session
-      );
+      const shippingAddress = await Address.findById(shippingAddressId).session(session);
       if (!shippingAddress) throw new Error("Shipping address not found");
 
       const billingAddress = billingAddressId
@@ -408,13 +397,10 @@ export const createOrder = async (req, res) => {
       const billingAddressSnapshot = buildAddressSnapshot(billingAddress);
 
       // ✅ validate product ids
-      const productIds = [
-        ...new Set(items.map((i) => str(i?.productId)).filter(Boolean)),
-      ];
+      const productIds = [...new Set(items.map((i) => str(i?.productId)).filter(Boolean))];
 
       const invalidProductId = productIds.find((id) => !isObjectId(id));
-      if (invalidProductId)
-        throw new Error(`Invalid productId: ${invalidProductId}`);
+      if (invalidProductId) throw new Error(`Invalid productId: ${invalidProductId}`);
 
       // ✅ fetch products
       const products = await Product.find({ _id: { $in: productIds } })
@@ -434,8 +420,7 @@ export const createOrder = async (req, res) => {
         if (!item?.productId) throw new Error("productId missing");
 
         const qty = Number(item.quantity || 0);
-        if (!Number.isFinite(qty) || qty < 1)
-          throw new Error("Invalid quantity");
+        if (!Number.isFinite(qty) || qty < 1) throw new Error("Invalid quantity");
 
         const product = productMap.get(str(item.productId));
         if (!product) throw new Error("Product not found");
@@ -448,24 +433,19 @@ export const createOrder = async (req, res) => {
 
         // ✅ Resolve variant
         if (isVariable) {
-          if (!item.variantId)
-            throw new Error(`${product.title} - variantId missing`);
+          if (!item.variantId) throw new Error(`${product.title} - variantId missing`);
 
           variant = findVariantById(product, item.variantId);
           if (!variant) throw new Error(`${product.title} - variant not found`);
 
-          if (Number(variant.stock ?? 0) < qty)
-            throw new Error(`${product.title} out of stock`);
+          if (Number(variant.stock ?? 0) < qty) throw new Error(`${product.title} out of stock`);
         } else {
-          if (Number(product.stock ?? 0) < qty)
-            throw new Error(`${product.title} out of stock`);
+          if (Number(product.stock ?? 0) < qty) throw new Error(`${product.title} out of stock`);
         }
 
         // ✅ price resolve
         const unitPrice =
-          variant && Number(variant.price) > 0
-            ? Number(variant.price)
-            : Number(product.price || 0);
+          variant && Number(variant.price) > 0 ? Number(variant.price) : Number(product.price || 0);
 
         const itemSubtotal = unitPrice * qty;
         totalQty += qty;
@@ -475,13 +455,11 @@ export const createOrder = async (req, res) => {
         const attrs = normalizeVariantAttributes(variant);
 
         // ✅ size/color from attrs OR fallback to SKU
-        let selectedSize =
-          pickAttr(attrs, ["size", "sizes", "shirt_size"]) ||
-          getSizeFromSku(variant?.sku);
+        const selectedSize =
+          pickAttr(attrs, ["size", "sizes", "shirt_size"]) || getSizeFromSku(variant?.sku);
 
-        let selectedColor =
-          pickAttr(attrs, ["color", "colour", "color_name"]) ||
-          getColorFromSku(variant?.sku);
+        const selectedColor =
+          pickAttr(attrs, ["color", "colour", "color_name"]) || getColorFromSku(variant?.sku);
 
         normalizedItems.push({
           productId: product._id,
@@ -494,9 +472,7 @@ export const createOrder = async (req, res) => {
             images: Array.isArray(product.images) ? product.images : [],
             category: product.category || null,
             subcategory: product.subcategory || null,
-            productType:
-              product.productType ||
-              (product?.variants?.length ? "variable" : "simple"),
+            productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
             sku: product.sku || "",
             tags: Array.isArray(product.tags) ? product.tags : [],
             weight: Number(product.weight ?? 0),
@@ -506,7 +482,7 @@ export const createOrder = async (req, res) => {
           variant: {
             variantId: variant?._id || null,
             sku: variant?.sku || "",
-            attributes: attrs, // ✅ FIXED
+            attributes: attrs,
             image: variant?.image || product.thumbnail || "",
             weight: Number(variant?.weight ?? 0),
           },
@@ -516,8 +492,7 @@ export const createOrder = async (req, res) => {
 
           quantity: qty,
           price: unitPrice,
-          compareAtPrice:
-            variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
+          compareAtPrice: variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
           subtotal: itemSubtotal,
         });
       }
@@ -546,14 +521,21 @@ export const createOrder = async (req, res) => {
       }
 
       /* =========================================================
-         ✅ Final totals
+         ✅ Final totals (✅ FIXED: include 5% online OFF)
       ========================================================= */
       const subtotal = computedSubtotal;
       const totalAmount = subtotal + Number(shippingFee) + Number(tax);
-      const finalPayable = Math.max(
-        0,
-        totalAmount - Number(computedDiscount || 0)
-      );
+
+      // ✅ 5% extra off ONLY for Razorpay (online payment)
+      razorpayExtraDiscount = pm === "razorpay" ? Math.round(subtotal * 0.05) : 0;
+
+      // ✅ total discount = coupon/manual discount + online discount
+      let finalDiscount = Number(computedDiscount || 0) + Number(razorpayExtraDiscount || 0);
+
+      // ✅ cap discount to totalAmount (never negative payable)
+      if (finalDiscount > totalAmount) finalDiscount = totalAmount;
+
+      const finalPayable = Math.max(0, totalAmount - finalDiscount);
 
       const analytics = {
         totalItems: totalQty,
@@ -561,13 +543,16 @@ export const createOrder = async (req, res) => {
         couponApplied: Boolean(couponSnapshot?.code),
         creditsUsed: false,
         categoryBreakdown: computeCategoryBreakdown(normalizedItems),
-        tagsUsed: uniqStrings(
-          normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])
-        ),
+        tagsUsed: uniqStrings(normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])),
+
+        // ✅ NEW: store online discount info
+        onlinePaymentDiscountApplied: pm === "razorpay",
+        onlinePaymentDiscountPct: pm === "razorpay" ? 5 : 0,
+        onlinePaymentDiscountAmount: razorpayExtraDiscount,
       };
 
       /* =========================================================
-         ✅ Create order
+         ✅ Create order (✅ FIXED: save finalDiscount)
       ========================================================= */
       const [order] = await Order.create(
         [
@@ -577,12 +562,15 @@ export const createOrder = async (req, res) => {
             billingAddressSnapshot,
             items: normalizedItems,
             subtotal,
-            discount: computedDiscount,
+
+            discount: finalDiscount, // ✅ IMPORTANT
             coupon: couponSnapshot,
+
             shippingFee,
             tax,
             totalAmount,
             finalPayable,
+
             currency,
             paymentMethod: pm,
             paymentStatus: "pending",
@@ -612,7 +600,6 @@ export const createOrder = async (req, res) => {
       }
     } catch (e) {
       console.error("⚠️ Auto Shiprocket booking failed:", e?.message || e);
-     
     }
 
     /* =========================================================
@@ -622,11 +609,8 @@ export const createOrder = async (req, res) => {
 
     /* =========================================================
        ✅ EMAILS (Non-blocking)
-       - Admin order received + Customer confirmation
-       - Never blocks response
     ========================================================= */
     try {
-      // ✅ fire-and-forget unified trigger
       triggerOrderEmails(finalOrder);
     } catch (e) {
       console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
@@ -648,6 +632,7 @@ export const createOrder = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 
