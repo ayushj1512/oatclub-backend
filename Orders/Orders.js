@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import crypto from "crypto";
 import Counter from "../models/Counter.js";
+import Coupon from "../Coupon/Coupon.js";
 
 /**
  * ORDER ITEM SCHEMA
@@ -252,10 +253,12 @@ const orderSchema = new mongoose.Schema(
     discount: { type: Number, default: 0 },
 
     coupon: {
-      code: String,
-      discount: Number,
-      finalTotal: Number,
-    },
+  code: String,
+  discount: Number,
+  finalTotal: Number,
+  identity: { type: String, default: "" }, // ✅ email/phone identity store
+},
+
 
     shippingFee: { type: Number, default: 0 },
     tax: { type: Number, default: 0 },
@@ -397,6 +400,11 @@ confirmedBy: {
       averageItemPrice: { type: Number, default: 0 },
       totalItems: { type: Number, default: 0 },
       paymentSuccessRate: { type: Number, default: 0 },
+      onlinePaymentDiscountApplied: { type: Boolean, default: false },
+onlinePaymentDiscountPct: { type: Number, default: 0 },
+onlinePaymentDiscountAmount: { type: Number, default: 0 },
+couponIdentity: { type: String, default: "" },
+
     },
   },
   { timestamps: true }

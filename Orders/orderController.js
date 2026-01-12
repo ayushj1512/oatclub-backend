@@ -17,6 +17,8 @@ import {
   triggerOrderCancellationEmails,
   triggerRmaEmails,
 } from "./order.emails.js";
+import Coupon from "../Coupon/Coupon.js"; 
+// ⚠️ path tumhare project ke hisaab se adjust kar lena
 
 const ADMIN_ORDER_ALERT_EMAILS = [
   "finance@mirayfashions.com",
@@ -199,6 +201,18 @@ const buildRmaItemsSnapshots = (order, rmaItems) => {
   return out;
 };
 
+const str = (v) => (v == null ? "" : String(v));
+const normEmail = (v) => str(v).trim().toLowerCase();
+const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
+
+const buildCouponIdentity = ({ email, phone }) => {
+  const e = normEmail(email);
+  if (e && e.includes("@")) return `email:${e}`;
+  const p = normPhone(phone);
+  if (p) return `phone:${p}`;
+  return "";
+};
+
 /**
  * Compute remaining returnable qty for each order item index
  * - Excludes rejected RMAs
@@ -256,10 +270,23 @@ const confirmOrderById = async ({ orderId, adminId = null, session = null }) => 
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
 
-  /* =========================================================
-     ✅ Helpers: Attribute normalize + extract
-  ========================================================= */
+  /* =========================
+     Helpers
+  ========================= */
   const str = (v) => (v == null ? "" : String(v));
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+  const normEmail = (v) => str(v).trim().toLowerCase();
+  const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim();
+
+  // ✅ identity for coupon validation (email preferred, else phone)
+  const buildCouponIdentity = ({ email, phone }) => {
+    const e = normEmail(email);
+    if (e && e.includes("@")) return `email:${e}`;
+    const p = normPhone(phone).replace(/^\+/, "");
+    if (p) return `phone:${p}`;
+    return "";
+  };
 
   const pickAttr = (attrs = [], keys = []) => {
     const wanted = keys.map((k) => str(k).toLowerCase());
@@ -272,25 +299,19 @@ export const createOrder = async (req, res) => {
   const normalizeVariantAttributes = (variant) => {
     const raw = variant?.attributes;
 
-    // ✅ Case 1: already array format [{key,value}]
     if (Array.isArray(raw)) {
       return raw
         .filter((a) => a?.key != null && a?.value != null)
         .map((a) => ({ key: str(a.key), value: str(a.value) }));
     }
 
-    // ✅ Case 2: object format { size: "M", color: "black" }
     if (raw && typeof raw === "object") {
-      return Object.entries(raw).map(([k, v]) => ({
-        key: str(k),
-        value: str(v),
-      }));
+      return Object.entries(raw).map(([k, v]) => ({ key: str(k), value: str(v) }));
     }
 
     return [];
   };
 
-  // ✅ SKU fallback: pick last size token from SKU
   const getSizeFromSku = (sku) => {
     const parts = str(sku).toUpperCase().split("-");
     const sizeOrder = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
@@ -300,17 +321,64 @@ export const createOrder = async (req, res) => {
     return "";
   };
 
-  // ✅ SKU fallback: color token = 2nd last usually
   const getColorFromSku = (sku) => {
     const parts = str(sku).toUpperCase().split("-");
     if (parts.length < 2) return "";
-
     const sizeOrder = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
-
     const maybeColor = parts[parts.length - 2];
     if (sizeOrder.includes(maybeColor)) return "";
-
     return maybeColor.toLowerCase();
+  };
+
+  // ✅ compute coupon discount server-side (email/phone based)
+  const validateAndComputeCoupon = async ({ code, cartTotal, identity }) => {
+    if (!code) return { couponSnapshot: null, couponDiscount: 0 };
+
+    const couponCode = str(code).trim().toUpperCase();
+    const couponDoc = await Coupon.findOne({ code: couponCode }).session(session);
+    if (!couponDoc) throw new Error("Invalid coupon code.");
+    if (!couponDoc.isActive) throw new Error("Coupon is not active.");
+    if (couponDoc.validFrom && new Date() < new Date(couponDoc.validFrom))
+      throw new Error("Coupon is not active yet.");
+    if (couponDoc.validTill && new Date() > new Date(couponDoc.validTill))
+      throw new Error("Coupon has expired.");
+
+    if (num(cartTotal) < num(couponDoc.minPurchase || 0)) {
+      throw new Error(`Minimum purchase required is ₹${num(couponDoc.minPurchase || 0)}`);
+    }
+
+    if (num(couponDoc.usageLimit) > 0 && num(couponDoc.usedCount) >= num(couponDoc.usageLimit)) {
+      throw new Error("Coupon usage limit has been reached.");
+    }
+
+    // ✅ per-customer limit uses email/phone identity
+    const perUserLimit = num(couponDoc.usageLimitPerCustomer || 1);
+    const usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
+    const usedTimes = identity ? usedBy.filter((x) => str(x) === identity).length : 0;
+
+    if (identity && usedTimes >= perUserLimit) {
+      throw new Error("You have already used this coupon.");
+    }
+
+    // ✅ discount calc
+    let discountAmount = 0;
+    if (couponDoc.discountType === "percentage") {
+      discountAmount = (num(cartTotal) * num(couponDoc.discountValue)) / 100;
+      if (num(couponDoc.maxDiscount) > 0) {
+        discountAmount = Math.min(discountAmount, num(couponDoc.maxDiscount));
+      }
+    } else {
+      discountAmount = num(couponDoc.discountValue);
+    }
+
+    discountAmount = Math.max(0, Math.round(discountAmount));
+    if (!discountAmount) throw new Error("Invalid discount calculation.");
+
+    return {
+      couponSnapshot: { code: couponCode, discount: discountAmount },
+      couponDiscount: discountAmount,
+      couponDoc, // for marking used later
+    };
   };
 
   try {
@@ -319,8 +387,7 @@ export const createOrder = async (req, res) => {
       shippingAddressId,
       billingAddressId,
       items,
-      discount = 0,
-      coupon,
+      coupon, // ✅ expects { code } now
       shippingFee = 0,
       tax = 0,
       paymentMethod = "cod",
@@ -331,9 +398,9 @@ export const createOrder = async (req, res) => {
 
     const pm = str(paymentMethod).toLowerCase();
 
-    /* =========================================================
-       ✅ Hard Validations
-    ========================================================= */
+    /* =========================
+       Hard validations
+    ========================= */
     if (!mongoose.Types.ObjectId.isValid(customerId))
       return res.status(400).json({ message: "Invalid customerId" });
 
@@ -343,49 +410,16 @@ export const createOrder = async (req, res) => {
     if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId))
       return res.status(400).json({ message: "Invalid billingAddressId" });
 
-    if (!Array.isArray(items) || items.length === 0)
+    if (!Array.isArray(items) || !items.length)
       return res.status(400).json({ message: "Order items missing" });
 
     if (!["cod", "razorpay"].includes(pm))
-      return res.status(400).json({
-        message: "Invalid paymentMethod. Allowed: cod | razorpay",
-      });
+      return res.status(400).json({ message: "Invalid paymentMethod. Allowed: cod | razorpay" });
 
-    /* =========================================================
-       ✅ Coupon Snapshot (if any)
-       NOTE:
-       - We DO NOT trust frontend discount.
-       - We only accept coupon snapshot discount (server should ideally validate coupon).
-    ========================================================= */
-    let couponSnapshot = null;
-    let computedDiscount = 0; // ✅ default server-side discount
-
-    if (coupon && typeof coupon === "object") {
-      const code = str(coupon.code).trim().toUpperCase();
-      const couponDiscount = Number(coupon.discount || 0);
-      const finalTotal = Number(coupon.finalTotal || 0);
-
-      if (code && couponDiscount > 0) {
-        couponSnapshot = { code, discount: couponDiscount, finalTotal };
-        computedDiscount = couponDiscount;
-      }
-    } else {
-      // ✅ If you still want to allow manual discount (admin/internal only),
-      // keep this. Otherwise remove this line.
-      computedDiscount = Number(discount || 0);
-    }
-
-    /* =========================================================
-       ✅ Razorpay extra discount (5% OFF online)
-       We'll compute actual amount AFTER subtotal is computed.
-    ========================================================= */
-    let razorpayExtraDiscount = 0;
-
-    /* =========================================================
-       ✅ Transaction: Create Order + Reduce Stock
-    ========================================================= */
+    /* =========================
+       Transaction
+    ========================= */
     await session.withTransaction(async () => {
-      // ✅ fetch address
       const shippingAddress = await Address.findById(shippingAddressId).session(session);
       if (!shippingAddress) throw new Error("Shipping address not found");
 
@@ -396,9 +430,14 @@ export const createOrder = async (req, res) => {
       const shippingAddressSnapshot = buildAddressSnapshot(shippingAddress);
       const billingAddressSnapshot = buildAddressSnapshot(billingAddress);
 
+      // ✅ identity from shipping snapshot (guest works too)
+      const identity = buildCouponIdentity({
+        email: shippingAddressSnapshot?.email,
+        phone: shippingAddressSnapshot?.phone,
+      });
+
       // ✅ validate product ids
       const productIds = [...new Set(items.map((i) => str(i?.productId)).filter(Boolean))];
-
       const invalidProductId = productIds.find((id) => !isObjectId(id));
       if (invalidProductId) throw new Error(`Invalid productId: ${invalidProductId}`);
 
@@ -413,9 +452,6 @@ export const createOrder = async (req, res) => {
       let computedSubtotal = 0;
       let totalQty = 0;
 
-      /* =========================================================
-         ✅ Normalize Items (product snapshot + variant snapshot)
-      ========================================================= */
       for (const item of items) {
         if (!item?.productId) throw new Error("productId missing");
 
@@ -431,7 +467,6 @@ export const createOrder = async (req, res) => {
 
         let variant = null;
 
-        // ✅ Resolve variant
         if (isVariable) {
           if (!item.variantId) throw new Error(`${product.title} - variantId missing`);
 
@@ -443,7 +478,6 @@ export const createOrder = async (req, res) => {
           if (Number(product.stock ?? 0) < qty) throw new Error(`${product.title} out of stock`);
         }
 
-        // ✅ price resolve
         const unitPrice =
           variant && Number(variant.price) > 0 ? Number(variant.price) : Number(product.price || 0);
 
@@ -451,10 +485,8 @@ export const createOrder = async (req, res) => {
         totalQty += qty;
         computedSubtotal += itemSubtotal;
 
-        // ✅ variant attributes snapshot
         const attrs = normalizeVariantAttributes(variant);
 
-        // ✅ size/color from attrs OR fallback to SKU
         const selectedSize =
           pickAttr(attrs, ["size", "sizes", "shirt_size"]) || getSizeFromSku(variant?.sku);
 
@@ -463,7 +495,6 @@ export const createOrder = async (req, res) => {
 
         normalizedItems.push({
           productId: product._id,
-
           productSnapshot: {
             productCode: product.productCode || "",
             title: product.title,
@@ -478,7 +509,6 @@ export const createOrder = async (req, res) => {
             weight: Number(product.weight ?? 0),
             currency: product.currency || currency,
           },
-
           variant: {
             variantId: variant?._id || null,
             sku: variant?.sku || "",
@@ -486,10 +516,8 @@ export const createOrder = async (req, res) => {
             image: variant?.image || product.thumbnail || "",
             weight: Number(variant?.weight ?? 0),
           },
-
           selectedSize,
           selectedColor,
-
           quantity: qty,
           price: unitPrice,
           compareAtPrice: variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
@@ -497,19 +525,15 @@ export const createOrder = async (req, res) => {
         });
       }
 
-      /* =========================================================
-         ✅ Stock Reduction (atomic)
-      ========================================================= */
+      /* =========================
+         Stock reduction
+      ========================= */
       for (const it of normalizedItems) {
         const variantId = it?.variant?.variantId;
 
         const result = variantId
           ? await Product.updateOne(
-              {
-                _id: it.productId,
-                "variants._id": variantId,
-                "variants.stock": { $gte: it.quantity },
-              },
+              { _id: it.productId, "variants._id": variantId, "variants.stock": { $gte: it.quantity } },
               { $inc: { "variants.$.stock": -it.quantity } }
             ).session(session)
           : await Product.updateOne(
@@ -520,19 +544,25 @@ export const createOrder = async (req, res) => {
         if (!result.modifiedCount) throw new Error("Stock update failed");
       }
 
-      /* =========================================================
-         ✅ Final totals (✅ FIXED: include 5% online OFF)
-      ========================================================= */
+      /* =========================
+         Totals + Discounts (✅ FIXED)
+      ========================= */
       const subtotal = computedSubtotal;
-      const totalAmount = subtotal + Number(shippingFee) + Number(tax);
+      const totalAmount = subtotal + num(shippingFee) + num(tax);
 
-      // ✅ 5% extra off ONLY for Razorpay (online payment)
-      razorpayExtraDiscount = pm === "razorpay" ? Math.round(subtotal * 0.05) : 0;
+      // ✅ coupon discount server-side (email/phone based)
+      const couponCode = coupon && typeof coupon === "object" ? str(coupon.code) : "";
+      const { couponSnapshot, couponDiscount, couponDoc } = await validateAndComputeCoupon({
+        code: couponCode,
+        cartTotal: subtotal,
+        identity,
+      });
 
-      // ✅ total discount = coupon/manual discount + online discount
-      let finalDiscount = Number(computedDiscount || 0) + Number(razorpayExtraDiscount || 0);
+      // ✅ 5% extra off ONLY for Razorpay
+      const razorpayExtraDiscount = pm === "razorpay" ? Math.round(subtotal * 0.05) : 0;
 
-      // ✅ cap discount to totalAmount (never negative payable)
+      // ✅ final discount
+      let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
       if (finalDiscount > totalAmount) finalDiscount = totalAmount;
 
       const finalPayable = Math.max(0, totalAmount - finalDiscount);
@@ -544,16 +574,15 @@ export const createOrder = async (req, res) => {
         creditsUsed: false,
         categoryBreakdown: computeCategoryBreakdown(normalizedItems),
         tagsUsed: uniqStrings(normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])),
-
-        // ✅ NEW: store online discount info
         onlinePaymentDiscountApplied: pm === "razorpay",
         onlinePaymentDiscountPct: pm === "razorpay" ? 5 : 0,
         onlinePaymentDiscountAmount: razorpayExtraDiscount,
+        couponIdentity: identity || "",
       };
 
-      /* =========================================================
-         ✅ Create order (✅ FIXED: save finalDiscount)
-      ========================================================= */
+      /* =========================
+         Create Order
+      ========================= */
       const [order] = await Order.create(
         [
           {
@@ -563,8 +592,8 @@ export const createOrder = async (req, res) => {
             items: normalizedItems,
             subtotal,
 
-            discount: finalDiscount, // ✅ IMPORTANT
-            coupon: couponSnapshot,
+            discount: finalDiscount,
+            coupon: couponSnapshot ? { ...couponSnapshot, identity } : null,
 
             shippingFee,
             tax,
@@ -584,17 +613,24 @@ export const createOrder = async (req, res) => {
         { session }
       );
 
+      // ✅ IMPORTANT:
+      // COD: mark coupon used immediately (order is accepted without online payment)
+      // Razorpay: DO NOT mark used here; mark used after payment success webhook/callback
+      if (couponDoc && couponSnapshot?.code && identity && pm === "cod") {
+        couponDoc.usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
+        couponDoc.usedBy.push(identity);
+        couponDoc.usedCount = num(couponDoc.usedCount) + 1;
+        await couponDoc.save({ session });
+      }
+
       req.__createdOrder = order;
     });
 
-    /* =========================================================
-       ✅ Auto Book Shiprocket (COD only immediately)
-       - Razorpay orders will be booked when paymentStatus becomes "paid"
-       - via updateOrderStatus (add call there)
-    ========================================================= */
+    /* =========================
+       Shiprocket booking (COD only)
+    ========================= */
     try {
       const createdOrder = await Order.findById(req.__createdOrder._id);
-
       if (createdOrder?.paymentMethod === "cod") {
         await autoBookShiprocketForOrder(createdOrder);
       }
@@ -602,36 +638,23 @@ export const createOrder = async (req, res) => {
       console.error("⚠️ Auto Shiprocket booking failed:", e?.message || e);
     }
 
-    /* =========================================================
-       ✅ Fetch final order (lean)
-    ========================================================= */
     const finalOrder = await Order.findById(req.__createdOrder._id).lean();
 
-    /* =========================================================
-       ✅ EMAILS (Non-blocking)
-    ========================================================= */
     try {
       triggerOrderEmails(finalOrder);
     } catch (e) {
       console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
     }
 
-    /* =========================================================
-       ✅ Return final order
-    ========================================================= */
-    return res.status(201).json({
-      message: "Order created successfully",
-      order: finalOrder,
-    });
+    return res.status(201).json({ message: "Order created successfully", order: finalOrder });
   } catch (error) {
     console.error("❌ Create Order Error:", error);
-    return res.status(400).json({
-      message: error.message || "Order creation failed",
-    });
+    return res.status(400).json({ message: error.message || "Order creation failed" });
   } finally {
     session.endSession();
   }
 };
+
 
 
 
@@ -738,6 +761,18 @@ export const updateOrder = async (req, res) => {
 export const updateOrderStatus = async (req, res) => {
   const session = await mongoose.startSession();
 
+  // -------- helpers (keep local to avoid changing file structure)
+  const str = (v) => (v == null ? "" : String(v));
+  const normEmail = (v) => str(v).trim().toLowerCase();
+  const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
+  const buildCouponIdentity = ({ email, phone }) => {
+    const e = normEmail(email);
+    if (e && e.includes("@")) return `email:${e}`;
+    const p = normPhone(phone);
+    if (p) return `phone:${p}`;
+    return "";
+  };
+
   try {
     const {
       fulfillmentStatus,
@@ -753,16 +788,12 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     let updatedOrder = null;
-    let shouldBookShiprocket = false; // ✅ triggers only when confirmed transition happens
+    let shouldBookShiprocket = false;
 
     await session.withTransaction(async () => {
       // ✅ If cancelling → run full cancel flow
       if (fulfillmentStatus === "cancelled") {
-        updatedOrder = await performOrderCancellation({
-          orderId,
-          reason,
-          session,
-        });
+        updatedOrder = await performOrderCancellation({ orderId, reason, session });
         return;
       }
 
@@ -786,7 +817,6 @@ export const updateOrderStatus = async (req, res) => {
         if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
           throw new Error("Cannot confirm Razorpay order before payment is paid");
         }
-
         order.isConfirmed = true;
         order.confirmedAt = new Date();
       }
@@ -803,22 +833,51 @@ export const updateOrderStatus = async (req, res) => {
         order.confirmedAt = new Date();
       }
 
-      // ✅ detect confirm transition (after possible confirm changes)
+      // -----------------------------------------------
+      // ✅ 3.1) MARK COUPON USED ON RAZORPAY "PAID"
+      // (idempotent: won't double count)
+      // -----------------------------------------------
+      if (
+        paymentStatus === "paid" &&
+        order.paymentMethod === "razorpay" &&
+        order?.coupon?.code
+      ) {
+        const couponCode = str(order.coupon.code).trim().toUpperCase();
+
+        const identity =
+          str(order?.coupon?.identity).trim() ||
+          buildCouponIdentity({
+            email: order?.shippingAddressSnapshot?.email,
+            phone: order?.shippingAddressSnapshot?.phone,
+          });
+
+        if (couponCode && identity) {
+          const couponDoc = await Coupon.findOne({ code: couponCode }).session(session);
+
+          if (couponDoc) {
+            couponDoc.usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
+
+            // ✅ idempotent guard
+            const alreadyUsed = couponDoc.usedBy.includes(identity);
+
+            if (!alreadyUsed) {
+              couponDoc.usedBy.push(identity);
+              couponDoc.usedCount = Number(couponDoc.usedCount || 0) + 1;
+              await couponDoc.save({ session });
+            }
+          }
+        }
+      }
+
+      // ✅ detect confirm transition
       const nowConfirmed = Boolean(order.isConfirmed);
 
       // -----------------------------------------------
       // ✅ 4) Fulfillment status update (guard shipping stages)
       // -----------------------------------------------
       if (fulfillmentStatus) {
-        const shippingStages = [
-          "packed",
-          "picked",
-          "shipped",
-          "out_for_delivery",
-          "delivered",
-        ];
+        const shippingStages = ["packed", "picked", "shipped", "out_for_delivery", "delivered"];
 
-        // ✅ IMPORTANT: guard based on FINAL confirmation state (nowConfirmed)
         if (!nowConfirmed && shippingStages.includes(fulfillmentStatus)) {
           throw new Error("Order must be confirmed before shipping stages");
         }
@@ -855,27 +914,19 @@ export const updateOrderStatus = async (req, res) => {
       updatedOrder = order;
     });
 
-    // ✅ Fetch Lean for email trigger + response consistency
     const finalOrder = await Order.findById(updatedOrder._id).lean();
 
-    // -----------------------------------------------
     // ✅ Book Shiprocket ONLY if order became confirmed
-    // -----------------------------------------------
     try {
       if (shouldBookShiprocket) {
-        const freshOrderDoc = await Order.findById(finalOrder._id); // doc needed
+        const freshOrderDoc = await Order.findById(finalOrder._id);
         await autoBookShiprocketForOrder(freshOrderDoc);
       }
     } catch (e) {
-      console.error(
-        "⚠️ Auto Shiprocket booking after confirmation failed:",
-        e?.message || e
-      );
+      console.error("⚠️ Auto Shiprocket booking after confirmation failed:", e?.message || e);
     }
 
-    // -----------------------------------------------
     // ✅ Cancellation emails
-    // -----------------------------------------------
     try {
       if (fulfillmentStatus === "cancelled") {
         console.log("📩 Triggering cancellation emails from updateOrderStatus...");
@@ -886,10 +937,7 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     return res.status(200).json({
-      message:
-        fulfillmentStatus === "cancelled"
-          ? "Order cancelled successfully"
-          : "Order status updated",
+      message: fulfillmentStatus === "cancelled" ? "Order cancelled successfully" : "Order status updated",
       order: finalOrder,
     });
   } catch (error) {
@@ -902,6 +950,7 @@ export const updateOrderStatus = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 
