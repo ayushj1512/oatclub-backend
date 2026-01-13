@@ -350,6 +350,7 @@ const orderSchema = new mongoose.Schema(
     trackingDetails: {
       trackingId: { type: String, default: "" },
       courierName: { type: String, default: "" },
+        trackingUrl: { type: String, default: "" },  // ✅ ADD THIS
       shippedAt: Date,
       deliveredAt: Date,
       expectedDelivery: Date,

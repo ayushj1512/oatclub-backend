@@ -15,6 +15,8 @@ import {
   getOrderByOrderNumber,
   cancelOrder,
   confirmOrder, // ✅ NEW
+  adminBookShiprocketIfMissing,      // ✅ ADD
+
 } from "./orderController.js";
 
 /* ===========================
@@ -77,10 +79,22 @@ router.get("/customer/:customerId", getOrdersByCustomer);
 router.get("/by-number/:orderNumber", getOrderByOrderNumber);
 
 /* ============================================================
+   ✅ SHIPROCKET ADMIN TRIGGERS
+   (Only books if shipment.shiprocket details are missing)
+============================================================ */
+
+// ✅ Bulk: Book Shiprocket for eligible orders (confirmed + missing SR details)
+// Optional query filters supported by controller: ?limit=50&paymentMethod=cod&fulfillmentStatus=processing
+// 
+
+// ✅ Single: Book Shiprocket only if missing
+router.post("/:id/shiprocket/book", adminBookShiprocketIfMissing);
+
+/* ============================================================
    ORDER ACTIONS (Ship / Cancel / Confirm)
 ============================================================ */
 
-// Book shipment
+// Book shipment (existing route)
 router.post("/:id/ship", bookWithShiprocket);
 
 // Cancel order

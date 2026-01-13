@@ -19,7 +19,8 @@ const variantSchema = new mongoose.Schema(
     barcode: { type: String, trim: true, default: "" },
 
     stock: { type: Number, default: 0 },
-    isInStock: { type: Boolean, default: true },
+    // ✅ FIX: stock=0 implies not in stock
+    isInStock: { type: Boolean, default: false },
 
     weight: { type: Number, default: 0 },
   },
@@ -61,33 +62,31 @@ const productSchema = new mongoose.Schema(
     /* INVENTORY (SIMPLE PRODUCT) */
     sku: { type: String, unique: true, sparse: true, trim: true, index: true },
     stock: { type: Number, default: 0 },
-    isInStock: { type: Boolean, default: true },
+    // ✅ FIX: stock=0 implies not in stock
+    isInStock: { type: Boolean, default: false },
 
-    /* FABRICS (MULTIPLE ✅) */
     /* FABRICS (MULTIPLE ✅) — store by Fabric.code */
-fabrics: [
-  {
-    fabricCode: {
-      type: String,
-      trim: true,
-      required: true,
-      index: true,
-    },
-
-    role: {
-      type: String,
-      trim: true,
-      default: "main",
-      enum: ["main", "lining", "contrast", "padding", "other"],
-    },
-  },
-],
-
+    fabrics: [
+      {
+        fabricCode: {
+          type: String,
+          trim: true,
+          required: true,
+          index: true,
+        },
+        role: {
+          type: String,
+          trim: true,
+          default: "main",
+          enum: ["main", "lining", "contrast", "padding", "other"],
+        },
+      },
+    ],
 
     /* AVG FABRIC CONSUMPTION (PRODUCT LEVEL ✅) */
     avgFabricConsumption: {
       value: { type: Number, min: 0, default: 0 },
-unit: { type: String, enum: ["meter", "gram"], default: "meter" },
+      unit: { type: String, enum: ["meter", "gram"], default: "meter" },
     },
 
     /* ATTRIBUTES + VARIANTS */
@@ -162,7 +161,38 @@ unit: { type: String, enum: ["meter", "gram"], default: "meter" },
 );
 
 /* ------------------------------------------------------------------
-  HELPERS / HOOKS
+  HELPERS
+------------------------------------------------------------------- */
+function computeInventoryFlags(doc) {
+  const isVariable = Array.isArray(doc.variants) && doc.variants.length > 0;
+
+  if (!isVariable) {
+    const inStock = (doc.stock ?? 0) > 0;
+    doc.isInStock = inStock;
+    if (!inStock) doc.isActive = false; // ✅ auto-unpublish
+    return;
+  }
+
+  let anyVariantInStock = false;
+
+  doc.variants = (doc.variants || []).map((v) => {
+    const vInStock = (v.stock ?? 0) > 0;
+    if (vInStock) anyVariantInStock = true;
+
+    // if it's a mongoose subdoc, keep it compatible
+    if (v && typeof v.set === "function") {
+      v.set("isInStock", vInStock);
+      return v;
+    }
+    return { ...v, isInStock: vInStock };
+  });
+
+  doc.isInStock = anyVariantInStock;
+  if (!anyVariantInStock) doc.isActive = false; // ✅ auto-unpublish
+}
+
+/* ------------------------------------------------------------------
+  HOOKS
 ------------------------------------------------------------------- */
 
 // ✅ productType must be set BEFORE SKU logic
@@ -237,6 +267,117 @@ productSchema.pre("validate", function (next) {
   }
 });
 
+// ✅ Auto compute isInStock + auto-unpublish on save
+productSchema.pre("save", function (next) {
+  try {
+    computeInventoryFlags(this);
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * ✅ Handle update queries too (findOneAndUpdate / updateOne)
+ * We read current doc, apply update in memory, compute flags,
+ * then inject computed fields into the update payload.
+ */
+async function applyInventoryToUpdateQuery(next) {
+  try {
+    const update = this.getUpdate() || {};
+    const $set = update.$set || {};
+    const $inc = update.$inc || {};
+    const $unset = update.$unset || {};
+
+    // If update doesn't touch stock/variants, skip
+    const touchesInventory =
+      "stock" in update ||
+      "variants" in update ||
+      "variants" in $set ||
+      "stock" in $set ||
+      Object.keys($set).some((k) => k.startsWith("variants.") || k === "stock") ||
+      Object.keys($inc).some((k) => k.startsWith("variants.") || k === "stock") ||
+      Object.keys($unset).some((k) => k.startsWith("variants.") || k === "stock");
+
+    if (!touchesInventory) return next();
+
+    // fetch current doc
+    const current = await this.model.findOne(this.getQuery()).lean();
+    if (!current) return next();
+
+    // apply update roughly in memory (covers common patterns)
+    const merged = structuredClone(current);
+
+    // apply top-level direct fields
+    Object.assign(merged, update);
+
+    // apply $set
+    for (const [k, v] of Object.entries($set)) {
+      // handle nested paths like "variants.0.stock"
+      const parts = k.split(".");
+      let ref = merged;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i];
+        if (!(p in ref)) ref[p] = /^\d+$/.test(parts[i + 1]) ? [] : {};
+        ref = ref[p];
+      }
+      ref[parts[parts.length - 1]] = v;
+    }
+
+    // apply $inc
+    for (const [k, v] of Object.entries($inc)) {
+      const parts = k.split(".");
+      let ref = merged;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i];
+        if (!(p in ref)) ref[p] = /^\d+$/.test(parts[i + 1]) ? [] : {};
+        ref = ref[p];
+      }
+      const last = parts[parts.length - 1];
+      ref[last] = (ref[last] ?? 0) + v;
+    }
+
+    // apply $unset
+    for (const k of Object.keys($unset)) {
+      const parts = k.split(".");
+      let ref = merged;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i];
+        if (!(p in ref)) break;
+        ref = ref[p];
+      }
+      delete ref[parts[parts.length - 1]];
+    }
+
+    // compute flags on a mongoose doc instance (so helper works same)
+    const tempDoc = new this.model(merged);
+    computeInventoryFlags(tempDoc);
+
+    // inject computed flags back into update
+    update.$set = update.$set || {};
+    update.$set.isInStock = tempDoc.isInStock;
+
+    // only force isActive false when out of stock
+    if (!tempDoc.isInStock) update.$set.isActive = false;
+
+    // also update variants.isInStock if variable
+    if (Array.isArray(tempDoc.variants) && tempDoc.variants.length) {
+      tempDoc.variants.forEach((v, idx) => {
+        update.$set[`variants.${idx}.isInStock`] = !!v.isInStock;
+      });
+    }
+
+    this.setUpdate(update);
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+
+productSchema.pre("findOneAndUpdate", applyInventoryToUpdateQuery);
+productSchema.pre("updateOne", applyInventoryToUpdateQuery);
+productSchema.pre("updateMany", applyInventoryToUpdateQuery); // optional
+
 /* ------------------------------------------------------------------
   INDEXES
 ------------------------------------------------------------------- */
@@ -253,4 +394,5 @@ productSchema.index({ "variants.sku": 1 }, { sparse: true });
 productSchema.index({ tags: 1 });
 productSchema.index({ "fabrics.fabricCode": 1 });
 
-export default mongoose.models.Product || mongoose.model("Product", productSchema);
+export default mongoose.models.Product ||
+  mongoose.model("Product", productSchema);

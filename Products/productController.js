@@ -81,15 +81,27 @@ const applyStockFromVariants = (doc) => {
 
   if (!isVariable) {
     const st = Number(p.stock ?? 0);
-    return { ...p, stock: st, isInStock: Boolean(p.isInStock ?? st > 0) };
+    const inStock = st > 0;
+    return {
+      ...p,
+      stock: st,
+      isInStock: inStock,
+      // ✅ auto-unpublish representation
+      isActive: inStock ? p.isActive : false,
+    };
   }
 
   const total = variants.reduce((s, v) => s + Number(v?.stock ?? 0), 0);
-  const any = variants.some(
-    (v) => Number(v?.stock ?? 0) > 0 && v?.isInStock !== false
-  );
-  return { ...p, stock: total, isInStock: any };
+  const any = variants.some((v) => Number(v?.stock ?? 0) > 0);
+
+  return {
+    ...p,
+    stock: total,
+    isInStock: any,
+    isActive: any ? p.isActive : false, // ✅ if none in stock -> unpublish
+  };
 };
+
 
 const ensureSKUs = async (data) => {
   if (!data || typeof data !== "object") return data;
@@ -705,13 +717,23 @@ export const updateProduct = async (req, res) => {
       data.variants = data.variants.map(({ image, ...v }) => v);
     }
 
+    /* =========================================================
+       ✅ STOCK REMOVAL (IMPORTANT)
+       - disallow updating product.stock and variants.stock here
+       - disallow isInStock updates here (model hooks compute it)
+    ========================================================= */
+
+    // remove top-level stock fields if someone sends them
+    if (data.stock !== undefined) delete data.stock;
+    if (data.isInStock !== undefined) delete data.isInStock;
+
     /* ---------------- VARIANTS ---------------- */
     if (Array.isArray(data.variants)) {
       data.variants = data.variants.map((v) => ({
         ...(v._id ? { _id: v._id } : {}), // ✅ include only if exists
         sku: v.sku,
-        stock: Number(v.stock ?? 0),
-        isInStock: Number(v.stock ?? 0) > 0,
+        // ❌ stock removed
+        // ❌ isInStock removed
         attributes: Array.isArray(v.attributes) ? v.attributes : [],
       }));
     } else {
@@ -780,6 +802,7 @@ export const updateProduct = async (req, res) => {
     res.status(500).json({ message: e.message });
   }
 };
+
 
 
 

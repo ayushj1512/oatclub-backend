@@ -1037,8 +1037,10 @@ export const confirmOrder = async (req, res) => {
 export const updateTracking = async (req, res) => {
   try {
     const {
-      trackingId,
+      trackingId,        // keep for backward compatibility
+      awb,               // ✅ NEW
       courierName,
+      trackingUrl,       // ✅ NEW
       shippedAt,
       deliveredAt,
       expectedDelivery,
@@ -1047,29 +1049,80 @@ export const updateTracking = async (req, res) => {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
+    const finalAwb = (awb ?? trackingId ?? order?.shipment?.shiprocket?.awb ?? order?.trackingDetails?.trackingId ?? "").toString();
+    const finalCourier = (courierName ?? order?.shipment?.shiprocket?.courierName ?? order?.trackingDetails?.courierName ?? "").toString();
+    const finalUrl = (trackingUrl ?? order?.shipment?.shiprocket?.trackingUrl ?? order?.trackingDetails?.trackingUrl ?? "").toString();
+
+    // ✅ Ensure shipment objects exist
+    order.shipment = order.shipment || {};
+    order.shipment.provider = order.shipment.provider || "shiprocket";
+    order.shipment.shiprocket = order.shipment.shiprocket || {};
+
+    // ✅ Save main source of truth
+    if (finalAwb) order.shipment.shiprocket.awb = finalAwb;
+    if (finalCourier) order.shipment.shiprocket.courierName = finalCourier;
+    if (finalUrl) order.shipment.shiprocket.trackingUrl = finalUrl;
+
+    // ✅ trackingDetails mirror (if you added trackingUrl in schema)
     order.trackingDetails = {
-      ...order.trackingDetails,
-      trackingId: trackingId ?? order.trackingDetails?.trackingId,
-      courierName: courierName ?? order.trackingDetails?.courierName,
+      ...(order.trackingDetails || {}),
+      trackingId: finalAwb || order.trackingDetails?.trackingId,
+      courierName: finalCourier || order.trackingDetails?.courierName,
+      trackingUrl: finalUrl || order.trackingDetails?.trackingUrl,
       shippedAt: shippedAt ?? order.trackingDetails?.shippedAt,
       deliveredAt: deliveredAt ?? order.trackingDetails?.deliveredAt,
-      expectedDelivery:
-        expectedDelivery ?? order.trackingDetails?.expectedDelivery,
+      expectedDelivery: expectedDelivery ?? order.trackingDetails?.expectedDelivery,
     };
+
+    // ✅ If shipped → set shipped status (optional but sensible)
+    if (finalAwb || shippedAt) {
+      order.fulfillmentStatus = order.fulfillmentStatus === "processing" ? "shipped" : order.fulfillmentStatus;
+      order.shipment.status = order.shipment.status === "pending" ? "shipped" : order.shipment.status;
+      if (shippedAt && !order.shipment.shippedAt) order.shipment.shippedAt = new Date(shippedAt);
+    }
 
     // ✅ If deliveredAt set -> auto mark delivered
     if (deliveredAt) {
       order.fulfillmentStatus = "delivered";
+      order.shipment.status = "delivered";
+      if (!order.shipment.deliveredAt) order.shipment.deliveredAt = new Date(deliveredAt);
     }
 
     await order.save();
 
+        // ✅ Send tracking email to customer (only if we have basic tracking info)
+    try {
+      const customerEmail =
+        order?.shippingAddressSnapshot?.email ||
+        order?.customerId?.email || // works if populated
+        order?.billingAddressSnapshot?.email ||
+        order?.email;
+
+      const customerName =
+        order?.shippingAddressSnapshot?.fullName ||
+        order?.shippingAddressSnapshot?.name ||
+        order?.customerId?.name || // works if populated
+        "Customer";
+
+      if (customerEmail && (finalAwb || finalUrl)) {
+        await Mailer.sendOrderTracking({
+          to: customerEmail,
+          name: customerName,
+          awb: finalAwb,
+          courierName: finalCourier || "—",
+          trackingLink: finalUrl || "#",
+          order,
+        });
+      }
+    } catch (mailErr) {
+      console.error("❌ Tracking mail error:", mailErr?.message || mailErr);
+    }
+
+
     return res.status(200).json({ message: "Tracking updated", order });
   } catch (error) {
     console.error("❌ Tracking Update Error:", error);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -1465,185 +1518,144 @@ async function autoBookShiprocketForOrder(order) {
       isConfirmed: order?.isConfirmed,
     });
 
-    // ------------------------------------------------
     // 0) Guards
-    // ------------------------------------------------
+    if (!order?.isConfirmed) return console.log(`${TAG} 🚫 SKIP: not confirmed`);
+    if (!order?.shippingAddressSnapshot?.pincode)
+      return console.log(`${TAG} ❌ SKIP: shipping pincode missing`);
+    if (!process.env.SHIPROCKET_PICKUP_PINCODE)
+      return console.log(`${TAG} ❌ SKIP: SHIPROCKET_PICKUP_PINCODE missing`);
 
-    // ✅ CONFIRM GUARD: never book before confirmation
-    if (!order?.isConfirmed) {
-      console.log(`${TAG} 🚫 SKIP: Order not confirmed yet`);
-      return;
-    }
+    // already booked?
+    if (order?.shipment?.shiprocket?.awb)
+      return console.log(`${TAG} ✅ SKIP: AWB exists`, { awb: order.shipment.shiprocket.awb });
 
-    if (!order?.shippingAddressSnapshot?.pincode) {
-      console.log(`${TAG} ❌ SKIP: shipping pincode missing`);
-      return;
-    }
-
-    if (!process.env.SHIPROCKET_PICKUP_PINCODE) {
-      console.log(`${TAG} ❌ SKIP: SHIPROCKET_PICKUP_PINCODE missing in env`);
-      return;
-    }
-
-    // ✅ Double booking guard: if AWB already exists, never book again
-    if (order.shipment?.shiprocket?.awb) {
-      console.log(`${TAG} ✅ SKIP: AWB already exists`, {
-        awb: order.shipment.shiprocket.awb,
-      });
-      return;
-    }
-
-    // ✅ If shipmentId already exists, we should NOT create shipment again
-    // (we can still attempt assign awb later if needed, but do not create shipment)
-    if (order.shipment?.shiprocket?.shipmentId) {
-      console.log(`${TAG} ✅ SKIP: Shipment already created`, {
-        shipmentId: order.shipment.shiprocket.shipmentId,
-      });
-
-      // If shipment exists but AWB missing, we can attempt assign AWB here
+    // shipment exists -> only assign awb
+    if (order?.shipment?.shiprocket?.shipmentId) {
       const existingShipmentId = String(order.shipment.shiprocket.shipmentId || "").trim();
-
       if (!existingShipmentId) return;
 
+      console.log(`${TAG} ✅ Shipment exists. Trying assign AWB...`, { existingShipmentId });
+
       try {
-        console.log(`${TAG} 📌 Shipment exists but AWB missing. Attempting assign AWB...`);
-
         const assigned = await assignAwb(existingShipmentId);
-        const awb = (assigned?.awb_code || assigned?.awb || "").trim();
+        const awb = String(assigned?.awb_code || assigned?.awb || "").trim();
 
-        if (awb) {
-          order.shipment.shiprocket.awb = awb;
-          order.shipment.shiprocket.courierName =
-            assigned?.courier_name || order.shipment.shiprocket.courierName;
-
-          order.shipment.shiprocket.trackingUrl =
-            assigned?.tracking_url ||
-            order.shipment.shiprocket.trackingUrl ||
-            `https://shiprocket.co/tracking/${awb}`;
-
-          order.shipment.shiprocket.status = "processing";
-          order.shipment.status = "processing";
-
-          order.trackingDetails = {
-            ...(order.trackingDetails || {}),
-            trackingId: awb,
-            courierName: order.shipment.shiprocket.courierName,
-          };
-
-          await order.save();
-
-          console.log(`${TAG} ✅ AWB assigned & saved (existing shipment)`, {
-            orderNumber: order.orderNumber,
+        if (!awb) {
+          return console.log(`${TAG} ⚠️ Assign AWB response missing awb_code`, {
             shipmentId: existingShipmentId,
-            awb,
-          });
-        } else {
-          console.log(`${TAG} ⚠️ Assign AWB success but AWB missing`, {
-            shipmentId: existingShipmentId,
+            data: assigned,
           });
         }
+
+        order.shipment = order.shipment || {};
+        order.shipment.shiprocket = order.shipment.shiprocket || {};
+
+        order.shipment.shiprocket.awb = awb;
+        order.shipment.shiprocket.courierName =
+          assigned?.courier_name || order.shipment.shiprocket.courierName || "";
+        order.shipment.shiprocket.trackingUrl =
+          assigned?.tracking_url ||
+          order.shipment.shiprocket.trackingUrl ||
+          `https://shiprocket.co/tracking/${awb}`;
+        order.shipment.shiprocket.status = "processing";
+        order.shipment.status = "processing";
+
+        order.trackingDetails = {
+          ...(order.trackingDetails || {}),
+          trackingId: awb,
+          courierName: order.shipment.shiprocket.courierName,
+        };
+
+        await order.save();
+        return console.log(`${TAG} ✅ AWB assigned & saved`, { existingShipmentId, awb });
       } catch (e) {
-        console.log(`${TAG} ⚠️ Assign AWB failed for existing shipment`, {
+        return console.log(`${TAG} ⚠️ Assign AWB failed`, {
           shipmentId: existingShipmentId,
           message: e?.message,
           status: e?.response?.status,
           data: e?.response?.data,
         });
       }
-
-      return; // ✅ stop here (no createShipment)
     }
 
-    // ✅ Payment guard: prepaid only after paid
+    // prepaid guard
     if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
-      console.log(`${TAG} ⏳ SKIP: prepaid not paid yet`);
-      return;
+      return console.log(`${TAG} ⏳ SKIP: prepaid not paid yet`);
     }
 
-    // ------------------------------------------------
-    // 1) Calculate Weight
-    // ------------------------------------------------
+    // 1) Weight
     const totalWeight =
-      order.items.reduce((sum, it) => {
-        const w =
-          Number(it.variant?.weight) ||
-          Number(it.productSnapshot?.weight) ||
-          0.5;
+      order.items?.reduce((sum, it) => {
+        const w = Number(it.variant?.weight) || Number(it.productSnapshot?.weight) || 0.5;
         return sum + w * Number(it.quantity || 1);
       }, 0) || 0.5;
 
-    console.log(`${TAG} 📦 Weight computed`, {
-      totalWeight,
-      itemCount: order?.items?.length || 0,
-      pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE,
-      deliveryPincode: order.shippingAddressSnapshot.pincode,
-      isCOD: order.paymentMethod === "cod",
-    });
-
-    // ------------------------------------------------
     // 2) Serviceability
-    // ------------------------------------------------
-    console.log(`${TAG} 🔎 Checking serviceability...`);
-
+    const isCOD = order.paymentMethod === "cod";
     const couriers = await checkServiceability({
       pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE,
       deliveryPincode: order.shippingAddressSnapshot.pincode,
       weight: totalWeight,
-      cod: order.paymentMethod === "cod" ? 1 : 0,
-    });
-
-    console.log(`${TAG} ✅ Serviceability result`, {
-      courierCount: Array.isArray(couriers) ? couriers.length : 0,
-      sample: Array.isArray(couriers)
-        ? couriers.slice(0, 3).map((c) => ({
-            courier_name: c?.courier_name,
-            courier_company_id: c?.courier_company_id,
-            rate: c?.rate,
-            etd: c?.etd,
-          }))
-        : "INVALID_RESPONSE",
+      cod: isCOD ? 1 : 0,
     });
 
     if (!Array.isArray(couriers) || couriers.length === 0) {
-      console.log(`${TAG} ⚠️ SKIP: No courier available`);
-      return;
+      return console.log(`${TAG} ⚠️ SKIP: No courier available`);
     }
 
-    // ------------------------------------------------
-    // 3) Create Shipment (Adhoc)
-    // ------------------------------------------------
+    // 3) Build payload + ✅ FORCE AMOUNT + PAYMENT METHOD FIX
     const payload = buildShiprocketPayload(order);
 
-    console.log(`${TAG} 📦 Create shipment payload`, {
+    // ✅ Shiprocket wants "COD" or "Prepaid" (not "razorpay")
+    payload.payment_method = isCOD ? "COD" : "Prepaid";
+
+    // ✅ Ensure invoice amount matches your order math
+    // sub_total = items subtotal (no shipping)
+    payload.sub_total = Number(order.subtotal || 0);
+
+    // shipping_charges = shipping fee (if you charge)
+    payload.shipping_charges = Number(order.shippingFee || 0);
+
+    // total_discount = ALL discounts (coupon + razorpay extra) -> your order.discount
+    payload.total_discount = Number(order.discount || 0);
+
+    // ✅ Avoid accidental extra additions (only use if you intentionally add something)
+    if (payload.transaction_charges == null) payload.transaction_charges = 0;
+
+    // OPTIONAL: if your buildShiprocketPayload sets cod/collectable incorrectly, force it:
+    if (!isCOD) payload.collectable_amount = 0;
+
+    // ✅ Sanity log (this will immediately show why mismatch happens)
+    console.log(`${TAG} 🧾 AMOUNT CHECK`, {
+      orderSubtotal: Number(order.subtotal || 0),
+      shippingFee: Number(order.shippingFee || 0),
+      tax: Number(order.tax || 0),
+      totalAmount: Number(order.totalAmount || 0),
+      discount: Number(order.discount || 0),
+      finalPayable: Number(order.finalPayable || 0),
+      payload_payment_method: payload.payment_method,
+      payload_sub_total: payload.sub_total,
+      payload_shipping_charges: payload.shipping_charges,
+      payload_total_discount: payload.total_discount,
+      payload_transaction_charges: payload.transaction_charges,
+      payload_collectable_amount: payload.collectable_amount,
+    });
+
+    console.log(`${TAG} 📦 Creating shipment...`, {
       order_id: payload?.order_id,
-      pickup_location: payload?.pickup_location,
       payment_method: payload?.payment_method,
-      weight: payload?.weight,
-      delivery_pincode: payload?.billing_pincode,
+      weight: payload?.weight || totalWeight,
     });
 
     const shipment = await createShipment(payload);
 
-    console.log(`${TAG} ✅ Create shipment response`, {
-      shiprocket_order_id: shipment?.order_id,
-      shipment_id: shipment?.shipment_id,
-      status: shipment?.status,
-      awb_code: shipment?.awb_code,
-      courier_name: shipment?.courier_name,
-    });
-
     const shipmentId = shipment?.shipment_id ? String(shipment.shipment_id) : "";
     const shiprocketOrderId = shipment?.order_id ? String(shipment.order_id) : "";
-    let awb = (shipment?.awb_code || "").trim();
+    let awb = String(shipment?.awb_code || "").trim();
 
-    if (!shipmentId) {
-      console.log(`${TAG} ❌ FAIL: shipment_id missing in Shiprocket response`);
-      return;
-    }
+    if (!shipmentId) return console.log(`${TAG} ❌ FAIL: shipment_id missing`, { shipment });
 
-    // ------------------------------------------------
-    // 4) Save shipment snapshot even if AWB missing ✅
-    // ------------------------------------------------
+    // 4) Save snapshot
     order.shipment = {
       ...(order.shipment || {}),
       provider: "shiprocket",
@@ -1652,10 +1664,8 @@ async function autoBookShiprocketForOrder(order) {
         shipmentId,
         orderId: shiprocketOrderId,
         awb: order.shipment?.shiprocket?.awb || "",
-        courierName:
-          shipment?.courier_name || order.shipment?.shiprocket?.courierName || "",
-        trackingUrl:
-          shipment?.tracking_url || order.shipment?.shiprocket?.trackingUrl || "",
+        courierName: shipment?.courier_name || order.shipment?.shiprocket?.courierName || "",
+        trackingUrl: shipment?.tracking_url || order.shipment?.shiprocket?.trackingUrl || "",
         status: "processing",
         lastUpdatedAt: new Date(),
       },
@@ -1664,41 +1674,20 @@ async function autoBookShiprocketForOrder(order) {
 
     await order.save();
 
-    console.log(`${TAG} ✅ Saved shipment snapshot to DB`, {
-      orderNumber: order.orderNumber,
-      shipmentId: order.shipment?.shiprocket?.shipmentId,
-      existingAwb: order.shipment?.shiprocket?.awb,
-    });
-
-    // ------------------------------------------------
-    // 5) If AWB missing, try assign AWB (optional auto step)
-    // ------------------------------------------------
+    // 5) Assign AWB if missing
     if (!awb) {
-      console.log(`${TAG} 📌 AWB missing. Attempting /courier/assign/awb...`);
-
       try {
         const assigned = await assignAwb(shipmentId);
-
-        console.log(`${TAG} ✅ Assign AWB response`, {
-          awb_code: assigned?.awb_code,
-          courier_name: assigned?.courier_name,
-          courier_company_id: assigned?.courier_company_id,
-        });
-
-        awb = (assigned?.awb_code || assigned?.awb || "").trim();
+        awb = String(assigned?.awb_code || assigned?.awb || "").trim();
 
         if (awb) {
           order.shipment.shiprocket.awb = awb;
           order.shipment.shiprocket.courierName =
-            assigned?.courier_name || order.shipment.shiprocket.courierName;
-
+            assigned?.courier_name || order.shipment.shiprocket.courierName || "";
           order.shipment.shiprocket.trackingUrl =
             assigned?.tracking_url ||
             order.shipment.shiprocket.trackingUrl ||
             `https://shiprocket.co/tracking/${awb}`;
-
-          order.shipment.shiprocket.status = "processing";
-          order.shipment.status = "processing";
 
           order.trackingDetails = {
             ...(order.trackingDetails || {}),
@@ -1707,28 +1696,18 @@ async function autoBookShiprocketForOrder(order) {
           };
 
           await order.save();
-
-          console.log(`${TAG} ✅ AWB assigned & saved to DB`, {
-            orderNumber: order.orderNumber,
-            shipmentId,
-            awb,
-          });
+          console.log(`${TAG} ✅ AWB assigned & saved`, { shipmentId, awb });
         } else {
-          console.log(
-            `${TAG} ⚠️ Assign AWB success but awb_code missing (panel/webhook will update later)`
-          );
+          console.log(`${TAG} ⚠️ Assign AWB success but awb_code missing`, { shipmentId, assigned });
         }
       } catch (e) {
-        console.log(`${TAG} ⚠️ Assign AWB failed (will rely on webhook/panel)`, {
+        console.log(`${TAG} ⚠️ Assign AWB failed`, {
+          shipmentId,
           message: e?.message,
           status: e?.response?.status,
           data: e?.response?.data,
         });
       }
-    } else {
-      console.log(`${TAG} ✅ AWB already returned in create shipment response`, {
-        awb,
-      });
     }
 
     console.log(`${TAG} END ✅`, {
@@ -1746,3 +1725,123 @@ async function autoBookShiprocketForOrder(order) {
     });
   }
 }
+
+
+// Admin trigger: Book Shiprocket only if details missing
+// Route example: POST /admin/orders/:id/shiprocket/book
+export const adminBookShiprocketIfMissing = async (req, res) => {
+  const TAG = "🛠️[ADMIN-BOOK-SHIPROCKET]";
+
+  try {
+    const orderId = req.params.id;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order id" });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+
+    // ✅ Guards
+    if (!order.isConfirmed) {
+      return res.status(400).json({
+        success: false,
+        message: "Order not confirmed. Confirm order first.",
+        reason: "not_confirmed",
+      });
+    }
+
+    // prepaid guard (extra safety; your autoBook already checks, but keeping here)
+    if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
+      return res.status(400).json({
+        success: false,
+        message: "Razorpay order is not paid yet.",
+        reason: "prepaid_not_paid",
+      });
+    }
+
+    if (!order?.shippingAddressSnapshot?.pincode) {
+      return res.status(400).json({
+        success: false,
+        message: "Shipping pincode missing in order.",
+        reason: "missing_delivery_pincode",
+      });
+    }
+
+    if (!process.env.SHIPROCKET_PICKUP_PINCODE) {
+      return res.status(500).json({
+        success: false,
+        message: "SHIPROCKET_PICKUP_PINCODE missing in env.",
+        reason: "missing_pickup_pincode_env",
+      });
+    }
+
+    // ✅ "Details missing" check (model has shipment.shiprocket always)
+    const sr = order?.shipment?.shiprocket || {};
+    const hasAwb = Boolean(String(sr.awb || "").trim());
+    const hasShipmentId = Boolean(String(sr.shipmentId || "").trim());
+
+    // Optional mirror check (doesn't block booking)
+    const hasTrackingId = Boolean(String(order?.trackingDetails?.trackingId || "").trim());
+
+    if (hasAwb || hasShipmentId) {
+      return res.status(200).json({
+        success: true,
+        message: "Shiprocket already exists for this order. Skipping booking.",
+        skipped: true,
+        reason: hasAwb ? "awb_exists" : "shipmentId_exists",
+        shiprocket: {
+          shipmentId: String(sr.shipmentId || ""),
+          awb: String(sr.awb || ""),
+          courierName: String(sr.courierName || ""),
+          trackingUrl: String(sr.trackingUrl || ""),
+        },
+        trackingDetails: {
+          trackingId: String(order?.trackingDetails?.trackingId || ""),
+          courierName: String(order?.trackingDetails?.courierName || ""),
+          trackingUrl: String(order?.trackingDetails?.trackingUrl || ""),
+        },
+      });
+    }
+
+    console.log(`${TAG} Booking Shiprocket...`, {
+      orderId: order._id.toString(),
+      orderNumber: order.orderNumber,
+      paymentMethod: order.paymentMethod,
+      paymentStatus: order.paymentStatus,
+      hasTrackingId,
+    });
+
+    // ✅ Do booking (your function handles createShipment + assignAwb + save)
+    await autoBookShiprocketForOrder(order);
+
+    // ✅ Return fresh state
+    const fresh = await Order.findById(orderId).lean();
+    const freshSr = fresh?.shipment?.shiprocket || {};
+
+    return res.status(200).json({
+      success: true,
+      message: "Shiprocket booking triggered (only when details were missing).",
+      orderId: fresh?._id,
+      orderNumber: fresh?.orderNumber,
+      shiprocket: {
+        shipmentId: String(freshSr.shipmentId || ""),
+        awb: String(freshSr.awb || ""),
+        courierName: String(freshSr.courierName || ""),
+        trackingUrl: String(freshSr.trackingUrl || ""),
+      },
+      trackingDetails: {
+        trackingId: String(fresh?.trackingDetails?.trackingId || ""),
+        courierName: String(fresh?.trackingDetails?.courierName || ""),
+        trackingUrl: String(fresh?.trackingDetails?.trackingUrl || ""),
+      },
+    });
+  } catch (err) {
+    console.error("❌ adminBookShiprocketIfMissing error:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err?.message || "unknown_error",
+    });
+  }
+};
