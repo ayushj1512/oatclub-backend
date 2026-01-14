@@ -32,7 +32,7 @@ import fabricRoutes from "./Fabric/fabric.routes.js";
 import sizeChartRoutes from "./SizeChart/sizeChartRoutes.js";
 import proxyImageRoute from "./routes/imageProxy.route.js";
 import emailRoutes from "./Email/email.routes.js"; // ✅ your merged email/actions routes
-
+import collaborationRoutes from "./Collaboration/CollaborationRoutes.js"; // <-- router file
 import attributeRoutes from "./Attribute/attributeRoutes.js";
 import shiprocketRoutes from "./shiprocket/shipping.routes.js";
 
@@ -221,6 +221,7 @@ app.use("/api/attributes", attributeRoutes);
 app.use("/api/admin-users", adminUserRoutes);
 app.use("/api/proxy-image", proxyImageRoute);
 app.use("/api", emailRoutes);
+app.use("/api/collaborations", collaborationRoutes);
 
 // Admin
 app.use("/api/inventory", inventoryRoutes);
