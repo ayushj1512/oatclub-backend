@@ -658,7 +658,7 @@ export const updateProduct = async (req, res) => {
     if (data.tags !== undefined) data.tags = tagsNorm(data.tags);
     if (data.collections !== undefined) data.collections = arr(data.collections);
 
-    // ✅ NEW: patternNumber + fabrics + avgFabricConsumption
+    // ✅ patternNumber + fabrics + avgFabricConsumption
     if (data.patternNumber !== undefined)
       data.patternNumber = String(data.patternNumber || "").trim();
 
@@ -713,6 +713,7 @@ export const updateProduct = async (req, res) => {
     /* ---------------- attribute validation ---------------- */
     await validateAttributes(data.attributes);
 
+    // If someone sends variant "image", strip it (your variant schema has no images)
     if (Array.isArray(data.variants)) {
       data.variants = data.variants.map(({ image, ...v }) => v);
     }
@@ -722,26 +723,29 @@ export const updateProduct = async (req, res) => {
        - disallow updating product.stock and variants.stock here
        - disallow isInStock updates here (model hooks compute it)
     ========================================================= */
-
-    // remove top-level stock fields if someone sends them
     if (data.stock !== undefined) delete data.stock;
     if (data.isInStock !== undefined) delete data.isInStock;
 
     /* ---------------- VARIANTS ---------------- */
     if (Array.isArray(data.variants)) {
       data.variants = data.variants.map((v) => ({
-        ...(v._id ? { _id: v._id } : {}), // ✅ include only if exists
+        ...(v._id ? { _id: v._id } : {}),
         sku: v.sku,
+        barcode: v.barcode ?? "",
+        weight: typeof v.weight === "number" ? v.weight : 0,
         // ❌ stock removed
         // ❌ isInStock removed
         attributes: Array.isArray(v.attributes) ? v.attributes : [],
       }));
     } else {
-      data.variants = existing.variants;
+      // if not sent, do not touch variants
+      delete data.variants;
     }
 
     /* ---------------- product type ---------------- */
-    data.productType = data.variants.length > 0 ? "variable" : "simple";
+    if (Array.isArray(data.variants)) {
+      data.productType = data.variants.length > 0 ? "variable" : "simple";
+    }
 
     /* ------------------------------------------------------------------
        ✅ CROSS-SELL PRODUCTS
@@ -753,10 +757,8 @@ export const updateProduct = async (req, res) => {
         ? data.crossSellProducts.split(",").map((id) => id.trim())
         : [];
 
-      // validate ObjectIds
       data.crossSellProducts = data.crossSellProducts.filter(isValidObjectId);
 
-      // prevent self-link
       data.crossSellProducts = data.crossSellProducts.filter(
         (id) => String(id) !== String(existing._id)
       );
@@ -774,24 +776,46 @@ export const updateProduct = async (req, res) => {
     data.images = images;
     data.thumbnail = thumbnail;
 
+    if (data.keepImages !== undefined) delete data.keepImages;
+
     /* ---------------- SKU handling ---------------- */
-    const skuData = { ...existing.toObject(), ...data };
+    const skuData = {
+      ...existing.toObject(),
+      ...data,
+      variants: Array.isArray(data.variants) ? data.variants : existing.variants,
+    };
+
     await ensureSKUs(skuData);
 
     data.sku = skuData.sku;
-    data.variants = skuData.variants;
+    if (Array.isArray(data.variants)) data.variants = skuData.variants;
 
-    /* ---------------- update ---------------- */
-    const updated = await pop(
-      Product.findByIdAndUpdate(req.params.id, data, {
-        new: true,
-        runValidators: true,
-      })
-    );
+    /* ---------------- apply changes & save ---------------- */
+    existing.set(data);
 
-    if (!updated) {
-      return res.status(404).json({ message: "Product not found" });
-    }
+    // help mongoose track nested replacements/changes
+    if (Array.isArray(data.variants)) existing.markModified("variants");
+    if (data.attributes !== undefined) existing.markModified("attributes");
+    if (data.fabrics !== undefined) existing.markModified("fabrics");
+    if (data.avgFabricConsumption !== undefined)
+      existing.markModified("avgFabricConsumption");
+    if (data.images !== undefined) existing.markModified("images");
+
+    // ✅ IMPORTANT: don't use pop() here
+    const saved = await existing.save({ validateBeforeSave: true });
+
+    // ✅ If you need population similar to pop(), do it on the document:
+    // (adjust these populate paths to match what pop() used in your project)
+    const updated = await saved.populate([
+      { path: "collections" },
+      { path: "offer" },
+      { path: "couponsApplicable" },
+      { path: "reviews" },
+      { path: "crossSellProducts" },
+      // If you populate attributes.attribute:
+      { path: "attributes.attribute" },
+      { path: "variants.attributes.attribute" },
+    ]);
 
     res.json({
       message: "Product updated successfully",
@@ -802,6 +826,7 @@ export const updateProduct = async (req, res) => {
     res.status(500).json({ message: e.message });
   }
 };
+
 
 
 
