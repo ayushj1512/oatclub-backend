@@ -1527,7 +1527,9 @@ async function autoBookShiprocketForOrder(order) {
 
     // already booked?
     if (order?.shipment?.shiprocket?.awb)
-      return console.log(`${TAG} ✅ SKIP: AWB exists`, { awb: order.shipment.shiprocket.awb });
+      return console.log(`${TAG} ✅ SKIP: AWB exists`, {
+        awb: order.shipment.shiprocket.awb,
+      });
 
     // shipment exists -> only assign awb
     if (order?.shipment?.shiprocket?.shipmentId) {
@@ -1610,8 +1612,14 @@ async function autoBookShiprocketForOrder(order) {
     payload.payment_method = isCOD ? "COD" : "Prepaid";
 
     // ✅ Ensure invoice amount matches your order math
-    // sub_total = items subtotal (no shipping)
-    payload.sub_total = Number(order.subtotal || 0);
+    // Shiprocket sub_total should reflect discounts/tax (shipping excluded)
+    // so that: sub_total + shipping_charges = finalPayable
+    const srSubTotal = Math.max(
+      0,
+      Number(order.subtotal || 0) + Number(order.tax || 0) - Number(order.discount || 0)
+    );
+
+    payload.sub_total = srSubTotal;
 
     // shipping_charges = shipping fee (if you charge)
     payload.shipping_charges = Number(order.shippingFee || 0);
@@ -1622,8 +1630,8 @@ async function autoBookShiprocketForOrder(order) {
     // ✅ Avoid accidental extra additions (only use if you intentionally add something)
     if (payload.transaction_charges == null) payload.transaction_charges = 0;
 
-    // OPTIONAL: if your buildShiprocketPayload sets cod/collectable incorrectly, force it:
-    if (!isCOD) payload.collectable_amount = 0;
+    // ✅ Force collectable correctly
+    payload.collectable_amount = isCOD ? Number(order.finalPayable || 0) : 0;
 
     // ✅ Sanity log (this will immediately show why mismatch happens)
     console.log(`${TAG} 🧾 AMOUNT CHECK`, {
@@ -1633,12 +1641,17 @@ async function autoBookShiprocketForOrder(order) {
       totalAmount: Number(order.totalAmount || 0),
       discount: Number(order.discount || 0),
       finalPayable: Number(order.finalPayable || 0),
+
       payload_payment_method: payload.payment_method,
       payload_sub_total: payload.sub_total,
       payload_shipping_charges: payload.shipping_charges,
       payload_total_discount: payload.total_discount,
       payload_transaction_charges: payload.transaction_charges,
       payload_collectable_amount: payload.collectable_amount,
+
+      // ✅ expected match
+      shiprocketExpectedFinal:
+        Number(payload.sub_total || 0) + Number(payload.shipping_charges || 0),
     });
 
     console.log(`${TAG} 📦 Creating shipment...`, {
@@ -1698,7 +1711,10 @@ async function autoBookShiprocketForOrder(order) {
           await order.save();
           console.log(`${TAG} ✅ AWB assigned & saved`, { shipmentId, awb });
         } else {
-          console.log(`${TAG} ⚠️ Assign AWB success but awb_code missing`, { shipmentId, assigned });
+          console.log(`${TAG} ⚠️ Assign AWB success but awb_code missing`, {
+            shipmentId,
+            assigned,
+          });
         }
       } catch (e) {
         console.log(`${TAG} ⚠️ Assign AWB failed`, {
@@ -1725,6 +1741,7 @@ async function autoBookShiprocketForOrder(order) {
     });
   }
 }
+
 
 
 // Admin trigger: Book Shiprocket only if details missing
