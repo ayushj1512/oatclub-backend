@@ -1186,3 +1186,56 @@ export const getProductsByIds = async (req, res) => {
   }
 };
 
+
+export const bulkSyncCollectionOnProducts = async (req, res) => {
+  try {
+    const { collectionId, addIds, removeIds } = req.body;
+
+    if (!collectionId || !mongoose.Types.ObjectId.isValid(collectionId)) {
+      return res.status(400).json({ message: "Valid collectionId is required" });
+    }
+
+    const add = [...new Set(arr(addIds))].filter(mongoose.Types.ObjectId.isValid);
+    const remove = [...new Set(arr(removeIds))].filter(mongoose.Types.ObjectId.isValid);
+
+    if (!add.length && !remove.length) {
+      return res.status(400).json({ message: "addIds or removeIds required" });
+    }
+
+    const ops = [];
+
+    // ✅ Add collection to selected products (multi-collection safe + no duplicates)
+    if (add.length) {
+      ops.push({
+        updateMany: {
+          filter: { _id: { $in: add } },
+          update: { $addToSet: { collections: new mongoose.Types.ObjectId(collectionId) } },
+        },
+      });
+    }
+
+    // ✅ Remove collection from unselected products (doesn't touch other collections)
+    if (remove.length) {
+      ops.push({
+        updateMany: {
+          filter: { _id: { $in: remove } },
+          update: { $pull: { collections: new mongoose.Types.ObjectId(collectionId) } },
+        },
+      });
+    }
+
+    const result = await Product.bulkWrite(ops, { ordered: false });
+
+    return res.json({
+      message: "Product collections synced ✅",
+      collectionId,
+      addedCount: add.length,
+      removedCount: remove.length,
+      modifiedCount: result?.modifiedCount ?? 0,
+      result,
+    });
+  } catch (e) {
+    console.error("❌ bulkSyncCollectionOnProducts Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};

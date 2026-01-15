@@ -5,7 +5,7 @@ import {
   createProduct,
   getAllProducts,
   getProductsByTag,
-  getProductsByCategory,   // ✅ ADD THIS
+  getProductsByCategory,
   getProductByIdOrSlug,
   getProductBySKU,
 
@@ -19,7 +19,10 @@ import {
   updateVariantStock,
   incrementProductAnalytics,
   updateProductRatings,
-  bulkUpdatePricing
+  bulkUpdatePricing,
+
+  // ✅ NEW: bulk collection sync
+  bulkSyncCollectionOnProducts,
 } from "./productController.js";
 
 /* ---------------- BULK CONTROLLER ---------------- */
@@ -68,15 +71,15 @@ router.post(
 );
 
 // ✅ CREATE DRAFT PRODUCTS (NO IMAGES)
-router.post(
-  "/bulk/create-draft",
-  bulkCreateDraftProducts
-);
+router.post("/bulk/create-draft", bulkCreateDraftProducts);
 
 // ✅ Existing bulk operations
 router.post("/bulk/delete", bulkDeleteProducts);
 router.post("/bulk/import", bulkImportProducts);
-router.patch("/bulk/pricing", bulkUpdatePricing); // ✅ better here (bulk route)
+router.patch("/bulk/pricing", bulkUpdatePricing);
+
+// ✅ NEW: Bulk sync collection ↔ products
+router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 
 /* ===========================================================
    🔐 ADMIN ROUTES (SINGLE PRODUCT OPS)
@@ -88,8 +91,8 @@ router.patch("/:id/variant-stock", updateVariantStock);
 
 router.post("/", createProduct);
 
-router.patch("/:id", updateProduct); // ✅ partial update
-router.put("/:id", updateProduct);   // optional full update
+router.patch("/:id", updateProduct);
+router.put("/:id", updateProduct);
 router.delete("/:id", deleteProduct);
 
 /* ===========================================================
