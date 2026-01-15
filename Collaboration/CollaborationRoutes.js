@@ -4,7 +4,7 @@ import {
   listCollaborations,
   getCollaborationById,
   updateCollaboration,
-} from "./collaborationController.js";
+} from "./CollaborationController.js";
 
 const router = express.Router();
 
