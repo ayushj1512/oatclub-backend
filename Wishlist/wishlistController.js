@@ -149,3 +149,39 @@ export const clearWishlist = async (req, res) => {
     });
   }
 };
+
+/* ------------------------------------------------------
+   ✅ GET ALL WISHLISTS
+   GET /api/wishlist
+------------------------------------------------------ */
+export const getAllWishlists = async (req, res) => {
+  try {
+    // Optional: add pagination support
+    const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 200);
+    const skip = (page - 1) * limit;
+
+    const [wishlists, total] = await Promise.all([
+      Wishlist.find({})
+        .sort({ updatedAt: -1 }) // latest updated first (works if timestamps enabled)
+        .skip(skip)
+        .limit(limit),
+      Wishlist.countDocuments({}),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      total,
+      page,
+      limit,
+      wishlists,
+    });
+  } catch (error) {
+    console.error("❌ Error fetching all wishlists:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while fetching wishlists",
+      error: error.message,
+    });
+  }
+};
