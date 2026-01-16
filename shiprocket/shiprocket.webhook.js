@@ -1,6 +1,11 @@
 import Order from "../Orders/Orders.js";
 
 /* ============================================================
+   CONFIG
+============================================================ */
+const SHIPROCKET_WEBHOOK_TOKEN = process.env.SHIPROCKET_WEBHOOK_TOKEN || "";
+
+/* ============================================================
    SHIPROCKET STATUS → INTERNAL STATUS MAP
 ============================================================ */
 const STATUS_MAP = {
@@ -15,7 +20,6 @@ const STATUS_MAP = {
 
   /* ------------------------------
      Picked up
-     Shiprocket often sends: "Shipment Picked Up"
   ------------------------------ */
   PICKED_UP: { shipment: "picked", fulfillment: "shipped" },
   SHIPMENT_PICKED_UP: { shipment: "picked", fulfillment: "shipped" },
@@ -31,7 +35,6 @@ const STATUS_MAP = {
 
   /* ------------------------------
      Out for delivery
-     scans can show: "SHIPMENT OUT FOR DELIVERY"
   ------------------------------ */
   OUT_FOR_DELIVERY: {
     shipment: "out_for_delivery",
@@ -44,7 +47,6 @@ const STATUS_MAP = {
 
   /* ------------------------------
      Delivered
-     scans can show: "SHIPMENT DELIVERED"
   ------------------------------ */
   DELIVERED: { shipment: "delivered", fulfillment: "delivered" },
   SHIPMENT_DELIVERED: { shipment: "delivered", fulfillment: "delivered" },
@@ -67,7 +69,6 @@ const STATUS_MAP = {
   SHIPMENT_CANCELED: { shipment: "cancelled", fulfillment: "cancelled" },
 };
 
-
 const SHIPMENT_PRIORITY = {
   processing: 1,
   picked: 2,
@@ -81,19 +82,57 @@ const SHIPMENT_PRIORITY = {
 /* ============================================================
    HELPERS
 ============================================================ */
+const safeStr = (v) => (v === undefined || v === null ? "" : String(v).trim());
+
 const normalizeStatus = (s = "") =>
-  String(s).trim().toUpperCase().replace(/\s+/g, "_");
+  String(s)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_") // handles spaces, hyphens, slashes etc.
+    .replace(/^_+|_+$/g, "");
+
+const getLastScanStatus = (data = {}) => {
+  const scans = Array.isArray(data.scans) ? data.scans : [];
+  const last = scans.length ? scans[scans.length - 1] : null;
+  return (
+    last?.["sr-status-label"] ||
+    last?.status ||
+    last?.activity ||
+    ""
+  );
+};
 
 const getRawStatus = (data = {}) =>
   String(
     data.current_status ||
       data.current_status_name ||
+      getLastScanStatus(data) ||
       data.status ||
       data.shipment_status ||
       ""
   ).trim();
 
-const safeStr = (v) => (v === undefined || v === null ? "" : String(v).trim());
+const stageOf = (s) => SHIPMENT_PRIORITY[s] || 0;
+
+/**
+ * Webhook idempotency key
+ * - uses awb OR shipmentId + normalizedStatus + a timestamp-ish field (if present)
+ * - Shiprocket may resend same payload → avoid repeated DB writes
+ */
+const getEventKey = (data, awb, shipmentId, normalizedStatus) => {
+  const ts =
+    data.current_timestamp ||
+    data.current_tracking_status_datetime ||
+    data.updated_at ||
+    "";
+  return [awb || shipmentId, normalizedStatus, String(ts)].filter(Boolean).join("|");
+};
+
+const verifyWebhookToken = (req) => {
+  if (!SHIPROCKET_WEBHOOK_TOKEN) return true; // if you didn't set token in env/dashboard
+  const token = (req.header("x-api-key") || "").trim();
+  return token === SHIPROCKET_WEBHOOK_TOKEN;
+};
 
 /* ============================================================
    SHIPROCKET WEBHOOK
@@ -101,6 +140,11 @@ const safeStr = (v) => (v === undefined || v === null ? "" : String(v).trim());
 ============================================================ */
 export async function shiprocketWebhook(req, res) {
   try {
+    // 0) Optional security token verification
+    if (!verifyWebhookToken(req)) {
+      return res.status(401).json({ success: false });
+    }
+
     const data = req.body || {};
     const now = new Date();
 
@@ -113,8 +157,16 @@ export async function shiprocketWebhook(req, res) {
 
     const normalizedStatus = normalizeStatus(rawStatus);
     const mapped = STATUS_MAP[normalizedStatus];
+
     if (!mapped) {
-      console.warn("⚠️ Unhandled Shiprocket status:", rawStatus);
+      // keep ACKing 200 to avoid retries, but log for mapping expansion
+      console.warn("⚠️ Unhandled Shiprocket status:", {
+        rawStatus,
+        normalizedStatus,
+        awb,
+        shipmentId,
+        channelOrderId,
+      });
       return res.status(200).json({ success: true });
     }
 
@@ -161,9 +213,12 @@ export async function shiprocketWebhook(req, res) {
         shipmentId,
         channelOrderId,
         rawStatus,
+        normalizedStatus,
       });
       return res.status(200).json({ success: true });
     }
+
+    const eventKey = getEventKey(data, awb, shipmentId, normalizedStatus);
 
     /* ------------------------------------------------
        2) REVERSE PICKUP (RMA)
@@ -171,12 +226,15 @@ export async function shiprocketWebhook(req, res) {
     if (isReverse) {
       const rma = order.rmas[rmaIndex];
 
-      // anti-regression
-      if (
-        rma.reverseShipment?.status &&
-        SHIPMENT_PRIORITY[shipmentStatus] <
-          SHIPMENT_PRIORITY[rma.reverseShipment.status]
-      ) {
+      // idempotency (reverse)
+      const lastKey = rma?.reverseShipment?.lastEventKey;
+      if (eventKey && lastKey === eventKey) {
+        return res.status(200).json({ success: true });
+      }
+
+      // anti-regression (reverse)
+      const prev = rma.reverseShipment?.status;
+      if (prev && stageOf(shipmentStatus) < stageOf(prev)) {
         return res.status(200).json({ success: true });
       }
 
@@ -187,6 +245,7 @@ export async function shiprocketWebhook(req, res) {
         trackingUrl: data.tracking_url || rma.reverseShipment?.trackingUrl,
         status: shipmentStatus,
         lastUpdatedAt: now,
+        ...(eventKey ? { lastEventKey: eventKey } : {}),
       };
 
       // Auto-advance RMA status
@@ -199,12 +258,36 @@ export async function shiprocketWebhook(req, res) {
     }
 
     /* ------------------------------------------------
-       3) FORWARD ANTI-REGRESSION
+       3) FORWARD IDPOTENCY + SAFER ANTI-REGRESSION
     ------------------------------------------------ */
     const prevShipmentStatus = order.shipment?.status;
+
+    // idempotency (forward)
+    const lastForwardKey = order.shipment?.shiprocket?.lastEventKey;
+    if (eventKey && lastForwardKey === eventKey) {
+      return res.status(200).json({ success: true });
+    }
+
+    // anti-regression basic
+    if (prevShipmentStatus && stageOf(shipmentStatus) < stageOf(prevShipmentStatus)) {
+      return res.status(200).json({ success: true });
+    }
+
+    // special safety rules
+    //  - cancelled should not override late stages
     if (
+      shipmentStatus === "cancelled" &&
       prevShipmentStatus &&
-      SHIPMENT_PRIORITY[shipmentStatus] < SHIPMENT_PRIORITY[prevShipmentStatus]
+      stageOf(prevShipmentStatus) > stageOf("processing")
+    ) {
+      return res.status(200).json({ success: true });
+    }
+
+    //  - rto should not override delivered forward shipment (keep forward delivered stable)
+    if (
+      shipmentStatus === "rto" &&
+      prevShipmentStatus &&
+      stageOf(prevShipmentStatus) >= stageOf("delivered")
     ) {
       return res.status(200).json({ success: true });
     }
@@ -224,6 +307,13 @@ export async function shiprocketWebhook(req, res) {
         trackingUrl: data.tracking_url || order.shipment?.shiprocket?.trackingUrl,
         status: shipmentStatus,
         lastUpdatedAt: now,
+
+        // idempotency tracking
+        ...(eventKey ? { lastEventKey: eventKey } : {}),
+
+        // optional: store raw status for debugging
+        lastStatusRaw: rawStatus,
+        lastStatusNorm: normalizedStatus,
       },
 
       status: shipmentStatus,
@@ -238,13 +328,14 @@ export async function shiprocketWebhook(req, res) {
        6) UPDATE TRACKING DETAILS (only if AWB present)
     ------------------------------------------------ */
     if (awb) {
+      const expected =
+        data.expected_delivery_date || data.etd || data.expected_delivery || null;
+
       order.trackingDetails = {
         ...(order.trackingDetails || {}),
         trackingId: awb,
         courierName: data.courier_name || order.trackingDetails?.courierName,
-        expectedDelivery: data.expected_delivery_date
-          ? new Date(data.expected_delivery_date)
-          : order.trackingDetails?.expectedDelivery,
+        expectedDelivery: expected ? new Date(expected) : order.trackingDetails?.expectedDelivery,
       };
 
       if (shipmentStatus === "picked" && !order.trackingDetails.shippedAt) {
@@ -260,6 +351,7 @@ export async function shiprocketWebhook(req, res) {
     return res.status(200).json({ success: true });
   } catch (error) {
     console.error("❌ Shiprocket Webhook Error:", error);
+    // Always ACK 200 to avoid Shiprocket retries storm
     return res.status(200).json({ success: true });
   }
 }

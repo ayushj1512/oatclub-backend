@@ -1862,3 +1862,103 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
     });
   }
 };
+
+
+/* ============================================================
+   UPDATE ADDRESS SNAPSHOT (ADMIN)
+   PATCH /api/orders/:id/address
+   body: { type: "shipping"|"billing", address: {...} }
+============================================================ */
+export const updateOrderAddress = async (req, res) => {
+  try {
+    const orderId = req.params.id;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    const { type, address } = req.body || {};
+    const targetType = String(type || "").trim().toLowerCase();
+
+    if (!["shipping", "billing"].includes(targetType)) {
+      return res.status(400).json({ message: "Invalid type. Allowed: shipping | billing" });
+    }
+
+    if (!address || typeof address !== "object") {
+      return res.status(400).json({ message: "address object missing" });
+    }
+
+    // ✅ Basic sanitizers
+    const str = (v) => (v == null ? "" : String(v)).trim();
+    const cleanPhone = (v) => str(v).replace(/[^\d+]/g, "").replace(/^\+/, "");
+    const cleanPincode = (v) => str(v).replace(/[^\d]/g, "");
+
+    const nextSnapshot = {
+      fullName: str(address.fullName),
+      line1: str(address.line1),
+      line2: str(address.line2),
+      city: str(address.city),
+      state: str(address.state),
+      pincode: cleanPincode(address.pincode),
+      phone: cleanPhone(address.phone),
+      // keep optional fields if you store them in snapshot:
+      email: str(address.email),
+      country: str(address.country),
+    };
+
+    // ✅ Minimal validations
+    if (!nextSnapshot.fullName || !nextSnapshot.line1 || !nextSnapshot.city || !nextSnapshot.state || !nextSnapshot.pincode) {
+      return res.status(400).json({ message: "Required fields missing (fullName, line1, city, state, pincode)" });
+    }
+
+    // ✅ pincode sanity (India)
+    if (nextSnapshot.pincode && nextSnapshot.pincode.length !== 6) {
+      return res.status(400).json({ message: "Invalid pincode" });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    // 🚫 Guard: once shipped/picked/out_for_delivery/delivered -> don't allow address change
+    const blockedStatuses = ["picked", "shipped", "out_for_delivery", "delivered", "returned"];
+    if (blockedStatuses.includes(order.fulfillmentStatus)) {
+      return res.status(400).json({
+        message: `Address cannot be updated after order is ${order.fulfillmentStatus}`,
+      });
+    }
+
+    // 🚫 Guard: if Shiprocket shipment already created, usually address should NOT change
+    const srShipmentId = order?.shipment?.shiprocket?.shipmentId;
+    const srAwb = order?.shipment?.shiprocket?.awb;
+    if (srShipmentId || srAwb) {
+      return res.status(400).json({
+        message: "Shiprocket shipment already created. Address update is locked.",
+        reason: "shiprocket_locked",
+      });
+    }
+
+    // ✅ Optional: keep history
+    order.addressEditLogs = Array.isArray(order.addressEditLogs) ? order.addressEditLogs : [];
+    order.addressEditLogs.push({
+      type: targetType,
+      updatedAt: new Date(),
+      // adminId: req.user?._id || null, // if auth middleware exists
+      previous:
+        targetType === "shipping"
+          ? order.shippingAddressSnapshot
+          : order.billingAddressSnapshot,
+      next: nextSnapshot,
+    });
+
+    if (targetType === "shipping") order.shippingAddressSnapshot = nextSnapshot;
+    if (targetType === "billing") order.billingAddressSnapshot = nextSnapshot;
+
+    await order.save();
+
+    return res.status(200).json({ message: "Address updated", order });
+  } catch (error) {
+    console.error("❌ Update Address Error:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+

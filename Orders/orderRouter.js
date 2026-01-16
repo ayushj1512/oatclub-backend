@@ -16,6 +16,8 @@ import {
   cancelOrder,
   confirmOrder, // ✅ NEW
   adminBookShiprocketIfMissing,      // ✅ ADD
+    updateOrderAddress, // ✅ ADD THIS
+
 
 } from "./orderController.js";
 
@@ -130,5 +132,8 @@ router.get("/:id", getOrderById);
 router.put("/:id", updateOrder);
 router.patch("/:id/status", updateOrderStatus);
 router.patch("/:id/tracking", updateTracking);
+
+// address update
+router.patch("/:id/address", updateOrderAddress);
 
 export default router;
