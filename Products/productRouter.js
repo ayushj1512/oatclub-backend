@@ -6,6 +6,7 @@ import {
   getAllProducts,
   getProductsByTag,
   getProductsByCategory,
+  fetchProductsByCategory, // ✅ NEW
   getProductByIdOrSlug,
   getProductBySKU,
 
@@ -46,6 +47,10 @@ router.get("/by-tag", getProductsByTag);
 
 // ✅ Products by category (slug OR id OR name)
 router.get("/by-category/:category", getProductsByCategory);
+
+// ✅ ✅ NEW: Alternative fetch-by-category (param + query supported)
+router.get("/fetch-by-category/:category", fetchProductsByCategory);
+router.get("/fetch-by-category", fetchProductsByCategory);
 
 // ✅ ✅ NEW: Products by multiple IDs (single fetch)
 router.post("/by-ids", getProductsByIds);

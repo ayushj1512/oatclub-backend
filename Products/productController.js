@@ -350,6 +350,15 @@ export const createProduct = async (req, res) => {
       data.avgFabricConsumption
     );
 
+    // ✅ NEW: HSN CODE normalize + validate (digits only, optional)
+    if (data.hsnCode !== undefined) {
+      const hsn = String(data.hsnCode ?? "").trim();
+      if (hsn !== "" && !/^\d+$/.test(hsn)) {
+        return res.status(400).json({ message: "HSN code must contain digits only" });
+      }
+      data.hsnCode = hsn; // allow "" to clear / keep optional
+    }
+
     /* ---------------- slug ---------------- */
     data.slug = slugify(String(data.slug || data.title || ""), { lower: true });
 
@@ -460,6 +469,7 @@ export const createProduct = async (req, res) => {
     return res.status(400).json({ message: e.message });
   }
 };
+
 
 
 
@@ -670,6 +680,15 @@ export const updateProduct = async (req, res) => {
         data.avgFabricConsumption
       );
 
+    // ✅ NEW: HSN CODE normalize + validate (digits only, optional)
+    if (data.hsnCode !== undefined) {
+      const hsn = String(data.hsnCode ?? "").trim();
+      if (hsn !== "" && !/^\d+$/.test(hsn)) {
+        return res.status(400).json({ message: "HSN code must contain digits only" });
+      }
+      data.hsnCode = hsn; // allow "" to clear / keep optional
+    }
+
     /* ---------------- fetch existing ---------------- */
     const existing = await Product.findById(req.params.id);
     if (!existing) {
@@ -805,14 +824,12 @@ export const updateProduct = async (req, res) => {
     const saved = await existing.save({ validateBeforeSave: true });
 
     // ✅ If you need population similar to pop(), do it on the document:
-    // (adjust these populate paths to match what pop() used in your project)
     const updated = await saved.populate([
       { path: "collections" },
       { path: "offer" },
       { path: "couponsApplicable" },
       { path: "reviews" },
       { path: "crossSellProducts" },
-      // If you populate attributes.attribute:
       { path: "attributes.attribute" },
       { path: "variants.attributes.attribute" },
     ]);
@@ -826,6 +843,8 @@ export const updateProduct = async (req, res) => {
     res.status(500).json({ message: e.message });
   }
 };
+
+
 
 
 
@@ -1236,6 +1255,125 @@ export const bulkSyncCollectionOnProducts = async (req, res) => {
     });
   } catch (e) {
     console.error("❌ bulkSyncCollectionOnProducts Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};
+
+
+/* ============================================================
+   ✅ FETCH PRODUCTS BY CATEGORY
+   GET /api/products/fetch-by-category/:category
+   Supports:
+   ?page&limit&collection&tags&minPrice&maxPrice&isActive&search&sort&sku
+============================================================ */
+export const fetchProductsByCategory = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      collection,
+      tags,
+      minPrice,
+      maxPrice,
+      isActive,
+      search,
+      sort,
+      sku,
+    } = req.query;
+
+    // category can come from params OR query
+    const categoryParam = req.params.category || req.query.category;
+
+    if (!categoryParam) {
+      return res.status(400).json({ message: "Category is required" });
+    }
+
+    /* ---------------------------------------------------------
+       ✅ Find category by slug OR _id OR name
+    --------------------------------------------------------- */
+    let catDoc = null;
+
+    if (mongoose.Types.ObjectId.isValid(categoryParam)) {
+      catDoc = await Category.findById(categoryParam);
+    }
+
+    if (!catDoc) {
+      catDoc = await Category.findOne({
+        $or: [
+          { slug: String(categoryParam).toLowerCase() },
+          { name: String(categoryParam) },
+        ],
+      });
+    }
+
+    /* ---------------------------------------------------------
+       ✅ category match:
+       - if found: match both slug + name
+       - else: fallback to raw categoryParam stored in Product.categories
+    --------------------------------------------------------- */
+    const categoryMatch = catDoc
+      ? [catDoc.slug, catDoc.name]
+      : [String(categoryParam)];
+
+    const filters = { categories: { $in: categoryMatch } };
+
+    /* ---------------- collections ---------------- */
+    if (collection) filters.collections = collection;
+
+    /* ---------------- tags ---------------- */
+    const t = tagsNorm(tags);
+    if (t.length) filters.tags = { $in: t };
+
+    /* ---------------- active ---------------- */
+    if (isActive !== undefined) filters.isActive = isActive === "true";
+
+    /* ---------------- SKU ---------------- */
+    if (sku) {
+      filters.$or = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
+    }
+
+    /* ---------------- price ---------------- */
+    if (minPrice || maxPrice) {
+      filters.price = {};
+      if (minPrice) filters.price.$gte = Number(minPrice);
+      if (maxPrice) filters.price.$lte = Number(maxPrice);
+    }
+
+    /* ---------------- search ---------------- */
+    if (search) filters.$text = { $search: search };
+
+    /* ---------------- sorting ---------------- */
+    const sortMap = {
+      price_asc: { price: 1 },
+      price_desc: { price: -1 },
+      newest: { createdAt: -1 },
+      rating: { averageRating: -1 },
+      popularity: { "analytics.views": -1 },
+    };
+
+    const safeLimit = Math.min(200, Math.max(1, Number(limit)));
+    const skip = (Number(page) - 1) * safeLimit;
+    const sortObj = sortMap[sort] || { createdAt: -1 };
+
+    /* ---------------- query ---------------- */
+    const docs = await pop(Product.find(filters))
+      .sort(sortObj)
+      .skip(skip)
+      .limit(safeLimit);
+
+    const total = await Product.countDocuments(filters);
+
+    return res.json({
+      category: catDoc
+        ? { _id: catDoc._id, name: catDoc.name, slug: catDoc.slug }
+        : { raw: String(categoryParam) },
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / safeLimit),
+      products: (docs || []).map(applyStockFromVariants),
+    });
+  } catch (e) {
+    console.error("❌ fetchProductsByCategory Error:", e);
     return res.status(500).json({ message: e.message });
   }
 };

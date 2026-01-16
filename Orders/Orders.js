@@ -19,38 +19,40 @@ const orderItemSchema = new mongoose.Schema(
     },
 
     // ✅ purchase-time snapshot (so order doesn't break if product changes later)
-    productSnapshot: {
-      productCode: { type: String, default: "" }, // (00001 style from Product)
-      title: { type: String, required: true },
-      slug: { type: String, default: "" },
+   productSnapshot: {
+  productCode: { type: String, default: "" },
+  title: { type: String, required: true },
+  slug: { type: String, default: "" },
 
-      thumbnail: { type: String, default: "" },
-      images: [{ type: String, default: [] }],
+  thumbnail: { type: String, default: "" },
+  images: [{ type: String, default: [] }],
 
-      category: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Category",
-        default: null,
-      },
-      subcategory: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Category",
-        default: null,
-      },
+  category: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Category",
+    default: null,
+  },
+  subcategory: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Category",
+    default: null,
+  },
 
-      productType: {
-        type: String,
-        enum: ["simple", "variable", "digital", "external"],
-        default: "simple",
-      },
+  productType: {
+    type: String,
+    enum: ["simple", "variable", "digital", "external"],
+    default: "simple",
+  },
 
-      sku: { type: String, default: "" }, // for simple products
-      tags: [{ type: String, default: [] }], // ✅ tags are strings now
+  sku: { type: String, default: "" },
+  tags: [{ type: String, default: [] }],
 
-      // optional extras
-      weight: { type: Number, default: 0 },
-      currency: { type: String, default: "INR" },
-    },
+  // ✅ ADD THIS
+  hsnCode: { type: String, default: "" },
+
+  weight: { type: Number, default: 0 },
+  currency: { type: String, default: "INR" },
+},
 
     // ✅ chosen variant snapshot (if variable)
     variant: {

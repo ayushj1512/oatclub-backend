@@ -496,19 +496,24 @@ export const createOrder = async (req, res) => {
         normalizedItems.push({
           productId: product._id,
           productSnapshot: {
-            productCode: product.productCode || "",
-            title: product.title,
-            slug: product.slug || "",
-            thumbnail: product.thumbnail || "",
-            images: Array.isArray(product.images) ? product.images : [],
-            category: product.category || null,
-            subcategory: product.subcategory || null,
-            productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
-            sku: product.sku || "",
-            tags: Array.isArray(product.tags) ? product.tags : [],
-            weight: Number(product.weight ?? 0),
-            currency: product.currency || currency,
-          },
+  productCode: product.productCode || "",
+  title: product.title,
+  slug: product.slug || "",
+  thumbnail: product.thumbnail || "",
+  images: Array.isArray(product.images) ? product.images : [],
+  category: product.category || null,
+  subcategory: product.subcategory || null,
+  productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
+  sku: product.sku || "",
+  tags: Array.isArray(product.tags) ? product.tags : [],
+
+  // ✅ NEW
+  hsnCode: String(product.hsnCode || "62105000"),
+
+  weight: Number(product.weight ?? 0),
+  currency: product.currency || currency,
+},
+
           variant: {
             variantId: variant?._id || null,
             sku: variant?.sku || "",
@@ -757,6 +762,8 @@ export const updateOrder = async (req, res) => {
 
 /* ============================================================
    UPDATE ORDER STATUS ONLY
+   ✅ Fix: default cancel reason -> cancelled_by_customer
+   ✅ Supports: cancelled_by_admin / cancelled_by_customer
 ============================================================ */
 export const updateOrderStatus = async (req, res) => {
   const session = await mongoose.startSession();
@@ -764,7 +771,8 @@ export const updateOrderStatus = async (req, res) => {
   // -------- helpers (keep local to avoid changing file structure)
   const str = (v) => (v == null ? "" : String(v));
   const normEmail = (v) => str(v).trim().toLowerCase();
-  const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
+  const normPhone = (v) =>
+    str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
   const buildCouponIdentity = ({ email, phone }) => {
     const e = normEmail(email);
     if (e && e.includes("@")) return `email:${e}`;
@@ -773,13 +781,35 @@ export const updateOrderStatus = async (req, res) => {
     return "";
   };
 
+  // ✅ NEW: normalize cancel reason with safe defaults
+  const normReason = (v) => str(v).trim().toLowerCase();
+  const pickCancelReason = () => {
+    // priority 1: explicit reason from client
+    const incoming = normReason(req.body?.reason);
+
+    if (incoming === "cancelled_by_admin") return "cancelled_by_admin";
+    if (incoming === "cancelled_by_customer") return "cancelled_by_customer";
+
+    // also accept "admin"/"customer" as shorthand
+    if (incoming === "admin") return "cancelled_by_admin";
+    if (incoming === "customer") return "cancelled_by_customer";
+
+    // priority 2: explicit cancelledBy field
+    const actor = normReason(req.body?.cancelledBy);
+    if (actor === "admin") return "cancelled_by_admin";
+    if (actor === "customer") return "cancelled_by_customer";
+
+    // ✅ DEFAULT: customer (as requested)
+    return "cancelled_by_customer";
+  };
+
+  const isAdminCancel = (reason) => normReason(reason) === "cancelled_by_admin";
+
   try {
-    const {
-      fulfillmentStatus,
-      paymentStatus,
-      isConfirmed,
-      reason = "cancelled_by_admin",
-    } = req.body;
+    const { fulfillmentStatus, paymentStatus, isConfirmed } = req.body;
+
+    // ✅ default -> cancelled_by_customer
+    const reason = pickCancelReason();
 
     const orderId = req.params.id;
 
@@ -794,6 +824,29 @@ export const updateOrderStatus = async (req, res) => {
       // ✅ If cancelling → run full cancel flow
       if (fulfillmentStatus === "cancelled") {
         updatedOrder = await performOrderCancellation({ orderId, reason, session });
+
+        // ✅ HARD GUARANTEE: fix remarks fields so "admin" doesn't leak into customer cancels
+        const patch = {};
+
+        if (isAdminCancel(reason)) {
+          // admin cancel
+          patch.adminRemarks = str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
+
+          // don't overwrite customerMessage unless explicitly sent
+          if (req.body?.customerMessage !== undefined) {
+            patch.customerMessage = str(req.body?.customerMessage);
+          }
+        } else {
+          // customer cancel (default)
+          patch.customerMessage =
+            str(req.body?.customerMessage).trim() || "cancelled_by_customer";
+          patch.adminRemarks = ""; // ✅ clear any admin remark
+        }
+
+        await Order.updateOne({ _id: orderId }, { $set: patch }).session(session);
+
+        // re-fetch within txn so updatedOrder reflects patch
+        updatedOrder = await Order.findById(orderId).session(session);
         return;
       }
 
@@ -937,7 +990,10 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: fulfillmentStatus === "cancelled" ? "Order cancelled successfully" : "Order status updated",
+      message:
+        fulfillmentStatus === "cancelled"
+          ? "Order cancelled successfully"
+          : "Order status updated",
       order: finalOrder,
     });
   } catch (error) {
@@ -950,6 +1006,7 @@ export const updateOrderStatus = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 

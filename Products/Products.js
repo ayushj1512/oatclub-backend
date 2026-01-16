@@ -64,6 +64,20 @@ const productSchema = new mongoose.Schema(
     stock: { type: Number, default: 0 },
     // ✅ FIX: stock=0 implies not in stock
     isInStock: { type: Boolean, default: false },
+/* HSN CODE (numeric-only) */
+hsnCode: {
+  type: String,
+  trim: true,
+  default: "",
+  index: true,
+  validate: {
+    validator: function (v) {
+      // allow empty (optional), otherwise digits only
+      return v === "" || /^\d+$/.test(v);
+    },
+    message: "HSN code must contain digits only",
+  },
+},
 
     /* FABRICS (MULTIPLE ✅) — store by Fabric.code */
     fabrics: [
