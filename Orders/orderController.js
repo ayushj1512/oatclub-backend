@@ -626,6 +626,10 @@ export const createOrder = async (req, res) => {
     }
 
     const finalOrder = await Order.findById(req.__createdOrder._id).lean();
+
+    try { triggerOrderEmails(finalOrder); }
+catch (e) { console.error("⚠️ triggerOrderEmails failed:", e?.message || e); }
+
     return res.status(201).json({ message: "Order created successfully", order: finalOrder });
   } catch (error) {
     console.error("❌ Create Order Error:", error);
@@ -760,24 +764,27 @@ export const updateOrderStatus = async (req, res) => {
   // ✅ NEW: normalize cancel reason with safe defaults
   const normReason = (v) => str(v).trim().toLowerCase();
   const pickCancelReason = () => {
-    // priority 1: explicit reason from client
-    const incoming = normReason(req.body?.reason);
+  const incoming = normReason(req.body?.reason);
 
-    if (incoming === "cancelled_by_admin") return "cancelled_by_admin";
-    if (incoming === "cancelled_by_customer") return "cancelled_by_customer";
+  if (incoming === "cancelled_by_admin") return "cancelled_by_admin";
+  if (incoming === "cancelled_by_customer") return "cancelled_by_customer";
+  if (incoming === "admin") return "cancelled_by_admin";
+  if (incoming === "customer") return "cancelled_by_customer";
 
-    // also accept "admin"/"customer" as shorthand
-    if (incoming === "admin") return "cancelled_by_admin";
-    if (incoming === "customer") return "cancelled_by_customer";
+  const actor = normReason(req.body?.cancelledBy);
+  if (actor === "admin") return "cancelled_by_admin";
+  if (actor === "customer") return "cancelled_by_customer";
 
-    // priority 2: explicit cancelledBy field
-    const actor = normReason(req.body?.cancelledBy);
-    if (actor === "admin") return "cancelled_by_admin";
-    if (actor === "customer") return "cancelled_by_customer";
+  // ✅ NEW: adminRemarks se infer
+  const ar = normReason(req.body?.adminRemarks);
+  if (ar === "cancelled_by_admin" || ar === "admin") return "cancelled_by_admin";
 
-    // ✅ DEFAULT: customer (as requested)
-    return "cancelled_by_customer";
-  };
+  // ✅ NEW: if request is from admin (if you have auth/role)
+  if (req.user?.role === "admin") return "cancelled_by_admin";
+
+  return "cancelled_by_customer";
+};
+
 
   const isAdminCancel = (reason) => normReason(reason) === "cancelled_by_admin";
 
@@ -798,33 +805,25 @@ export const updateOrderStatus = async (req, res) => {
 
     await session.withTransaction(async () => {
       // ✅ If cancelling → run full cancel flow
-      if (fulfillmentStatus === "cancelled") {
-        updatedOrder = await performOrderCancellation({ orderId, reason, session });
+     if (fulfillmentStatus === "cancelled") {
+  updatedOrder = await performOrderCancellation({ orderId, reason, session });
 
-        // ✅ HARD GUARANTEE: fix remarks fields so "admin" doesn't leak into customer cancels
-        const patch = {};
+  const $set = {};
+  const $unset = {};
 
-        if (isAdminCancel(reason)) {
-          // admin cancel
-          patch.adminRemarks = str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
+  if (isAdminCancel(reason)) {
+    $set.adminRemarks = str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
+    $unset.customerMessage = ""; // ✅ ensure customer msg not present
+  } else {
+    $set.customerMessage = str(req.body?.customerMessage).trim() || "cancelled_by_customer";
+    $unset.adminRemarks = "";    // ✅ ensure admin remark not present
+  }
 
-          // don't overwrite customerMessage unless explicitly sent
-          if (req.body?.customerMessage !== undefined) {
-            patch.customerMessage = str(req.body?.customerMessage);
-          }
-        } else {
-          // customer cancel (default)
-          patch.customerMessage =
-            str(req.body?.customerMessage).trim() || "cancelled_by_customer";
-          patch.adminRemarks = ""; // ✅ clear any admin remark
-        }
+  await Order.updateOne({ _id: orderId }, { $set, $unset }).session(session);
+  updatedOrder = await Order.findById(orderId).session(session);
+  return;
+}
 
-        await Order.updateOne({ _id: orderId }, { $set: patch }).session(session);
-
-        // re-fetch within txn so updatedOrder reflects patch
-        updatedOrder = await Order.findById(orderId).session(session);
-        return;
-      }
 
       const order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
@@ -1414,7 +1413,7 @@ export const cancelOrder = async (req, res) => {
             null,
         });
 
-        triggerOrderCancellationEmails(finalOrder, reason);
+        // triggerOrderCancellationEmails(finalOrder, reason);
 
         console.log(`${TAG} ✅ triggerOrderCancellationEmails called`);
       }
