@@ -55,6 +55,8 @@ export const createAddress = async (req, res) => {
   }
 };
 
+
+
 /**
  * ---------------------------------------------------------
  * GET ALL ADDRESSES (Logged-in)
@@ -205,6 +207,31 @@ export const deleteAddress = async (req, res) => {
     });
   } catch (error) {
     console.error("Error deleting address:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * ---------------------------------------------------------
+ * GET ALL ADDRESSES (Admin / Internal)
+ * @route GET /api/addresses
+ * ---------------------------------------------------------
+ */
+export const getAllAddresses = async (req, res) => {
+  try {
+    const addresses = await Address.find({}).sort({
+      isDefaultShipping: -1,
+      isDefaultBilling: -1,
+      createdAt: -1,
+    });
+
+    res.status(200).json({
+      success: true,
+      count: addresses.length,
+      data: addresses,
+    });
+  } catch (error) {
+    console.error("Error fetching all addresses:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };

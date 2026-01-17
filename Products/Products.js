@@ -7,6 +7,9 @@ import Counter from "../models/Counter.js";
 ------------------------------------------------------------------- */
 const variantSchema = new mongoose.Schema(
   {
+    /* ✅ PATTERN NUMBER (per-variant) */
+    patternNumber: { type: String, trim: true, default: "", index: true },
+
     attributes: [
       {
         attribute: { type: mongoose.Schema.Types.ObjectId, ref: "Attribute" },
@@ -19,13 +22,13 @@ const variantSchema = new mongoose.Schema(
     barcode: { type: String, trim: true, default: "" },
 
     stock: { type: Number, default: 0 },
-    // ✅ FIX: stock=0 implies not in stock
     isInStock: { type: Boolean, default: false },
 
     weight: { type: Number, default: 0 },
   },
   { _id: true, timestamps: false }
 );
+
 
 /* ------------------------------------------------------------------
   PRODUCT SCHEMA
@@ -35,8 +38,6 @@ const productSchema = new mongoose.Schema(
     /* SEQUENTIAL PRODUCT CODE */
     productCode: { type: String, unique: true, required: true, index: true },
 
-    /* PATTERN NUMBER (NOT UNIQUE ✅) */
-    patternNumber: { type: String, trim: true, default: "", index: true },
 
     /* BASIC */
     title: { type: String, required: true, trim: true },
@@ -396,7 +397,7 @@ productSchema.pre("updateMany", applyInventoryToUpdateQuery); // optional
   INDEXES
 ------------------------------------------------------------------- */
 productSchema.index({ productCode: 1 }, { unique: true });
-productSchema.index({ patternNumber: 1 });
+productSchema.index({ "variants.patternNumber": 1 });
 productSchema.index({ title: "text", description: "text" });
 productSchema.index({ keywords: 1 });
 productSchema.index({ categories: 1 });

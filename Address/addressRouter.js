@@ -1,6 +1,7 @@
 import express from "express";
 import {
   createAddress,
+  getAllAddresses,
   getAddressesByFirebaseUID,
   getAddressesByCustomer,
   getAddressById,
@@ -17,6 +18,14 @@ const router = express.Router();
  * ---------------------------------------------------------
  */
 router.post("/", createAddress);
+
+/**
+ * ---------------------------------------------------------
+ * GET ALL ADDRESSES (Admin / Internal)
+ * GET /api/addresses
+ * ---------------------------------------------------------
+ */
+router.get("/", getAllAddresses);
 
 /**
  * ---------------------------------------------------------

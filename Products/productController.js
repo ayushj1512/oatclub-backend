@@ -340,21 +340,19 @@ export const createProduct = async (req, res) => {
     data.tags = tagsNorm(data.tags);
     data.collections = arr(data.collections);
 
-    // ✅ NEW: patternNumber + fabrics + avgFabricConsumption
-    if (data.patternNumber !== undefined)
-      data.patternNumber = String(data.patternNumber || "").trim();
-
     data.fabrics = json(data.fabrics, []);
     data.avgFabricConsumption = json(
       data.avgFabricConsumption,
       data.avgFabricConsumption
     );
 
-    // ✅ NEW: HSN CODE normalize + validate (digits only, optional)
+    // ✅ HSN CODE normalize + validate (digits only, optional)
     if (data.hsnCode !== undefined) {
       const hsn = String(data.hsnCode ?? "").trim();
       if (hsn !== "" && !/^\d+$/.test(hsn)) {
-        return res.status(400).json({ message: "HSN code must contain digits only" });
+        return res
+          .status(400)
+          .json({ message: "HSN code must contain digits only" });
       }
       data.hsnCode = hsn; // allow "" to clear / keep optional
     }
@@ -370,11 +368,16 @@ export const createProduct = async (req, res) => {
     data.categories = Array.isArray(data.categories)
       ? data.categories
       : typeof data.categories === "string"
-      ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
-      : [];
+        ? data.categories
+            .split(",")
+            .map((c) => c.trim())
+            .filter(Boolean)
+        : [];
 
     if (!data.categories.length) {
-      return res.status(400).json({ message: "At least one category is required" });
+      return res
+        .status(400)
+        .json({ message: "At least one category is required" });
     }
 
     /* =====================================================
@@ -384,12 +387,6 @@ export const createProduct = async (req, res) => {
       data.attributes = [];
       data.variants = [];
       data.productType = "simple";
-
-      // ✅ optional: keep fabrics/pattern in bulk if provided (no change)
-      // If you want to clear them in bulk, uncomment:
-      // data.fabrics = [];
-      // data.avgFabricConsumption = { value: 0, unit: "meter" };
-      // data.patternNumber = "";
     } else {
       /* ---------------- attribute validation ---------------- */
       await validateAttributes(data.attributes);
@@ -407,6 +404,14 @@ export const createProduct = async (req, res) => {
       });
 
       data.productType = data.variants.length > 0 ? "variable" : "simple";
+
+      // ✅ NEW: normalize variant-level patternNumber
+      if (Array.isArray(data.variants)) {
+        data.variants = data.variants.map((v) => ({
+          ...v,
+          patternNumber: String(v?.patternNumber || "").trim(),
+        }));
+      }
     }
 
     /* =====================================================
@@ -415,8 +420,8 @@ export const createProduct = async (req, res) => {
     data.crossSellProducts = Array.isArray(data.crossSellProducts)
       ? data.crossSellProducts
       : typeof data.crossSellProducts === "string"
-      ? data.crossSellProducts.split(",").map((id) => id.trim())
-      : [];
+        ? data.crossSellProducts.split(",").map((id) => id.trim())
+        : [];
 
     data.crossSellProducts = data.crossSellProducts.filter(isValidObjectId);
 
@@ -433,7 +438,9 @@ export const createProduct = async (req, res) => {
 
     /* ❗ Images REQUIRED only for NON-bulk products */
     if (!isBulk && (!data.images || !data.images.length)) {
-      return res.status(400).json({ message: "At least one product image is required" });
+      return res
+        .status(400)
+        .json({ message: "At least one product image is required" });
     }
 
     /* =====================================================
@@ -461,7 +468,9 @@ export const createProduct = async (req, res) => {
     const full = await pop(Product.findById(created._id));
 
     return res.status(201).json({
-      message: isBulk ? "Bulk draft product created" : "Product created successfully",
+      message: isBulk
+        ? "Bulk draft product created"
+        : "Product created successfully",
       product: applyStockFromVariants(full),
     });
   } catch (e) {
@@ -469,6 +478,7 @@ export const createProduct = async (req, res) => {
     return res.status(400).json({ message: e.message });
   }
 };
+
 
 
 
@@ -668,9 +678,7 @@ export const updateProduct = async (req, res) => {
     if (data.tags !== undefined) data.tags = tagsNorm(data.tags);
     if (data.collections !== undefined) data.collections = arr(data.collections);
 
-    // ✅ patternNumber + fabrics + avgFabricConsumption
-    if (data.patternNumber !== undefined)
-      data.patternNumber = String(data.patternNumber || "").trim();
+
 
     if (data.fabrics !== undefined) data.fabrics = json(data.fabrics, data.fabrics);
 
