@@ -5,9 +5,10 @@ import Attribute from "../Attribute/Attribute.js";
 import slugify from "slugify";
 import mongoose from "mongoose";
 import { uploadToCloudinary } from "../config/cloudinary.js";
-import { generateUniqueSKU } from "../utility/sku.js";
 import { generateVariants } from "../utility/variants.js";
 import Category from "../Category/Category.js";
+
+const SYSTEM_CATEGORIES = new Set(["all-clothing", "new-arrivals","best-sellers"]);
 
 /* ---------------- tiny helpers ---------------- */
 const arr = (v) =>
@@ -21,7 +22,7 @@ const arr = (v) =>
             .map((x) => x.trim())
             .filter(Boolean)
         : [];
-const VARIANT_KEYS = ["size", "color"];
+const VARIANT_KEYS = ["size"];
 const tagsNorm = (v) =>
   arr(v)
     .map((t) => String(t || "").trim().toLowerCase())
@@ -67,8 +68,9 @@ const extractVariantKeys = (variant) => {
   const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
   const pick = (key) =>
     attrs.find((a) => String(a?.key || "").toLowerCase() === key)?.value || "";
-  return { size: pick("size"), color: pick("color") };
+  return { size: pick("size") };
 };
+
 
 
 
@@ -103,17 +105,30 @@ const applyStockFromVariants = (doc) => {
 };
 
 
+const skuSafe = (v) =>
+  String(v || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
 const ensureSKUs = async (data) => {
   if (!data || typeof data !== "object") return data;
 
-  /* ---------------- derive SKU context ---------------- */
-  const categoryName =
-    Array.isArray(data.categories) && data.categories.length
-      ? String(data.categories[0]).toUpperCase()
-      : "CAT";
+  // ✅ pick a "real" category for SKU (ignore default/system categories)
+  const rawCats = Array.isArray(data.categories) ? data.categories : [];
+  const mainCat =
+    rawCats.find((c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase())) ||
+    rawCats[0] ||
+    "CAT";
 
-  const title =
-    String(data.title || data.slug || "PRODUCT").toUpperCase();
+  // ✅ category code = first 3 letters only (alphanumeric-safe)
+  const onlyLetters = skuSafe(mainCat).replace(/[^A-Z]/g, "");
+const categoryCode = (onlyLetters.slice(0, 3) || "CAT");
+
+  // ✅ productCode must exist (you are creating first, then calling ensureSKUs)
+  const productCode = skuSafe(data.productCode || "00000");
 
   const variants = Array.isArray(data.variants) ? data.variants : [];
 
@@ -122,48 +137,34 @@ const ensureSKUs = async (data) => {
   ===================================================== */
   if (!variants.length) {
     data.productType = "simple";
-
-    // keep existing SKU if already present
-    if (!data.sku) {
-      data.sku = await generateUniqueSKU(Product, {
-        brand: "MIR",
-        category: categoryName,
-        title,
-      });
-    }
-
+    data.sku = `${categoryCode}-${productCode}`;
     return data;
   }
 
   /* =====================================================
-     VARIABLE PRODUCT
+     VARIABLE PRODUCT (SIZE ONLY)
   ===================================================== */
   data.productType = "variable";
-
-  // ❗ simple SKU must NOT exist for variable products
   if (data.sku) delete data.sku;
 
-  for (let i = 0; i < variants.length; i++) {
-    const v = variants[i];
-    if (!v || v.sku) continue;
+  // ✅ remove cross-product / duplicates; keep only size variants
+  data.variants = keepOnlySizeVariants(variants);
 
-    const { size, color } = extractVariantKeys(v);
+  data.variants = data.variants.map((v) => {
+    const { size } = extractVariantKeys(v);
+    const sizePart = skuSafe(size);
 
-    variants[i] = {
+    return {
       ...v,
-      sku: await generateUniqueSKU(Product, {
-        brand: "MIR",
-        category: categoryName,
-        title,
-        size: size || undefined,
-        color: color || undefined,
-      }),
+      sku: `${categoryCode}-${productCode}-${sizePart}`,
     };
-  }
+  });
 
-  data.variants = variants;
   return data;
 };
+
+
+
 
 const validateAttributes = async (attributes = []) => {
   if (!Array.isArray(attributes) || !attributes.length) return;
@@ -324,6 +325,42 @@ export const getProductsByTag = async (req, res) => {
 /* helpers already in your file */
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
+const normalizeSize = (s) =>
+  String(s || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+
+const getVariantSize = (variant) => {
+  const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
+  return (
+    attrs.find((a) => String(a?.key || "").toLowerCase() === "size")?.value || ""
+  );
+};
+
+const keepOnlySizeVariants = (variants = []) => {
+  const out = [];
+  const seen = new Set();
+
+  for (const v of Array.isArray(variants) ? variants : []) {
+    const size = normalizeSize(getVariantSize(v));
+    if (!size) continue;
+    if (seen.has(size)) continue;
+
+    // remove color attribute if present
+    const attrs = Array.isArray(v?.attributes) ? v.attributes : [];
+    const cleanedAttrs = attrs.filter(
+      (a) => String(a?.key || "").toLowerCase() !== "color"
+    );
+
+    out.push({ ...v, attributes: cleanedAttrs });
+    seen.add(size);
+  }
+
+  return out;
+};
+
+
 export const createProduct = async (req, res) => {
   try {
     const data = { ...req.body };
@@ -354,7 +391,7 @@ export const createProduct = async (req, res) => {
           .status(400)
           .json({ message: "HSN code must contain digits only" });
       }
-      data.hsnCode = hsn; // allow "" to clear / keep optional
+      data.hsnCode = hsn;
     }
 
     /* ---------------- slug ---------------- */
@@ -368,16 +405,27 @@ export const createProduct = async (req, res) => {
     data.categories = Array.isArray(data.categories)
       ? data.categories
       : typeof data.categories === "string"
-        ? data.categories
-            .split(",")
-            .map((c) => c.trim())
-            .filter(Boolean)
+        ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
         : [];
 
+    // ✅ Remove system categories + optionally convert new-arrivals -> tag
+    const hadNewArrivals = data.categories.some(
+      (c) => String(c).toLowerCase() === "new-arrivals"
+    );
+
+    data.categories = data.categories.filter(
+      (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase())
+    );
+
+    if (hadNewArrivals) {
+      data.tags = Array.from(new Set([...(data.tags || []), "new-arrival"]));
+    }
+
     if (!data.categories.length) {
-      return res
-        .status(400)
-        .json({ message: "At least one category is required" });
+      return res.status(400).json({
+        message:
+          "Select a main category like dress/top/shirt etc (all-clothing/new-arrivals are not allowed as main category)",
+      });
     }
 
     /* =====================================================
@@ -388,7 +436,6 @@ export const createProduct = async (req, res) => {
       data.variants = [];
       data.productType = "simple";
     } else {
-      /* ---------------- attribute validation ---------------- */
       await validateAttributes(data.attributes);
 
       // safety: strip variant image if any incoming
@@ -400,12 +447,15 @@ export const createProduct = async (req, res) => {
       data.variants = generateVariants({
         productAttributes: data.attributes,
         existingVariants: [],
-        variantKeys: VARIANT_KEYS,
+        variantKeys: VARIANT_KEYS, // ✅ ["size"]
       });
+
+      // ✅ HARD SAFETY: keep only 1 variant per size + remove color attribute
+      data.variants = keepOnlySizeVariants(data.variants);
 
       data.productType = data.variants.length > 0 ? "variable" : "simple";
 
-      // ✅ NEW: normalize variant-level patternNumber
+      // ✅ normalize variant-level patternNumber
       if (Array.isArray(data.variants)) {
         data.variants = data.variants.map((v) => ({
           ...v,
@@ -453,11 +503,28 @@ export const createProduct = async (req, res) => {
       data.isActive = false;
     }
 
-    /* ---------------- SKU handling ---------------- */
-    await ensureSKUs(data);
-
-    /* ---------------- create ---------------- */
+    /* ---------------- create FIRST (so productCode exists) ---------------- */
     const created = await Product.create(data);
+
+    /* ---------------- SKU handling AFTER create ---------------- */
+    const skuPayload = created.toObject();
+
+    // ensureSKUs will now generate:
+    // - simple: CAT3-PRODUCTCODE
+    // - variable: CAT3-PRODUCTCODE-SIZE
+    await ensureSKUs(skuPayload);
+
+    created.set({
+      sku: skuPayload.sku,
+      variants: skuPayload.variants,
+      productType: skuPayload.productType,
+      // keep tags/categories if ensureSKUs didn't touch them (it shouldn't)
+    });
+
+    // ✅ IMPORTANT: mark modified for nested variants (if variable)
+    if (Array.isArray(skuPayload.variants)) created.markModified("variants");
+
+    await created.save({ validateBeforeSave: true });
 
     /* prevent self cross-sell (safety net) */
     await Product.updateOne(
@@ -478,6 +545,9 @@ export const createProduct = async (req, res) => {
     return res.status(400).json({ message: e.message });
   }
 };
+
+
+
 
 
 
@@ -678,23 +748,24 @@ export const updateProduct = async (req, res) => {
     if (data.tags !== undefined) data.tags = tagsNorm(data.tags);
     if (data.collections !== undefined) data.collections = arr(data.collections);
 
-
-
     if (data.fabrics !== undefined) data.fabrics = json(data.fabrics, data.fabrics);
 
-    if (data.avgFabricConsumption !== undefined)
+    if (data.avgFabricConsumption !== undefined) {
       data.avgFabricConsumption = json(
         data.avgFabricConsumption,
         data.avgFabricConsumption
       );
+    }
 
-    // ✅ NEW: HSN CODE normalize + validate (digits only, optional)
+    // ✅ HSN CODE normalize + validate (digits only, optional)
     if (data.hsnCode !== undefined) {
       const hsn = String(data.hsnCode ?? "").trim();
       if (hsn !== "" && !/^\d+$/.test(hsn)) {
-        return res.status(400).json({ message: "HSN code must contain digits only" });
+        return res
+          .status(400)
+          .json({ message: "HSN code must contain digits only" });
       }
-      data.hsnCode = hsn; // allow "" to clear / keep optional
+      data.hsnCode = hsn;
     }
 
     /* ---------------- fetch existing ---------------- */
@@ -727,12 +798,27 @@ export const updateProduct = async (req, res) => {
       data.categories = Array.isArray(data.categories)
         ? data.categories
         : typeof data.categories === "string"
-        ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
-        : [];
+          ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
+          : [];
+
+      // ✅ Remove system categories + optionally convert new-arrivals -> tag
+      const hadNewArrivals = data.categories.some(
+        (c) => String(c).toLowerCase() === "new-arrivals"
+      );
+
+      data.categories = data.categories.filter(
+        (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase())
+      );
+
+     if (hadNewArrivals) {
+  const existingTags = tagsNorm(data.tags ?? existing.tags); // ✅ safe fallback
+  data.tags = Array.from(new Set([...existingTags, "new-arrival"]));
+}
 
       if (!data.categories.length) {
         return res.status(400).json({
-          message: "At least one category is required",
+          message:
+            "Select a main category like dress/top/shirt etc (all-clothing/new-arrivals are not allowed as main category)",
         });
       }
     }
@@ -760,10 +846,17 @@ export const updateProduct = async (req, res) => {
         sku: v.sku,
         barcode: v.barcode ?? "",
         weight: typeof v.weight === "number" ? v.weight : 0,
+
+        // ✅ keep variant-level patternNumber
+        patternNumber: String(v?.patternNumber || "").trim(),
+
         // ❌ stock removed
         // ❌ isInStock removed
         attributes: Array.isArray(v.attributes) ? v.attributes : [],
       }));
+
+      // ✅ HARD SAFETY: keep only 1 variant per size + remove color attribute
+      data.variants = keepOnlySizeVariants(data.variants);
     } else {
       // if not sent, do not touch variants
       delete data.variants;
@@ -781,8 +874,8 @@ export const updateProduct = async (req, res) => {
       data.crossSellProducts = Array.isArray(data.crossSellProducts)
         ? data.crossSellProducts
         : typeof data.crossSellProducts === "string"
-        ? data.crossSellProducts.split(",").map((id) => id.trim())
-        : [];
+          ? data.crossSellProducts.split(",").map((id) => id.trim())
+          : [];
 
       data.crossSellProducts = data.crossSellProducts.filter(isValidObjectId);
 
@@ -812,6 +905,9 @@ export const updateProduct = async (req, res) => {
       variants: Array.isArray(data.variants) ? data.variants : existing.variants,
     };
 
+    // ensureSKUs will generate:
+    // - simple: CAT3-PRODUCTCODE
+    // - variable: CAT3-PRODUCTCODE-SIZE
     await ensureSKUs(skuData);
 
     data.sku = skuData.sku;
@@ -828,10 +924,8 @@ export const updateProduct = async (req, res) => {
       existing.markModified("avgFabricConsumption");
     if (data.images !== undefined) existing.markModified("images");
 
-    // ✅ IMPORTANT: don't use pop() here
     const saved = await existing.save({ validateBeforeSave: true });
 
-    // ✅ If you need population similar to pop(), do it on the document:
     const updated = await saved.populate([
       { path: "collections" },
       { path: "offer" },
@@ -851,6 +945,8 @@ export const updateProduct = async (req, res) => {
     res.status(500).json({ message: e.message });
   }
 };
+
+
 
 
 

@@ -279,7 +279,20 @@ export const createOrder = async (req, res) => {
   const normEmail = (v) => str(v).trim().toLowerCase();
   const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim();
 
-  // ✅ identity for coupon validation (email preferred, else phone)
+  const isNumericLike = (v) => {
+    const s = str(v).trim();
+    return s.length > 0 && /^[0-9]+$/.test(s);
+  };
+
+  const sanitizeSelectedColor = (color, productCode = "") => {
+    const c = str(color).trim();
+    const pc = str(productCode).trim();
+    if (!c) return "";
+    if (isNumericLike(c)) return ""; // kills "00218"
+    if (pc && c.toUpperCase() === pc.toUpperCase()) return ""; // kills productCode
+    return c;
+  };
+
   const buildCouponIdentity = ({ email, phone }) => {
     const e = normEmail(email);
     if (e && e.includes("@")) return `email:${e}`;
@@ -298,39 +311,41 @@ export const createOrder = async (req, res) => {
 
   const normalizeVariantAttributes = (variant) => {
     const raw = variant?.attributes;
-
     if (Array.isArray(raw)) {
       return raw
         .filter((a) => a?.key != null && a?.value != null)
         .map((a) => ({ key: str(a.key), value: str(a.value) }));
     }
-
     if (raw && typeof raw === "object") {
       return Object.entries(raw).map(([k, v]) => ({ key: str(k), value: str(v) }));
     }
-
     return [];
   };
 
   const getSizeFromSku = (sku) => {
     const parts = str(sku).toUpperCase().split("-");
-    const sizeOrder = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+    const sizes = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
     for (let i = parts.length - 1; i >= 0; i--) {
-      if (sizeOrder.includes(parts[i])) return parts[i];
+      if (sizes.includes(parts[i])) return parts[i];
     }
     return "";
   };
 
-  const getColorFromSku = (sku) => {
+  // NOTE: your SKU is like FEA-00218-L (no color), so protect numeric/productCode tokens.
+  const getColorFromSku = (sku, productCode = "") => {
     const parts = str(sku).toUpperCase().split("-");
     if (parts.length < 2) return "";
-    const sizeOrder = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+
+    const sizes = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
     const maybeColor = parts[parts.length - 2];
-    if (sizeOrder.includes(maybeColor)) return "";
+
+    if (sizes.includes(maybeColor)) return "";
+    if (/^[0-9]+$/.test(maybeColor)) return "";
+    if (productCode && maybeColor === str(productCode).toUpperCase()) return "";
+
     return maybeColor.toLowerCase();
   };
 
-  // ✅ compute coupon discount server-side (email/phone based)
   const validateAndComputeCoupon = async ({ code, cartTotal, identity }) => {
     if (!code) return { couponSnapshot: null, couponDiscount: 0 };
 
@@ -351,7 +366,6 @@ export const createOrder = async (req, res) => {
       throw new Error("Coupon usage limit has been reached.");
     }
 
-    // ✅ per-customer limit uses email/phone identity
     const perUserLimit = num(couponDoc.usageLimitPerCustomer || 1);
     const usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
     const usedTimes = identity ? usedBy.filter((x) => str(x) === identity).length : 0;
@@ -360,7 +374,6 @@ export const createOrder = async (req, res) => {
       throw new Error("You have already used this coupon.");
     }
 
-    // ✅ discount calc
     let discountAmount = 0;
     if (couponDoc.discountType === "percentage") {
       discountAmount = (num(cartTotal) * num(couponDoc.discountValue)) / 100;
@@ -377,7 +390,7 @@ export const createOrder = async (req, res) => {
     return {
       couponSnapshot: { code: couponCode, discount: discountAmount },
       couponDiscount: discountAmount,
-      couponDoc, // for marking used later
+      couponDoc,
     };
   };
 
@@ -387,7 +400,7 @@ export const createOrder = async (req, res) => {
       shippingAddressId,
       billingAddressId,
       items,
-      coupon, // ✅ expects { code } now
+      coupon, // expects { code }
       shippingFee = 0,
       tax = 0,
       paymentMethod = "cod",
@@ -398,9 +411,6 @@ export const createOrder = async (req, res) => {
 
     const pm = str(paymentMethod).toLowerCase();
 
-    /* =========================
-       Hard validations
-    ========================= */
     if (!mongoose.Types.ObjectId.isValid(customerId))
       return res.status(400).json({ message: "Invalid customerId" });
 
@@ -416,9 +426,6 @@ export const createOrder = async (req, res) => {
     if (!["cod", "razorpay"].includes(pm))
       return res.status(400).json({ message: "Invalid paymentMethod. Allowed: cod | razorpay" });
 
-    /* =========================
-       Transaction
-    ========================= */
     await session.withTransaction(async () => {
       const shippingAddress = await Address.findById(shippingAddressId).session(session);
       if (!shippingAddress) throw new Error("Shipping address not found");
@@ -430,22 +437,16 @@ export const createOrder = async (req, res) => {
       const shippingAddressSnapshot = buildAddressSnapshot(shippingAddress);
       const billingAddressSnapshot = buildAddressSnapshot(billingAddress);
 
-      // ✅ identity from shipping snapshot (guest works too)
       const identity = buildCouponIdentity({
         email: shippingAddressSnapshot?.email,
         phone: shippingAddressSnapshot?.phone,
       });
 
-      // ✅ validate product ids
       const productIds = [...new Set(items.map((i) => str(i?.productId)).filter(Boolean))];
       const invalidProductId = productIds.find((id) => !isObjectId(id));
       if (invalidProductId) throw new Error(`Invalid productId: ${invalidProductId}`);
 
-      // ✅ fetch products
-      const products = await Product.find({ _id: { $in: productIds } })
-        .session(session)
-        .lean();
-
+      const products = await Product.find({ _id: { $in: productIds } }).session(session).lean();
       const productMap = new Map(products.map((p) => [str(p._id), p]));
 
       const normalizedItems = [];
@@ -490,30 +491,29 @@ export const createOrder = async (req, res) => {
         const selectedSize =
           pickAttr(attrs, ["size", "sizes", "shirt_size"]) || getSizeFromSku(variant?.sku);
 
-        const selectedColor =
-          pickAttr(attrs, ["color", "colour", "color_name"]) || getColorFromSku(variant?.sku);
+        const selectedColorRaw =
+          pickAttr(attrs, ["color", "colour", "color_name"]) ||
+          getColorFromSku(variant?.sku, product.productCode);
+
+        const selectedColor = sanitizeSelectedColor(selectedColorRaw, product.productCode);
 
         normalizedItems.push({
           productId: product._id,
           productSnapshot: {
-  productCode: product.productCode || "",
-  title: product.title,
-  slug: product.slug || "",
-  thumbnail: product.thumbnail || "",
-  images: Array.isArray(product.images) ? product.images : [],
-  category: product.category || null,
-  subcategory: product.subcategory || null,
-  productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
-  sku: product.sku || "",
-  tags: Array.isArray(product.tags) ? product.tags : [],
-
-  // ✅ NEW
-  hsnCode: String(product.hsnCode || "62105000"),
-
-  weight: Number(product.weight ?? 0),
-  currency: product.currency || currency,
-},
-
+            productCode: product.productCode || "",
+            title: product.title,
+            slug: product.slug || "",
+            thumbnail: product.thumbnail || "",
+            images: Array.isArray(product.images) ? product.images : [],
+            category: product.category || null,
+            subcategory: product.subcategory || null,
+            productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
+            sku: product.sku || "",
+            tags: Array.isArray(product.tags) ? product.tags : [],
+            hsnCode: String(product.hsnCode || "62105000"),
+            weight: Number(product.weight ?? 0),
+            currency: product.currency || currency,
+          },
           variant: {
             variantId: variant?._id || null,
             sku: variant?.sku || "",
@@ -530,9 +530,6 @@ export const createOrder = async (req, res) => {
         });
       }
 
-      /* =========================
-         Stock reduction
-      ========================= */
       for (const it of normalizedItems) {
         const variantId = it?.variant?.variantId;
 
@@ -549,13 +546,9 @@ export const createOrder = async (req, res) => {
         if (!result.modifiedCount) throw new Error("Stock update failed");
       }
 
-      /* =========================
-         Totals + Discounts (✅ FIXED)
-      ========================= */
       const subtotal = computedSubtotal;
       const totalAmount = subtotal + num(shippingFee) + num(tax);
 
-      // ✅ coupon discount server-side (email/phone based)
       const couponCode = coupon && typeof coupon === "object" ? str(coupon.code) : "";
       const { couponSnapshot, couponDiscount, couponDoc } = await validateAndComputeCoupon({
         code: couponCode,
@@ -563,10 +556,8 @@ export const createOrder = async (req, res) => {
         identity,
       });
 
-      // ✅ 5% extra off ONLY for Razorpay
       const razorpayExtraDiscount = pm === "razorpay" ? Math.round(subtotal * 0.05) : 0;
 
-      // ✅ final discount
       let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
       if (finalDiscount > totalAmount) finalDiscount = totalAmount;
 
@@ -585,9 +576,6 @@ export const createOrder = async (req, res) => {
         couponIdentity: identity || "",
       };
 
-      /* =========================
-         Create Order
-      ========================= */
       const [order] = await Order.create(
         [
           {
@@ -596,15 +584,12 @@ export const createOrder = async (req, res) => {
             billingAddressSnapshot,
             items: normalizedItems,
             subtotal,
-
             discount: finalDiscount,
             coupon: couponSnapshot ? { ...couponSnapshot, identity } : null,
-
             shippingFee,
             tax,
             totalAmount,
             finalPayable,
-
             currency,
             paymentMethod: pm,
             paymentStatus: "pending",
@@ -618,9 +603,8 @@ export const createOrder = async (req, res) => {
         { session }
       );
 
-      // ✅ IMPORTANT:
-      // COD: mark coupon used immediately (order is accepted without online payment)
-      // Razorpay: DO NOT mark used here; mark used after payment success webhook/callback
+      // COD: mark coupon used immediately
+      // Razorpay: mark used after payment success
       if (couponDoc && couponSnapshot?.code && identity && pm === "cod") {
         couponDoc.usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
         couponDoc.usedBy.push(identity);
@@ -631,9 +615,7 @@ export const createOrder = async (req, res) => {
       req.__createdOrder = order;
     });
 
-    /* =========================
-       Shiprocket booking (COD only)
-    ========================= */
+    // Shiprocket booking (COD only)
     try {
       const createdOrder = await Order.findById(req.__createdOrder._id);
       if (createdOrder?.paymentMethod === "cod") {
@@ -644,13 +626,6 @@ export const createOrder = async (req, res) => {
     }
 
     const finalOrder = await Order.findById(req.__createdOrder._id).lean();
-
-    try {
-      triggerOrderEmails(finalOrder);
-    } catch (e) {
-      console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
-    }
-
     return res.status(201).json({ message: "Order created successfully", order: finalOrder });
   } catch (error) {
     console.error("❌ Create Order Error:", error);
@@ -659,6 +634,7 @@ export const createOrder = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 
