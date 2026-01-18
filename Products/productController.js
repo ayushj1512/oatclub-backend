@@ -7,6 +7,7 @@ import mongoose from "mongoose";
 import { uploadToCloudinary } from "../config/cloudinary.js";
 import { generateVariants } from "../utility/variants.js";
 import Category from "../Category/Category.js";
+import Collection from "../Collection/Collection.js";
 
 const SYSTEM_CATEGORIES = new Set(["all-clothing", "new-arrivals","best-sellers"]);
 
@@ -1568,3 +1569,116 @@ export const updateProductFabrics = async (req, res) => {
   }
 };
 
+
+/* ============================================================
+   ✅ GET PRODUCTS BY COLLECTION (slug OR id)
+   GET /api/products/by-collection/:collection
+   Example:
+   /api/products/by-collection/summer-sale
+============================================================ */
+export const getProductsByCollection = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      category,
+      tags,
+      minPrice,
+      maxPrice,
+      isActive,
+      search,
+      sort,
+      sku,
+    } = req.query;
+
+    const collectionParam = req.params.collection;
+    if (!collectionParam) {
+      return res.status(400).json({ message: "Collection is required" });
+    }
+
+    /* ---------------------------------------------------------
+       ✅ Resolve collection by ID OR slug
+    --------------------------------------------------------- */
+    let collectionDoc = null;
+
+    if (mongoose.Types.ObjectId.isValid(collectionParam)) {
+      collectionDoc = await Collection.findById(collectionParam);
+    }
+
+    if (!collectionDoc) {
+      collectionDoc = await Collection.findOne({
+        slug: String(collectionParam).toLowerCase(),
+      });
+    }
+
+    if (!collectionDoc) {
+      return res.status(404).json({ message: "Collection not found" });
+    }
+
+    const filters = {
+      collections: collectionDoc._id,
+    };
+
+    /* ---------------- optional filters ---------------- */
+    if (category) {
+      const cats = String(category)
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean);
+      if (cats.length) filters.categories = { $in: cats };
+    }
+
+    const t = tagsNorm(tags);
+    if (t.length) filters.tags = { $in: t };
+
+    if (isActive !== undefined) {
+      filters.isActive = isActive === "true";
+    }
+
+    if (sku) {
+      filters.$or = [{ sku }, { "variants.sku": sku }];
+    }
+
+    if (minPrice || maxPrice) {
+      filters.price = {};
+      if (minPrice) filters.price.$gte = Number(minPrice);
+      if (maxPrice) filters.price.$lte = Number(maxPrice);
+    }
+
+    if (search) filters.$text = { $search: search };
+
+    const sortMap = {
+      price_asc: { price: 1 },
+      price_desc: { price: -1 },
+      newest: { createdAt: -1 },
+      rating: { averageRating: -1 },
+      popularity: { "analytics.views": -1 },
+    };
+
+    const safeLimit = Math.min(200, Math.max(1, Number(limit)));
+    const skip = (Number(page) - 1) * safeLimit;
+    const sortObj = sortMap[sort] || { createdAt: -1 };
+
+    const docs = await pop(Product.find(filters))
+      .sort(sortObj)
+      .skip(skip)
+      .limit(safeLimit);
+
+    const total = await Product.countDocuments(filters);
+
+    return res.json({
+      collection: {
+        _id: collectionDoc._id,
+        name: collectionDoc.name,
+        slug: collectionDoc.slug,
+      },
+      total,
+      page: Number(page),
+      pages: Math.ceil(total / safeLimit),
+      products: docs.map(applyStockFromVariants),
+    });
+  } catch (e) {
+    console.error("❌ Get Products By Collection Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};

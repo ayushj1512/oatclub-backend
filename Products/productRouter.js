@@ -12,7 +12,7 @@ import {
 
   // ✅ NEW: multiple ids fetch
   getProductsByIds,
-
+getProductsByCollection,
   updateProduct,
   deleteProduct,
   bulkDeleteProducts,
@@ -54,6 +54,7 @@ router.get("/by-category/:category", getProductsByCategory);
 // ✅ ✅ NEW: Alternative fetch-by-category (param + query supported)
 router.get("/fetch-by-category/:category", fetchProductsByCategory);
 router.get("/fetch-by-category", fetchProductsByCategory);
+router.get("/by-collection/:collection", getProductsByCollection);
 
 // ✅ ✅ NEW: Products by multiple IDs (single fetch)
 router.post("/by-ids", getProductsByIds);
@@ -105,7 +106,6 @@ router.post("/", createProduct);
 router.patch("/:id", updateProduct);
 router.put("/:id", updateProduct);
 router.delete("/:id", deleteProduct);
-
 /* ===========================================================
    FALLBACK (Slug OR ID) — MUST ALWAYS BE LAST
 =========================================================== */
