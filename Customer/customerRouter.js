@@ -11,6 +11,11 @@ import {
 
   // ✅ NEW
   checkCustomerExists,
+
+  // ✅ CART ADDS (NEW)
+  addCartAddByCustomerId,
+  removeCartAddByCustomerId,
+  mergeGuestCartAddsByCustomerId,
 } from "../Customer/customerController.js";
 
 const router = express.Router();
@@ -42,6 +47,23 @@ router.get("/", getAllCustomers);
  */
 router.get("/by-customer-id/:customerId", getCustomerByCustomerId);
 router.get("/by-firebase/:firebaseUID", getCustomerByFirebaseUID);
+
+/**
+ * ---------------------------------------------------------
+ * ✅ CART ADDS ROUTES (customer _id based)
+ * ---------------------------------------------------------
+ * POST /api/customers/:id/cart-adds/add
+ * Body: { productCode }
+ *
+ * POST /api/customers/:id/cart-adds/remove
+ * Body: { productCode }
+ *
+ * POST /api/customers/:id/cart-adds/merge
+ * Body: { productCodes: ["00131","00218"] }
+ */
+router.post("/:id/cart-adds/add", addCartAddByCustomerId);
+router.post("/:id/cart-adds/remove", removeCartAddByCustomerId);
+router.post("/:id/cart-adds/merge", mergeGuestCartAddsByCustomerId);
 
 /**
  * ✅ Get customer by Mongo ID

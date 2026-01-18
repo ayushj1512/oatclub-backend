@@ -519,3 +519,147 @@ export const checkCustomerExists = async (req, res) => {
     });
   }
 };
+
+/**
+ * ---------------------------------------------------------
+ * ✅ Add Cart Add (productCode) by customer _id
+ * @route POST /api/customers/:id/cart-adds/add
+ * Body: { productCode }
+ * ---------------------------------------------------------
+ */
+export const addCartAddByCustomerId = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { productCode = "" } = req.body;
+
+    const code = String(productCode || "").trim();
+    if (!code) {
+      return res.status(400).json({ message: "productCode is required" });
+    }
+
+    const customer = await Customer.findById(id);
+    if (!customer) return res.status(404).json({ message: "Customer not found" });
+
+    // ✅ ensure array
+    customer.cartAdds = Array.isArray(customer.cartAdds) ? customer.cartAdds : [];
+
+    // ✅ remove if already exists
+    customer.cartAdds = customer.cartAdds.filter((x) => x?.productCode !== code);
+
+    // ✅ add to front (recent-first)
+    customer.cartAdds.unshift({
+      productCode: code,
+      lastAddedAt: new Date(),
+    });
+
+    // ✅ cap list (keep light)
+    customer.cartAdds = customer.cartAdds.slice(0, 80);
+
+    await customer.save();
+
+    return res.status(200).json({
+      message: "cartAdds updated",
+      cartAdds: customer.cartAdds,
+    });
+  } catch (err) {
+    console.error("Add CartAdd Error:", err);
+    return res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+/**
+ * ---------------------------------------------------------
+ * ✅ Remove Cart Add (productCode) by customer _id
+ * @route POST /api/customers/:id/cart-adds/remove
+ * Body: { productCode }
+ * ---------------------------------------------------------
+ */
+export const removeCartAddByCustomerId = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { productCode = "" } = req.body;
+
+    const code = String(productCode || "").trim();
+    if (!code) {
+      return res.status(400).json({ message: "productCode is required" });
+    }
+
+    const customer = await Customer.findById(id);
+    if (!customer) return res.status(404).json({ message: "Customer not found" });
+
+    customer.cartAdds = Array.isArray(customer.cartAdds) ? customer.cartAdds : [];
+
+    const before = customer.cartAdds.length;
+    customer.cartAdds = customer.cartAdds.filter((x) => x?.productCode !== code);
+    const after = customer.cartAdds.length;
+
+    if (before !== after) {
+      await customer.save();
+    }
+
+    return res.status(200).json({
+      message: "cartAdds updated",
+      removed: before !== after,
+      cartAdds: customer.cartAdds,
+    });
+  } catch (err) {
+    console.error("Remove CartAdd Error:", err);
+    return res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+/**
+ * ---------------------------------------------------------
+ * ✅ Merge Guest Cart Adds after login (customer _id)
+ * @route POST /api/customers/:id/cart-adds/merge
+ * Body: { productCodes: ["00131","00218"] }
+ * ---------------------------------------------------------
+ */
+export const mergeGuestCartAddsByCustomerId = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { productCodes = [] } = req.body;
+
+    const codes = (Array.isArray(productCodes) ? productCodes : [])
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+
+    if (!codes.length) {
+      return res.status(200).json({
+        message: "Nothing to merge",
+        cartAdds: [],
+      });
+    }
+
+    const customer = await Customer.findById(id);
+    if (!customer) return res.status(404).json({ message: "Customer not found" });
+
+    customer.cartAdds = Array.isArray(customer.cartAdds) ? customer.cartAdds : [];
+
+    // existing codes from DB
+    const existing = customer.cartAdds
+      .map((x) => String(x?.productCode || "").trim())
+      .filter(Boolean);
+
+    // ✅ guest recent-first, then existing
+    const mergedUnique = [...codes, ...existing]
+      .filter((v, i, arr) => arr.indexOf(v) === i)
+      .slice(0, 80);
+
+    // ✅ rebuild with fresh timestamps (simple)
+    customer.cartAdds = mergedUnique.map((c) => ({
+      productCode: c,
+      lastAddedAt: new Date(),
+    }));
+
+    await customer.save();
+
+    return res.status(200).json({
+      message: "cartAdds merged",
+      cartAdds: customer.cartAdds,
+    });
+  } catch (err) {
+    console.error("Merge Guest CartAdds Error:", err);
+    return res.status(500).json({ message: "Server error", error: err.message });
+  }
+};

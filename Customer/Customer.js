@@ -72,6 +72,18 @@ const customerSchema = new mongoose.Schema(
     state: { type: String, trim: true, default: "" },
     city: { type: String, trim: true, default: "" },
 
+   cartAdds: {
+  type: [
+    {
+      productCode: { type: String, trim: true, required: true },
+      lastAddedAt: { type: Date, default: Date.now },
+    },
+  ],
+  default: [],
+},
+
+
+
     cart: {
       activeCartId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -189,6 +201,7 @@ customerSchema.index({ customerId: 1 });
 customerSchema.index({ email: 1 });
 customerSchema.index({ ageGroup: 1 });
 customerSchema.index({ country: 1 });
+customerSchema.index({ "cartAdds.productCode": 1 });
 
 export default mongoose.models.Customer ||
   mongoose.model("Customer", customerSchema);
