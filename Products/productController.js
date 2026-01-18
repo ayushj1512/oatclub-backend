@@ -1481,3 +1481,90 @@ export const fetchProductsByCategory = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
+
+// PATCH /api/products/:id/fabrics
+export const updateProductFabrics = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Accept both: body.fabrics array OR JSON string
+    const fabricsRaw = req.body?.fabrics;
+
+    const fabrics =
+      typeof fabricsRaw === "string"
+        ? (() => {
+            try { return JSON.parse(fabricsRaw); } catch { return null; }
+          })()
+        : fabricsRaw;
+
+    if (!Array.isArray(fabrics)) {
+      return res.status(400).json({ message: "fabrics must be an array" });
+    }
+
+    // Basic validation + normalize
+    const normalized = fabrics.map((f) => ({
+      fabricCode: String(f?.fabricCode || "").trim(),
+      role: String(f?.role || "main").trim(),
+      consumption: {
+        value: Number(f?.consumption?.value ?? 0),
+        unit: String(f?.consumption?.unit || "meter").trim(),
+      },
+      notes: String(f?.notes || "").trim(),
+    }));
+
+    // Validate required + enums
+    const roleSet = new Set(["main", "lining", "contrast", "padding", "other"]);
+    const unitSet = new Set(["meter", "gram"]);
+
+    for (const f of normalized) {
+      if (!f.fabricCode) {
+        return res.status(400).json({ message: "fabricCode is required" });
+      }
+      if (!roleSet.has(f.role)) {
+        return res.status(400).json({ message: `Invalid role: ${f.role}` });
+      }
+      if (!unitSet.has(f.consumption.unit)) {
+        return res
+          .status(400)
+          .json({ message: `Invalid unit: ${f.consumption.unit}` });
+      }
+      if (Number.isNaN(f.consumption.value) || f.consumption.value < 0) {
+        return res
+          .status(400)
+          .json({ message: "consumption.value must be >= 0" });
+      }
+    }
+
+    // Prevent duplicates (fabricCode + role)
+    const seen = new Set();
+    for (const f of normalized) {
+      const key = `${f.fabricCode}__${f.role}`;
+      if (seen.has(key)) {
+        return res
+          .status(400)
+          .json({ message: `Duplicate fabric entry: ${f.fabricCode} (${f.role})` });
+      }
+      seen.add(key);
+    }
+
+    const updated = await pop(
+      Product.findByIdAndUpdate(
+        id,
+        { $set: { fabrics: normalized } },
+        { new: true, runValidators: true }
+      )
+    );
+
+    if (!updated) return res.status(404).json({ message: "Product not found" });
+
+    return res.json({
+      message: "Fabrics updated successfully",
+      product: applyStockFromVariants(updated),
+    });
+  } catch (e) {
+    console.error("❌ updateProductFabrics Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};
+

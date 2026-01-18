@@ -24,6 +24,9 @@ import {
 
   // ✅ NEW: bulk collection sync
   bulkSyncCollectionOnProducts,
+
+  // ✅ NEW: fabrics update route
+  updateProductFabrics,
 } from "./productController.js";
 
 /* ---------------- BULK CONTROLLER ---------------- */
@@ -93,6 +96,9 @@ router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 router.post("/:id/update-ratings", updateProductRatings);
 router.patch("/:id/analytics", incrementProductAnalytics);
 router.patch("/:id/variant-stock", updateVariantStock);
+
+// ✅ NEW: update fabrics + consumption (dedicated)
+router.patch("/:id/fabrics", updateProductFabrics);
 
 router.post("/", createProduct);
 
