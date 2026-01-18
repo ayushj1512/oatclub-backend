@@ -1637,36 +1637,23 @@ async function autoBookShiprocketForOrder(order) {
       return console.log(`${TAG} ⚠️ SKIP: No courier available`);
     }
 
-    // 3) Build payload + ✅ FORCE AMOUNT + PAYMENT METHOD FIX
+    // 3) Build payload (MRP + per-unit discount + HSN comes from buildShiprocketPayload)
     const payload = buildShiprocketPayload(order);
 
-    // ✅ Shiprocket wants "COD" or "Prepaid" (not "razorpay")
+    // ✅ Shiprocket wants "COD" or "Prepaid"
     payload.payment_method = isCOD ? "COD" : "Prepaid";
 
-    // ✅ Ensure invoice amount matches your order math
-    // Shiprocket sub_total should reflect discounts/tax (shipping excluded)
-    // so that: sub_total + shipping_charges = finalPayable
-    const srSubTotal = Math.max(
-      0,
-      Number(order.subtotal || 0) + Number(order.tax || 0) - Number(order.discount || 0)
-    );
-
-    payload.sub_total = srSubTotal;
-
-    // shipping_charges = shipping fee (if you charge)
+    // ✅ Shipping charges from your order
     payload.shipping_charges = Number(order.shippingFee || 0);
 
-    // total_discount = ALL discounts (coupon + razorpay extra) -> your order.discount
-    payload.total_discount = Number(order.discount || 0);
-
-    // ✅ Avoid accidental extra additions (only use if you intentionally add something)
-    if (payload.transaction_charges == null) payload.transaction_charges = 0;
-
-    // ✅ Force collectable correctly
+    // ✅ Collectable amount (COD)
     payload.collectable_amount = isCOD ? Number(order.finalPayable || 0) : 0;
 
-    // ✅ Sanity log (this will immediately show why mismatch happens)
-    console.log(`${TAG} 🧾 AMOUNT CHECK`, {
+    // ✅ Avoid accidental extra additions
+    if (payload.transaction_charges == null) payload.transaction_charges = 0;
+
+    // ✅ Sanity log (MRP model)
+    console.log(`${TAG} 🧾 AMOUNT CHECK (MRP model)`, {
       orderSubtotal: Number(order.subtotal || 0),
       shippingFee: Number(order.shippingFee || 0),
       tax: Number(order.tax || 0),
@@ -1675,22 +1662,34 @@ async function autoBookShiprocketForOrder(order) {
       finalPayable: Number(order.finalPayable || 0),
 
       payload_payment_method: payload.payment_method,
-      payload_sub_total: payload.sub_total,
-      payload_shipping_charges: payload.shipping_charges,
-      payload_total_discount: payload.total_discount,
-      payload_transaction_charges: payload.transaction_charges,
-      payload_collectable_amount: payload.collectable_amount,
+      payload_sub_total: Number(payload.sub_total || 0), // MRP subtotal (pre-discount)
+      payload_total_discount: Number(payload.total_discount || 0), // from items sum
+      payload_shipping_charges: Number(payload.shipping_charges || 0),
+      payload_transaction_charges: Number(payload.transaction_charges || 0),
+      payload_collectable_amount: Number(payload.collectable_amount || 0),
 
-      // ✅ expected match
-      shiprocketExpectedFinal:
-        Number(payload.sub_total || 0) + Number(payload.shipping_charges || 0),
+      // This is NOT your payable; just useful to see what you sent:
+      payload_mrp_minus_discount:
+        Number(payload.sub_total || 0) - Number(payload.total_discount || 0),
+
+      // For COD, this should match finalPayable (if tax=0 and discount allocation matches):
+      expectedPayableFromPayload:
+        Math.max(
+          0,
+          (Number(payload.sub_total || 0) - Number(payload.total_discount || 0)) +
+            Number(payload.shipping_charges || 0) +
+            Number(order.tax || 0) // NOTE: only if you want to represent tax separately
+        ),
     });
 
     console.log(`${TAG} 📦 Creating shipment...`, {
       order_id: payload?.order_id,
       payment_method: payload?.payment_method,
       weight: payload?.weight || totalWeight,
+      items: payload?.order_items?.length || 0,
     });
+
+    
 
     const shipment = await createShipment(payload);
 
