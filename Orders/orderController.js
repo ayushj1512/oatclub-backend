@@ -1556,6 +1556,8 @@ async function autoBookShiprocketForOrder(order) {
       return console.log(`${TAG} ❌ SKIP: shipping pincode missing`);
     if (!process.env.SHIPROCKET_PICKUP_PINCODE)
       return console.log(`${TAG} ❌ SKIP: SHIPROCKET_PICKUP_PINCODE missing`);
+    if (!process.env.SHIPROCKET_PICKUP_LOCATION)
+      return console.log(`${TAG} ❌ SKIP: SHIPROCKET_PICKUP_LOCATION missing`);
 
     // already booked?
     if (order?.shipment?.shiprocket?.awb)
@@ -1598,6 +1600,7 @@ async function autoBookShiprocketForOrder(order) {
           ...(order.trackingDetails || {}),
           trackingId: awb,
           courierName: order.shipment.shiprocket.courierName,
+          trackingUrl: order.shipment.shiprocket.trackingUrl,
         };
 
         await order.save();
@@ -1625,10 +1628,10 @@ async function autoBookShiprocketForOrder(order) {
       }, 0) || 0.5;
 
     // 2) Serviceability
-    const isCOD = order.paymentMethod === "cod";
+    const isCOD = String(order.paymentMethod || "").toLowerCase() === "cod";
     const couriers = await checkServiceability({
       pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE,
-      deliveryPincode: order.shippingAddressSnapshot.pincode,
+      deliveryPincode: String(order.shippingAddressSnapshot.pincode || ""),
       weight: totalWeight,
       cod: isCOD ? 1 : 0,
     });
@@ -1637,7 +1640,7 @@ async function autoBookShiprocketForOrder(order) {
       return console.log(`${TAG} ⚠️ SKIP: No courier available`);
     }
 
-    // 3) Build payload (MRP + per-unit discount + HSN comes from buildShiprocketPayload)
+    // 3) Build payload (✅ NET model should be implemented in buildShiprocketPayload)
     const payload = buildShiprocketPayload(order);
 
     // ✅ Shiprocket wants "COD" or "Prepaid"
@@ -1652,34 +1655,65 @@ async function autoBookShiprocketForOrder(order) {
     // ✅ Avoid accidental extra additions
     if (payload.transaction_charges == null) payload.transaction_charges = 0;
 
-    // ✅ Sanity log (MRP model)
-    console.log(`${TAG} 🧾 AMOUNT CHECK (MRP model)`, {
+    // ✅ STRONG CONSISTENCY GUARD (NET)
+    if (isCOD) {
+      const expectedSubTotal = Math.max(
+        0,
+        Number(order.finalPayable || 0) -
+          Number(order.shippingFee || 0) -
+          Number(order.tax || 0)
+      );
+
+      // If rounding drift/mismatch happens, force to expected
+      if (Number.isFinite(expectedSubTotal) && Math.abs(Number(payload.sub_total || 0) - expectedSubTotal) >= 1) {
+        payload.sub_total = expectedSubTotal;
+
+        // keep items aligned (simple rebalance)
+        if (Array.isArray(payload.order_items) && payload.order_items.length) {
+          const totalUnits = payload.order_items.reduce((s, x) => s + Number(x.units || 0), 0) || 1;
+          const perUnit = Math.round(expectedSubTotal / totalUnits);
+
+          // reset all to perUnit first
+          payload.order_items = payload.order_items.map((x) => ({
+            ...x,
+            selling_price: String(perUnit),
+            discount: "0",
+          }));
+
+          // adjust last item to fix remainder
+          const after = payload.order_items.reduce((s, x) => s + (Number(x.selling_price) * Number(x.units)), 0);
+          const delta = expectedSubTotal - after; // could be +/- small
+          const last = payload.order_items[payload.order_items.length - 1];
+          const lastUnits = Number(last.units || 1);
+          const lastPrice = Number(last.selling_price || 0);
+          payload.order_items[payload.order_items.length - 1] = {
+            ...last,
+            selling_price: String(Math.max(0, lastPrice + Math.round(delta / lastUnits))),
+          };
+        }
+      }
+    }
+
+    // ✅ Sanity log (NET model)
+    console.log(`${TAG} 🧾 AMOUNT CHECK (NET model)`, {
       orderSubtotal: Number(order.subtotal || 0),
-      shippingFee: Number(order.shippingFee || 0),
-      tax: Number(order.tax || 0),
-      totalAmount: Number(order.totalAmount || 0),
       discount: Number(order.discount || 0),
       finalPayable: Number(order.finalPayable || 0),
+      shippingFee: Number(order.shippingFee || 0),
+      tax: Number(order.tax || 0),
 
       payload_payment_method: payload.payment_method,
-      payload_sub_total: Number(payload.sub_total || 0), // MRP subtotal (pre-discount)
-      payload_total_discount: Number(payload.total_discount || 0), // from items sum
+      payload_sub_total: Number(payload.sub_total || 0),
       payload_shipping_charges: Number(payload.shipping_charges || 0),
       payload_transaction_charges: Number(payload.transaction_charges || 0),
       payload_collectable_amount: Number(payload.collectable_amount || 0),
 
-      // This is NOT your payable; just useful to see what you sent:
-      payload_mrp_minus_discount:
-        Number(payload.sub_total || 0) - Number(payload.total_discount || 0),
-
-      // For COD, this should match finalPayable (if tax=0 and discount allocation matches):
-      expectedPayableFromPayload:
-        Math.max(
-          0,
-          (Number(payload.sub_total || 0) - Number(payload.total_discount || 0)) +
-            Number(payload.shipping_charges || 0) +
-            Number(order.tax || 0) // NOTE: only if you want to represent tax separately
-        ),
+      payload_expected_collectable: Math.max(
+        0,
+        Number(payload.sub_total || 0) +
+          Number(payload.shipping_charges || 0) +
+          Number(order.tax || 0)
+      ),
     });
 
     console.log(`${TAG} 📦 Creating shipment...`, {
@@ -1688,8 +1722,6 @@ async function autoBookShiprocketForOrder(order) {
       weight: payload?.weight || totalWeight,
       items: payload?.order_items?.length || 0,
     });
-
-    
 
     const shipment = await createShipment(payload);
 
@@ -1737,6 +1769,7 @@ async function autoBookShiprocketForOrder(order) {
             ...(order.trackingDetails || {}),
             trackingId: awb,
             courierName: order.shipment.shiprocket.courierName,
+            trackingUrl: order.shipment.shiprocket.trackingUrl,
           };
 
           await order.save();
@@ -1775,6 +1808,7 @@ async function autoBookShiprocketForOrder(order) {
 
 
 
+
 // Admin trigger: Book Shiprocket only if details missing
 // Route example: POST /admin/orders/:id/shiprocket/book
 export const adminBookShiprocketIfMissing = async (req, res) => {
@@ -1793,7 +1827,13 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
     // ✅ Guards
     if (!order.isConfirmed) {
       return res.status(400).json({
-        success: false,
+        _success: false,
+        get success() {
+          return this._success;
+        },
+        set success(value) {
+          this._success = value;
+        },
         message: "Order not confirmed. Confirm order first.",
         reason: "not_confirmed",
       });
