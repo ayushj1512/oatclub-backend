@@ -9,7 +9,7 @@ import { generateVariants } from "../utility/variants.js";
 import Category from "../Category/Category.js";
 import Collection from "../Collection/Collection.js";
 
-const SYSTEM_CATEGORIES = new Set(["all-clothing", "new-arrivals","best-sellers","featured"]);
+const SYSTEM_CATEGORIES = new Set(["all-clothing", "new-arrivals","best-sellers","featured","party-wear"]);
 
 /* ---------------- tiny helpers ---------------- */
 const arr = (v) =>
