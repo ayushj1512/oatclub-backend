@@ -1682,3 +1682,75 @@ export const getProductsByCollection = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
+
+
+/* ============================================================
+   ✅ GET BY PRODUCT CODE
+   GET /api/products/code/:code
+   Example: /api/products/code/00229
+============================================================ */
+export const getProductByCode = async (req, res) => {
+  try {
+    const code = String(req.params.code || "").trim();
+    if (!code) return res.status(400).json({ message: "productCode is required" });
+
+    // productCode stored as string in DB (like "00229")
+    const doc = await pop(
+      Product.findOne({ productCode: code }).populate({
+        path: "crossSellProducts",
+        select: "title slug price compareAtPrice thumbnail isActive",
+        match: { isActive: true },
+      })
+    );
+
+    if (!doc) return res.status(404).json({ message: "Product not found" });
+
+    return res.json(applyStockFromVariants(doc));
+  } catch (e) {
+    console.error("❌ Get Product By Code Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};
+
+
+// GET /api/products/by-codes?codes=00229,00230,00231
+// OR POST /api/products/by-codes  body: { codes: ["00229","00230"] } or { codes: "00229,00230" }
+
+export const getProductsByCodes = async (req, res) => {
+  try {
+    // allow both GET query and POST body
+    let codes = req.query.codes ?? req.body.codes;
+
+    // normalize codes (array/string)
+    codes = Array.isArray(codes)
+      ? codes
+      : typeof codes === "string"
+        ? codes.split(",").map((x) => String(x).trim()).filter(Boolean)
+        : [];
+
+    if (!codes.length) {
+      return res.status(400).json({ message: "codes is required" });
+    }
+
+    // productCode stored as string (e.g. "00229"), so keep as string
+    const docs = await pop(
+      Product.find({ productCode: { $in: codes } })
+    );
+
+    // ✅ keep same order as input
+    const map = new Map();
+    docs.forEach((d) => map.set(String(d.productCode), d));
+    const ordered = codes.map((c) => map.get(String(c))).filter(Boolean);
+
+    return res.json({
+      requestedCount: codes.length,
+      foundCount: ordered.length,
+      missingCodes: codes.filter((c) => !map.has(String(c))),
+      products: ordered.map(applyStockFromVariants),
+    });
+  } catch (e) {
+    console.error("❌ getProductsByCodes Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};

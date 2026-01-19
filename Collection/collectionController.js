@@ -4,10 +4,11 @@ import slugify from "slugify";
 
 /* ============================================================
    CREATE COLLECTION
+   - UPDATED for products: [{ product, productCode }]
 ============================================================ */
 export const createCollection = async (req, res) => {
   try {
-    const payload = req.body;
+    const payload = { ...req.body };
 
     payload.slug = slugify(payload.name, {
       lower: true,
@@ -17,6 +18,27 @@ export const createCollection = async (req, res) => {
     const exists = await Collection.findOne({ slug: payload.slug });
     if (exists)
       return res.status(400).json({ message: "Collection already exists" });
+
+    // OPTIONAL: normalize incoming products if client sends old format [ObjectId]
+    // Convert to [{ product: id, productCode: "" }] if needed
+    if (Array.isArray(payload.products) && payload.products.length > 0) {
+      payload.products = payload.products.map((p) => {
+        // old format: ObjectId string
+        if (
+          typeof p === "string" ||
+          mongoose.isValidObjectId(p) ||
+          p instanceof mongoose.Types.ObjectId
+        ) {
+          return { product: p, productCode: "" }; // productCode required in schema; ideally send from client
+        }
+
+        // new format: { product, productCode }
+        return {
+          product: p.product,
+          productCode: p.productCode,
+        };
+      });
+    }
 
     const collection = await Collection.create(payload);
     res.status(201).json({ collection });
@@ -28,11 +50,12 @@ export const createCollection = async (req, res) => {
 
 /* ============================================================
    GET ALL COLLECTIONS
+   - UPDATED populate path: "products.product"
 ============================================================ */
 export const getAllCollections = async (req, res) => {
   try {
     const collections = await Collection.find()
-      .populate("products", "title price images")
+      .populate("products.product", "title price images productCode")
       .sort({ createdAt: -1 });
 
     res.json(collections);
@@ -43,7 +66,8 @@ export const getAllCollections = async (req, res) => {
 };
 
 /* ============================================================
-   GET COLLECTION BY ID OR SLUG  ✅ FIXED
+   GET COLLECTION BY ID OR SLUG
+   - UPDATED populate path: "products.product"
 ============================================================ */
 export const getCollectionById = async (req, res) => {
   try {
@@ -54,8 +78,8 @@ export const getCollectionById = async (req, res) => {
       : { slug: idOrSlug };
 
     const collection = await Collection.findOne(query).populate(
-      "products",
-      "title price images"
+      "products.product",
+      "title price images productCode"
     );
 
     if (!collection)
@@ -70,6 +94,7 @@ export const getCollectionById = async (req, res) => {
 
 /* ============================================================
    UPDATE COLLECTION
+   - UPDATED for products: [{ product, productCode }]
 ============================================================ */
 export const updateCollection = async (req, res) => {
   try {
@@ -82,10 +107,30 @@ export const updateCollection = async (req, res) => {
       });
     }
 
+    // OPTIONAL: normalize incoming products if client sends old format [ObjectId]
+    if (Array.isArray(updates.products) && updates.products.length > 0) {
+      updates.products = updates.products.map((p) => {
+        // old format: ObjectId string
+        if (
+          typeof p === "string" ||
+          mongoose.isValidObjectId(p) ||
+          p instanceof mongoose.Types.ObjectId
+        ) {
+          return { product: p, productCode: "" }; // productCode required in schema; ideally send from client
+        }
+
+        // new format: { product, productCode }
+        return {
+          product: p.product,
+          productCode: p.productCode,
+        };
+      });
+    }
+
     const collection = await Collection.findByIdAndUpdate(
       req.params.id,
       updates,
-      { new: true }
+      { new: true, runValidators: true }
     );
 
     if (!collection)

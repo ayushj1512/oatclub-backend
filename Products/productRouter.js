@@ -1,4 +1,5 @@
 import express from "express";
+import multer from "multer";
 
 /* ---------------- PRODUCT CONTROLLER ---------------- */
 import {
@@ -6,26 +7,22 @@ import {
   getAllProducts,
   getProductsByTag,
   getProductsByCategory,
-  fetchProductsByCategory, // ✅ NEW
-  getProductByIdOrSlug,
-  getProductBySKU,
-
-  // ✅ NEW: multiple ids fetch
+  fetchProductsByCategory,
+  getProductsByCollection,
   getProductsByIds,
-getProductsByCollection,
+  getProductsByCodes, // ✅ NEW
+  getProductBySKU,
+  getProductByCode,
+  getProductByIdOrSlug,
   updateProduct,
   deleteProduct,
   bulkDeleteProducts,
   bulkImportProducts,
+  bulkUpdatePricing,
+  bulkSyncCollectionOnProducts,
   updateVariantStock,
   incrementProductAnalytics,
   updateProductRatings,
-  bulkUpdatePricing,
-
-  // ✅ NEW: bulk collection sync
-  bulkSyncCollectionOnProducts,
-
-  // ✅ NEW: fabrics update route
   updateProductFabrics,
 } from "./productController.js";
 
@@ -35,14 +32,13 @@ import {
   bulkCreateDraftProducts,
 } from "./BulkproductController.js";
 
-/* ---------------- MIDDLEWARE ---------------- */
-import multer from "multer";
-
-const upload = multer({ dest: "uploads/csv" });
+/* ---------------- SETUP ---------------- */
 const router = express.Router();
+const upload = multer({ dest: "uploads/csv" });
 
 /* ===========================================================
    🔓 PUBLIC ROUTES (CUSTOMERS)
+   (keep specific routes above generic ones)
 =========================================================== */
 
 // ✅ Products by tag(s)
@@ -51,33 +47,40 @@ router.get("/by-tag", getProductsByTag);
 // ✅ Products by category (slug OR id OR name)
 router.get("/by-category/:category", getProductsByCategory);
 
-// ✅ ✅ NEW: Alternative fetch-by-category (param + query supported)
-router.get("/fetch-by-category/:category", fetchProductsByCategory);
-router.get("/fetch-by-category", fetchProductsByCategory);
+// ✅ Products by collection (slug OR id)
 router.get("/by-collection/:collection", getProductsByCollection);
 
-// ✅ ✅ NEW: Products by multiple IDs (single fetch)
+// ✅ Alternative fetch-by-category (param + query supported)
+router.get("/fetch-by-category/:category", fetchProductsByCategory);
+router.get("/fetch-by-category", fetchProductsByCategory);
+
+// ✅ Products by multiple IDs (single fetch)
 router.post("/by-ids", getProductsByIds);
 
-// ✅ Get all products (filters, pagination, search)
-router.get("/", getAllProducts);
+// ✅ Products by multiple productCodes (single fetch)  ✅ NEW
+// GET  /api/products/by-codes?codes=00229,00230
+// POST /api/products/by-codes  body: { codes: ["00229","00230"] } OR { codes: "00229,00230" }
+router.get("/by-codes", getProductsByCodes);
+router.post("/by-codes", getProductsByCodes);
 
 // ✅ Fetch by SKU (product or variant)
 router.get("/sku/:sku", getProductBySKU);
 
-// ✅ Product details by slug OR id
+// ✅ Fetch by productCode (IMPORTANT: must be above /:id fallback)
+router.get("/code/:code", getProductByCode);
+
+// ✅ Product details by slug OR id (explicit details route)
 router.get("/details/:id", getProductByIdOrSlug);
 
+// ✅ Get all products (filters, pagination, search)
+router.get("/", getAllProducts);
+
 /* ===========================================================
-   🔐 ADMIN ROUTES (BULK — MUST BE FIRST)
+   🔐 ADMIN ROUTES (BULK)
 =========================================================== */
 
 // ✅ CSV PREVIEW (NO DB WRITE)
-router.post(
-  "/bulk/preview",
-  upload.single("file"), // CSV file
-  bulkPreviewProducts
-);
+router.post("/bulk/preview", upload.single("file"), bulkPreviewProducts);
 
 // ✅ CREATE DRAFT PRODUCTS (NO IMAGES)
 router.post("/bulk/create-draft", bulkCreateDraftProducts);
@@ -87,7 +90,7 @@ router.post("/bulk/delete", bulkDeleteProducts);
 router.post("/bulk/import", bulkImportProducts);
 router.patch("/bulk/pricing", bulkUpdatePricing);
 
-// ✅ NEW: Bulk sync collection ↔ products
+// ✅ Bulk sync collection ↔ products
 router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 
 /* ===========================================================
@@ -98,18 +101,22 @@ router.post("/:id/update-ratings", updateProductRatings);
 router.patch("/:id/analytics", incrementProductAnalytics);
 router.patch("/:id/variant-stock", updateVariantStock);
 
-// ✅ NEW: update fabrics + consumption (dedicated)
+// ✅ Update fabrics + consumption (dedicated)
 router.patch("/:id/fabrics", updateProductFabrics);
 
+// ✅ Create product
 router.post("/", createProduct);
 
+// ✅ Update product
 router.patch("/:id", updateProduct);
 router.put("/:id", updateProduct);
+
+// ✅ Delete product
 router.delete("/:id", deleteProduct);
+
 /* ===========================================================
    FALLBACK (Slug OR ID) — MUST ALWAYS BE LAST
 =========================================================== */
-
 router.get("/:id", getProductByIdOrSlug);
 
 export default router;

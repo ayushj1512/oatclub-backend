@@ -3,67 +3,31 @@ import mongoose from "mongoose";
 
 const collectionSchema = new mongoose.Schema(
   {
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-    },
+    name: { type: String, required: true, trim: true },
 
-    slug: {
-      type: String,
-      required: true,
-      unique: true,
-      lowercase: true,
-      trim: true,
-    },
+    slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
 
-    description: {
-      type: String,
-      trim: true,
-    },
+    description: { type: String, trim: true },
 
-    bannerImage: {
-      type: String, // Cloudinary URL
-      default: "",
-    },
+    bannerImage: { type: String, default: "" },
+    thumbnailImage: { type: String, default: "" },
 
-    thumbnailImage: {
-      type: String, // Cloudinary URL
-      default: "",
-    },
-
+    // ✅ NEW: store product + productCode snapshot
     products: [
       {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Product",
+        product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+        productCode: { type: String, required: true, trim: true },
       },
     ],
 
-    tags: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Tag",
-      },
-    ],
+    tags: [{ type: mongoose.Schema.Types.ObjectId, ref: "Tag" }],
 
-    category: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Category",
-    },
+    category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
 
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
+    isActive: { type: Boolean, default: true },
 
-    launchDate: {
-      type: Date,
-      default: Date.now,
-    },
-
-    expiryDate: {
-      type: Date,
-    },
+    launchDate: { type: Date, default: Date.now },
+    expiryDate: { type: Date },
 
     type: {
       type: String,
@@ -71,27 +35,16 @@ const collectionSchema = new mongoose.Schema(
       default: "seasonal",
     },
 
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Admin", // or "User" if you don’t have admin model yet
-    },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
 
     analytics: {
-      views: {
-        type: Number,
-        default: 0,
-      },
-      clicks: {
-        type: Number,
-        default: 0,
-      },
-      conversions: {
-        type: Number,
-        default: 0,
-      },
+      views: { type: Number, default: 0 },
+      clicks: { type: Number, default: 0 },
+      conversions: { type: Number, default: 0 },
     },
   },
   { timestamps: true }
 );
 
-export default mongoose.model("Collection", collectionSchema);
+export default mongoose.models.Collection ||
+  mongoose.model("Collection", collectionSchema);
