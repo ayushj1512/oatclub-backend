@@ -663,19 +663,22 @@ export const getAllProducts = async (req, res) => {
 /* ============================================================
    GET BY ID OR SLUG
 ============================================================ */
+// controller
 export const getProductByIdOrSlug = async (req, res) => {
   try {
-    const param = req.params.id;
+    const param = String(req.params.id || "").trim();
 
-    const query = Product.findOne({ slug: param }).populate({
-      path: "crossSellProducts",
-      select: "title slug price compareAtPrice thumbnail isActive",
-      match: { isActive: true },
-    });
+    // 1) slug
+    let doc = await pop(
+      Product.findOne({ slug: param }).populate({
+        path: "crossSellProducts",
+        select: "title slug price compareAtPrice thumbnail isActive",
+        match: { isActive: true },
+      })
+    );
 
-    let doc = await pop(query);
-
-    if (!doc && mongoose.Types.ObjectId.isValid(String(param))) {
+    // 2) objectId
+    if (!doc && mongoose.Types.ObjectId.isValid(param)) {
       doc = await pop(
         Product.findById(param).populate({
           path: "crossSellProducts",
@@ -685,16 +688,26 @@ export const getProductByIdOrSlug = async (req, res) => {
       );
     }
 
-    if (!doc) {
-      return res.status(404).json({ message: "Product not found" });
+    // 3) productCode (✅ FIX for /api/products/00218)
+    if (!doc && /^\d{3,}$/.test(param)) {
+      doc = await pop(
+        Product.findOne({ productCode: param }).populate({
+          path: "crossSellProducts",
+          select: "title slug price compareAtPrice thumbnail isActive",
+          match: { isActive: true },
+        })
+      );
     }
 
-    res.json(applyStockFromVariants(doc));
+    if (!doc) return res.status(404).json({ message: "Product not found" });
+
+    return res.json(applyStockFromVariants(doc));
   } catch (e) {
     console.error("❌ Get Product Error:", e);
-    res.status(500).json({ message: e.message });
+    return res.status(500).json({ message: e.message });
   }
 };
+
 
 
 /* ============================================================

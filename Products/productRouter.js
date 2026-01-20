@@ -117,6 +117,7 @@ router.delete("/:id", deleteProduct);
 /* ===========================================================
    FALLBACK (Slug OR ID) — MUST ALWAYS BE LAST
 =========================================================== */
+
 router.get("/:id", getProductByIdOrSlug);
 
 export default router;
