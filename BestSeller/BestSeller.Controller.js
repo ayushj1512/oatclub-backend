@@ -1,7 +1,7 @@
 // BestSeller/BestSeller.jsx
 // Controller (CRUD) for Bestseller model (MongoDB + Mongoose)
 
-import Bestseller from "../BestSeller/Bestseller.js"; // <-- adjust path as per your structure
+import Bestseller from "../BestSeller/BestSeller.js"; // <-- adjust path as per your structure
 
 // CREATE: add a productId to bestseller list
 export const createBestseller = async (req, res) => {
