@@ -384,6 +384,16 @@ export const createProduct = async (req, res) => {
       data.avgFabricConsumption
     );
 
+    // ✅ NEW: COLORS normalize (accept "red,black" OR ["red","black"])
+    // This is for easy UI selection at product level.
+    if (data.colors !== undefined) {
+      data.colors = arr(data.colors)
+        .map((c) => String(c || "").trim().toLowerCase())
+        .filter(Boolean);
+      // remove duplicates
+      data.colors = Array.from(new Set(data.colors));
+    }
+
     // ✅ HSN CODE normalize + validate (digits only, optional)
     if (data.hsnCode !== undefined) {
       const hsn = String(data.hsnCode ?? "").trim();
@@ -436,6 +446,9 @@ export const createProduct = async (req, res) => {
       data.attributes = [];
       data.variants = [];
       data.productType = "simple";
+
+      // ✅ In bulk, ensure colors is always an array (optional)
+      if (!Array.isArray(data.colors)) data.colors = [];
     } else {
       await validateAttributes(data.attributes);
 
@@ -463,6 +476,10 @@ export const createProduct = async (req, res) => {
           patternNumber: String(v?.patternNumber || "").trim(),
         }));
       }
+
+      // ✅ If variable and colors NOT provided, keep it as empty array
+      // (because variants currently don't carry color after keepOnlySizeVariants)
+      if (!Array.isArray(data.colors)) data.colors = [];
     }
 
     /* =====================================================
@@ -519,11 +536,13 @@ export const createProduct = async (req, res) => {
       sku: skuPayload.sku,
       variants: skuPayload.variants,
       productType: skuPayload.productType,
-      // keep tags/categories if ensureSKUs didn't touch them (it shouldn't)
+      // ✅ keep colors as well (if passed/normalized above)
+      colors: Array.isArray(data.colors) ? data.colors : [],
     });
 
     // ✅ IMPORTANT: mark modified for nested variants (if variable)
     if (Array.isArray(skuPayload.variants)) created.markModified("variants");
+    created.markModified("colors"); // ✅ NEW
 
     await created.save({ validateBeforeSave: true });
 
@@ -771,7 +790,27 @@ export const updateProduct = async (req, res) => {
       );
     }
 
-    // ✅ HSN CODE normalize + validate (digits only, optional)
+    /* ---------------------------------------------------
+       ✅ COLORS normalize (optional)
+       Accept "red,black" OR ["red","black"]
+    ---------------------------------------------------- */
+    if (data.colors !== undefined) {
+      const raw = Array.isArray(data.colors)
+        ? data.colors
+        : String(data.colors || "").split(",");
+
+      data.colors = Array.from(
+        new Set(
+          raw
+            .map((c) => String(c || "").trim().toLowerCase())
+            .filter(Boolean)
+        )
+      );
+    }
+
+    /* ---------------------------------------------------
+       ✅ HSN CODE normalize + validate (digits only, optional)
+    ---------------------------------------------------- */
     if (data.hsnCode !== undefined) {
       const hsn = String(data.hsnCode ?? "").trim();
       if (hsn !== "" && !/^\d+$/.test(hsn)) {
@@ -824,10 +863,10 @@ export const updateProduct = async (req, res) => {
         (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase())
       );
 
-     if (hadNewArrivals) {
-  const existingTags = tagsNorm(data.tags ?? existing.tags); // ✅ safe fallback
-  data.tags = Array.from(new Set([...existingTags, "new-arrival"]));
-}
+      if (hadNewArrivals) {
+        const existingTags = tagsNorm(data.tags ?? existing.tags); // ✅ safe fallback
+        data.tags = Array.from(new Set([...existingTags, "new-arrival"]));
+      }
 
       if (!data.categories.length) {
         return res.status(400).json({
@@ -853,21 +892,35 @@ export const updateProduct = async (req, res) => {
     if (data.stock !== undefined) delete data.stock;
     if (data.isInStock !== undefined) delete data.isInStock;
 
-    /* ---------------- VARIANTS ---------------- */
+    /* ---------------- VARIANTS ----------------
+       ✅ FIX: Preserve existing variant stock/isInStock so they don't reset to 0
+       - client can send variants (patternNumber/sku/etc)
+       - but inventory fields are preserved from DB (cannot be changed here)
+    ---------------------------------------------------------- */
     if (Array.isArray(data.variants)) {
-      data.variants = data.variants.map((v) => ({
-        ...(v._id ? { _id: v._id } : {}),
-        sku: v.sku,
-        barcode: v.barcode ?? "",
-        weight: typeof v.weight === "number" ? v.weight : 0,
+      const existingById = new Map(
+        (existing.variants || []).map((v) => [String(v._id), v])
+      );
 
-        // ✅ keep variant-level patternNumber
-        patternNumber: String(v?.patternNumber || "").trim(),
+      data.variants = data.variants.map((v) => {
+        const prev = v?._id ? existingById.get(String(v._id)) : null;
 
-        // ❌ stock removed
-        // ❌ isInStock removed
-        attributes: Array.isArray(v.attributes) ? v.attributes : [],
-      }));
+        return {
+          ...(v._id ? { _id: v._id } : {}),
+          sku: v.sku,
+          barcode: v.barcode ?? "",
+          weight: typeof v.weight === "number" ? v.weight : 0,
+
+          // ✅ keep variant-level patternNumber
+          patternNumber: String(v?.patternNumber || "").trim(),
+
+          // ✅ inventory preserved (NOT editable via this controller)
+          stock: prev?.stock ?? 0,
+          isInStock: prev?.isInStock ?? false,
+
+          attributes: Array.isArray(v.attributes) ? v.attributes : [],
+        };
+      });
 
       // ✅ HARD SAFETY: keep only 1 variant per size + remove color attribute
       data.variants = keepOnlySizeVariants(data.variants);
@@ -937,6 +990,7 @@ export const updateProduct = async (req, res) => {
     if (data.avgFabricConsumption !== undefined)
       existing.markModified("avgFabricConsumption");
     if (data.images !== undefined) existing.markModified("images");
+    if (data.colors !== undefined) existing.markModified("colors");
 
     const saved = await existing.save({ validateBeforeSave: true });
 
@@ -959,6 +1013,7 @@ export const updateProduct = async (req, res) => {
     res.status(500).json({ message: e.message });
   }
 };
+
 
 
 

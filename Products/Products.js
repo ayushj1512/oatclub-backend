@@ -53,7 +53,8 @@ const productSchema = new mongoose.Schema(
 
   /* TAGS */
   tags: [{ type: String, trim: true, lowercase: true }],
-
+ /* Colors */
+  colors: [{ type: String, trim: true, lowercase: true, index: true }],
   /* PRICING (COMMON FOR ALL VARIANTS ✅) */
   price: { type: Number, required: true },
   compareAtPrice: { type: Number, default: null },
@@ -206,6 +207,35 @@ doc.isInStock = anyVariantInStock;
 if (!anyVariantInStock) doc.isActive = false; // ✅ auto-unpublish
 }
 
+function computeColors(doc) {
+  // ✅ If product-level colors already provided, keep them (manual colors)
+  if (Array.isArray(doc.colors) && doc.colors.length > 0) {
+    doc.colors = Array.from(
+      new Set(doc.colors.map((c) => String(c || "").trim().toLowerCase()).filter(Boolean))
+    );
+    return;
+  }
+
+  const isVariable = Array.isArray(doc.variants) && doc.variants.length > 0;
+  if (!isVariable) {
+    doc.colors = Array.isArray(doc.colors) ? doc.colors : [];
+    return;
+  }
+
+  // fallback: compute from variant Color attribute
+  const set = new Set();
+  (doc.variants || []).forEach((v) => {
+    const attrs = Array.isArray(v.attributes) ? v.attributes : [];
+    const color =
+      attrs.find((a) => (a.key || "").toLowerCase() === "color")?.value || "";
+    if (color) set.add(String(color).trim().toLowerCase());
+  });
+
+  doc.colors = Array.from(set);
+}
+
+
+
 /* ------------------------------------------------------------------
 HOOKS
 ------------------------------------------------------------------- */
@@ -284,13 +314,15 @@ try {
 
 // ✅ Auto compute isInStock + auto-unpublish on save
 productSchema.pre("save", function (next) {
-try {
-  computeInventoryFlags(this);
-  next();
-} catch (e) {
-  next(e);
-}
+  try {
+    computeInventoryFlags(this);
+    computeColors(this); // ✅ NEW
+    next();
+  } catch (e) {
+    next(e);
+  }
 });
+
 
 /**
  * ✅ Handle update queries too (findOneAndUpdate / updateOne)
@@ -367,10 +399,18 @@ try {
   // compute flags on a mongoose doc instance (so helper works same)
   const tempDoc = new this.model(merged);
   computeInventoryFlags(tempDoc);
-
+computeColors(tempDoc); 
   // inject computed flags back into update
   update.$set = update.$set || {};
   update.$set.isInStock = tempDoc.isInStock;
+const touchesColors =
+  "colors" in update ||
+  "colors" in $set ||
+  Object.keys($set).some((k) => k.startsWith("colors"));
+
+if (touchesColors) {
+  update.$set.colors = tempDoc.colors;
+}
 
   // only force isActive false when out of stock
   if (!tempDoc.isInStock) update.$set.isActive = false;
@@ -408,6 +448,7 @@ productSchema.index({ sku: 1 }, { sparse: true });
 productSchema.index({ "variants.sku": 1 }, { sparse: true });
 productSchema.index({ tags: 1 });
 productSchema.index({ "fabrics.fabricCode": 1 });
+productSchema.index({ colors: 1 });
 
 export default mongoose.models.Product ||
 mongoose.model("Product", productSchema);

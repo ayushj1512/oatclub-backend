@@ -35,6 +35,7 @@ import emailRoutes from "./Email/email.routes.js"; // ✅ your merged email/acti
 import collaborationRoutes from "./Collaboration/CollaborationRoutes.js"; // <-- router file
 import attributeRoutes from "./Attribute/attributeRoutes.js";
 import shiprocketRoutes from "./shiprocket/shipping.routes.js";
+import bestsellerRoutes from "./BestSeller/bestseller.routes.js";
 
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
@@ -222,6 +223,7 @@ app.use("/api/admin-users", adminUserRoutes);
 app.use("/api/proxy-image", proxyImageRoute);
 app.use("/api", emailRoutes);
 app.use("/api/collaborations", collaborationRoutes);
+app.use("/api", bestsellerRoutes);
 
 // Admin
 app.use("/api/inventory", inventoryRoutes);
