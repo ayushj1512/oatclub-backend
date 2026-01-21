@@ -73,10 +73,6 @@ export function buildShiprocketPayload(order) {
     breadth: 10,
     height: 5,
 
-    weight:
-      order.items.reduce((sum, it) => {
-        const w = Number(it.variant?.weight) || Number(it.productSnapshot?.weight) || 0.5;
-        return sum + (w * Number(it.quantity || 1));
-      }, 0) || 0.5,
+     weight: 0.5,
   };
 }
