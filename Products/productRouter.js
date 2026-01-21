@@ -19,7 +19,7 @@ import {
   bulkDeleteProducts,
   bulkImportProducts,
   bulkUpdatePricing,
-  bulkSyncCollectionOnProducts,
+bulkSyncCollectionOnProducts,
   updateVariantStock,
   incrementProductAnalytics,
   updateProductRatings,
