@@ -24,6 +24,7 @@ import {
   incrementProductAnalytics,
   updateProductRatings,
   updateProductFabrics,
+  updateVariantPatternNumber,
 } from "./productController.js";
 
 /* ---------------- BULK CONTROLLER ---------------- */
@@ -110,6 +111,7 @@ router.post("/", createProduct);
 // ✅ Update product
 router.patch("/:id", updateProduct);
 router.put("/:id", updateProduct);
+router.patch("/:id/variant-pattern", updateVariantPatternNumber);
 
 // ✅ Delete product
 router.delete("/:id", deleteProduct);

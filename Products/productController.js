@@ -1017,6 +1017,39 @@ export const updateProduct = async (req, res) => {
 
 
 
+export const updateVariantPatternNumber = async (req, res) => {
+  try {
+    const { variantId, patternNumber } = req.body;
+
+    if (!variantId) return res.status(400).json({ message: "variantId required" });
+
+    const pn = String(patternNumber || "").trim();
+
+    const updated = await Product.findOneAndUpdate(
+      { _id: req.params.id, "variants._id": variantId },
+      { $set: { "variants.$.patternNumber": pn } },
+      { new: true }
+    ).populate([
+      { path: "collections" },
+      { path: "offer" },
+      { path: "couponsApplicable" },
+      { path: "reviews" },
+      { path: "crossSellProducts" },
+      { path: "attributes.attribute" },
+      { path: "variants.attributes.attribute" },
+    ]);
+
+    if (!updated) return res.status(404).json({ message: "Product/Variant not found" });
+
+    return res.json({
+      message: "Variant pattern updated",
+      product: applyStockFromVariants(updated),
+    });
+  } catch (e) {
+    console.error("❌ updateVariantPatternNumber:", e);
+    res.status(500).json({ message: e.message });
+  }
+};
 
 
 
