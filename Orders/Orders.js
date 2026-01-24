@@ -314,40 +314,53 @@ const orderSchema = new mongoose.Schema(
 },
 
 
-    shipment: {
-      provider: {
-        type: String,
-        enum: ["shiprocket", "manual", "xpressbees", "ekart"],
-        default: "shiprocket",
-      },
+   shipment: {
+  provider: {
+    type: String,
+    enum: ["shiprocket", "manual", "xpressbees", "ekart"],
+    default: "shiprocket",
+  },
 
-      shiprocket: {
-        orderId: { type: String, default: "" },
-        shipmentId: { type: String, default: "" },
-        awb: { type: String, default: "", index: true },
-        courierName: { type: String, default: "" },
-        trackingUrl: { type: String, default: "" },
-      },
+  shiprocket: {
+    orderId: { type: String, default: "" },
+    shipmentId: { type: String, default: "" },
+    awb: { type: String, default: "", index: true },
+    courierName: { type: String, default: "" },
+    trackingUrl: { type: String, default: "" },
+  },
 
-      status: {
-        type: String,
-        enum: [
-          "pending",
-          "processing",
-          "packed",
-          "shipped",
-          "out_for_delivery",
-          "delivered",
-          "rto",
-          "cancelled",
-        ],
-        default: "pending",
-        index: true,
-      },
+  // ✅ XpressBees (added; does not affect Shiprocket)
+  xpressbees: {
+    shipmentId: { type: String, default: "", index: true }, // ✅ index true
+    awb: { type: String, default: "", index: true },        // ✅ index true
+    labelUrl: { type: String, default: "" },
+    courierName: { type: String, default: "XpressBees" },
+    trackingUrl: { type: String, default: "" },
 
-      shippedAt: Date,
-      deliveredAt: Date,
-    },
+    lastWebhook: { type: Object, default: null },
+    lastTrack: { type: Object, default: null },
+  },
+
+  status: {
+    type: String,
+    enum: [
+      "pending",
+      "processing",
+      "packed",
+      "shipped",
+      "out_for_delivery",
+      "delivered",
+      "rto",
+      "cancelled",
+    ],
+    default: "pending",
+    index: true,
+  },
+
+  shippedAt: Date,
+  deliveredAt: Date,
+},
+
 
     trackingDetails: {
       trackingId: { type: String, default: "" },
@@ -657,7 +670,8 @@ orderSchema.index({ "items.lineId": 1 });
 orderSchema.index({ isConfirmed: 1, orderDate: -1 });
 orderSchema.index({ isConfirmed: 1, paymentStatus: 1 });
 orderSchema.index({ isConfirmed: 1, fulfillmentStatus: 1 });
-
+orderSchema.index({ "shipment.xpressbees.awb": 1 });
+orderSchema.index({ "shipment.xpressbees.shipmentId": 1 });
 
 // Helpful indexes for RMA queries
 orderSchema.index({ "rmas.rmaNumber": 1 });

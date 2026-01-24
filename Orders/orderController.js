@@ -26,6 +26,7 @@ const ADMIN_ORDER_ALERT_EMAILS = [
   "miray.ayushjuneja@gmail.com",
 ].filter(Boolean);
 
+const RAZORPAY_DISCOUNT_PERCENT = 10;
 
 const sendAdminOrderReceivedMail = async (order) => {
   try {
@@ -556,7 +557,10 @@ export const createOrder = async (req, res) => {
         identity,
       });
 
-      const razorpayExtraDiscount = pm === "razorpay" ? Math.round(subtotal * 0.05) : 0;
+const razorpayExtraDiscount =
+  pm === "razorpay"
+    ? Math.round((subtotal * RAZORPAY_DISCOUNT_PERCENT) / 100)
+    : 0;
 
       let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
       if (finalDiscount > totalAmount) finalDiscount = totalAmount;
@@ -571,7 +575,7 @@ export const createOrder = async (req, res) => {
         categoryBreakdown: computeCategoryBreakdown(normalizedItems),
         tagsUsed: uniqStrings(normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])),
         onlinePaymentDiscountApplied: pm === "razorpay",
-        onlinePaymentDiscountPct: pm === "razorpay" ? 5 : 0,
+onlinePaymentDiscountPct: pm === "razorpay" ? RAZORPAY_DISCOUNT_PERCENT : 0,
         onlinePaymentDiscountAmount: razorpayExtraDiscount,
         couponIdentity: identity || "",
       };

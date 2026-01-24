@@ -36,6 +36,7 @@ import collaborationRoutes from "./Collaboration/CollaborationRoutes.js"; // <--
 import attributeRoutes from "./Attribute/attributeRoutes.js";
 import shiprocketRoutes from "./shiprocket/shipping.routes.js";
 import bestsellerRoutes from "./BestSeller/bestseller.routes.js";
+import xpressbeesRoutes from "./Xpressbees/xpressbees.routes.js";
 
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
@@ -73,6 +74,7 @@ import abandonedCartRoutes from "./AbandonedCart/AbandonedCartRoutes.js";
 
 import homepageSettingsRoutes from "./HomepageSettings/homepageSettingsRoutes.js";
 import adminUserRoutes from "./AdminUsers/adminUserRoutes.js";
+import mediaAuthRoutes from "./MediaUser/mediaAuthRoutes.js";
 
 // --------------------------------------------------
 // ✅ ENV DEBUG (VERY IMPORTANT)
@@ -224,6 +226,7 @@ app.use("/api/proxy-image", proxyImageRoute);
 app.use("/api", emailRoutes);
 app.use("/api/collaborations", collaborationRoutes);
 app.use("/api", bestsellerRoutes);
+app.use("/api/shipping/xpressbees", xpressbeesRoutes);
 
 // Admin
 app.use("/api/inventory", inventoryRoutes);
@@ -233,6 +236,7 @@ app.use("/api/newsletters", newsletterRouter);
 
 // Media
 app.use("/api/media", mediaRoutes);
+app.use("/media-user", mediaAuthRoutes);
 
 // Shipping
 app.use("/api", shiprocketRoutes);
