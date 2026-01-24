@@ -360,10 +360,15 @@ export const createOrder = async (req, res) => {
       throw new Error("Coupon has expired.");
 
     if (num(cartTotal) < num(couponDoc.minPurchase || 0)) {
-      throw new Error(`Minimum purchase required is ₹${num(couponDoc.minPurchase || 0)}`);
+      throw new Error(
+        `Minimum purchase required is ₹${num(couponDoc.minPurchase || 0)}`
+      );
     }
 
-    if (num(couponDoc.usageLimit) > 0 && num(couponDoc.usedCount) >= num(couponDoc.usageLimit)) {
+    if (
+      num(couponDoc.usageLimit) > 0 &&
+      num(couponDoc.usedCount) >= num(couponDoc.usageLimit)
+    ) {
       throw new Error("Coupon usage limit has been reached.");
     }
 
@@ -425,7 +430,9 @@ export const createOrder = async (req, res) => {
       return res.status(400).json({ message: "Order items missing" });
 
     if (!["cod", "razorpay"].includes(pm))
-      return res.status(400).json({ message: "Invalid paymentMethod. Allowed: cod | razorpay" });
+      return res.status(400).json({
+        message: "Invalid paymentMethod. Allowed: cod | razorpay",
+      });
 
     await session.withTransaction(async () => {
       const shippingAddress = await Address.findById(shippingAddressId).session(session);
@@ -443,11 +450,15 @@ export const createOrder = async (req, res) => {
         phone: shippingAddressSnapshot?.phone,
       });
 
-      const productIds = [...new Set(items.map((i) => str(i?.productId)).filter(Boolean))];
+      const productIds = [
+        ...new Set(items.map((i) => str(i?.productId)).filter(Boolean)),
+      ];
       const invalidProductId = productIds.find((id) => !isObjectId(id));
       if (invalidProductId) throw new Error(`Invalid productId: ${invalidProductId}`);
 
-      const products = await Product.find({ _id: { $in: productIds } }).session(session).lean();
+      const products = await Product.find({ _id: { $in: productIds } })
+        .session(session)
+        .lean();
       const productMap = new Map(products.map((p) => [str(p._id), p]));
 
       const normalizedItems = [];
@@ -481,7 +492,9 @@ export const createOrder = async (req, res) => {
         }
 
         const unitPrice =
-          variant && Number(variant.price) > 0 ? Number(variant.price) : Number(product.price || 0);
+          variant && Number(variant.price) > 0
+            ? Number(variant.price)
+            : Number(product.price || 0);
 
         const itemSubtotal = unitPrice * qty;
         totalQty += qty;
@@ -508,7 +521,8 @@ export const createOrder = async (req, res) => {
             images: Array.isArray(product.images) ? product.images : [],
             category: product.category || null,
             subcategory: product.subcategory || null,
-            productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
+            productType:
+              product.productType || (product?.variants?.length ? "variable" : "simple"),
             sku: product.sku || "",
             tags: Array.isArray(product.tags) ? product.tags : [],
             hsnCode: String(product.hsnCode || "62105000"),
@@ -531,12 +545,17 @@ export const createOrder = async (req, res) => {
         });
       }
 
+      // ✅ decrement stock (atomic)
       for (const it of normalizedItems) {
         const variantId = it?.variant?.variantId;
 
         const result = variantId
           ? await Product.updateOne(
-              { _id: it.productId, "variants._id": variantId, "variants.stock": { $gte: it.quantity } },
+              {
+                _id: it.productId,
+                "variants._id": variantId,
+                "variants.stock": { $gte: it.quantity },
+              },
               { $inc: { "variants.$.stock": -it.quantity } }
             ).session(session)
           : await Product.updateOne(
@@ -550,6 +569,7 @@ export const createOrder = async (req, res) => {
       const subtotal = computedSubtotal;
       const totalAmount = subtotal + num(shippingFee) + num(tax);
 
+      // ✅ compute coupon discount on subtotal
       const couponCode = coupon && typeof coupon === "object" ? str(coupon.code) : "";
       const { couponSnapshot, couponDiscount, couponDoc } = await validateAndComputeCoupon({
         code: couponCode,
@@ -557,11 +577,28 @@ export const createOrder = async (req, res) => {
         identity,
       });
 
-const razorpayExtraDiscount =
-  pm === "razorpay"
-    ? Math.round((subtotal * RAZORPAY_DISCOUNT_PERCENT) / 100)
-    : 0;
+      /**
+       * ✅ FIX: Razorpay extra discount should apply on PAYABLE AFTER COUPON (products only),
+       * not on the original subtotal.
+       *
+       * Example:
+       * subtotal=3200, coupon=500 => base=2700
+       * razorpay extra 10% => 270
+       */
+      const baseForRazorpayExtra = Math.max(
+        0,
+        subtotal - Math.min(num(couponDiscount), subtotal)
+      );
 
+      const razorpayExtraDiscount =
+        pm === "razorpay"
+          ? Math.min(
+              baseForRazorpayExtra,
+              Math.round((baseForRazorpayExtra * RAZORPAY_DISCOUNT_PERCENT) / 100)
+            )
+          : 0;
+
+      // ✅ final discount (coupon + razorpay extra), capped to totalAmount
       let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
       if (finalDiscount > totalAmount) finalDiscount = totalAmount;
 
@@ -575,8 +612,10 @@ const razorpayExtraDiscount =
         categoryBreakdown: computeCategoryBreakdown(normalizedItems),
         tagsUsed: uniqStrings(normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])),
         onlinePaymentDiscountApplied: pm === "razorpay",
-onlinePaymentDiscountPct: pm === "razorpay" ? RAZORPAY_DISCOUNT_PERCENT : 0,
+        onlinePaymentDiscountPct: pm === "razorpay" ? RAZORPAY_DISCOUNT_PERCENT : 0,
         onlinePaymentDiscountAmount: razorpayExtraDiscount,
+        // (optional) helpful for debugging, no functional impact
+        // onlinePaymentDiscountBase: baseForRazorpayExtra,
         couponIdentity: identity || "",
       };
 
@@ -631,8 +670,11 @@ onlinePaymentDiscountPct: pm === "razorpay" ? RAZORPAY_DISCOUNT_PERCENT : 0,
 
     const finalOrder = await Order.findById(req.__createdOrder._id).lean();
 
-    try { triggerOrderEmails(finalOrder); }
-catch (e) { console.error("⚠️ triggerOrderEmails failed:", e?.message || e); }
+    try {
+      triggerOrderEmails(finalOrder);
+    } catch (e) {
+      console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
+    }
 
     return res.status(201).json({ message: "Order created successfully", order: finalOrder });
   } catch (error) {
@@ -642,6 +684,7 @@ catch (e) { console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
     session.endSession();
   }
 };
+
 
 
 
