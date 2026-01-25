@@ -1,6 +1,100 @@
 import Customer from "./Customer.js";
 import { Mailer } from "../nodemailer/events/mailer.js"; // ✅ adjust relative path if needed
 
+
+const normalizeIncomingCustomer = (body = {}) => {
+  const firebaseUID = body.firebaseUID ? String(body.firebaseUID).trim() : null;
+  const email = body.email ? String(body.email).trim().toLowerCase() : "";
+  const phone = body.phone ? String(body.phone).trim() : "";
+  const name = body.name ? String(body.name).trim() : "";
+  const profileImage = body.profileImage ? String(body.profileImage).trim() : "";
+
+  return {
+    firebaseUID: firebaseUID || null,
+    email,
+    phone,
+    name,
+    profileImage,
+    referredBy: body.referredBy || null,
+    referralCode: body.referralCode || null,
+  };
+};
+
+// Only set if incoming has value; for existing fields choose policy
+const buildSafeUpdate = ({ email, phone, name, profileImage }) => {
+  const $set = {};
+
+  // keep these as "always update if provided" (your choice)
+  if (email) $set.email = email;
+  if (phone) $set.phone = phone;
+  if (name) $set.name = name;
+  if (profileImage) $set.profileImage = profileImage;
+
+  $set.updatedAt = new Date();
+  return $set;
+};
+
+const getOrCreateCustomerAtomic = async ({
+  firebaseUID,
+  email,
+  phone,
+  name,
+  profileImage,
+  referredBy,
+  referralCode,
+}) => {
+  const finalReferralCode =
+    referralCode || Math.random().toString(36).substring(2, 10).toUpperCase();
+
+  // Prefer firebaseUID if present
+  const filter = firebaseUID
+    ? { firebaseUID }
+    : {
+        $or: [
+          ...(email ? [{ email }] : []),
+          ...(phone ? [{ phone }] : []),
+        ],
+      };
+
+  const update = {
+    $set: buildSafeUpdate({ email, phone, name, profileImage }),
+    $setOnInsert: {
+      firebaseUID: firebaseUID || null,
+      email: email || "",
+      name: name || "",
+      phone: phone || "",
+      profileImage: profileImage || "",
+      referralCode: finalReferralCode,
+      referredBy: referredBy || null,
+      cart: {
+        activeCartId: null,
+        activeCartType: "cart",
+        cartCount: 0,
+        abandonedCartCount: 0,
+        lastCartActivityAt: null,
+        lastAbandonedCartId: null,
+      },
+      joinedAt: new Date(),
+      createdAt: new Date(),
+      isActive: true,
+    },
+  };
+
+  // Important: rawResult gives lastErrorObject.updatedExisting
+  const result = await Customer.findOneAndUpdate(filter, update, {
+    upsert: true,
+    new: true,
+    setDefaultsOnInsert: true,
+    rawResult: true,
+  });
+
+  const customer = result.value;
+  const wasCreated = result.lastErrorObject?.updatedExisting === false;
+
+  return { customer, wasCreated };
+};
+
+
 /**
  * ---------------------------------------------------------
  * ✅ Create or update customer (OAuth login + Guest Checkout)
@@ -21,10 +115,13 @@ export const createCustomer = async (req, res) => {
     } = req.body;
 
     // ✅ Normalize
+    const safeFirebaseUID = firebaseUID ? String(firebaseUID).trim() : null;
     const safeEmail = email ? String(email).trim().toLowerCase() : "";
     const safePhone = phone ? String(phone).trim() : "";
+    const safeName = name ? String(name).trim() : "";
+    const safeProfileImage = profileImage ? String(profileImage).trim() : "";
 
-    // ✅ Referral Code
+    // ✅ Referral Code (only used on insert)
     const finalReferralCode =
       referralCode ||
       Math.random().toString(36).substring(2, 10).toUpperCase();
@@ -56,192 +153,140 @@ export const createCustomer = async (req, res) => {
       }
     };
 
-    /**
-     * ✅ RULE:
-     * Send onboarding ONLY when:
-     * - New customer created OR
-     * - Existing customer had no email before and now email is set
-     */
-
     // ---------------------------------------------------------
-    // ✅ CASE 1: Firebase Login (OAuth)
+    // ✅ Guard: Guest must have email or phone
     // ---------------------------------------------------------
-    if (firebaseUID) {
-      // 1) Find by firebaseUID
-      let customer = await Customer.findOne({ firebaseUID });
-
-      // ✅ If exists, update fields (send onboarding ONLY if email was missing and now set)
-      if (customer) {
-        const wasEmailMissing = !customer.email;
-
-        if (safeEmail) customer.email = safeEmail;
-        if (name) customer.name = name;
-        if (safePhone) customer.phone = safePhone;
-        if (profileImage) customer.profileImage = profileImage;
-
-        await customer.save();
-
-        // ✅ Send onboarding only if email got added now
-        if (wasEmailMissing && customer.email) {
-          // fire & forget but safe
-          sendOnboardingIfPossible(customer);
-        }
-
-        return res.status(200).json({
-          message: "Customer updated",
-          customer,
-        });
-      }
-
-      // 2) Edge: firebaseUID not found but email exists → link account
-      if (safeEmail) {
-        const existingByEmail = await Customer.findOne({ email: safeEmail });
-
-        if (existingByEmail) {
-          const wasEmailMissing = !existingByEmail.email; // usually false since found by email
-
-          existingByEmail.firebaseUID = firebaseUID;
-          if (name) existingByEmail.name = name;
-          if (safePhone) existingByEmail.phone = safePhone;
-          if (profileImage) existingByEmail.profileImage = profileImage;
-
-          await existingByEmail.save();
-
-          // In linking case, onboarding usually not needed, but safe:
-          // if email was missing earlier and now set (rare) -> send
-          if (wasEmailMissing && existingByEmail.email) {
-            sendOnboardingIfPossible(existingByEmail);
-          }
-
-          return res.status(200).json({
-            message: "Customer linked to firebase login",
-            customer: existingByEmail,
-          });
-        }
-      }
-
-      // 3) Create NEW firebase customer
-      customer = await Customer.create({
-        firebaseUID,
-        email: safeEmail || "", // allow empty if user logged in without email
-        name,
-        phone: safePhone,
-        profileImage,
-        referralCode: finalReferralCode,
-        referredBy: referredBy || null,
-
-        cart: {
-          activeCartId: null,
-          activeCartType: "cart",
-          cartCount: 0,
-          abandonedCartCount: 0,
-          lastCartActivityAt: null,
-          lastAbandonedCartId: null,
-        },
-      });
-
-      // ✅ send onboarding (if email exists)
-      sendOnboardingIfPossible(customer);
-
-      return res.status(201).json({
-        message: "Customer created",
-        customer,
-      });
-    }
-
-    // ---------------------------------------------------------
-    // ✅ CASE 2: Guest Checkout (no firebaseUID)
-    // ---------------------------------------------------------
-    if (!safeEmail && !safePhone) {
+    if (!safeFirebaseUID && !safeEmail && !safePhone) {
       return res.status(400).json({
         message: "Email or phone is required for guest checkout",
       });
     }
 
-    // ✅ Find existing guest by email/phone
-    let existingCustomer = await Customer.findOne({
-      $or: [
-        ...(safeEmail ? [{ email: safeEmail }] : []),
-        ...(safePhone ? [{ phone: safePhone }] : []),
-      ],
-    });
+    // ---------------------------------------------------------
+    // ✅ OPTIONAL: Link guest/email record with firebaseUID (if uid doc doesn't exist)
+    // ---------------------------------------------------------
+    if (safeFirebaseUID && safeEmail) {
+      const uidExists = await Customer.findOne({ firebaseUID: safeFirebaseUID })
+        .select("_id")
+        .lean();
 
-    // ✅ Guest exists → update (send onboarding ONLY if email was missing and now set)
-    if (existingCustomer) {
-      const wasEmailMissing = !existingCustomer.email;
-
-      if (name && !existingCustomer.name) existingCustomer.name = name;
-
-      if (safeEmail && !existingCustomer.email)
-        existingCustomer.email = safeEmail;
-
-      if (safePhone && !existingCustomer.phone)
-        existingCustomer.phone = safePhone;
-
-      if (profileImage && !existingCustomer.profileImage)
-        existingCustomer.profileImage = profileImage;
-
-      await existingCustomer.save();
-
-      // ✅ send onboarding only if email got added now
-      if (wasEmailMissing && existingCustomer.email) {
-        sendOnboardingIfPossible(existingCustomer);
+      if (!uidExists) {
+        await Customer.updateOne(
+          {
+            email: safeEmail,
+            $or: [
+              { firebaseUID: null },
+              { firebaseUID: "" },
+              { firebaseUID: { $exists: false } },
+            ],
+          },
+          { $set: { firebaseUID: safeFirebaseUID, updatedAt: new Date() } }
+        );
       }
-
-      return res.status(200).json({
-        message: "Guest customer already exists",
-        customer: existingCustomer,
-      });
     }
 
-    // ✅ Create NEW guest customer
-    try {
-      const guestCustomer = await Customer.create({
-        firebaseUID: null,
-        email: safeEmail || "",
-        name,
-        phone: safePhone,
-        profileImage,
-        referralCode: finalReferralCode,
-        referredBy: referredBy || null,
-
-        cart: {
-          activeCartId: null,
-          activeCartType: "cart",
-          cartCount: 0,
-          abandonedCartCount: 0,
-          lastCartActivityAt: null,
-          lastAbandonedCartId: null,
-        },
-      });
-
-      // ✅ send onboarding (if email exists)
-      sendOnboardingIfPossible(guestCustomer);
-
-      return res.status(201).json({
-        message: "Guest customer created",
-        customer: guestCustomer,
-      });
-    } catch (err) {
-      // ✅ Handle duplicate key race condition safely
-      if (err?.code === 11000) {
-        const fallback = await Customer.findOne({
+    // ---------------------------------------------------------
+    // ✅ ATOMIC UPSERT FILTER
+    // Priority: firebaseUID -> else email/phone
+    // ---------------------------------------------------------
+    const filter = safeFirebaseUID
+      ? { firebaseUID: safeFirebaseUID }
+      : {
           $or: [
             ...(safeEmail ? [{ email: safeEmail }] : []),
             ...(safePhone ? [{ phone: safePhone }] : []),
           ],
-        });
+        };
 
+    // ✅ Pre-check for onboarding + created/updated status
+    const before = await Customer.findOne(filter).select("email").lean();
+    const wasCreated = !before;
+    const wasEmailMissingBefore = !before?.email;
+
+    const isOAuth = !!safeFirebaseUID;
+
+    // ---------------------------------------------------------
+    // ✅ Update policy (NO overlap with $setOnInsert)
+    // ---------------------------------------------------------
+    const $set = { updatedAt: new Date() };
+
+    if (isOAuth) {
+      if (safeEmail) $set.email = safeEmail;
+      if (safeName) $set.name = safeName;
+      if (safePhone) $set.phone = safePhone;
+      if (safeProfileImage) $set.profileImage = safeProfileImage;
+    } else {
+      if (safeName) $set.name = safeName;
+      if (safeEmail) $set.email = safeEmail;
+      if (safePhone) $set.phone = safePhone;
+      if (safeProfileImage) $set.profileImage = safeProfileImage;
+    }
+
+    // ✅ Insert-only defaults (do NOT include email/phone/name/profileImage here)
+    const $setOnInsert = {
+      firebaseUID: safeFirebaseUID || null,
+      referralCode: finalReferralCode,
+      referredBy: referredBy || null,
+      cart: {
+        activeCartId: null,
+        activeCartType: "cart",
+        cartCount: 0,
+        abandonedCartCount: 0,
+        lastCartActivityAt: null,
+        lastAbandonedCartId: null,
+      },
+      joinedAt: new Date(),
+      createdAt: new Date(),
+      isActive: true,
+    };
+
+    let customer;
+
+    try {
+      // ✅ Use normal mongoose return (avoid rawResult shape surprises)
+      customer = await Customer.findOneAndUpdate(
+        filter,
+        { $set, $setOnInsert },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+          runValidators: true,
+        }
+      );
+    } catch (err) {
+      // ✅ Handle duplicate key race condition safely
+      if (err?.code === 11000) {
+        const fallback = await Customer.findOne(filter);
         if (fallback) {
           return res.status(200).json({
-            message: "Guest customer already exists",
+            message: "Customer already exists",
             customer: fallback,
           });
         }
       }
-
       throw err;
     }
+
+    if (!customer?._id) {
+      return res.status(500).json({
+        message: "Customer upsert failed",
+        error: "Customer document not returned from DB",
+      });
+    }
+
+    // ✅ Onboarding rule
+    if (
+      customer?.email &&
+      (wasCreated || (wasEmailMissingBefore && !!customer.email))
+    ) {
+      sendOnboardingIfPossible(customer);
+    }
+
+    return res.status(wasCreated ? 201 : 200).json({
+      message: wasCreated ? "Customer created" : "Customer updated",
+      customer,
+    });
   } catch (error) {
     console.error("Create Customer Error FULL:", error);
 
@@ -251,6 +296,9 @@ export const createCustomer = async (req, res) => {
     });
   }
 };
+
+
+
 
 
 

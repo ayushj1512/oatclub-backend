@@ -102,6 +102,7 @@ const ALLOWED_ORIGINS = [
   // Local
   "http://localhost:3000",
   "http://localhost:3001",
+  "http://localhost:3002",
 
   // ✅ Frontend (.in)
   "https://www.mirayfashions.in",
@@ -111,6 +112,11 @@ const ALLOWED_ORIGINS = [
   "https://www.mirayfashions.com",
   "https://mirayfashions.com",
 
+  // ✅ Media Panel / Media site
+  "https://media.mirayfashions.com",
+  "https://www.media.mirayfashions.com",
+"https://miray-media-project.vercel.app",
+"https://www.miray-media-project.vercel.app",
   // ✅ Vercel Preview/Deployment
   "https://miray-nine.vercel.app",
 
@@ -120,6 +126,7 @@ const ALLOWED_ORIGINS = [
   // ✅ Backend itself
   "https://miray-backend.onrender.com",
 ];
+
 
 // ✅ Allow Shiprocket webhook without CORS restrictions
 app.use("/api/shiprocket/webhook", (req, res, next) => {
