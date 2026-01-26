@@ -6,13 +6,16 @@ import mongoose from "mongoose";
  */
 const normCode = (v) => String(v || "").trim().toUpperCase();
 const normEmail = (v) => String(v || "").trim().toLowerCase();
-const normPhone = (v) => String(v || "").replace(/[^\d+]/g, "").trim(); // keep digits/+ only
+
+// ✅ digits-only (matches schema normalizePhone)
+const normPhone = (v) => {
+  const digits = String(v || "").replace(/\D/g, "");
+  return digits.length ? digits : "";
+};
 
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normEmail(v));
 const isPhone = (v) => {
-  const p = normPhone(v);
-  // very lenient: 10-15 digits (optional +)
-  const digits = p.replace(/^\+/, "");
+  const digits = normPhone(v);
   return digits.length >= 10 && digits.length <= 15;
 };
 
@@ -57,6 +60,25 @@ const isWithinDates = (coupon) => {
   return true;
 };
 
+// ✅ enforce targeted coupons (email/phone)
+const enforceTargets = ({ coupon, email, phone, res }) => {
+  if (coupon.targetEmail) {
+    if (!email || normEmail(email) !== coupon.targetEmail) {
+      res.status(403).json({ message: "This coupon is not applicable for this email." });
+      return false;
+    }
+  }
+
+  if (coupon.targetPhone) {
+    if (!phone || normPhone(phone) !== coupon.targetPhone) {
+      res.status(403).json({ message: "This coupon is not applicable for this phone number." });
+      return false;
+    }
+  }
+
+  return true;
+};
+
 /**
  * @desc Create a new coupon
  * @route POST /api/coupons
@@ -67,6 +89,7 @@ export const createCoupon = async (req, res) => {
     const {
       code,
       type,
+      visibility, // ✅ new
       description,
       discountType,
       discountValue,
@@ -79,6 +102,8 @@ export const createCoupon = async (req, res) => {
       usageLimit,
       usageLimitPerCustomer,
       isActive,
+      targetEmail, // ✅ new
+      targetPhone, // ✅ new
     } = req.body;
 
     if (!code || !validTill || !discountType || discountValue == null) {
@@ -95,6 +120,7 @@ export const createCoupon = async (req, res) => {
     const coupon = await Coupon.create({
       code: couponCode,
       type,
+      visibility, // ✅ add
       description,
       discountType,
       discountValue,
@@ -107,6 +133,8 @@ export const createCoupon = async (req, res) => {
       usageLimit,
       usageLimitPerCustomer,
       isActive,
+      targetEmail: targetEmail ? normEmail(targetEmail) : null, // ✅ add
+      targetPhone: targetPhone ? normPhone(targetPhone) : null, // ✅ add
       usedBy: [],
     });
 
@@ -124,10 +152,11 @@ export const createCoupon = async (req, res) => {
  */
 export const getAllCoupons = async (req, res) => {
   try {
-    const { type, isActive, influencerId } = req.query;
+    const { type, isActive, influencerId, visibility } = req.query;
 
     const filter = {};
     if (type) filter.type = type;
+    if (visibility) filter.visibility = visibility;
     if (isActive !== undefined) filter.isActive = isActive === "true";
     if (influencerId) filter.influencerId = influencerId;
 
@@ -147,6 +176,9 @@ export const getAllCoupons = async (req, res) => {
  * @desc Get a single coupon by ID or code
  * @route GET /api/coupons/:idOrCode
  * @access Public
+ *
+ * ✅ NOTE: This blocks private coupons from being fetched publicly (prevents leaking private codes).
+ * If you want admins to access private coupons via this route, protect this route with auth middleware.
  */
 export const getCouponByIdOrCode = async (req, res) => {
   try {
@@ -160,6 +192,11 @@ export const getCouponByIdOrCode = async (req, res) => {
     }
 
     if (!coupon) return res.status(404).json({ message: "Coupon not found" });
+
+    // ✅ block private coupon from public fetch
+    if (coupon.visibility === "private") {
+      return res.status(404).json({ message: "Coupon not found" });
+    }
 
     res.status(200).json(coupon);
   } catch (error) {
@@ -179,6 +216,10 @@ export const updateCoupon = async (req, res) => {
     const updates = { ...req.body };
 
     if (updates.code) updates.code = normCode(updates.code);
+
+    // ✅ normalize targets if present
+    if (updates.targetEmail !== undefined) updates.targetEmail = updates.targetEmail ? normEmail(updates.targetEmail) : null;
+    if (updates.targetPhone !== undefined) updates.targetPhone = updates.targetPhone ? normPhone(updates.targetPhone) : null;
 
     const coupon = await Coupon.findByIdAndUpdate(id, updates, {
       new: true,
@@ -217,6 +258,7 @@ export const deleteCoupon = async (req, res) => {
  * @desc Apply coupon (VALIDATE + CALCULATE ONLY)
  *       ✅ identifies customer via email OR phone OR customerId
  *       ✅ blocks "guest" identity until email/phone provided
+ *       ✅ validates targetEmail/targetPhone if present
  *       ✅ DOES NOT mark usedBy / usedCount (do that on order success)
  * @route POST /api/coupons/apply
  * @access Public/Private (Customer/Guest)
@@ -232,7 +274,6 @@ export const applyCoupon = async (req, res) => {
     const couponCode = normCode(code);
     const customerKey = buildCustomerKey({ email, phone, customerId });
 
-    // ✅ if guest but no email/phone yet
     if (!customerKey) {
       return res.status(400).json({
         message: "Please enter email or phone number to apply coupon.",
@@ -244,6 +285,9 @@ export const applyCoupon = async (req, res) => {
 
     if (!coupon.isActive) return res.status(400).json({ message: "Coupon is not active." });
     if (!isWithinDates(coupon)) return res.status(400).json({ message: "Coupon is expired or not yet active." });
+
+    // ✅ enforce mobile/email targeting
+    if (!enforceTargets({ coupon, email, phone, res })) return;
 
     if (Number(cartTotal) < Number(coupon.minPurchase || 0)) {
       return res.status(400).json({
@@ -281,7 +325,7 @@ export const applyCoupon = async (req, res) => {
 };
 
 /**
- * ✅ NEW: Redeem coupon (MARK USED) – call this only when order/payment is successful
+ * ✅ Redeem coupon (MARK USED) – call this only when order/payment is successful
  * @route POST /api/coupons/redeem
  * @access Private (Order service / Customer)
  */
@@ -302,11 +346,14 @@ export const redeemCoupon = async (req, res) => {
       });
     }
 
-    // Validate coupon again (safe)
     const coupon = await Coupon.findOne({ code: couponCode });
     if (!coupon) return res.status(404).json({ message: "Invalid coupon code." });
+
     if (!coupon.isActive) return res.status(400).json({ message: "Coupon is not active." });
     if (!isWithinDates(coupon)) return res.status(400).json({ message: "Coupon is expired or not yet active." });
+
+    // ✅ enforce mobile/email targeting
+    if (!enforceTargets({ coupon, email, phone, res })) return;
 
     if (Number(cartTotal) < Number(coupon.minPurchase || 0)) {
       return res.status(400).json({
@@ -330,12 +377,12 @@ export const redeemCoupon = async (req, res) => {
     const { discount, finalTotal } = calcDiscount(coupon, cartTotal);
     if (discount <= 0) return res.status(400).json({ message: "Invalid discount calculation." });
 
-    // ✅ NOW mark usage (atomic-ish)
-    // $addToSet avoids duplicates for same key; usedCount increments once per redeem call
+    // ✅ NOW mark usage
+    // IMPORTANT: use $push (NOT $addToSet) because you count usage by duplicates in usedBy
     const updated = await Coupon.findOneAndUpdate(
       { code: couponCode },
       {
-        $addToSet: { usedBy: customerKey },
+        $push: { usedBy: customerKey },
         $inc: { usedCount: 1 },
       },
       { new: true }
