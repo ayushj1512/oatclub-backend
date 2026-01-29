@@ -15,6 +15,7 @@ router.post("/orders/:id/ship", bookWithShiprocket);
  * POST /api/shiprocket/webhook
  */
 router.post("/shiprocket/webhook", shiprocketWebhook);
+router.post("/1bfc4cf60e6c2cc8/1bfc4cf60e6c2cc8", shiprocketWebhook);
 
 // Reverse pickup (RMA)
 router.post(
