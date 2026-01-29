@@ -12,14 +12,51 @@ const reviewSchema = new mongoose.Schema(
       index: true,
     },
 
+    /**
+     * ✅ Store productCode snapshot (denormalized)
+     * Helps you query reviews by productCode without extra populate.
+     */
+    productCode: {
+      type: String,
+      required: true,
+      trim: true,
+      index: true,
+    },
+
     /* ---------------------------------------------------------
-       CUSTOMER (OPTIONAL FOR NOW)
-       You can allow guest reviews later by disabling required
+       CUSTOMER (REQUIRED)
     --------------------------------------------------------- */
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
       required: true,
+      index: true,
+    },
+
+    /**
+     * ✅ Store customer snapshot fields (denormalized)
+     * (Name, email, phone/mobile at the time of review)
+     */
+    customerName: {
+      type: String,
+      trim: true,
+      default: "",
+      index: true,
+    },
+
+    customerEmail: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      default: "",
+      index: true,
+    },
+
+    customerPhone: {
+      type: String,
+      trim: true,
+      default: "",
+      index: true,
     },
 
     /* ---------------------------------------------------------
@@ -34,7 +71,6 @@ const reviewSchema = new mongoose.Schema(
 
     /* ---------------------------------------------------------
        OPTIONAL TITLE OF REVIEW
-       (e.g., "Amazing quality!", "Perfect Fit", etc.)
     --------------------------------------------------------- */
     title: {
       type: String,
@@ -55,8 +91,6 @@ const reviewSchema = new mongoose.Schema(
 
     /* ---------------------------------------------------------
        IMAGES (CLOUDINARY URLS)
-       - supports multiple images
-       - supports null values
     --------------------------------------------------------- */
     images: [
       {
@@ -67,7 +101,6 @@ const reviewSchema = new mongoose.Schema(
 
     /* ---------------------------------------------------------
        VERIFIED PURCHASE TAG
-       - Mark when the user actually bought the product
     --------------------------------------------------------- */
     verifiedPurchase: {
       type: Boolean,
@@ -75,10 +108,7 @@ const reviewSchema = new mongoose.Schema(
     },
 
     /* ---------------------------------------------------------
-       STATUS:
-       - pending (default)
-       - approved (visible to customers)
-       - rejected (hidden)
+       STATUS
     --------------------------------------------------------- */
     status: {
       type: String,
@@ -88,9 +118,7 @@ const reviewSchema = new mongoose.Schema(
     },
 
     /* ---------------------------------------------------------
-       ANALYTICS: HELPFUL / REPORT
-       - For showing "X people found this helpful"
-       - Customer can tap "Report this review"
+       ANALYTICS
     --------------------------------------------------------- */
     helpfulCount: {
       type: Number,
@@ -111,5 +139,38 @@ const reviewSchema = new mongoose.Schema(
 --------------------------------------------------------- */
 reviewSchema.index({ product: 1, customer: 1 }, { unique: true });
 
-export default mongoose.models.Review ||
-  mongoose.model("Review", reviewSchema);
+/* ---------------------------------------------------------
+   HOOKS: auto-fill snapshots if only ObjectIds provided
+   (requires Product + Customer models to exist)
+--------------------------------------------------------- */
+reviewSchema.pre("validate", async function (next) {
+  try {
+    // Fill productCode from Product if missing
+    if (!this.productCode && this.product) {
+      const Product = mongoose.model("Product");
+      const p = await Product.findById(this.product).select("productCode").lean();
+      if (p?.productCode) this.productCode = p.productCode;
+    }
+
+    // Fill customer snapshot fields from Customer if missing
+    if (
+      this.customer &&
+      (!this.customerName || !this.customerEmail || !this.customerPhone)
+    ) {
+      const Customer = mongoose.model("Customer");
+      const c = await Customer.findById(this.customer)
+        .select("name email phone")
+        .lean();
+
+      if (!this.customerName && c?.name) this.customerName = c.name;
+      if (!this.customerEmail && c?.email) this.customerEmail = c.email;
+      if (!this.customerPhone && c?.phone) this.customerPhone = c.phone;
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
+export default mongoose.models.Review || mongoose.model("Review", reviewSchema);

@@ -1,3 +1,4 @@
+// shiprocket/shiprocket.webhook.js
 import Order from "../Orders/Orders.js";
 
 /* ============================================================
@@ -88,18 +89,13 @@ const normalizeStatus = (s = "") =>
   String(s)
     .trim()
     .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_") // handles spaces, hyphens, slashes etc.
+    .replace(/[^A-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 
 const getLastScanStatus = (data = {}) => {
   const scans = Array.isArray(data.scans) ? data.scans : [];
   const last = scans.length ? scans[scans.length - 1] : null;
-  return (
-    last?.["sr-status-label"] ||
-    last?.status ||
-    last?.activity ||
-    ""
-  );
+  return last?.["sr-status-label"] || last?.status || last?.activity || "";
 };
 
 const getRawStatus = (data = {}) =>
@@ -116,8 +112,6 @@ const stageOf = (s) => SHIPMENT_PRIORITY[s] || 0;
 
 /**
  * Webhook idempotency key
- * - uses awb OR shipmentId + normalizedStatus + a timestamp-ish field (if present)
- * - Shiprocket may resend same payload → avoid repeated DB writes
  */
 const getEventKey = (data, awb, shipmentId, normalizedStatus) => {
   const ts =
@@ -125,13 +119,36 @@ const getEventKey = (data, awb, shipmentId, normalizedStatus) => {
     data.current_tracking_status_datetime ||
     data.updated_at ||
     "";
-  return [awb || shipmentId, normalizedStatus, String(ts)].filter(Boolean).join("|");
+  return [awb || shipmentId, normalizedStatus, String(ts)]
+    .filter(Boolean)
+    .join("|");
 };
 
+/**
+ * Shiprocket sends token in header key: anx-api-key (per your doc)
+ * - We also accept x-api-key as fallback (in case dashboards differ)
+ */
 const verifyWebhookToken = (req) => {
-  if (!SHIPROCKET_WEBHOOK_TOKEN) return true; // if you didn't set token in env/dashboard
-  const token = (req.header("x-api-key") || "").trim();
+  if (!SHIPROCKET_WEBHOOK_TOKEN) return true;
+
+  const token = (
+    req.header("anx-api-key") ||
+    req.header("x-api-key") ||
+    ""
+  ).trim();
+
   return token === SHIPROCKET_WEBHOOK_TOKEN;
+};
+
+/**
+ * Safer date parsing for "YYYY-MM-DD HH:mm:ss"
+ */
+const toDate = (s) => {
+  if (!s) return null;
+  const str = String(s).trim();
+  const isoish = str.includes(" ") ? str.replace(" ", "T") : str;
+  const d = new Date(isoish);
+  return Number.isNaN(d.getTime()) ? null : d;
 };
 
 /* ============================================================
@@ -141,8 +158,10 @@ const verifyWebhookToken = (req) => {
 export async function shiprocketWebhook(req, res) {
   try {
     // 0) Optional security token verification
+    // IMPORTANT: Always respond 200 to avoid Shiprocket retries
     if (!verifyWebhookToken(req)) {
-      return res.status(401).json({ success: false });
+      console.warn("⚠️ Shiprocket webhook: invalid token (ignored).");
+      return res.status(200).json({ success: true });
     }
 
     const data = req.body || {};
@@ -258,7 +277,7 @@ export async function shiprocketWebhook(req, res) {
     }
 
     /* ------------------------------------------------
-       3) FORWARD IDPOTENCY + SAFER ANTI-REGRESSION
+       3) FORWARD IDEMPOTENCY + SAFER ANTI-REGRESSION
     ------------------------------------------------ */
     const prevShipmentStatus = order.shipment?.status;
 
@@ -269,7 +288,10 @@ export async function shiprocketWebhook(req, res) {
     }
 
     // anti-regression basic
-    if (prevShipmentStatus && stageOf(shipmentStatus) < stageOf(prevShipmentStatus)) {
+    if (
+      prevShipmentStatus &&
+      stageOf(shipmentStatus) < stageOf(prevShipmentStatus)
+    ) {
       return res.status(200).json({ success: true });
     }
 
@@ -283,7 +305,7 @@ export async function shiprocketWebhook(req, res) {
       return res.status(200).json({ success: true });
     }
 
-    //  - rto should not override delivered forward shipment (keep forward delivered stable)
+    //  - rto should not override delivered forward shipment
     if (
       shipmentStatus === "rto" &&
       prevShipmentStatus &&
@@ -331,11 +353,13 @@ export async function shiprocketWebhook(req, res) {
       const expected =
         data.expected_delivery_date || data.etd || data.expected_delivery || null;
 
+      const parsedExpected = toDate(expected);
+
       order.trackingDetails = {
         ...(order.trackingDetails || {}),
         trackingId: awb,
         courierName: data.courier_name || order.trackingDetails?.courierName,
-        expectedDelivery: expected ? new Date(expected) : order.trackingDetails?.expectedDelivery,
+        expectedDelivery: parsedExpected || order.trackingDetails?.expectedDelivery,
       };
 
       if (shipmentStatus === "picked" && !order.trackingDetails.shippedAt) {
