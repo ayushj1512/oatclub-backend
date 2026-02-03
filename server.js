@@ -37,6 +37,9 @@ import attributeRoutes from "./Attribute/attributeRoutes.js";
 import shiprocketRoutes from "./shiprocket/shipping.routes.js";
 import bestsellerRoutes from "./BestSeller/bestseller.routes.js";
 import xpressbeesRoutes from "./Xpressbees/xpressbees.routes.js";
+import adminFootwearRoutes from "./Footwear/adminFootwearRoutes.js";
+import footwearRoutes from "./Footwear/footwearRoutes.js";
+import inventoryReservationRoutes from "./InventoryReservation/InventoryReservationRoutes.js";
 
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
@@ -234,6 +237,9 @@ app.use("/api", emailRoutes);
 app.use("/api/collaborations", collaborationRoutes);
 app.use("/api", bestsellerRoutes);
 app.use("/api/shipping/xpressbees", xpressbeesRoutes);
+app.use("/api/footwear", footwearRoutes);
+app.use("/api/admin/footwear", adminFootwearRoutes);
+app.use("/api/inventory-reservations", inventoryReservationRoutes);
 
 // Admin
 app.use("/api/inventory", inventoryRoutes);

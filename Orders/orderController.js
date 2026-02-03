@@ -18,7 +18,13 @@ import {
   triggerRmaEmails,
 } from "./order.emails.js";
 import Coupon from "../Coupon/Coupon.js"; 
+
 // ⚠️ path tumhare project ke hisaab se adjust kar lena
+
+const isParentOrder = (order) => String(order?.orderType || "").toLowerCase() === "parent";
+const isShipmentOrder = (order) =>
+  ["shipment", "child"].includes(String(order?.orderType || "").toLowerCase()); // pick one naming
+
 
 const ADMIN_ORDER_ALERT_EMAILS = [
   "finance@mirayfashions.com",
@@ -271,11 +277,10 @@ const confirmOrderById = async ({ orderId, adminId = null, session = null }) => 
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
 
-  /* =========================
-     Helpers
-  ========================= */
+  // helpers
   const str = (v) => (v == null ? "" : String(v));
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const isObjectId = (v) => mongoose.Types.ObjectId.isValid(String(v || ""));
 
   const normEmail = (v) => str(v).trim().toLowerCase();
   const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim();
@@ -289,8 +294,8 @@ export const createOrder = async (req, res) => {
     const c = str(color).trim();
     const pc = str(productCode).trim();
     if (!c) return "";
-    if (isNumericLike(c)) return ""; // kills "00218"
-    if (pc && c.toUpperCase() === pc.toUpperCase()) return ""; // kills productCode
+    if (isNumericLike(c)) return "";
+    if (pc && c.toUpperCase() === pc.toUpperCase()) return "";
     return c;
   };
 
@@ -326,13 +331,10 @@ export const createOrder = async (req, res) => {
   const getSizeFromSku = (sku) => {
     const parts = str(sku).toUpperCase().split("-");
     const sizes = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
-    for (let i = parts.length - 1; i >= 0; i--) {
-      if (sizes.includes(parts[i])) return parts[i];
-    }
+    for (let i = parts.length - 1; i >= 0; i--) if (sizes.includes(parts[i])) return parts[i];
     return "";
   };
 
-  // NOTE: your SKU is like FEA-00218-L (no color), so protect numeric/productCode tokens.
   const getColorFromSku = (sku, productCode = "") => {
     const parts = str(sku).toUpperCase().split("-");
     if (parts.length < 2) return "";
@@ -359,33 +361,22 @@ export const createOrder = async (req, res) => {
     if (couponDoc.validTill && new Date() > new Date(couponDoc.validTill))
       throw new Error("Coupon has expired.");
 
-    if (num(cartTotal) < num(couponDoc.minPurchase || 0)) {
-      throw new Error(
-        `Minimum purchase required is ₹${num(couponDoc.minPurchase || 0)}`
-      );
-    }
+    if (num(cartTotal) < num(couponDoc.minPurchase || 0))
+      throw new Error(`Minimum purchase required is ₹${num(couponDoc.minPurchase || 0)}`);
 
-    if (
-      num(couponDoc.usageLimit) > 0 &&
-      num(couponDoc.usedCount) >= num(couponDoc.usageLimit)
-    ) {
+    if (num(couponDoc.usageLimit) > 0 && num(couponDoc.usedCount) >= num(couponDoc.usageLimit))
       throw new Error("Coupon usage limit has been reached.");
-    }
 
     const perUserLimit = num(couponDoc.usageLimitPerCustomer || 1);
     const usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
     const usedTimes = identity ? usedBy.filter((x) => str(x) === identity).length : 0;
-
-    if (identity && usedTimes >= perUserLimit) {
-      throw new Error("You have already used this coupon.");
-    }
+    if (identity && usedTimes >= perUserLimit) throw new Error("You have already used this coupon.");
 
     let discountAmount = 0;
     if (couponDoc.discountType === "percentage") {
       discountAmount = (num(cartTotal) * num(couponDoc.discountValue)) / 100;
-      if (num(couponDoc.maxDiscount) > 0) {
+      if (num(couponDoc.maxDiscount) > 0)
         discountAmount = Math.min(discountAmount, num(couponDoc.maxDiscount));
-      }
     } else {
       discountAmount = num(couponDoc.discountValue);
     }
@@ -400,39 +391,44 @@ export const createOrder = async (req, res) => {
     };
   };
 
+  // ✅ allocate from sellable (stock - reserved) but allow made-to-order (even if 0)
+  const computeAllocation = ({ stock, reservedStock, qty }) => {
+    const s = Number(stock ?? 0);
+    const r = Number(reservedStock ?? 0);
+    const q = Number(qty ?? 0);
+    const sellable = Math.max(0, s - r);
+    const allocatedQty = Math.min(q, sellable);
+    const toProduceQty = Math.max(0, q - allocatedQty);
+    return { sellable, allocatedQty, toProduceQty };
+  };
+
   try {
     const {
       customerId,
       shippingAddressId,
       billingAddressId,
       items,
-      coupon, // expects { code }
+      coupon,
       shippingFee = 0,
       tax = 0,
       paymentMethod = "cod",
       source = "website",
       isGiftOrder = false,
       currency = "INR",
+      customerSupportRemark = "",
     } = req.body;
 
     const pm = str(paymentMethod).toLowerCase();
 
-    if (!mongoose.Types.ObjectId.isValid(customerId))
-      return res.status(400).json({ message: "Invalid customerId" });
-
-    if (!mongoose.Types.ObjectId.isValid(shippingAddressId))
+    if (!isObjectId(customerId)) return res.status(400).json({ message: "Invalid customerId" });
+    if (!isObjectId(shippingAddressId))
       return res.status(400).json({ message: "Invalid shippingAddressId" });
-
-    if (billingAddressId && !mongoose.Types.ObjectId.isValid(billingAddressId))
+    if (billingAddressId && !isObjectId(billingAddressId))
       return res.status(400).json({ message: "Invalid billingAddressId" });
-
     if (!Array.isArray(items) || !items.length)
       return res.status(400).json({ message: "Order items missing" });
-
     if (!["cod", "razorpay"].includes(pm))
-      return res.status(400).json({
-        message: "Invalid paymentMethod. Allowed: cod | razorpay",
-      });
+      return res.status(400).json({ message: "Invalid paymentMethod. Allowed: cod | razorpay" });
 
     await session.withTransaction(async () => {
       const shippingAddress = await Address.findById(shippingAddressId).session(session);
@@ -450,15 +446,12 @@ export const createOrder = async (req, res) => {
         phone: shippingAddressSnapshot?.phone,
       });
 
-      const productIds = [
-        ...new Set(items.map((i) => str(i?.productId)).filter(Boolean)),
-      ];
-      const invalidProductId = productIds.find((id) => !isObjectId(id));
-      if (invalidProductId) throw new Error(`Invalid productId: ${invalidProductId}`);
+      // ✅ only Product for now
+      const productIds = [...new Set(items.map((i) => str(i?.productId)).filter(Boolean))];
+      const bad = productIds.find((id) => !isObjectId(id));
+      if (bad) throw new Error(`Invalid productId: ${bad}`);
 
-      const products = await Product.find({ _id: { $in: productIds } })
-        .session(session)
-        .lean();
+      const products = await Product.find({ _id: { $in: productIds } }).session(session).lean();
       const productMap = new Map(products.map((p) => [str(p._id), p]));
 
       const normalizedItems = [];
@@ -480,23 +473,37 @@ export const createOrder = async (req, res) => {
 
         let variant = null;
 
+        // ✅ NO "out of stock" throw. We allow made-to-order.
+        let allocatedQty = 0;
+        let toProduceQty = qty;
+
         if (isVariable) {
           if (!item.variantId) throw new Error(`${product.title} - variantId missing`);
-
           variant = findVariantById(product, item.variantId);
           if (!variant) throw new Error(`${product.title} - variant not found`);
 
-          if (Number(variant.stock ?? 0) < qty) throw new Error(`${product.title} out of stock`);
+          const alloc = computeAllocation({
+            stock: variant.stock,
+            reservedStock: variant.reservedStock,
+            qty,
+          });
+
+          allocatedQty = alloc.allocatedQty;
+          toProduceQty = alloc.toProduceQty;
         } else {
-          if (Number(product.stock ?? 0) < qty) throw new Error(`${product.title} out of stock`);
+          const alloc = computeAllocation({
+            stock: product.stock,
+            reservedStock: product.reservedStock,
+            qty,
+          });
+
+          allocatedQty = alloc.allocatedQty;
+          toProduceQty = alloc.toProduceQty;
         }
 
-        const unitPrice =
-          variant && Number(variant.price) > 0
-            ? Number(variant.price)
-            : Number(product.price || 0);
-
+        const unitPrice = Number(product.price || 0);
         const itemSubtotal = unitPrice * qty;
+
         totalQty += qty;
         computedSubtotal += itemSubtotal;
 
@@ -512,64 +519,95 @@ export const createOrder = async (req, res) => {
         const selectedColor = sanitizeSelectedColor(selectedColorRaw, product.productCode);
 
         normalizedItems.push({
+          lineId: crypto.randomUUID(),
+          productModel: "Product",
           productId: product._id,
+
+          fulfillment: {
+            allocatedQty, // ✅ reserve only this
+            shippedQty: 0,
+            toProduceQty, // ✅ remaining goes to production
+          },
+
           productSnapshot: {
             productCode: product.productCode || "",
             title: product.title,
             slug: product.slug || "",
             thumbnail: product.thumbnail || "",
             images: Array.isArray(product.images) ? product.images : [],
-            category: product.category || null,
-            subcategory: product.subcategory || null,
-            productType:
-              product.productType || (product?.variants?.length ? "variable" : "simple"),
+            productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
             sku: product.sku || "",
             tags: Array.isArray(product.tags) ? product.tags : [],
-            hsnCode: String(product.hsnCode || "62105000"),
+            hsnCode: String(product.hsnCode || ""),
             weight: Number(product.weight ?? 0),
             currency: product.currency || currency,
           },
+
           variant: {
             variantId: variant?._id || null,
             sku: variant?.sku || "",
             attributes: attrs,
-            image: variant?.image || product.thumbnail || "",
             weight: Number(variant?.weight ?? 0),
           },
+
           selectedSize,
           selectedColor,
           quantity: qty,
           price: unitPrice,
-          compareAtPrice: variant?.compareAtPrice ?? product?.compareAtPrice ?? null,
+          compareAtPrice: product?.compareAtPrice ?? null,
           subtotal: itemSubtotal,
         });
       }
 
-      // ✅ decrement stock (atomic)
+      /**
+       * ✅ IMPORTANT CHANGE:
+       * We DO NOT decrement stock at order creation (no $inc stock:-qty).
+       * We only reserve allocatedQty (sellable part).
+       * Anything beyond sellable remains toProduceQty and is NOT reserved.
+       *
+       * This matches:
+       * sellable = stock - reservedStock
+       * reserve only sellable portion
+       */
       for (const it of normalizedItems) {
         const variantId = it?.variant?.variantId;
+        const reserveQty = Number(it?.fulfillment?.allocatedQty || 0);
 
-        const result = variantId
-          ? await Product.updateOne(
-              {
-                _id: it.productId,
-                "variants._id": variantId,
-                "variants.stock": { $gte: it.quantity },
-              },
-              { $inc: { "variants.$.stock": -it.quantity } }
-            ).session(session)
-          : await Product.updateOne(
-              { _id: it.productId, stock: { $gte: it.quantity } },
-              { $inc: { stock: -it.quantity } }
-            ).session(session);
+        if (!reserveQty) continue; // fully made-to-order
 
-        if (!result.modifiedCount) throw new Error("Stock update failed");
+        if (variantId) {
+          // reserve on variant (simple optimistic update)
+          const result = await Product.updateOne(
+            { _id: it.productId, "variants._id": variantId },
+            { $inc: { "variants.$.reservedStock": reserveQty } }
+          ).session(session);
+
+          // if it didn't modify, degrade reservation to production (do not fail order)
+          if (!result?.modifiedCount) {
+            it.fulfillment.toProduceQty =
+              Number(it.fulfillment.toProduceQty || 0) + reserveQty;
+            it.fulfillment.allocatedQty =
+              Math.max(0, Number(it.fulfillment.allocatedQty || 0) - reserveQty);
+          }
+        } else {
+          // reserve on simple product
+          const result = await Product.updateOne(
+            { _id: it.productId },
+            { $inc: { reservedStock: reserveQty } }
+          ).session(session);
+
+          if (!result?.modifiedCount) {
+            it.fulfillment.toProduceQty =
+              Number(it.fulfillment.toProduceQty || 0) + reserveQty;
+            it.fulfillment.allocatedQty =
+              Math.max(0, Number(it.fulfillment.allocatedQty || 0) - reserveQty);
+          }
+        }
       }
 
       const subtotal = computedSubtotal;
       const totalAmount = subtotal + num(shippingFee) + num(tax);
 
-      // ✅ compute coupon discount on subtotal
       const couponCode = coupon && typeof coupon === "object" ? str(coupon.code) : "";
       const { couponSnapshot, couponDiscount, couponDoc } = await validateAndComputeCoupon({
         code: couponCode,
@@ -577,18 +615,7 @@ export const createOrder = async (req, res) => {
         identity,
       });
 
-      /**
-       * ✅ FIX: Razorpay extra discount should apply on PAYABLE AFTER COUPON (products only),
-       * not on the original subtotal.
-       *
-       * Example:
-       * subtotal=3200, coupon=500 => base=2700
-       * razorpay extra 10% => 270
-       */
-      const baseForRazorpayExtra = Math.max(
-        0,
-        subtotal - Math.min(num(couponDiscount), subtotal)
-      );
+      const baseForRazorpayExtra = Math.max(0, subtotal - Math.min(num(couponDiscount), subtotal));
 
       const razorpayExtraDiscount =
         pm === "razorpay"
@@ -598,7 +625,6 @@ export const createOrder = async (req, res) => {
             )
           : 0;
 
-      // ✅ final discount (coupon + razorpay extra), capped to totalAmount
       let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
       if (finalDiscount > totalAmount) finalDiscount = totalAmount;
 
@@ -614,8 +640,6 @@ export const createOrder = async (req, res) => {
         onlinePaymentDiscountApplied: pm === "razorpay",
         onlinePaymentDiscountPct: pm === "razorpay" ? RAZORPAY_DISCOUNT_PERCENT : 0,
         onlinePaymentDiscountAmount: razorpayExtraDiscount,
-        // (optional) helpful for debugging, no functional impact
-        // onlinePaymentDiscountBase: baseForRazorpayExtra,
         couponIdentity: identity || "",
       };
 
@@ -626,6 +650,7 @@ export const createOrder = async (req, res) => {
             shippingAddressSnapshot,
             billingAddressSnapshot,
             items: normalizedItems,
+            customerSupportRemark: String(customerSupportRemark || "").trim(),
             subtotal,
             discount: finalDiscount,
             coupon: couponSnapshot ? { ...couponSnapshot, identity } : null,
@@ -646,8 +671,7 @@ export const createOrder = async (req, res) => {
         { session }
       );
 
-      // COD: mark coupon used immediately
-      // Razorpay: mark used after payment success
+      // coupon usage on COD (same as before)
       if (couponDoc && couponSnapshot?.code && identity && pm === "cod") {
         couponDoc.usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
         couponDoc.usedBy.push(identity);
@@ -657,16 +681,6 @@ export const createOrder = async (req, res) => {
 
       req.__createdOrder = order;
     });
-
-    // Shiprocket booking (COD only)
-    try {
-      const createdOrder = await Order.findById(req.__createdOrder._id);
-      if (createdOrder?.paymentMethod === "cod") {
-        await autoBookShiprocketForOrder(createdOrder);
-      }
-    } catch (e) {
-      console.error("⚠️ Auto Shiprocket booking failed:", e?.message || e);
-    }
 
     const finalOrder = await Order.findById(req.__createdOrder._id).lean();
 
@@ -684,6 +698,8 @@ export const createOrder = async (req, res) => {
     session.endSession();
   }
 };
+
+
 
 
 
@@ -764,6 +780,10 @@ export const updateOrder = async (req, res) => {
   try {
     const body = { ...req.body };
 
+    if (body.customerSupportRemark != null) {
+  body.customerSupportRemark = String(body.customerSupportRemark).trim();
+}
+
     // ✅ If coupon object updated manually, sync discount too
     if (body.coupon && typeof body.coupon === "object" && body.coupon.code) {
       body.discount = Number(body.coupon.discount || 0);
@@ -795,15 +815,11 @@ export const updateOrder = async (req, res) => {
 export const updateOrderStatus = async (req, res) => {
   const session = await mongoose.startSession();
 
-  /* =========================
-     Helpers (local)
-  ========================= */
   const str = (v) => (v == null ? "" : String(v));
   const normEmail = (v) => str(v).trim().toLowerCase();
   const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
   const normReason = (v) => str(v).trim().toLowerCase();
 
-  // ✅ PATCH: remove undefined deeply (prevents mongoose Cast errors on nested objects)
   const stripUndefinedDeep = (obj) => {
     if (Array.isArray(obj)) return obj.map(stripUndefinedDeep);
     if (obj && typeof obj === "object") {
@@ -846,10 +862,8 @@ export const updateOrderStatus = async (req, res) => {
   const isAdminCancel = (reason) => normReason(reason) === "cancelled_by_admin";
 
   try {
-    // ✅ PATCH: sanitize request body once at entry
     req.body = stripUndefinedDeep(req.body);
 
-    // ✅ PATCH: never allow shipment sub-objects to be set to null/undefined
     if (req.body?.shipment) {
       if (req.body.shipment.xpressbees == null) delete req.body.shipment.xpressbees;
       if (req.body.shipment.shiprocket == null) delete req.body.shipment.shiprocket;
@@ -867,7 +881,7 @@ export const updateOrderStatus = async (req, res) => {
     let shouldBookShiprocket = false;
 
     await session.withTransaction(async () => {
-      // ✅ Cancel flow (inside txn)
+      // ✅ Cancel flow
       if (fulfillmentStatus === "cancelled") {
         await performOrderCancellation({ orderId, reason, session });
 
@@ -876,11 +890,11 @@ export const updateOrderStatus = async (req, res) => {
 
         if (isAdminCancel(reason)) {
           $set.adminRemarks = str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
-          $unset.customerMessage = 1; // ✅ PATCH: correct $unset usage
+          $unset.customerMessage = 1;
         } else {
           $set.customerMessage =
             str(req.body?.customerMessage).trim() || "cancelled_by_customer";
-          $unset.adminRemarks = 1; // ✅ PATCH: correct $unset usage
+          $unset.adminRemarks = 1;
         }
 
         await Order.updateOne({ _id: orderId }, { $set, $unset }).session(session);
@@ -888,16 +902,16 @@ export const updateOrderStatus = async (req, res) => {
         return;
       }
 
-      // ✅ Normal status update flow
       const order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
       const wasConfirmed = Boolean(order.isConfirmed);
+      const isParent = String(order?.orderType || "").toLowerCase() === "parent";
 
       // 1) Payment status
       if (paymentStatus) order.paymentStatus = paymentStatus;
 
-      // 2) Manual confirm (admin)
+      // 2) Manual confirm
       if (isConfirmed === true && !order.isConfirmed) {
         if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
           throw new Error("Cannot confirm Razorpay order before payment is paid");
@@ -906,8 +920,12 @@ export const updateOrderStatus = async (req, res) => {
         order.confirmedAt = new Date();
       }
 
-      // 3) Auto-confirm: razorpay paid
-      if (paymentStatus === "paid" && order.paymentMethod === "razorpay" && !order.isConfirmed) {
+      // 3) Auto-confirm razorpay paid
+      if (
+        paymentStatus === "paid" &&
+        order.paymentMethod === "razorpay" &&
+        !order.isConfirmed
+      ) {
         order.isConfirmed = true;
         order.confirmedAt = new Date();
       }
@@ -937,29 +955,44 @@ export const updateOrderStatus = async (req, res) => {
 
       const nowConfirmed = Boolean(order.isConfirmed);
 
-      // 4) Fulfillment status (guard shipping stages)
+      // 4) Fulfillment status update
       if (fulfillmentStatus) {
         const shippingStages = ["packed", "picked", "shipped", "out_for_delivery", "delivered"];
+
+        if (isParent && shippingStages.includes(fulfillmentStatus)) {
+          throw new Error(
+            "Parent order cannot move to shipping stages. Update shipment orders (-A/-B) instead."
+          );
+        }
+
         if (!nowConfirmed && shippingStages.includes(fulfillmentStatus)) {
           throw new Error("Order must be confirmed before shipping stages");
         }
 
+        // ✅ IMPORTANT: booking trigger should happen when it becomes PACKED
+        const becomingPacked = fulfillmentStatus === "packed" && order.fulfillmentStatus !== "packed";
+
         order.fulfillmentStatus = fulfillmentStatus;
 
-        // auto deliveredAt
         if (fulfillmentStatus === "delivered") {
           order.trackingDetails = order.trackingDetails || {};
           order.shipment = order.shipment || {};
           if (!order.trackingDetails.deliveredAt) order.trackingDetails.deliveredAt = new Date();
           if (!order.shipment.deliveredAt) order.shipment.deliveredAt = new Date();
         }
-      }
 
-      // 5) Shiprocket booking trigger (only on confirm transition)
-      if (!wasConfirmed && nowConfirmed) {
-        const alreadyBooked =
-          order?.shipment?.shiprocket?.awb || order?.shipment?.shiprocket?.shipmentId;
-        if (!alreadyBooked) shouldBookShiprocket = true;
+        // ✅ BOOK SHIPROCKET ONLY WHEN PACKED (not on confirm)
+        if (becomingPacked && !isParent) {
+          const alreadyBooked =
+            order?.shipment?.shiprocket?.awb || order?.shipment?.shiprocket?.shipmentId;
+
+          // prepaid guard (extra safety)
+          if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
+            throw new Error("Cannot book shipment before Razorpay payment is paid");
+          }
+
+          if (!alreadyBooked) shouldBookShiprocket = true;
+        }
       }
 
       await order.save({ session });
@@ -968,17 +1001,17 @@ export const updateOrderStatus = async (req, res) => {
 
     const finalOrder = await Order.findById(updatedOrder._id).lean();
 
-    // ✅ Auto-book shiprocket after confirmation (outside txn)
+    // ✅ Auto-book shiprocket AFTER packed (outside txn)
     try {
       if (shouldBookShiprocket) {
         const freshOrderDoc = await Order.findById(finalOrder._id);
         await autoBookShiprocketForOrder(freshOrderDoc);
       }
     } catch (e) {
-      console.error("⚠️ Auto Shiprocket booking after confirmation failed:", e?.message || e);
+      console.error("⚠️ Auto Shiprocket booking after packed failed:", e?.message || e);
     }
 
-    // ✅ Cancellation emails (outside txn)
+    // cancellation emails
     try {
       if (fulfillmentStatus === "cancelled") {
         triggerOrderCancellationEmails(finalOrder, reason);
@@ -1007,6 +1040,8 @@ export const updateOrderStatus = async (req, res) => {
 
 
 
+
+
 /* ============================================================
    ✅ CONFIRM ORDER (ADMIN / COD)
    - sets isConfirmed + confirmedAt + confirmedBy
@@ -1022,21 +1057,22 @@ export const confirmOrder = async (req, res) => {
       return res.status(400).json({ message: "Invalid order id" });
     }
 
-    const adminId = req.user?._id || null; // if you have auth middleware
+    const adminId = req.user?._id || null;
 
     let updatedOrder = null;
-    let shouldBookShiprocket = false;
 
     await session.withTransaction(async () => {
       const order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
-      // ✅ prepaid guard (razorpay must be paid)
+      const isParent = String(order?.orderType || "").toLowerCase() === "parent";
+
+      // ✅ prepaid guard
       if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
         throw new Error("Cannot confirm Razorpay order before payment is paid");
       }
 
-      // ✅ idempotent: already confirmed
+      // ✅ idempotent
       if (order.isConfirmed) {
         updatedOrder = order;
         return;
@@ -1046,25 +1082,15 @@ export const confirmOrder = async (req, res) => {
       order.confirmedAt = new Date();
       if (adminId) order.confirmedBy = adminId;
 
-      // ✅ book only if not already booked
-      const alreadyBooked =
-        order?.shipment?.shiprocket?.awb || order?.shipment?.shiprocket?.shipmentId;
-
-      if (!alreadyBooked) shouldBookShiprocket = true;
+      // ✅ IMPORTANT: Do NOT book shipment on confirm anymore
+      // booking will happen only when fulfillmentStatus becomes "packed"
+      if (isParent) {
+        // parent order confirm is ok, but shipping actions remain blocked
+      }
 
       await order.save({ session });
       updatedOrder = order;
     });
-
-    // ✅ book shiprocket outside transaction
-    try {
-      if (shouldBookShiprocket) {
-        const freshOrderDoc = await Order.findById(updatedOrder._id);
-        await autoBookShiprocketForOrder(freshOrderDoc);
-      }
-    } catch (e) {
-      console.error("⚠️ Auto Shiprocket booking after confirm failed:", e?.message || e);
-    }
 
     const finalOrder = await Order.findById(updatedOrder._id).lean();
 
@@ -1084,16 +1110,18 @@ export const confirmOrder = async (req, res) => {
 };
 
 
+
+
 /* ============================================================
    UPDATE TRACKING
 ============================================================ */
 export const updateTracking = async (req, res) => {
   try {
     const {
-      trackingId,        // keep for backward compatibility
-      awb,               // ✅ NEW
+      trackingId, // backward compatibility
+      awb,
       courierName,
-      trackingUrl,       // ✅ NEW
+      trackingUrl,
       shippedAt,
       deliveredAt,
       expectedDelivery,
@@ -1102,21 +1130,51 @@ export const updateTracking = async (req, res) => {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    const finalAwb = (awb ?? trackingId ?? order?.shipment?.shiprocket?.awb ?? order?.trackingDetails?.trackingId ?? "").toString();
-    const finalCourier = (courierName ?? order?.shipment?.shiprocket?.courierName ?? order?.trackingDetails?.courierName ?? "").toString();
-    const finalUrl = (trackingUrl ?? order?.shipment?.shiprocket?.trackingUrl ?? order?.trackingDetails?.trackingUrl ?? "").toString();
+    // ✅ PATCH: block parent tracking updates (partial-shipment model)
+    if (String(order?.orderType || "").toLowerCase() === "parent") {
+      return res.status(400).json({
+        message:
+          "Tracking cannot be updated on parent order. Update shipment order (-A/-B) instead.",
+        reason: "parent_order_blocked",
+      });
+    }
+
+    const finalAwb = String(
+      awb ??
+        trackingId ??
+        order?.shipment?.shiprocket?.awb ??
+        order?.trackingDetails?.trackingId ??
+        ""
+    ).trim();
+
+    const finalCourier = String(
+      courierName ??
+        order?.shipment?.shiprocket?.courierName ??
+        order?.trackingDetails?.courierName ??
+        ""
+    ).trim();
+
+    const finalUrl = String(
+      trackingUrl ??
+        order?.shipment?.shiprocket?.trackingUrl ??
+        order?.trackingDetails?.trackingUrl ??
+        ""
+    ).trim();
 
     // ✅ Ensure shipment objects exist
-    order.shipment = order.shipment || {};
+    order.shipment = order.shipment && typeof order.shipment === "object" ? order.shipment : {};
     order.shipment.provider = order.shipment.provider || "shiprocket";
-    order.shipment.shiprocket = order.shipment.shiprocket || {};
+    order.shipment.shiprocket =
+      order.shipment.shiprocket && typeof order.shipment.shiprocket === "object"
+        ? order.shipment.shiprocket
+        : {};
 
     // ✅ Save main source of truth
     if (finalAwb) order.shipment.shiprocket.awb = finalAwb;
     if (finalCourier) order.shipment.shiprocket.courierName = finalCourier;
     if (finalUrl) order.shipment.shiprocket.trackingUrl = finalUrl;
 
-    // ✅ trackingDetails mirror (if you added trackingUrl in schema)
+    // ✅ Mirror
     order.trackingDetails = {
       ...(order.trackingDetails || {}),
       trackingId: finalAwb || order.trackingDetails?.trackingId,
@@ -1127,14 +1185,17 @@ export const updateTracking = async (req, res) => {
       expectedDelivery: expectedDelivery ?? order.trackingDetails?.expectedDelivery,
     };
 
-    // ✅ If shipped → set shipped status (optional but sensible)
-    if (finalAwb || shippedAt) {
-      order.fulfillmentStatus = order.fulfillmentStatus === "processing" ? "shipped" : order.fulfillmentStatus;
-      order.shipment.status = order.shipment.status === "pending" ? "shipped" : order.shipment.status;
+    // ✅ If shipped → set shipped status (but don't downgrade)
+    const hasShippedSignal = Boolean(finalAwb) || shippedAt != null;
+    if (hasShippedSignal) {
+      if (order.fulfillmentStatus === "processing") order.fulfillmentStatus = "shipped";
+      if (!order.shipment.status || order.shipment.status === "pending")
+        order.shipment.status = "shipped";
+
       if (shippedAt && !order.shipment.shippedAt) order.shipment.shippedAt = new Date(shippedAt);
     }
 
-    // ✅ If deliveredAt set -> auto mark delivered
+    // ✅ If deliveredAt set -> auto mark delivered (strongest)
     if (deliveredAt) {
       order.fulfillmentStatus = "delivered";
       order.shipment.status = "delivered";
@@ -1143,18 +1204,18 @@ export const updateTracking = async (req, res) => {
 
     await order.save();
 
-        // ✅ Send tracking email to customer (only if we have basic tracking info)
+    // ✅ Send tracking email to customer (non-blocking)
     try {
       const customerEmail =
         order?.shippingAddressSnapshot?.email ||
-        order?.customerId?.email || // works if populated
         order?.billingAddressSnapshot?.email ||
+        order?.customerId?.email ||
         order?.email;
 
       const customerName =
         order?.shippingAddressSnapshot?.fullName ||
         order?.shippingAddressSnapshot?.name ||
-        order?.customerId?.name || // works if populated
+        order?.customerId?.name ||
         "Customer";
 
       if (customerEmail && (finalAwb || finalUrl)) {
@@ -1170,7 +1231,6 @@ export const updateTracking = async (req, res) => {
     } catch (mailErr) {
       console.error("❌ Tracking mail error:", mailErr?.message || mailErr);
     }
-
 
     return res.status(200).json({ message: "Tracking updated", order });
   } catch (error) {
@@ -1252,10 +1312,10 @@ export const cancelOrder = async (req, res) => {
   const session = await mongoose.startSession();
   const TAG = "❌[CANCEL_ORDER]";
 
-  // ✅ helpers
   const str = (v) => (v == null ? "" : String(v));
+  const norm = (v) => str(v).trim().toLowerCase();
 
-  // ✅ PATCH: remove undefined deeply (prevents mongoose cast errors on nested objects)
+  // ✅ remove undefined deeply (prevents mongoose cast errors on nested objects)
   const stripUndefinedDeep = (obj) => {
     if (Array.isArray(obj)) return obj.map(stripUndefinedDeep);
     if (obj && typeof obj === "object") {
@@ -1269,19 +1329,32 @@ export const cancelOrder = async (req, res) => {
     return obj;
   };
 
+  const isAdminCancel = (reason) => norm(reason) === "cancelled_by_admin";
+
+  const pickCancelReason = (req) => {
+    const incoming = norm(req.body?.reason);
+    if (incoming === "cancelled_by_admin" || incoming === "admin") return "cancelled_by_admin";
+    if (incoming === "cancelled_by_customer" || incoming === "customer") return "cancelled_by_customer";
+
+    const actor = norm(req.body?.cancelledBy);
+    if (actor === "admin") return "cancelled_by_admin";
+    if (actor === "customer") return "cancelled_by_customer";
+
+    if (req.user?.role === "admin") return "cancelled_by_admin";
+    return "cancelled_by_customer";
+  };
+
   try {
-    // ✅ sanitize incoming body
     req.body = stripUndefinedDeep(req.body);
 
     const orderId = req.params.id;
-    const reason = str(req.body?.reason || "cancelled_by_customer").trim();
-
-    console.log(`${TAG} Request received`, { orderId, reason });
-
     if (!mongoose.Types.ObjectId.isValid(orderId)) {
       console.log(`${TAG} Invalid orderId`);
       return res.status(400).json({ success: false, message: "Invalid order id" });
     }
+
+    const reason = pickCancelReason(req);
+    console.log(`${TAG} Request received`, { orderId, reason });
 
     let cancelledOrderId = null;
 
@@ -1289,74 +1362,94 @@ export const cancelOrder = async (req, res) => {
       console.log(`${TAG} Transaction started`);
 
       const order = await Order.findById(orderId).session(session);
-      if (!order) {
-        console.log(`${TAG} Order not found inside txn`);
-        throw new Error("Order not found");
-      }
+      if (!order) throw new Error("Order not found");
+
+      const orderType = norm(order?.orderType);
+      const isParent = orderType === "parent";
+      const isShipment = orderType === "shipment" || orderType === "child";
 
       // ✅ guards
       const nonCancellableStatuses = ["picked", "shipped", "out_for_delivery", "delivered"];
-      if (nonCancellableStatuses.includes(order.fulfillmentStatus)) {
+      if (nonCancellableStatuses.includes(norm(order.fulfillmentStatus))) {
         throw new Error("Order cannot be cancelled after pickup / shipment");
       }
 
       // ✅ idempotent
-      if (order.fulfillmentStatus === "cancelled") {
+      if (norm(order.fulfillmentStatus) === "cancelled") {
         cancelledOrderId = order._id;
         return;
       }
 
       /* -------------------------------
          Cancel Shiprocket (if booked)
+         ✅ Parent order: no shiprocket cancellation in split model
       -------------------------------- */
-      const shipmentId = order?.shipment?.shiprocket?.shipmentId;
-      if (shipmentId) {
-        try {
-          await cancelShiprocketShipment(shipmentId);
-          console.log(`${TAG} ✅ Shiprocket cancellation successful`, { shipmentId });
-        } catch (err) {
-          console.error(`${TAG} ⚠️ Shiprocket cancel failed`, err?.response?.data || err);
+      if (!isParent) {
+        const shipmentId = order?.shipment?.shiprocket?.shipmentId;
+        if (shipmentId) {
+          try {
+            await cancelShiprocketShipment(shipmentId);
+            console.log(`${TAG} ✅ Shiprocket cancellation successful`, { shipmentId });
+          } catch (err) {
+            console.error(`${TAG} ⚠️ Shiprocket cancel failed`, err?.response?.data || err);
+          }
         }
       }
 
       /* -------------------------------
-         Restore stock
+         Restore stock (matches your split model)
+         ✅ Parent: DO NOT restore (children will restore)
+         ✅ Shipment/Child: restore normally
+         ✅ Fallback (orderType missing): restore (safer)
       -------------------------------- */
-      for (const it of order.items || []) {
-        const qty = Number(it.quantity || 0);
-        if (!qty) continue;
+      const shouldRestoreStock = isShipment || !orderType; // if parent => false
 
-        const variantId = it?.variant?.variantId;
+      if (shouldRestoreStock && Array.isArray(order.items) && order.items.length) {
+        for (const it of order.items) {
+          const qty = Number(it?.quantity || 0);
+          if (!Number.isFinite(qty) || qty <= 0) continue;
 
-        if (variantId) {
-          await Product.updateOne(
-            { _id: it.productId, "variants._id": variantId },
-            { $inc: { "variants.$.stock": qty } }
-          ).session(session);
-        } else {
-          await Product.updateOne({ _id: it.productId }, { $inc: { stock: qty } }).session(session);
+          const variantId = it?.variant?.variantId;
+
+          // ✅ Order schema now stores productId at top-level (not it.productId)
+          const pid = it?.productId;
+          if (!pid) continue;
+
+          if (variantId) {
+            await Product.updateOne(
+              { _id: pid, "variants._id": variantId },
+              { $inc: { "variants.$.stock": qty } }
+            ).session(session);
+          } else {
+            await Product.updateOne({ _id: pid }, { $inc: { stock: qty } }).session(session);
+          }
         }
       }
 
       /* -------------------------------
          Payment status
       -------------------------------- */
-      if (order.paymentMethod === "razorpay" && order.paymentStatus === "paid") {
+      if (norm(order.paymentMethod) === "razorpay" && norm(order.paymentStatus) === "paid") {
         order.paymentStatus = "refund_pending";
       }
 
       /* -------------------------------
          ✅ FINAL STATE (SAFE)
-         - do NOT replace shipment object
       -------------------------------- */
       order.fulfillmentStatus = "cancelled";
 
-      // ✅ ensure shipment exists, then set only status
+      // ✅ ensure shipment exists, then set only status (do NOT replace object)
       if (!order.shipment || typeof order.shipment !== "object") order.shipment = {};
       order.shipment.status = "cancelled";
 
-      // ✅ remarks
-      order.adminRemarks = reason;
+      // ✅ remarks separation (admin/customer)
+      if (isAdminCancel(reason)) {
+        order.adminRemarks = "cancelled_by_admin";
+        order.customerMessage = undefined;
+      } else {
+        order.customerMessage = "cancelled_by_customer";
+        order.adminRemarks = undefined;
+      }
 
       await order.save({ session });
 
@@ -1364,24 +1457,15 @@ export const cancelOrder = async (req, res) => {
       console.log(`${TAG} ✅ Cancelled saved`, { orderId: cancelledOrderId });
     });
 
-    // ✅ fetch outside txn
     const finalOrder = cancelledOrderId ? await Order.findById(cancelledOrderId).lean() : null;
-
-    // ✅ email trigger non-blocking (optional)
-    try {
-      if (finalOrder) {
-        // triggerOrderCancellationEmails(finalOrder, reason);
-      }
-    } catch (e) {
-      console.error(`${TAG} ⚠️ triggerOrderCancellationEmails failed`, e?.message || e);
-    }
 
     return res.status(200).json({
       success: true,
-      message: finalOrder?.fulfillmentStatus === "cancelled"
-        ? "Order cancelled successfully"
-        : "Order already cancelled",
-      order: finalOrder || null, // ✅ never send undefined in JSON
+      message:
+        finalOrder?.fulfillmentStatus === "cancelled"
+          ? "Order cancelled successfully"
+          : "Order already cancelled",
+      order: finalOrder || null,
     });
   } catch (error) {
     console.error(`${TAG} ❌ Cancel Order Error`, error);
@@ -1393,9 +1477,15 @@ export const cancelOrder = async (req, res) => {
 };
 
 
+
+
 async function performOrderCancellation({ orderId, reason, session }) {
   const order = await Order.findById(orderId).session(session);
   if (!order) throw new Error("Order not found");
+
+  const orderType = String(order?.orderType || "").toLowerCase();
+  const isParent = orderType === "parent";
+  const isShipment = orderType === "shipment" || orderType === "child";
 
   const nonCancellableStatuses = ["picked", "shipped", "out_for_delivery", "delivered"];
   if (nonCancellableStatuses.includes(order.fulfillmentStatus)) {
@@ -1407,33 +1497,46 @@ async function performOrderCancellation({ orderId, reason, session }) {
 
   /* ------------------------------------------------
      1) Cancel Shiprocket (if booked)
+     ✅ Parent order never has shipment in partial model
   ------------------------------------------------ */
-  const shipmentId = order?.shipment?.shiprocket?.shipmentId;
-  if (shipmentId) {
-    try {
-      await cancelShiprocketShipment(shipmentId);
-    } catch (err) {
-      console.error("⚠️ Shiprocket cancel failed:", err?.response?.data || err);
-      // don't block cancellation
+  if (!isParent) {
+    const shipmentId = order?.shipment?.shiprocket?.shipmentId;
+    if (shipmentId) {
+      try {
+        await cancelShiprocketShipment(shipmentId);
+      } catch (err) {
+        console.error("⚠️ Shiprocket cancel failed:", err?.response?.data || err);
+        // don't block cancellation
+      }
     }
   }
 
   /* ------------------------------------------------
      2) Restore Stock (atomic)
+     ✅ Parent: DO NOT restore (children will restore)
+     ✅ Shipment/Child: restore normally
+     ✅ Fallback: if orderType missing, restore (safer)
   ------------------------------------------------ */
-  for (const it of order.items || []) {
-    const qty = Number(it.quantity || 0);
-    if (!qty) continue;
+  const shouldRestoreStock = !isParent; // parent => false, shipment/child => true
 
-    const variantId = it?.variant?.variantId;
+  if (shouldRestoreStock) {
+    for (const it of order.items || []) {
+      const qty = Number(it.quantity || 0);
+      if (!qty) continue;
 
-    if (variantId) {
-      await Product.updateOne(
-        { _id: it.productId, "variants._id": variantId },
-        { $inc: { "variants.$.stock": qty } }
-      ).session(session);
-    } else {
-      await Product.updateOne({ _id: it.productId }, { $inc: { stock: qty } }).session(session);
+      const variantId = it?.variant?.variantId;
+
+      if (variantId) {
+        await Product.updateOne(
+          { _id: it.productId, "variants._id": variantId },
+          { $inc: { "variants.$.stock": qty } }
+        ).session(session);
+      } else {
+        await Product.updateOne(
+          { _id: it.productId },
+          { $inc: { stock: qty } }
+        ).session(session);
+      }
     }
   }
 
@@ -1455,7 +1558,7 @@ async function performOrderCancellation({ orderId, reason, session }) {
   // ✅ set only status (do NOT replace object)
   order.shipment.status = "cancelled";
 
-  // ✅ keep remarks
+  // ✅ keep remarks (reason can be cancelled_by_admin / cancelled_by_customer)
   order.adminRemarks = reason;
 
   await order.save({ session });
@@ -1465,9 +1568,27 @@ async function performOrderCancellation({ orderId, reason, session }) {
 
 
 
+
 // SHIPROCKET AUTOBOOK
 async function autoBookShiprocketForOrder(order) {
   const TAG = "🚀[AUTO-SHIPROCKET]";
+
+// 🚫 Never book shipment for parent order
+if (isParentOrder(order)) {
+  return console.log(`${TAG} 🚫 SKIP: parent order cannot be shipped`, {
+    orderNumber: order?.orderNumber,
+  });
+}
+
+if (!order?.isConfirmed) return console.log(`${TAG} 🚫 SKIP: not confirmed`);
+
+// ✅ NEW: only packed
+if (String(order?.fulfillmentStatus || "").toLowerCase() !== "packed") {
+  return console.log(`${TAG} 🚫 SKIP: not packed yet`, {
+    orderNumber: order?.orderNumber,
+    fulfillmentStatus: order?.fulfillmentStatus,
+  });
+}
 
   try {
     console.log(`${TAG} START`, {
@@ -1752,22 +1873,35 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
-    // ✅ Guards
+    // ✅ block parent orders
+    if (isParentOrder(order)) {
+      return res.status(400).json({
+        success: false,
+        message: "Parent order cannot be shipped. Create -A/-B shipment order first.",
+        reason: "parent_order_blocked",
+      });
+    }
+
+    // ✅ Must be confirmed
     if (!order.isConfirmed) {
       return res.status(400).json({
-        _success: false,
-        get success() {
-          return this._success;
-        },
-        set success(value) {
-          this._success = value;
-        },
+        success: false,
         message: "Order not confirmed. Confirm order first.",
         reason: "not_confirmed",
       });
     }
 
-    // prepaid guard (extra safety; your autoBook already checks, but keeping here)
+    // ✅ NEW: Must be packed
+    if (String(order.fulfillmentStatus || "").toLowerCase() !== "packed") {
+      return res.status(400).json({
+        success: false,
+        message: "Shiprocket booking allowed only when order is packed.",
+        reason: "not_packed",
+        fulfillmentStatus: order.fulfillmentStatus,
+      });
+    }
+
+    // prepaid guard
     if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
       return res.status(400).json({
         success: false,
@@ -1792,12 +1926,10 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
       });
     }
 
-    // ✅ "Details missing" check (model has shipment.shiprocket always)
     const sr = order?.shipment?.shiprocket || {};
     const hasAwb = Boolean(String(sr.awb || "").trim());
     const hasShipmentId = Boolean(String(sr.shipmentId || "").trim());
 
-    // Optional mirror check (doesn't block booking)
     const hasTrackingId = Boolean(String(order?.trackingDetails?.trackingId || "").trim());
 
     if (hasAwb || hasShipmentId) {
@@ -1825,19 +1957,18 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
       orderNumber: order.orderNumber,
       paymentMethod: order.paymentMethod,
       paymentStatus: order.paymentStatus,
+      fulfillmentStatus: order.fulfillmentStatus,
       hasTrackingId,
     });
 
-    // ✅ Do booking (your function handles createShipment + assignAwb + save)
     await autoBookShiprocketForOrder(order);
 
-    // ✅ Return fresh state
     const fresh = await Order.findById(orderId).lean();
     const freshSr = fresh?.shipment?.shiprocket || {};
 
     return res.status(200).json({
       success: true,
-      message: "Shiprocket booking triggered (only when details were missing).",
+      message: "Shiprocket booking triggered (only when packed and details were missing).",
       orderId: fresh?._id,
       orderNumber: fresh?.orderNumber,
       shiprocket: {
@@ -1861,6 +1992,7 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
     });
   }
 };
+
 
 
 /* ============================================================
@@ -1961,3 +2093,150 @@ export const updateOrderAddress = async (req, res) => {
   }
 };
 
+export const splitOrderIntoShipments = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  try {
+    const orderId = req.params.id;
+    const { splits } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+    if (!Array.isArray(splits) || splits.length < 2) {
+      return res.status(400).json({ message: "splits must have at least 2 groups" });
+    }
+
+    let parentOrder;
+    let childOrders = [];
+
+    await session.withTransaction(async () => {
+      const order = await Order.findById(orderId).session(session);
+      if (!order) throw new Error("Order not found");
+
+      // 🚫 if already split, block double split
+      const alreadyHasChildren = await Order.exists({ parentOrderId: order._id }).session(session);
+      if (alreadyHasChildren) throw new Error("Order already split");
+
+      const items = Array.isArray(order.items) ? order.items : [];
+      if (!items.length) throw new Error("Order has no items");
+
+      // Build map lineId -> item
+      const itemMap = new Map(items.map((it) => [String(it.lineId), it]));
+
+      // Validate all requested lineIds exist and are unique across splits
+      const used = new Set();
+      for (const grp of splits) {
+        const lines = Array.isArray(grp?.lines) ? grp.lines.map(String) : [];
+        if (!lines.length) throw new Error("Each split group must have lines[]");
+
+        for (const lid of lines) {
+          if (!itemMap.has(lid)) throw new Error(`Invalid lineId: ${lid}`);
+          if (used.has(lid)) throw new Error(`Duplicate lineId across splits: ${lid}`);
+          used.add(lid);
+        }
+      }
+
+      // Ensure all items are covered (optional strict)
+      if (used.size !== items.length) {
+        throw new Error("All items must be included in splits");
+      }
+
+      // ✅ Convert original to parent ONLY NOW
+      order.orderType = "parent";
+      order.parentOrderId = null;
+      order.splitSuffix = "";
+      await order.save({ session });
+      parentOrder = order;
+
+      // Create child orders
+      const suffixes = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+      for (let i = 0; i < splits.length; i++) {
+        const grp = splits[i];
+        const lines = grp.lines.map(String);
+        const childItems = lines.map((lid) => itemMap.get(lid));
+
+        // totals
+        const childSubtotal = childItems.reduce((s, it) => s + Number(it.subtotal || 0), 0);
+
+        // ✅ shipping/tax distribution strategy (simple):
+        // shippingFee split proportionally by subtotal (or equally if subtotal 0)
+        const parentShipping = Number(order.shippingFee || 0);
+        const parentTax = Number(order.tax || 0);
+        const parentDiscount = Number(order.discount || 0);
+        const parentTotalSubtotal = Number(order.subtotal || 0) || 1;
+
+        const ratio = childSubtotal / parentTotalSubtotal;
+
+        const childShippingFee = Math.round(parentShipping * ratio);
+        const childTax = Math.round(parentTax * ratio);
+        const childDiscount = Math.round(parentDiscount * ratio);
+
+        const childTotalAmount = childSubtotal + childShippingFee + childTax;
+        const childFinalPayable = Math.max(0, childTotalAmount - childDiscount);
+
+        const suffix = suffixes[i] || String(i + 1);
+
+        const childDoc = await Order.create(
+          [
+            {
+              customerId: order.customerId,
+              shippingAddressSnapshot: order.shippingAddressSnapshot,
+              billingAddressSnapshot: order.billingAddressSnapshot,
+
+              items: childItems,
+
+              // ✅ link
+              orderType: "shipment",
+              parentOrderId: order._id,
+              splitSuffix: suffix,
+
+              // ✅ inherit confirmation/payment info
+              isConfirmed: order.isConfirmed,
+              confirmedAt: order.confirmedAt,
+              confirmedBy: order.confirmedBy,
+
+              paymentMethod: order.paymentMethod,
+              paymentStatus: order.paymentStatus,
+
+              // ✅ money
+              subtotal: childSubtotal,
+              shippingFee: childShippingFee,
+              tax: childTax,
+              discount: childDiscount,
+              totalAmount: childTotalAmount,
+              finalPayable: childFinalPayable,
+
+              currency: order.currency,
+              coupon: order.coupon, // keep same snapshot if needed
+              fulfillmentStatus: order.fulfillmentStatus === "processing" ? "processing" : order.fulfillmentStatus,
+              source: order.source,
+              isGiftOrder: order.isGiftOrder,
+              customerSupportRemark: order.customerSupportRemark || "",
+              analytics: order.analytics || {},
+              rmas: [],
+            },
+          ],
+          { session }
+        );
+
+        childOrders.push(childDoc[0]);
+      }
+    });
+
+    return res.status(200).json({
+      message: "Order split successfully",
+      parentOrderId: parentOrder._id,
+      childOrders: childOrders.map((o) => ({
+        _id: o._id,
+        orderNumber: o.orderNumber,
+        splitSuffix: o.splitSuffix,
+        parentOrderId: o.parentOrderId,
+      })),
+    });
+  } catch (e) {
+    return res.status(400).json({ message: e.message || "Split failed" });
+  } finally {
+    session.endSession();
+  }
+};

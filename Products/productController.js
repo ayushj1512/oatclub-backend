@@ -8,6 +8,7 @@ import { uploadToCloudinary } from "../config/cloudinary.js";
 import { generateVariants } from "../utility/variants.js";
 import Category from "../Category/Category.js";
 import Collection from "../Collection/Collection.js";
+import { reconcileBackordersForVariant } from "../inventoryUtility/reconcileBackordersForVariant.js";
 
 const SYSTEM_CATEGORIES = new Set(["all-clothing", "new-arrivals","best-sellers","featured","party-wear"]);
 
@@ -82,28 +83,46 @@ const applyStockFromVariants = (doc) => {
   const variants = Array.isArray(p.variants) ? p.variants : [];
   const isVariable = p.productType === "variable" || variants.length > 0;
 
+  // ✅ SIMPLE
   if (!isVariable) {
-    const st = Number(p.stock ?? 0);
-    const inStock = st > 0;
+    const stock = Number(p.stock ?? 0);
+    const reserved = Number(p.reservedStock ?? 0);
+    const available = Math.max(0, stock - reserved);
+
     return {
       ...p,
-      stock: st,
-      isInStock: inStock,
-      // ✅ auto-unpublish representation
-      isActive: inStock ? p.isActive : false,
+      stock,                 // physical
+      reservedStock: reserved,
+      availableStock: available,
+      isInStock: available > 0,
     };
   }
 
-  const total = variants.reduce((s, v) => s + Number(v?.stock ?? 0), 0);
-  const any = variants.some((v) => Number(v?.stock ?? 0) > 0);
+  // ✅ VARIABLE
+  const physicalTotal = variants.reduce((s, v) => s + Number(v?.stock ?? 0), 0);
+  const reservedTotal = variants.reduce(
+    (s, v) => s + Number(v?.reservedStock ?? 0),
+    0
+  );
+
+  const anyAvailable = variants.some((v) => {
+    const st = Number(v?.stock ?? 0);
+    const rs = Number(v?.reservedStock ?? 0);
+    return Math.max(0, st - rs) > 0;
+  });
 
   return {
     ...p,
-    stock: total,
-    isInStock: any,
-    isActive: any ? p.isActive : false, // ✅ if none in stock -> unpublish
+    stock: physicalTotal,           // physical total
+    reservedStock: reservedTotal,   // total reserved (computed)
+    availableStock: Math.max(0, physicalTotal - reservedTotal),
+    isInStock: anyAvailable,
   };
 };
+
+
+
+
 
 
 const skuSafe = (v) =>
@@ -767,34 +786,42 @@ export const getProductByIdOrSlug = async (req, res) => {
   try {
     const param = String(req.params.id || "").trim();
 
+    // Helper (keep here or import from utils)
+    const buildCodeCandidates = (input) => {
+      const raw = String(input || "").trim();
+      const digits = raw.replace(/\D/g, "");
+      if (!digits) return [];
+
+      const n = parseInt(digits, 10);
+      if (Number.isNaN(n)) return [];
+
+      const padded5 = String(n).padStart(5, "0"); // "00218"
+      return Array.from(new Set([raw, digits, padded5]));
+    };
+
+    const crossSellPopulate = {
+      path: "crossSellProducts",
+      select: "title slug price compareAtPrice thumbnail isActive",
+      match: { isActive: true },
+    };
+
+    let doc = null;
+
     // 1) slug
-    let doc = await pop(
-      Product.findOne({ slug: param }).populate({
-        path: "crossSellProducts",
-        select: "title slug price compareAtPrice thumbnail isActive",
-        match: { isActive: true },
-      })
-    );
+    doc = await pop(Product.findOne({ slug: param }).populate(crossSellPopulate));
 
     // 2) objectId
     if (!doc && mongoose.Types.ObjectId.isValid(param)) {
-      doc = await pop(
-        Product.findById(param).populate({
-          path: "crossSellProducts",
-          select: "title slug price compareAtPrice thumbnail isActive",
-          match: { isActive: true },
-        })
-      );
+      doc = await pop(Product.findById(param).populate(crossSellPopulate));
     }
 
-    // 3) productCode (✅ FIX for /api/products/00218)
-    if (!doc && /^\d{3,}$/.test(param)) {
+    // 3) productCode (supports /api/products/218 when DB has "00218")
+    // If you only want 3+ digits, change to: /^\d{3,}$/
+    if (!doc && /^\d+$/.test(param)) {
+      const codes = buildCodeCandidates(param);
+
       doc = await pop(
-        Product.findOne({ productCode: param }).populate({
-          path: "crossSellProducts",
-          select: "title slug price compareAtPrice thumbnail isActive",
-          match: { isActive: true },
-        })
+        Product.findOne({ productCode: { $in: codes } }).populate(crossSellPopulate)
       );
     }
 
@@ -806,6 +833,7 @@ export const getProductByIdOrSlug = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
 
 
 
@@ -868,6 +896,21 @@ export const updateProduct = async (req, res) => {
         data.avgFabricConsumption,
         data.avgFabricConsumption
       );
+    }
+
+    /* ---------------------------------------------------
+       ✅ SAMPLING FLAG (manufacturing coordination)
+       Accepts: true/false, "true"/"false", 1/0, "yes"/"no"
+    ---------------------------------------------------- */
+    if (data.isSamplingDone !== undefined) {
+      const raw = data.isSamplingDone;
+
+      if (typeof raw === "boolean") {
+        data.isSamplingDone = raw;
+      } else {
+        const s = String(raw).trim().toLowerCase();
+        data.isSamplingDone = s === "true" || s === "1" || s === "yes";
+      }
     }
 
     /* ---------------------------------------------------
@@ -996,6 +1039,7 @@ export const updateProduct = async (req, res) => {
 
           // ✅ inventory preserved (NOT editable via this controller)
           stock: prev?.stock ?? 0,
+          reservedStock: prev?.reservedStock ?? 0,
           isInStock: prev?.isInStock ?? false,
 
           attributes: Array.isArray(v.attributes) ? v.attributes : [],
@@ -1071,6 +1115,7 @@ export const updateProduct = async (req, res) => {
       existing.markModified("avgFabricConsumption");
     if (data.images !== undefined) existing.markModified("images");
     if (data.colors !== undefined) existing.markModified("colors");
+    if (data.isSamplingDone !== undefined) existing.markModified("isSamplingDone");
 
     const saved = await existing.save({ validateBeforeSave: true });
 
@@ -1093,6 +1138,7 @@ export const updateProduct = async (req, res) => {
     res.status(500).json({ message: e.message });
   }
 };
+
 
 
 
@@ -1182,31 +1228,111 @@ export const incrementProductAnalytics = async (req, res) => {
   }
 };
 
+// PATCH /api/products/:id/variant-stock  { size: "M", stock: 5 }
+// ✅ Only for VARIABLE products
 export const updateVariantStock = async (req, res) => {
   try {
-    const { variantId, stock } = req.body;
+    const { size, stock } = req.body;
+
+    const sz = String(size || "").trim();
+    if (!sz) {
+      return res.status(400).json({ message: "size is required (e.g., 'M')" });
+    }
+
+    const st = Number(stock);
+    if (!Number.isFinite(st) || st < 0) {
+      return res
+        .status(400)
+        .json({ message: "Invalid stock. Provide a non-negative number." });
+    }
 
     const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
-    const variant = product.variants.id(variantId);
-    if (!variant) return res.status(404).json({ message: "Variant not found" });
+    const isVariable =
+      product.productType === "variable" ||
+      (Array.isArray(product.variants) && product.variants.length > 0);
 
-    variant.stock = Number(stock);
-    variant.isInStock = Number(stock) > 0;
+    // ✅ Rule enforcement
+    if (!isVariable) {
+      return res.status(400).json({
+        message:
+          "This is a simple product. Use PATCH /api/products/:id/stock with { stock }.",
+      });
+    }
 
-    await product.save();
+    // Find matching variant by size attribute
+    const targetSize = normalizeSize(sz);
+
+    const variant =
+      (product.variants || []).find(
+        (v) => normalizeSize(getVariantSize(v)) === targetSize
+      ) || null;
+
+    if (!variant) {
+      return res.status(404).json({
+        message: `Variant not found for size: ${targetSize}`,
+      });
+    }
+
+    const variantId = variant._id; // keep id for reconcile
+
+    // ✅ update variant physical stock
+    // variant.stock = st;
+    // variant.isInStock = st > 0;
+
+    // ✅ recompute product totals (physical totals)
+    const totalStock = (product.variants || []).reduce(
+      (sum, v) => sum + Number(v?.stock ?? 0),
+      0
+    );
+
+    const anyInStock = (product.variants || []).some(
+      (v) => Number(v?.stock ?? 0) > 0
+    );
+
+    product.stock = totalStock;   // physical total
+    product.isInStock = anyInStock;
+
+    // ✅ DO NOT auto-unpublish
+    // if (!anyInStock) product.isActive = false;
+
+    await product.save({ validateBeforeSave: true });
+
+    // ✅ AFTER stock update: (optional) reconcile backorders
+    // NOTE: reconcile should use InventoryReservation as source of truth.
+    let reconcileSummary = null;
+    try {
+      reconcileSummary = await reconcileBackordersForVariant({
+        productId: product._id,
+        variantId,
+        // allowedStatuses optional: ["processing","packed"]
+      });
+    } catch (reErr) {
+      console.error(
+        "⚠️ reconcileBackordersForVariant failed:",
+        reErr?.message || reErr
+      );
+      // Don't fail stock update if reconcile fails
+    }
 
     const full = await pop(Product.findById(product._id));
-    res.json({
+
+    return res.json({
       message: "Variant stock updated",
       product: applyStockFromVariants(full),
+      updated: { size: targetSize, stock: st },
+      reconcile: reconcileSummary,
     });
   } catch (e) {
-    console.error("❌ Variant Stock Error:", e);
-    res.status(500).json({ message: e.message });
+    console.error("❌ updateVariantStock Error:", e);
+    return res.status(500).json({ message: e.message });
   }
 };
+
+
+
+
 
 export const updateProductRatings = async (req, res) => {
   try {
@@ -1983,3 +2109,63 @@ export const getProductsByCodes = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
+
+// PATCH /api/products/:id/stock  { stock: number }
+// ✅ Only for SIMPLE products
+// PATCH /api/products/:id/stock  { stock: number }
+// ✅ Only for SIMPLE products
+export const updateProductStock = async (req, res) => {
+  try {
+    const { stock } = req.body;
+
+    const st = Number(stock);
+    if (!Number.isFinite(st) || st < 0) {
+      return res
+        .status(400)
+        .json({ message: "Invalid stock. Provide a non-negative number." });
+    }
+
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: "Product not found" });
+
+    const isVariable =
+      product.productType === "variable" ||
+      (Array.isArray(product.variants) && product.variants.length > 0);
+
+    // ✅ Rule enforcement
+    if (isVariable) {
+      return res.status(400).json({
+        message:
+          "This is a variable product. Use PATCH /api/products/:id/variant-stock with { size, stock }.",
+      });
+    }
+
+    // ✅ update physical stock
+    product.stock = st;
+
+    // ✅ inStock = stock > 0 (reservation model is source of truth)
+    // product.isInStock = st > 0;
+
+    // ✅ DO NOT auto-unpublish
+    // if (!product.isInStock) product.isActive = false;
+
+    await product.save({ validateBeforeSave: true });
+
+    const full = await pop(Product.findById(product._id));
+
+    return res.json({
+      message: "Product stock updated",
+      product: applyStockFromVariants(full),
+      updated: { stock: st },
+    });
+  } catch (e) {
+    console.error("❌ updateProductStock Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};
+
+
+
+
+

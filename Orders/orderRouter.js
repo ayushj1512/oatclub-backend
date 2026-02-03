@@ -17,7 +17,7 @@ import {
   confirmOrder, // ✅ NEW
   adminBookShiprocketIfMissing,      // ✅ ADD
     updateOrderAddress, // ✅ ADD THIS
-
+splitOrderIntoShipments
 
 } from "./orderController.js";
 
@@ -123,6 +123,12 @@ router.get("/:id/rma/:rmaNumber", getRmaByNumber);
 
 // Admin update RMA
 router.patch("/:id/rma/:rmaNumber", updateRma);
+
+router.post(
+  "/orders/:id/split",
+        
+  splitOrderIntoShipments
+);
 
 /* ============================================================
    ORDER BY ID (Keep at bottom)

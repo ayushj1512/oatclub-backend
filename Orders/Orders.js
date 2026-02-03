@@ -12,59 +12,61 @@ const orderItemSchema = new mongoose.Schema(
     // ✅ stable id for RMA linking (no index-based bugs)
     lineId: { type: String, required: true, index: true },
 
-    productId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Product",
+    // ✅ support multiple product collections (Product / Footwear)
+    productModel: {
+      type: String,
+      enum: ["Product", "Footwear"],
+      default: "Product",
       required: true,
     },
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+      refPath: "productModel", // ✅ FIXED (was items.productModel)
+    },
 
-    // ✅ purchase-time snapshot (so order doesn't break if product changes later)
-   productSnapshot: {
-  productCode: { type: String, default: "" },
-  title: { type: String, required: true },
-  slug: { type: String, default: "" },
+    // ✅ production / fulfillment tracking per line
+    fulfillment: {
+      allocatedQty: { type: Number, default: 0, min: 0 }, // reservedStock locked
+      shippedQty: { type: Number, default: 0, min: 0 },   // shipped till now
+      toProduceQty: { type: Number, default: 0, min: 0 }, // remaining
+    },
 
-  thumbnail: { type: String, default: "" },
-  images: [{ type: String, default: [] }],
+    // ✅ purchase-time snapshot
+    productSnapshot: {
+      productCode: { type: String, default: "" },
+      title: { type: String, required: true },
+      slug: { type: String, default: "" },
 
-  category: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Category",
-    default: null,
-  },
-  subcategory: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Category",
-    default: null,
-  },
+      thumbnail: { type: String, default: "" },
+      images: { type: [String], default: [] }, // ✅ FIXED
 
-  productType: {
-    type: String,
-    enum: ["simple", "variable", "digital", "external"],
-    default: "simple",
-  },
+      productType: {
+        type: String,
+        enum: ["simple", "variable", "digital", "external"],
+        default: "simple",
+      },
 
-  sku: { type: String, default: "" },
-  tags: [{ type: String, default: [] }],
+      sku: { type: String, default: "" },
+      tags: { type: [String], default: [] }, // ✅ FIXED
 
-  // ✅ ADD THIS
-  hsnCode: { type: String, default: "" },
-
-  weight: { type: Number, default: 0 },
-  currency: { type: String, default: "INR" },
-},
+      hsnCode: { type: String, default: "" }, // ✅ keep
+      weight: { type: Number, default: 0 },
+      currency: { type: String, default: "INR" },
+    },
 
     // ✅ chosen variant snapshot (if variable)
     variant: {
       variantId: { type: mongoose.Schema.Types.ObjectId, default: null },
-      sku: { type: String, default: "" }, // variant SKU lives here
+      sku: { type: String, default: "" },
       attributes: [{ key: String, value: String }],
-      image: { type: String, default: "" },
       weight: { type: Number, default: 0 },
     },
-// ✅ easy access for frontend (no need to parse attributes array)
-selectedSize: { type: String, default: "" },
-selectedColor: { type: String, default: "" },
+
+    // ✅ easy access for frontend
+    selectedSize: { type: String, default: "" },
+    selectedColor: { type: String, default: "" },
+
     quantity: { type: Number, required: true, min: 1 },
 
     // ✅ locked at purchase time
@@ -74,6 +76,7 @@ selectedColor: { type: String, default: "" },
   },
   { _id: false }
 );
+
 
 // ============================================================================
 // RMA (Return/Exchange) — Embedded inside Order (no new order)
@@ -260,6 +263,9 @@ const orderSchema = new mongoose.Schema(
   finalTotal: Number,
   identity: { type: String, default: "" }, // ✅ email/phone identity store
 },
+orderType: { type: String, enum: ["parent", "shipment"], default: "shipment", index: true },
+parentOrderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", default: null, index: true },
+splitSuffix: { type: String, default: "", index: true }, // "A","B"
 
 
     shippingFee: { type: Number, default: 0 },
@@ -280,15 +286,17 @@ const orderSchema = new mongoose.Schema(
     },
 
     paymentMethod: {
-      type: String,
-      enum: ["cod", "razorpay"],
-      default: "cod",
-    },
+  type: String,
+  enum: ["cod", "razorpay", "exchange"],
+  default: "cod",
+  index: true,
+},
+
 
     // ✅ FIX: added refund_pending to prevent crashes
     paymentStatus: {
       type: String,
-      enum: ["pending", "paid", "failed", "refunded", "refund_pending"],
+      enum: ["pending", "paid", "failed", "refunded",  "refund_pending","not_applicable",],
       default: "pending",
       index: true,
     },
@@ -373,7 +381,10 @@ const orderSchema = new mongoose.Schema(
 
     customerMessage: { type: String, default: "" },
     adminRemarks: { type: String, default: "" },
-
+customerSupportRemark: {
+  type: String,
+  default: "",
+},
     queryRef: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Query",
@@ -443,6 +454,40 @@ orderSchema.pre("validate", function (next) {
   }
 });
 
+
+
+// ========================================================================================
+// ✅ AUTO-HANDLE EXCHANGE PAYMENT LOGIC
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    if (this.paymentMethod === "exchange") {
+      // no money movement
+      this.paymentStatus = "not_applicable";
+
+      // ensure accounting safety
+      this.subtotal = Number(this.subtotal || 0);
+      this.discount = 0;
+      this.shippingFee = 0;
+      this.tax = 0;
+
+      this.totalAmount = this.subtotal;
+      this.finalPayable = 0;
+
+      // exchange orders are always confirmed logically
+      if (!this.isConfirmed) {
+        this.isConfirmed = true;
+        this.confirmedAt = new Date();
+      }
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
+
 // ========================================================================================
 // ⭐ AUTO-GENERATE SEQUENTIAL ORDER NUMBER
 // ========================================================================================
@@ -465,6 +510,11 @@ const padded = String(counter.seq).padStart(6, "0");
     next(err);
   }
 });
+
+const hasChildren = async (orderId) => {
+  const exists = await mongoose.model("Order").exists({ parentOrderId: orderId });
+  return Boolean(exists);
+};
 
 // ========================================================================================
 // ✅ AUTO-CONFIRM if Razorpay payment is paid
@@ -624,30 +674,41 @@ return this.findByIdAndUpdate(orderId, update, { new: true, runValidators: true 
 
 // ========================================================================================
 // ✅ PATCH 4: Safety guard — prevent shipping stages unless confirmed
+// ✅ PLUS: Parent order can't be shipped (only shipment split orders can)
 // ========================================================================================
-// ========================================================================================
-// ✅ PATCH 4: Safety guard — prevent shipping stages unless confirmed
-// ========================================================================================
-orderSchema.pre("validate", function (next) {
+orderSchema.pre("validate", async function (next) {
   try {
-    const shippingStages = [
-      "packed",
-      "picked",
-      "shipped",
-      "out_for_delivery",
-      "delivered",
-    ];
+    const shippingStages = ["packed", "picked", "shipped", "out_for_delivery", "delivered"];
 
+    // 1) Nothing can move to shipping unless confirmed
     if (!this.isConfirmed && shippingStages.includes(this.fulfillmentStatus)) {
       return next(new Error("Order must be confirmed before shipping stages"));
     }
 
+    if (!this.isConfirmed && this.shipment?.status && shippingStages.includes(this.shipment.status)) {
+      return next(new Error("Order must be confirmed before shipment status moves"));
+    }
+
+    // ✅ 2) Parent can be blocked ONLY if it actually has children
+    const isMarkedParent = String(this.orderType || "").toLowerCase() === "parent";
+    let actuallySplitParent = false;
+
+    if (isMarkedParent && this._id) {
+      const OrderModel = mongoose.model("Order");
+      const childExists = await OrderModel.exists({ parentOrderId: this._id });
+      actuallySplitParent = Boolean(childExists);
+    }
+
+    if (actuallySplitParent && shippingStages.includes(this.fulfillmentStatus)) {
+      return next(new Error("Split parent order cannot be shipped. Ship child orders (-A/-B) only."));
+    }
+
     if (
-      !this.isConfirmed &&
+      actuallySplitParent &&
       this.shipment?.status &&
       shippingStages.includes(this.shipment.status)
     ) {
-      return next(new Error("Order must be confirmed before shipment status moves"));
+      return next(new Error("Split parent order shipment status cannot move. Ship only child orders."));
     }
 
     next();
@@ -655,6 +716,8 @@ orderSchema.pre("validate", function (next) {
     next(e);
   }
 });
+
+
 
 
 
@@ -672,7 +735,8 @@ orderSchema.index({ isConfirmed: 1, paymentStatus: 1 });
 orderSchema.index({ isConfirmed: 1, fulfillmentStatus: 1 });
 orderSchema.index({ "shipment.xpressbees.awb": 1 });
 orderSchema.index({ "shipment.xpressbees.shipmentId": 1 });
-
+orderSchema.index({ orderType: 1, parentOrderId: 1 });
+orderSchema.index({ parentOrderId: 1, splitSuffix: 1 });
 // Helpful indexes for RMA queries
 orderSchema.index({ "rmas.rmaNumber": 1 });
 orderSchema.index({ "rmas.status": 1 });

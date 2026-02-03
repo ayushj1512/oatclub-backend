@@ -19,7 +19,8 @@ import {
   bulkDeleteProducts,
   bulkImportProducts,
   bulkUpdatePricing,
-bulkSyncCollectionOnProducts,
+  bulkSyncCollectionOnProducts,
+  updateProductStock, // ✅ NEW (simple stock endpoint)
   updateVariantStock,
   incrementProductAnalytics,
   updateProductRatings,
@@ -100,7 +101,10 @@ router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 
 router.post("/:id/update-ratings", updateProductRatings);
 router.patch("/:id/analytics", incrementProductAnalytics);
-router.patch("/:id/variant-stock", updateVariantStock);
+
+// ✅ Inventory endpoints (2 only)
+router.patch("/:id/stock", updateProductStock);           // ✅ SIMPLE only
+router.patch("/:id/variant-stock", updateVariantStock);   // ✅ VARIABLE only
 
 // ✅ Update fabrics + consumption (dedicated)
 router.patch("/:id/fabrics", updateProductFabrics);
