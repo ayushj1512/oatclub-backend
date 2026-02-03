@@ -426,11 +426,15 @@ const normalizeSize = (s) =>
     .replace(/\s+/g, "");
 
 const getVariantSize = (variant) => {
+  if (!variant) return "";
+  if (variant.size) return String(variant.size); // ✅ support direct field
+
   const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
   return (
     attrs.find((a) => String(a?.key || "").toLowerCase() === "size")?.value || ""
   );
 };
+
 
 const keepOnlySizeVariants = (variants = []) => {
   const out = [];
@@ -1230,6 +1234,8 @@ export const incrementProductAnalytics = async (req, res) => {
 
 // PATCH /api/products/:id/variant-stock  { size: "M", stock: 5 }
 // ✅ Only for VARIABLE products
+// PATCH /api/products/:id/variant-stock  { size: "M", stock: 5 }
+// ✅ Only for VARIABLE products
 export const updateVariantStock = async (req, res) => {
   try {
     const { size, stock } = req.body;
@@ -1253,7 +1259,6 @@ export const updateVariantStock = async (req, res) => {
       product.productType === "variable" ||
       (Array.isArray(product.variants) && product.variants.length > 0);
 
-    // ✅ Rule enforcement
     if (!isVariable) {
       return res.status(400).json({
         message:
@@ -1261,7 +1266,6 @@ export const updateVariantStock = async (req, res) => {
       });
     }
 
-    // Find matching variant by size attribute
     const targetSize = normalizeSize(sz);
 
     const variant =
@@ -1275,11 +1279,13 @@ export const updateVariantStock = async (req, res) => {
       });
     }
 
-    const variantId = variant._id; // keep id for reconcile
+    const variantId = variant._id;
 
-    // ✅ update variant physical stock
-    // variant.stock = st;
-    // variant.isInStock = st > 0;
+    // ✅ ACTUAL UPDATE (THIS WAS MISSING)
+    variant.stock = st;
+
+    // ✅ IMPORTANT: tell mongoose variants array changed (safe)
+    product.markModified("variants");
 
     // ✅ recompute product totals (physical totals)
     const totalStock = (product.variants || []).reduce(
@@ -1287,33 +1293,22 @@ export const updateVariantStock = async (req, res) => {
       0
     );
 
-    const anyInStock = (product.variants || []).some(
-      (v) => Number(v?.stock ?? 0) > 0
-    );
-
-    product.stock = totalStock;   // physical total
-    product.isInStock = anyInStock;
-
-    // ✅ DO NOT auto-unpublish
-    // if (!anyInStock) product.isActive = false;
+    product.stock = totalStock;
 
     await product.save({ validateBeforeSave: true });
 
     // ✅ AFTER stock update: (optional) reconcile backorders
-    // NOTE: reconcile should use InventoryReservation as source of truth.
     let reconcileSummary = null;
     try {
       reconcileSummary = await reconcileBackordersForVariant({
         productId: product._id,
         variantId,
-        // allowedStatuses optional: ["processing","packed"]
       });
     } catch (reErr) {
       console.error(
         "⚠️ reconcileBackordersForVariant failed:",
         reErr?.message || reErr
       );
-      // Don't fail stock update if reconcile fails
     }
 
     const full = await pop(Product.findById(product._id));
