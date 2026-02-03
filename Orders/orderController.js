@@ -18,6 +18,8 @@ import {
   triggerRmaEmails,
 } from "./order.emails.js";
 import Coupon from "../Coupon/Coupon.js"; 
+import { createReservationInternal } from "../InventoryReservation/InventoryReservationController.js";
+import { consumeReservationsInternalByOrder } from "../InventoryReservation/InventoryReservationController.js";
 
 // ⚠️ path tumhare project ke hisaab se adjust kar lena
 
@@ -274,21 +276,21 @@ const confirmOrderById = async ({ orderId, adminId = null, session = null }) => 
    CREATE ORDER
   Expect each item: { productId, quantity, variantId? }
 ============================================================ */
+
+
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
 
-  // helpers
+  // ---------- tiny helpers ----------
   const str = (v) => (v == null ? "" : String(v));
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const isObjectId = (v) => mongoose.Types.ObjectId.isValid(String(v || ""));
+  const oid = (v) => new mongoose.Types.ObjectId(String(v));
 
   const normEmail = (v) => str(v).trim().toLowerCase();
-  const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim();
+  const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
 
-  const isNumericLike = (v) => {
-    const s = str(v).trim();
-    return s.length > 0 && /^[0-9]+$/.test(s);
-  };
+  const isNumericLike = (v) => /^[0-9]+$/.test(str(v).trim());
 
   const sanitizeSelectedColor = (color, productCode = "") => {
     const c = str(color).trim();
@@ -302,15 +304,15 @@ export const createOrder = async (req, res) => {
   const buildCouponIdentity = ({ email, phone }) => {
     const e = normEmail(email);
     if (e && e.includes("@")) return `email:${e}`;
-    const p = normPhone(phone).replace(/^\+/, "");
+    const p = normPhone(phone);
     if (p) return `phone:${p}`;
     return "";
   };
 
   const pickAttr = (attrs = [], keys = []) => {
-    const wanted = keys.map((k) => str(k).toLowerCase());
+    const wanted = keys.map((k) => str(k).trim().toLowerCase());
     const found = (Array.isArray(attrs) ? attrs : []).find((a) =>
-      wanted.includes(str(a?.key).toLowerCase())
+      wanted.includes(str(a?.key).trim().toLowerCase())
     );
     return found?.value ? str(found.value) : "";
   };
@@ -349,8 +351,16 @@ export const createOrder = async (req, res) => {
     return maybeColor.toLowerCase();
   };
 
+  // ✅ allocate from sellable (stock - reserved) but allow made-to-order
+  const computeAllocation = ({ stock, reservedStock, qty }) => {
+    const sellable = Math.max(0, num(stock) - num(reservedStock));
+    const allocatedQty = Math.min(num(qty), sellable);
+    const toProduceQty = Math.max(0, num(qty) - allocatedQty);
+    return { allocatedQty, toProduceQty };
+  };
+
   const validateAndComputeCoupon = async ({ code, cartTotal, identity }) => {
-    if (!code) return { couponSnapshot: null, couponDiscount: 0 };
+    if (!code) return { couponSnapshot: null, couponDiscount: 0, couponDoc: null };
 
     const couponCode = str(code).trim().toUpperCase();
     const couponDoc = await Coupon.findOne({ code: couponCode }).session(session);
@@ -391,17 +401,6 @@ export const createOrder = async (req, res) => {
     };
   };
 
-  // ✅ allocate from sellable (stock - reserved) but allow made-to-order (even if 0)
-  const computeAllocation = ({ stock, reservedStock, qty }) => {
-    const s = Number(stock ?? 0);
-    const r = Number(reservedStock ?? 0);
-    const q = Number(qty ?? 0);
-    const sellable = Math.max(0, s - r);
-    const allocatedQty = Math.min(q, sellable);
-    const toProduceQty = Math.max(0, q - allocatedQty);
-    return { sellable, allocatedQty, toProduceQty };
-  };
-
   try {
     const {
       customerId,
@@ -418,8 +417,9 @@ export const createOrder = async (req, res) => {
       customerSupportRemark = "",
     } = req.body;
 
-    const pm = str(paymentMethod).toLowerCase();
+    const pm = str(paymentMethod).trim().toLowerCase();
 
+    // ✅ basic validations
     if (!isObjectId(customerId)) return res.status(400).json({ message: "Invalid customerId" });
     if (!isObjectId(shippingAddressId))
       return res.status(400).json({ message: "Invalid shippingAddressId" });
@@ -430,7 +430,10 @@ export const createOrder = async (req, res) => {
     if (!["cod", "razorpay"].includes(pm))
       return res.status(400).json({ message: "Invalid paymentMethod. Allowed: cod | razorpay" });
 
+    let createdOrderId = null;
+
     await session.withTransaction(async () => {
+      // 1) Address snapshots
       const shippingAddress = await Address.findById(shippingAddressId).session(session);
       if (!shippingAddress) throw new Error("Shipping address not found");
 
@@ -441,12 +444,13 @@ export const createOrder = async (req, res) => {
       const shippingAddressSnapshot = buildAddressSnapshot(shippingAddress);
       const billingAddressSnapshot = buildAddressSnapshot(billingAddress);
 
+      // 2) Coupon identity
       const identity = buildCouponIdentity({
         email: shippingAddressSnapshot?.email,
         phone: shippingAddressSnapshot?.phone,
       });
 
-      // ✅ only Product for now
+      // 3) Fetch products (lean)
       const productIds = [...new Set(items.map((i) => str(i?.productId)).filter(Boolean))];
       const bad = productIds.find((id) => !isObjectId(id));
       if (bad) throw new Error(`Invalid productId: ${bad}`);
@@ -454,17 +458,19 @@ export const createOrder = async (req, res) => {
       const products = await Product.find({ _id: { $in: productIds } }).session(session).lean();
       const productMap = new Map(products.map((p) => [str(p._id), p]));
 
+      // 4) Normalize items + compute allocations
       const normalizedItems = [];
-      let computedSubtotal = 0;
+      let subtotal = 0;
       let totalQty = 0;
 
       for (const item of items) {
-        if (!item?.productId) throw new Error("productId missing");
+        const pid = str(item?.productId);
+        if (!pid) throw new Error("productId missing");
 
-        const qty = Number(item.quantity || 0);
+        const qty = num(item?.quantity);
         if (!Number.isFinite(qty) || qty < 1) throw new Error("Invalid quantity");
 
-        const product = productMap.get(str(item.productId));
+        const product = productMap.get(pid);
         if (!product) throw new Error("Product not found");
 
         const isVariable =
@@ -473,39 +479,23 @@ export const createOrder = async (req, res) => {
 
         let variant = null;
 
-        // ✅ NO "out of stock" throw. We allow made-to-order.
-        let allocatedQty = 0;
-        let toProduceQty = qty;
-
         if (isVariable) {
           if (!item.variantId) throw new Error(`${product.title} - variantId missing`);
           variant = findVariantById(product, item.variantId);
           if (!variant) throw new Error(`${product.title} - variant not found`);
-
-          const alloc = computeAllocation({
-            stock: variant.stock,
-            reservedStock: variant.reservedStock,
-            qty,
-          });
-
-          allocatedQty = alloc.allocatedQty;
-          toProduceQty = alloc.toProduceQty;
-        } else {
-          const alloc = computeAllocation({
-            stock: product.stock,
-            reservedStock: product.reservedStock,
-            qty,
-          });
-
-          allocatedQty = alloc.allocatedQty;
-          toProduceQty = alloc.toProduceQty;
         }
 
-        const unitPrice = Number(product.price || 0);
-        const itemSubtotal = unitPrice * qty;
+        const { allocatedQty, toProduceQty } = computeAllocation({
+          stock: variant ? variant.stock : product.stock,
+          reservedStock: variant ? variant.reservedStock : product.reservedStock,
+          qty,
+        });
 
+        const unitPrice = num(product.price);
+        const lineSubtotal = unitPrice * qty;
+
+        subtotal += lineSubtotal;
         totalQty += qty;
-        computedSubtotal += itemSubtotal;
 
         const attrs = normalizeVariantAttributes(variant);
 
@@ -521,13 +511,9 @@ export const createOrder = async (req, res) => {
         normalizedItems.push({
           lineId: crypto.randomUUID(),
           productModel: "Product",
-          productId: product._id,
+          productId: oid(product._id),
 
-          fulfillment: {
-            allocatedQty, // ✅ reserve only this
-            shippedQty: 0,
-            toProduceQty, // ✅ remaining goes to production
-          },
+          fulfillment: { allocatedQty, shippedQty: 0, toProduceQty },
 
           productSnapshot: {
             productCode: product.productCode || "",
@@ -538,8 +524,8 @@ export const createOrder = async (req, res) => {
             productType: product.productType || (product?.variants?.length ? "variable" : "simple"),
             sku: product.sku || "",
             tags: Array.isArray(product.tags) ? product.tags : [],
-            hsnCode: String(product.hsnCode || ""),
-            weight: Number(product.weight ?? 0),
+            hsnCode: str(product.hsnCode),
+            weight: num(product.weight),
             currency: product.currency || currency,
           },
 
@@ -547,7 +533,7 @@ export const createOrder = async (req, res) => {
             variantId: variant?._id || null,
             sku: variant?.sku || "",
             attributes: attrs,
-            weight: Number(variant?.weight ?? 0),
+            weight: num(variant?.weight),
           },
 
           selectedSize,
@@ -555,57 +541,11 @@ export const createOrder = async (req, res) => {
           quantity: qty,
           price: unitPrice,
           compareAtPrice: product?.compareAtPrice ?? null,
-          subtotal: itemSubtotal,
+          subtotal: lineSubtotal,
         });
       }
 
-      /**
-       * ✅ IMPORTANT CHANGE:
-       * We DO NOT decrement stock at order creation (no $inc stock:-qty).
-       * We only reserve allocatedQty (sellable part).
-       * Anything beyond sellable remains toProduceQty and is NOT reserved.
-       *
-       * This matches:
-       * sellable = stock - reservedStock
-       * reserve only sellable portion
-       */
-      for (const it of normalizedItems) {
-        const variantId = it?.variant?.variantId;
-        const reserveQty = Number(it?.fulfillment?.allocatedQty || 0);
-
-        if (!reserveQty) continue; // fully made-to-order
-
-        if (variantId) {
-          // reserve on variant (simple optimistic update)
-          const result = await Product.updateOne(
-            { _id: it.productId, "variants._id": variantId },
-            { $inc: { "variants.$.reservedStock": reserveQty } }
-          ).session(session);
-
-          // if it didn't modify, degrade reservation to production (do not fail order)
-          if (!result?.modifiedCount) {
-            it.fulfillment.toProduceQty =
-              Number(it.fulfillment.toProduceQty || 0) + reserveQty;
-            it.fulfillment.allocatedQty =
-              Math.max(0, Number(it.fulfillment.allocatedQty || 0) - reserveQty);
-          }
-        } else {
-          // reserve on simple product
-          const result = await Product.updateOne(
-            { _id: it.productId },
-            { $inc: { reservedStock: reserveQty } }
-          ).session(session);
-
-          if (!result?.modifiedCount) {
-            it.fulfillment.toProduceQty =
-              Number(it.fulfillment.toProduceQty || 0) + reserveQty;
-            it.fulfillment.allocatedQty =
-              Math.max(0, Number(it.fulfillment.allocatedQty || 0) - reserveQty);
-          }
-        }
-      }
-
-      const subtotal = computedSubtotal;
+      // 5) Discounts
       const totalAmount = subtotal + num(shippingFee) + num(tax);
 
       const couponCode = coupon && typeof coupon === "object" ? str(coupon.code) : "";
@@ -616,7 +556,6 @@ export const createOrder = async (req, res) => {
       });
 
       const baseForRazorpayExtra = Math.max(0, subtotal - Math.min(num(couponDiscount), subtotal));
-
       const razorpayExtraDiscount =
         pm === "razorpay"
           ? Math.min(
@@ -643,14 +582,15 @@ export const createOrder = async (req, res) => {
         couponIdentity: identity || "",
       };
 
+      // 6) Create order (NO stock decrement, NO direct reservedStock inc)
       const [order] = await Order.create(
         [
           {
-            customerId,
+            customerId: oid(customerId),
             shippingAddressSnapshot,
             billingAddressSnapshot,
             items: normalizedItems,
-            customerSupportRemark: String(customerSupportRemark || "").trim(),
+            customerSupportRemark: str(customerSupportRemark).trim(),
             subtotal,
             discount: finalDiscount,
             coupon: couponSnapshot ? { ...couponSnapshot, identity } : null,
@@ -671,7 +611,40 @@ export const createOrder = async (req, res) => {
         { session }
       );
 
-      // coupon usage on COD (same as before)
+      // 7) Create reservations for allocatedQty (atomic + audit trail)
+      for (const it of normalizedItems) {
+        const reserveQty = num(it?.fulfillment?.allocatedQty);
+        if (!reserveQty) continue;
+
+        try {
+          await createReservationInternal({
+            productId: it.productId,
+            variantId: it?.variant?.variantId || null,
+            qty: reserveQty,
+            refType: "order",
+            refId: order._id,
+            orderNumber: order.orderNumber || "",
+            productTitle: it?.productSnapshot?.title || "",
+            productImage:
+              it?.productSnapshot?.thumbnail || it?.productSnapshot?.images?.[0] || "",
+            variantSku: it?.variant?.sku || "",
+            selectedSize: it?.selectedSize || "",
+            selectedColor: it?.selectedColor || "",
+            notes: `Reserved at order creation | orderNumber=${order.orderNumber || ""}`,
+            session,
+          });
+        } catch (e) {
+          // ✅ degrade: if reserve fails, convert that qty to production (do not fail order)
+          it.fulfillment.toProduceQty = num(it.fulfillment.toProduceQty) + reserveQty;
+          it.fulfillment.allocatedQty = Math.max(0, num(it.fulfillment.allocatedQty) - reserveQty);
+        }
+      }
+
+      // ✅ if any degraded, persist updated fulfillment numbers
+      order.items = normalizedItems;
+      await order.save({ session });
+
+      // 8) Coupon usage on COD (same as before)
       if (couponDoc && couponSnapshot?.code && identity && pm === "cod") {
         couponDoc.usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
         couponDoc.usedBy.push(identity);
@@ -679,11 +652,12 @@ export const createOrder = async (req, res) => {
         await couponDoc.save({ session });
       }
 
-      req.__createdOrder = order;
+      createdOrderId = order._id;
     });
 
-    const finalOrder = await Order.findById(req.__createdOrder._id).lean();
+    const finalOrder = await Order.findById(createdOrderId).lean();
 
+    // non-blocking emails
     try {
       triggerOrderEmails(finalOrder);
     } catch (e) {
@@ -698,6 +672,7 @@ export const createOrder = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 
@@ -905,7 +880,6 @@ export const updateOrderStatus = async (req, res) => {
       const order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
-      const wasConfirmed = Boolean(order.isConfirmed);
       const isParent = String(order?.orderType || "").toLowerCase() === "parent";
 
       // 1) Payment status
@@ -970,9 +944,22 @@ export const updateOrderStatus = async (req, res) => {
         }
 
         // ✅ IMPORTANT: booking trigger should happen when it becomes PACKED
-        const becomingPacked = fulfillmentStatus === "packed" && order.fulfillmentStatus !== "packed";
+        const becomingPacked =
+          fulfillmentStatus === "packed" && order.fulfillmentStatus !== "packed";
 
+        // ✅ set status
         order.fulfillmentStatus = fulfillmentStatus;
+
+        // ✅ Consume inventory reservations on PACKED
+        // NOTE: you must import this at top of file:
+        // import { consumeReservationsInternalByOrder } from "../InventoryReservation/InventoryReservationController.js";
+        if (becomingPacked && !isParent) {
+          await consumeReservationsInternalByOrder({
+            orderId: order._id,
+            reason: `Consumed on PACKED | orderNumber=${order.orderNumber || ""}`,
+            session,
+          });
+        }
 
         if (fulfillmentStatus === "delivered") {
           order.trackingDetails = order.trackingDetails || {};
@@ -1034,6 +1021,7 @@ export const updateOrderStatus = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 
@@ -1308,6 +1296,10 @@ export const getOrderByOrderNumber = async (req, res) => {
 };
 
 // CANCEL ORDER
+// ✅ IMPORTANT: Add these imports at top (adjust paths if needed)
+// import InventoryReservation from "../InventoryReservation/InventoryReservation.js";
+// import { releaseReservationInternalByOrder } from "../InventoryReservation/reservation.internal.js"; // optional helper (shown below)
+
 export const cancelOrder = async (req, res) => {
   const session = await mongoose.startSession();
   const TAG = "❌[CANCEL_ORDER]";
@@ -1315,7 +1307,7 @@ export const cancelOrder = async (req, res) => {
   const str = (v) => (v == null ? "" : String(v));
   const norm = (v) => str(v).trim().toLowerCase();
 
-  // ✅ remove undefined deeply (prevents mongoose cast errors on nested objects)
+  // ✅ remove undefined deeply (prevents cast errors)
   const stripUndefinedDeep = (obj) => {
     if (Array.isArray(obj)) return obj.map(stripUndefinedDeep);
     if (obj && typeof obj === "object") {
@@ -1344,6 +1336,49 @@ export const cancelOrder = async (req, res) => {
     return "cancelled_by_customer";
   };
 
+  // ✅ release ALL "reserved" reservations for this order (restores reservedStock automatically)
+  const releaseReservationsForOrder = async ({ orderId, reason, session }) => {
+    const reservations = await InventoryReservation.find({
+      refType: "order",
+      refId: orderId,
+      status: "reserved",
+    }).session(session);
+
+    for (const r of reservations) {
+      // same logic as your controller: applyReservationTransition({r, nextStatus:"released"...})
+      // but we call it inline to keep cancelOrder self-contained.
+      const productId = r.productId;
+      const variantId = r.variantId;
+      const qty = Math.max(1, Number(r.qty || 0));
+
+      if (variantId) {
+        // reservedStock -qty on variant
+        const upd = await Product.updateOne(
+          { _id: productId },
+          { $inc: { "variants.$[v].reservedStock": -qty } },
+          { arrayFilters: [{ "v._id": variantId }], session }
+        );
+        if (upd.matchedCount === 0) throw new Error("Product not found while releasing reservation");
+        if (upd.modifiedCount === 0) throw new Error("Variant not found / release failed");
+      } else {
+        const upd = await Product.updateOne(
+          { _id: productId },
+          { $inc: { reservedStock: -qty } },
+          { session }
+        );
+        if (upd.matchedCount === 0) throw new Error("Product not found while releasing reservation");
+      }
+
+      r.status = "released";
+      r.notes =
+        (r.notes ? `${r.notes}\n` : "") +
+        `Released: ${reason || "order_cancelled"} | at=${new Date().toISOString()}`;
+      await r.save({ session });
+    }
+
+    return reservations.length;
+  };
+
   try {
     req.body = stripUndefinedDeep(req.body);
 
@@ -1357,10 +1392,9 @@ export const cancelOrder = async (req, res) => {
     console.log(`${TAG} Request received`, { orderId, reason });
 
     let cancelledOrderId = null;
+    let releasedCount = 0;
 
     await session.withTransaction(async () => {
-      console.log(`${TAG} Transaction started`);
-
       const order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
@@ -1380,10 +1414,9 @@ export const cancelOrder = async (req, res) => {
         return;
       }
 
-      /* -------------------------------
-         Cancel Shiprocket (if booked)
-         ✅ Parent order: no shiprocket cancellation in split model
-      -------------------------------- */
+      /* ------------------------------------------------
+         1) Cancel Shiprocket (if booked) - skip parent
+      ------------------------------------------------ */
       if (!isParent) {
         const shipmentId = order?.shipment?.shiprocket?.shipmentId;
         if (shipmentId) {
@@ -1396,53 +1429,42 @@ export const cancelOrder = async (req, res) => {
         }
       }
 
-      /* -------------------------------
-         Restore stock (matches your split model)
-         ✅ Parent: DO NOT restore (children will restore)
-         ✅ Shipment/Child: restore normally
-         ✅ Fallback (orderType missing): restore (safer)
-      -------------------------------- */
-      const shouldRestoreStock = isShipment || !orderType; // if parent => false
+      /* ------------------------------------------------
+         2) ✅ NEW: Release inventory reservations (THIS is the main change)
+         - Your createOrder now creates InventoryReservation docs
+         - On cancel we must "release" them to reduce reservedStock
+         - Parent: usually no stock ops, but still safe to release if any exist
+      ------------------------------------------------ */
+      releasedCount = await releaseReservationsForOrder({
+        orderId: order._id,
+        reason,
+        session,
+      });
 
-      if (shouldRestoreStock && Array.isArray(order.items) && order.items.length) {
-        for (const it of order.items) {
-          const qty = Number(it?.quantity || 0);
-          if (!Number.isFinite(qty) || qty <= 0) continue;
+      /* ------------------------------------------------
+         3) 🚫 Remove old "restore stock +qty" logic
+         Because you did NOT decrement stock at order creation.
+         Stock is decremented only when reservation is CONSUMED (packed/shipped flow).
+         So on cancel we only release reservations (reservedStock goes down).
+      ------------------------------------------------ */
+      // ✅ If you still have legacy orders that DID decrement stock at create,
+      // handle them separately (migration / flag). Don't mix in this flow.
 
-          const variantId = it?.variant?.variantId;
-
-          // ✅ Order schema now stores productId at top-level (not it.productId)
-          const pid = it?.productId;
-          if (!pid) continue;
-
-          if (variantId) {
-            await Product.updateOne(
-              { _id: pid, "variants._id": variantId },
-              { $inc: { "variants.$.stock": qty } }
-            ).session(session);
-          } else {
-            await Product.updateOne({ _id: pid }, { $inc: { stock: qty } }).session(session);
-          }
-        }
-      }
-
-      /* -------------------------------
-         Payment status
-      -------------------------------- */
+      /* ------------------------------------------------
+         4) Payment status
+      ------------------------------------------------ */
       if (norm(order.paymentMethod) === "razorpay" && norm(order.paymentStatus) === "paid") {
         order.paymentStatus = "refund_pending";
       }
 
-      /* -------------------------------
-         ✅ FINAL STATE (SAFE)
-      -------------------------------- */
+      /* ------------------------------------------------
+         5) Final state + remarks (safe shipment update)
+      ------------------------------------------------ */
       order.fulfillmentStatus = "cancelled";
 
-      // ✅ ensure shipment exists, then set only status (do NOT replace object)
       if (!order.shipment || typeof order.shipment !== "object") order.shipment = {};
       order.shipment.status = "cancelled";
 
-      // ✅ remarks separation (admin/customer)
       if (isAdminCancel(reason)) {
         order.adminRemarks = "cancelled_by_admin";
         order.customerMessage = undefined;
@@ -1454,7 +1476,7 @@ export const cancelOrder = async (req, res) => {
       await order.save({ session });
 
       cancelledOrderId = order._id;
-      console.log(`${TAG} ✅ Cancelled saved`, { orderId: cancelledOrderId });
+      console.log(`${TAG} ✅ Cancelled saved`, { orderId: cancelledOrderId, releasedCount });
     });
 
     const finalOrder = cancelledOrderId ? await Order.findById(cancelledOrderId).lean() : null;
@@ -1465,6 +1487,7 @@ export const cancelOrder = async (req, res) => {
         finalOrder?.fulfillmentStatus === "cancelled"
           ? "Order cancelled successfully"
           : "Order already cancelled",
+      releasedReservations: releasedCount, // ✅ helpful for debug
       order: finalOrder || null,
     });
   } catch (error) {
@@ -1475,6 +1498,7 @@ export const cancelOrder = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 

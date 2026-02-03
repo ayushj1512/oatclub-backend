@@ -8,69 +8,63 @@ const isObjectId = (v) => mongoose.Types.ObjectId.isValid(String(v || ""));
 const oid = (v) => new mongoose.Types.ObjectId(String(v));
 const allowedRefTypes = new Set(["order", "production", "manual"]);
 
+const httpCodeFromMsg = (msg = "") => {
+  const m = String(msg).toLowerCase();
+  if (m.startsWith("invalid")) return 400;
+  if (m.includes("qty must be")) return 400;
+  if (m.includes("variantid required")) return 400;
+  if (m.includes("only 'reserved'")) return 409;
+  if (m.includes("insufficient")) return 409;
+  if (m.includes("not found")) return 404;
+  if (m.includes("update failed")) return 409;
+  return 500;
+};
+
 const sendErr = (res, err, fallback = "Server Error") => {
   const msg = String(err?.message || fallback);
-
-  const code =
-    msg.startsWith("Invalid") ? 400 :
-    msg.includes("variantId required") ? 400 :
-    msg.includes("qty must be") ? 400 :
-    msg.includes("Only 'reserved'") ? 409 :
-    msg.toLowerCase().includes("insufficient") ? 409 :
-    msg.toLowerCase().includes("not found") ? 404 :
-    msg.toLowerCase().includes("update failed") ? 409 :
-    500;
-
+  const code = httpCodeFromMsg(msg);
   console.error("[InventoryReservation]", code, msg, err);
   return res.status(code).json({ ok: false, message: msg });
 };
 
-const computeAvailable = (product, variantId) => {
-  const isVariable = Array.isArray(product?.variants) && product.variants.length > 0;
-
-  if (!isVariable) {
-    return {
-      isVariable: false,
-      available: Math.max(0, (product.stock ?? 0) - (product.reservedStock ?? 0)),
-    };
-  }
-
-  if (!variantId) return { isVariable: true, available: 0, error: "variantId required for variable product" };
-  const v = product.variants.id(variantId);
-  if (!v) return { isVariable: true, available: 0, error: "Variant not found" };
-
-  return {
-    isVariable: true,
-    available: Math.max(0, (v.stock ?? 0) - (v.reservedStock ?? 0)),
-  };
-};
-
-const incReserved = async ({ productId, variantId, qty, session }) => {
+// ✅ Atomic reserve (prevents oversell/race)
+const tryReserveAtomic = async ({ productId, variantId, qty, session }) => {
   const q = Math.max(1, Number(qty || 0));
 
-  if (variantId) {
+  // SIMPLE product
+  if (!variantId) {
     const upd = await Product.updateOne(
-      { _id: productId },
-      { $inc: { "variants.$[v].reservedStock": q } },
-      { arrayFilters: [{ "v._id": variantId }], session }
+      {
+        _id: productId,
+        $expr: { $gte: [{ $subtract: ["$stock", "$reservedStock"] }, q] },
+      },
+      { $inc: { reservedStock: q } },
+      { session }
     );
-    if (upd.matchedCount === 0) throw new Error("Product not found");
-    if (upd.modifiedCount === 0) throw new Error("Variant not found / update failed");
+
+    if (!upd.matchedCount) throw new Error("Insufficient stock to reserve.");
     return;
   }
 
+  // VARIABLE product (variant-level)
   const upd = await Product.updateOne(
-    { _id: productId },
-    { $inc: { reservedStock: q } },
+    {
+      _id: productId,
+      variants: {
+        $elemMatch: {
+          _id: variantId,
+          $expr: { $gte: [{ $subtract: ["$stock", "$reservedStock"] }, q] },
+        },
+      },
+    },
+    { $inc: { "variants.$.reservedStock": q } },
     { session }
   );
-  if (upd.matchedCount === 0) throw new Error("Product not found / update failed");
+
+  if (!upd.matchedCount) throw new Error("Insufficient stock to reserve.");
 };
 
-/**
- * ✅ IMPORTANT FIX:
- * consume (variant) => DO TWO UPDATES to avoid conflict
- */
+// ✅ Release/Consume/Expire (variant consumes in 2 calls to avoid conflict)
 const applyReservationTransition = async ({ r, nextStatus, reason = "", session }) => {
   if (!r) throw new Error("Reservation not found");
   if (r.status !== "reserved") throw new Error("Only 'reserved' reservations can be updated");
@@ -80,31 +74,31 @@ const applyReservationTransition = async ({ r, nextStatus, reason = "", session 
   const qty = Math.max(1, Number(r.qty || 0));
 
   if (variantId) {
-    // 1) reservedStock -qty (always)
+    // 1) reservedStock -qty
     let upd = await Product.updateOne(
       { _id: productId },
       { $inc: { "variants.$[v].reservedStock": -qty } },
       { arrayFilters: [{ "v._id": variantId }], session }
     );
-    if (upd.matchedCount === 0) throw new Error("Product not found");
-    if (upd.modifiedCount === 0) throw new Error("Variant not found / update failed");
+    if (!upd.matchedCount) throw new Error("Product not found");
+    if (!upd.modifiedCount) throw new Error("Variant not found / update failed");
 
-    // 2) stock -qty (only when consumed) ✅ separate call => no conflict
+    // 2) stock -qty (only on consume)
     if (nextStatus === "consumed") {
       upd = await Product.updateOne(
         { _id: productId },
         { $inc: { "variants.$[v].stock": -qty } },
         { arrayFilters: [{ "v._id": variantId }], session }
       );
-      if (upd.matchedCount === 0) throw new Error("Product not found");
-      if (upd.modifiedCount === 0) throw new Error("Variant stock update failed");
+      if (!upd.matchedCount) throw new Error("Product not found");
+      if (!upd.modifiedCount) throw new Error("Variant stock update failed");
     }
   } else {
     const inc = { reservedStock: -qty };
     if (nextStatus === "consumed") inc.stock = -qty;
 
     const upd = await Product.updateOne({ _id: productId }, { $inc: inc }, { session });
-    if (upd.matchedCount === 0) throw new Error("Product not found / update failed");
+    if (!upd.matchedCount) throw new Error("Product not found / update failed");
   }
 
   r.status = nextStatus;
@@ -147,17 +141,15 @@ export async function createReservationInternal({
   if (!allowedRefTypes.has(refType)) throw new Error("Invalid refType");
   if (!isObjectId(refId)) throw new Error("Invalid refId");
 
-  const product = await Product.findById(productId).session(session);
-  if (!product) throw new Error("Product not found");
-
   const qtyNum = Math.max(1, Number(qty));
   const vId = variantId ? oid(variantId) : null;
 
-  const { isVariable, available, error } = computeAvailable(product, vId);
-  if (error) throw new Error(error);
-  if (available < qtyNum) throw new Error(`Insufficient stock to reserve. Available: ${available}`);
+  // fetch product for productCode/title/image (not for availability)
+  const product = await Product.findById(productId).session(session);
+  if (!product) throw new Error("Product not found");
 
-  await incReserved({ productId: product._id, variantId: isVariable ? vId : null, qty: qtyNum, session });
+  // ✅ atomic reserve
+  await tryReserveAtomic({ productId: product._id, variantId: vId, qty: qtyNum, session });
 
   const [reservation] = await InventoryReservation.create(
     [
@@ -169,7 +161,7 @@ export async function createReservationInternal({
         productImage: String(productImage || product?.thumbnail || product?.images?.[0] || "").trim(),
         orderNumber: String(orderNumber || "").trim(),
 
-        variantId: isVariable ? vId : null,
+        variantId: vId,
         variantSku: String(variantSku || "").trim(),
         selectedSize: String(selectedSize || "").trim(),
         selectedColor: String(selectedColor || "").trim(),
@@ -317,7 +309,10 @@ export async function expireDueReservations(req, res) {
     const due = await InventoryReservation.find({
       status: "reserved",
       expiresAt: { $ne: null, $lte: now },
-    }).sort({ expiresAt: 1 }).limit(200).session(session);
+    })
+      .sort({ expiresAt: 1 })
+      .limit(200)
+      .session(session);
 
     for (const r of due) {
       await applyReservationTransition({ r, nextStatus: "expired", reason: "", session });
@@ -331,4 +326,33 @@ export async function expireDueReservations(req, res) {
   } finally {
     session.endSession();
   }
+}
+
+
+// ✅ Consume all RESERVED reservations for an order (idempotent)
+export async function consumeReservationsInternalByOrder({
+  orderId,
+  reason = "packed",
+  session,
+}) {
+  if (!mongoose.Types.ObjectId.isValid(String(orderId || ""))) {
+    throw new Error("Invalid orderId");
+  }
+
+  const list = await InventoryReservation.find({
+    refType: "order",
+    refId: new mongoose.Types.ObjectId(String(orderId)),
+    status: "reserved",
+  }).session(session);
+
+  for (const r of list) {
+    await applyReservationTransition({
+      r,
+      nextStatus: "consumed",
+      reason,
+      session,
+    });
+  }
+
+  return { consumedCount: list.length };
 }
