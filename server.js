@@ -40,6 +40,7 @@ import xpressbeesRoutes from "./Xpressbees/xpressbees.routes.js";
 import adminFootwearRoutes from "./Footwear/adminFootwearRoutes.js";
 import footwearRoutes from "./Footwear/footwearRoutes.js";
 import inventoryReservationRoutes from "./InventoryReservation/InventoryReservationRoutes.js";
+import { startCrons } from "./cronjob/index.js";
 
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
@@ -300,6 +301,8 @@ app.use((req, res) => {
     message: "Route not found",
   });
 });
+
+startCrons();
 
 // Global error handler
 app.use((err, req, res, next) => {
