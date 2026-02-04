@@ -302,7 +302,7 @@ app.use((req, res) => {
   });
 });
 
-startCrons();
+// startCrons();
 
 // Global error handler
 app.use((err, req, res, next) => {
