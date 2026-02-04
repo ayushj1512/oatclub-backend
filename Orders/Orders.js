@@ -400,6 +400,13 @@ customerSupportRemark: {
       default: "website",
     },
 
+    priority: {
+  type: String,
+  enum: ["normal", "medium", "high"],
+  default: "normal",
+  index: true,
+},
+
     isGiftOrder: { type: Boolean, default: false },
 // ✅ order confirmation (separate from fulfillment)
 isConfirmed: { type: Boolean, default: false, index: true },

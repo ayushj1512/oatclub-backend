@@ -415,6 +415,8 @@ export const createOrder = async (req, res) => {
       isGiftOrder = false,
       currency = "INR",
       customerSupportRemark = "",
+      priority = "normal",
+
     } = req.body;
 
     const pm = str(paymentMethod).trim().toLowerCase();
@@ -612,37 +614,37 @@ export const createOrder = async (req, res) => {
       );
 
       // 7) Create reservations for allocatedQty (atomic + audit trail)
-      for (const it of normalizedItems) {
-        const reserveQty = num(it?.fulfillment?.allocatedQty);
-        if (!reserveQty) continue;
+      // for (const it of normalizedItems) {
+      //   const reserveQty = num(it?.fulfillment?.allocatedQty);
+      //   if (!reserveQty) continue;
 
-        try {
-          await createReservationInternal({
-            productId: it.productId,
-            variantId: it?.variant?.variantId || null,
-            qty: reserveQty,
-            refType: "order",
-            refId: order._id,
-            orderNumber: order.orderNumber || "",
-            productTitle: it?.productSnapshot?.title || "",
-            productImage:
-              it?.productSnapshot?.thumbnail || it?.productSnapshot?.images?.[0] || "",
-            variantSku: it?.variant?.sku || "",
-            selectedSize: it?.selectedSize || "",
-            selectedColor: it?.selectedColor || "",
-            notes: `Reserved at order creation | orderNumber=${order.orderNumber || ""}`,
-            session,
-          });
-        } catch (e) {
-          // ✅ degrade: if reserve fails, convert that qty to production (do not fail order)
-          it.fulfillment.toProduceQty = num(it.fulfillment.toProduceQty) + reserveQty;
-          it.fulfillment.allocatedQty = Math.max(0, num(it.fulfillment.allocatedQty) - reserveQty);
-        }
-      }
+      //   try {
+      //     await createReservationInternal({
+      //       productId: it.productId,
+      //       variantId: it?.variant?.variantId || null,
+      //       qty: reserveQty,
+      //       refType: "order",
+      //       refId: order._id,
+      //       orderNumber: order.orderNumber || "",
+      //       productTitle: it?.productSnapshot?.title || "",
+      //       productImage:
+      //         it?.productSnapshot?.thumbnail || it?.productSnapshot?.images?.[0] || "",
+      //       variantSku: it?.variant?.sku || "",
+      //       selectedSize: it?.selectedSize || "",
+      //       selectedColor: it?.selectedColor || "",
+      //       notes: `Reserved at order creation | orderNumber=${order.orderNumber || ""}`,
+      //       session,
+      //     });
+      //   } catch (e) {
+      //     // ✅ degrade: if reserve fails, convert that qty to production (do not fail order)
+      //     it.fulfillment.toProduceQty = num(it.fulfillment.toProduceQty) + reserveQty;
+      //     it.fulfillment.allocatedQty = Math.max(0, num(it.fulfillment.allocatedQty) - reserveQty);
+      //   }
+      // }
 
       // ✅ if any degraded, persist updated fulfillment numbers
-      order.items = normalizedItems;
-      await order.save({ session });
+      // order.items = normalizedItems;
+      // await order.save({ session });
 
       // 8) Coupon usage on COD (same as before)
       if (couponDoc && couponSnapshot?.code && identity && pm === "cod") {
@@ -672,17 +674,6 @@ export const createOrder = async (req, res) => {
     session.endSession();
   }
 };
-
-
-
-
-
-
-
-
-
-
-
 
 
 /* ============================================================
