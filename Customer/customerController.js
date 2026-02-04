@@ -578,29 +578,45 @@ export const checkCustomerExists = async (req, res) => {
 export const addCartAddByCustomerId = async (req, res) => {
   try {
     const { id } = req.params;
-    const { productCode = "" } = req.body;
+    const { productCode = "", variantId = null, size = "" } = req.body;
 
     const code = String(productCode || "").trim();
-    if (!code) {
-      return res.status(400).json({ message: "productCode is required" });
+    const sz = String(size || "").trim();
+    const vId = variantId ? String(variantId).trim() : null;
+
+    if (!code) return res.status(400).json({ message: "productCode is required" });
+    // ✅ at least one identifier for variant products (optional for simple)
+    if (!vId && !sz) {
+      // allow simple product to track just by productCode
+      // but if you want strict variant tracking, uncomment:
+      // return res.status(400).json({ message: "variantId or size is required" });
     }
 
     const customer = await Customer.findById(id);
     if (!customer) return res.status(404).json({ message: "Customer not found" });
 
-    // ✅ ensure array
     customer.cartAdds = Array.isArray(customer.cartAdds) ? customer.cartAdds : [];
 
-    // ✅ remove if already exists
-    customer.cartAdds = customer.cartAdds.filter((x) => x?.productCode !== code);
+    const sameKey = (x) =>
+      String(x?.productCode || "").trim() === code &&
+      (vId
+        ? String(x?.variantId || "") === vId
+        : String(x?.size || "").trim() === sz) &&
+      // ✅ if neither vId nor sz provided, match only by productCode (simple)
+      (vId || sz ? true : true);
+
+    // ✅ remove existing same key
+    customer.cartAdds = customer.cartAdds.filter((x) => !sameKey(x));
 
     // ✅ add to front (recent-first)
     customer.cartAdds.unshift({
       productCode: code,
+      variantId: vId || null,
+      size: sz || "",
       lastAddedAt: new Date(),
     });
 
-    // ✅ cap list (keep light)
+    // ✅ cap list
     customer.cartAdds = customer.cartAdds.slice(0, 80);
 
     await customer.save();
@@ -615,6 +631,7 @@ export const addCartAddByCustomerId = async (req, res) => {
   }
 };
 
+
 /**
  * ---------------------------------------------------------
  * ✅ Remove Cart Add (productCode) by customer _id
@@ -625,25 +642,37 @@ export const addCartAddByCustomerId = async (req, res) => {
 export const removeCartAddByCustomerId = async (req, res) => {
   try {
     const { id } = req.params;
-    const { productCode = "" } = req.body;
+    const { productCode = "", variantId = null, size = "" } = req.body;
 
     const code = String(productCode || "").trim();
-    if (!code) {
-      return res.status(400).json({ message: "productCode is required" });
-    }
+    const sz = String(size || "").trim();
+    const vId = variantId ? String(variantId).trim() : null;
+
+    if (!code) return res.status(400).json({ message: "productCode is required" });
 
     const customer = await Customer.findById(id);
     if (!customer) return res.status(404).json({ message: "Customer not found" });
 
     customer.cartAdds = Array.isArray(customer.cartAdds) ? customer.cartAdds : [];
 
+    const shouldRemove = (x) => {
+      if (String(x?.productCode || "").trim() !== code) return false;
+
+      // ✅ if variantId provided: match by variantId
+      if (vId) return String(x?.variantId || "") === vId;
+
+      // ✅ else if size provided: match by size
+      if (sz) return String(x?.size || "").trim() === sz;
+
+      // ✅ else (simple): remove all entries for productCode
+      return true;
+    };
+
     const before = customer.cartAdds.length;
-    customer.cartAdds = customer.cartAdds.filter((x) => x?.productCode !== code);
+    customer.cartAdds = customer.cartAdds.filter((x) => !shouldRemove(x));
     const after = customer.cartAdds.length;
 
-    if (before !== after) {
-      await customer.save();
-    }
+    if (before !== after) await customer.save();
 
     return res.status(200).json({
       message: "cartAdds updated",
@@ -656,6 +685,7 @@ export const removeCartAddByCustomerId = async (req, res) => {
   }
 };
 
+
 /**
  * ---------------------------------------------------------
  * ✅ Merge Guest Cart Adds after login (customer _id)
@@ -666,40 +696,65 @@ export const removeCartAddByCustomerId = async (req, res) => {
 export const mergeGuestCartAddsByCustomerId = async (req, res) => {
   try {
     const { id } = req.params;
-    const { productCodes = [] } = req.body;
+    const { items = [] } = req.body;
 
-    const codes = (Array.isArray(productCodes) ? productCodes : [])
-      .map((x) => String(x || "").trim())
+    const normItems = (Array.isArray(items) ? items : [])
+      .map((it) => {
+        const productCode = String(it?.productCode || "").trim();
+        const variantId = it?.variantId ? String(it.variantId).trim() : null;
+        const size = String(it?.size || "").trim();
+        const lastAddedAt = it?.lastAddedAt ? new Date(it.lastAddedAt) : new Date();
+        if (!productCode) return null;
+        return { productCode, variantId, size, lastAddedAt };
+      })
       .filter(Boolean);
 
-    if (!codes.length) {
-      return res.status(200).json({
-        message: "Nothing to merge",
-        cartAdds: [],
-      });
+    if (!normItems.length) {
+      return res.status(200).json({ message: "Nothing to merge", cartAdds: [] });
     }
 
     const customer = await Customer.findById(id);
     if (!customer) return res.status(404).json({ message: "Customer not found" });
 
-    customer.cartAdds = Array.isArray(customer.cartAdds) ? customer.cartAdds : [];
+    const existing = Array.isArray(customer.cartAdds) ? customer.cartAdds : [];
 
-    // existing codes from DB
-    const existing = customer.cartAdds
-      .map((x) => String(x?.productCode || "").trim())
-      .filter(Boolean);
+    // ✅ helper: unique key
+    const keyOf = (x) => {
+      const code = String(x?.productCode || "").trim();
+      const vId = x?.variantId ? String(x.variantId) : "";
+      const sz = String(x?.size || "").trim();
+      return `${code}::${vId || "-"}::${sz || "-"}`;
+    };
 
-    // ✅ guest recent-first, then existing
-    const mergedUnique = [...codes, ...existing]
-      .filter((v, i, arr) => arr.indexOf(v) === i)
+    // ✅ build map by recency (guest first, then existing)
+    const m = new Map();
+
+    const addToMap = (x) => {
+      const k = keyOf(x);
+      const prev = m.get(k);
+      const t = x?.lastAddedAt ? new Date(x.lastAddedAt).getTime() : Date.now();
+      const pt = prev?.lastAddedAt ? new Date(prev.lastAddedAt).getTime() : 0;
+
+      // keep latest timestamp
+      if (!prev || t > pt) {
+        m.set(k, {
+          productCode: String(x.productCode).trim(),
+          variantId: x.variantId ? String(x.variantId) : null,
+          size: String(x.size || "").trim(),
+          lastAddedAt: x.lastAddedAt ? new Date(x.lastAddedAt) : new Date(),
+        });
+      }
+    };
+
+    normItems.forEach(addToMap);
+    existing.forEach(addToMap);
+
+    // ✅ sort by lastAddedAt desc + cap 80
+    const merged = Array.from(m.values())
+      .sort((a, b) => new Date(b.lastAddedAt) - new Date(a.lastAddedAt))
       .slice(0, 80);
 
-    // ✅ rebuild with fresh timestamps (simple)
-    customer.cartAdds = mergedUnique.map((c) => ({
-      productCode: c,
-      lastAddedAt: new Date(),
-    }));
-
+    customer.cartAdds = merged;
     await customer.save();
 
     return res.status(200).json({
@@ -711,3 +766,4 @@ export const mergeGuestCartAddsByCustomerId = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+

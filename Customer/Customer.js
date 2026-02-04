@@ -72,15 +72,44 @@ const customerSchema = new mongoose.Schema(
     state: { type: String, trim: true, default: "" },
     city: { type: String, trim: true, default: "" },
 
-   cartAdds: {
+  cartAdds: {
   type: [
-    {
-      productCode: { type: String, trim: true, required: true },
-      lastAddedAt: { type: Date, default: Date.now },
-    },
+    new mongoose.Schema(
+      {
+        // product identity
+        productId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Product",
+          default: null,
+          index: true,
+        },
+        productCode: {
+          type: String,
+          trim: true,
+          required: true,
+          index: true,
+        },
+
+        // ✅ variant identity
+        variantId: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null,
+          index: true,
+        },
+        size: {
+          type: String,
+          trim: true,
+          default: "", // "S", "M", "L", "42"
+        },
+
+        lastAddedAt: { type: Date, default: Date.now },
+      },
+      { _id: false }
+    ),
   ],
   default: [],
 },
+
 
 
 
@@ -193,6 +222,15 @@ customerSchema.index(
     partialFilterExpression: { firebaseUID: { $type: "string" } },
   }
 );
+
+customerSchema.index({
+  "cartAdds.productCode": 1,
+  "cartAdds.size": 1,
+});
+
+customerSchema.index({
+  "cartAdds.variantId": 1,
+});
 
 /**
  * ✅ Other Indexes
