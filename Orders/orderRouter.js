@@ -133,7 +133,7 @@ router.post(
 /* ============================================================
    ORDER BY ID (Keep at bottom)
 ============================================================ */
-
+router.patch("/:id", updateOrder);
 router.get("/:id", getOrderById);
 router.put("/:id", updateOrder);
 router.patch("/:id/status", updateOrderStatus);

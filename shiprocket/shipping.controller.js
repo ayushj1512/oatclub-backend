@@ -2,6 +2,7 @@ import Order from "../Orders/Orders.js";
 import { checkServiceability, createShipment } from "./index.js";
 import { buildShiprocketPayload } from "./shiprocket.payload.js";
 import { buildReverseShiprocketPayload } from "./shiprocket.reverse.payload.js";
+import { getShiprocketToken } from "./shiprocket.auth.js";
 
 /**
  * POST /api/orders/:id/ship
@@ -302,6 +303,37 @@ export async function createReversePickup(req, res) {
       success: false,
       message: "Reverse pickup failed",
       error: shiprocketError || error.message,
+    });
+  }
+}
+
+
+/**
+ * GET /api/shiprocket/token
+ * Returns valid Shiprocket auth token
+ */
+export async function getShiprocketTokenApi(req, res) {
+  try {
+    const token = await getShiprocketToken();
+
+    if (!token) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to generate Shiprocket token",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      token,
+    });
+  } catch (err) {
+    console.error("❌ Shiprocket Token API Error:", err?.message || err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Shiprocket authentication failed",
+      error: err?.message,
     });
   }
 }
