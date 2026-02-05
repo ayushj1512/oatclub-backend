@@ -680,25 +680,102 @@ export const createOrder = async (req, res) => {
 ============================================================ */
 export const getAllOrders = async (req, res) => {
   try {
-    const { customerId, paymentStatus, fulfillmentStatus, isConfirmed, priority } = req.query;
+    const {
+      customerId,
+      paymentStatus,
+      fulfillmentStatus,
+      isConfirmed,      // supports boolean too
+      confirmFilter,    // supports "confirmed" | "not_confirmed"
+      priority,
+
+      // ✅ NEW filters
+      startDate,        // "YYYY-MM-DD"
+      endDate,          // "YYYY-MM-DD"
+      minAmount,
+      maxAmount,
+      paymentMethod,    // "cod" | "razorpay" | "exchange"
+      customerName,     // search: order#, name, email, phone
+    } = req.query;
 
     const filters = {};
 
+    /* ----------------------------
+       ✅ Basic filters
+       ---------------------------- */
     if (customerId && mongoose.Types.ObjectId.isValid(String(customerId))) {
-      filters.customerId = customerId;
+      filters.customerId = new mongoose.Types.ObjectId(String(customerId));
     }
 
     if (paymentStatus) filters.paymentStatus = String(paymentStatus).trim();
     if (fulfillmentStatus) filters.fulfillmentStatus = String(fulfillmentStatus).trim();
 
-    if (isConfirmed != null) filters.isConfirmed = String(isConfirmed) === "true";
+    // ✅ confirmation: support both isConfirmed=true/false and confirmFilter dropdown
+    if (confirmFilter === "confirmed") filters.isConfirmed = true;
+    else if (confirmFilter === "not_confirmed") filters.isConfirmed = { $ne: true };
+    else if (isConfirmed != null) filters.isConfirmed = String(isConfirmed) === "true";
 
+    // ✅ priority
     if (priority) {
       const p = String(priority).trim().toLowerCase();
       if (["normal", "medium", "high"].includes(p)) filters.priority = p;
     }
 
-    // ✅ correct priority sorting (high > medium > normal) + latest first
+    // ✅ paymentMethod
+    if (paymentMethod) filters.paymentMethod = String(paymentMethod).trim().toLowerCase();
+
+    /* ----------------------------
+       ✅ Date range (createdAt)
+       - startDate inclusive
+       - endDate exclusive (end + 1 day)
+       ---------------------------- */
+    const hasStart = !!startDate;
+    const hasEnd = !!endDate;
+
+    if (hasStart || hasEnd) {
+      filters.createdAt = {};
+      if (hasStart) {
+        // start of day
+        filters.createdAt.$gte = new Date(`${String(startDate)}T00:00:00.000Z`);
+      }
+      if (hasEnd) {
+        // end exclusive: next day 00:00
+        const end = new Date(`${String(endDate)}T00:00:00.000Z`);
+        end.setUTCDate(end.getUTCDate() + 1);
+        filters.createdAt.$lt = end;
+      }
+    }
+
+    /* ----------------------------
+       ✅ Amount range (finalPayable)
+       ---------------------------- */
+    const minA = Number(minAmount);
+    const maxA = Number(maxAmount);
+    if (Number.isFinite(minA) || Number.isFinite(maxA)) {
+      filters.finalPayable = {};
+      if (Number.isFinite(minA)) filters.finalPayable.$gte = minA;
+      if (Number.isFinite(maxA)) filters.finalPayable.$lte = maxA;
+    }
+
+    /* ----------------------------
+       ✅ Search (customerName param)
+       - Supports: orderNumber, name, email, phone
+       ---------------------------- */
+    const q = String(customerName || "").trim();
+    if (q) {
+      const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      filters.$or = [
+        { orderNumber: rx },
+        { "shippingAddressSnapshot.fullName": rx },
+        { "shippingAddressSnapshot.email": rx },
+        { "shippingAddressSnapshot.phone": rx },
+      ];
+      // Note: customerId populate fields can't be searched here easily without $lookup.
+      // If you want search in customer collection too, we can add $lookup in aggregate.
+    }
+
+    /* ----------------------------
+       ✅ Aggregate: priority sort + latest
+       ---------------------------- */
     const orders = await Order.aggregate([
       { $match: filters },
       {
@@ -716,10 +793,9 @@ export const getAllOrders = async (req, res) => {
         },
       },
       { $sort: { _priorityRank: -1, createdAt: -1 } },
-      { $limit: 500 }, // ✅ safety cap (remove/change if you want)
+      { $limit: 500 },
     ]);
 
-    // ✅ populate customer + items.productId after aggregate
     const populated = await Order.populate(orders, [
       { path: "customerId", select: "name email phone" },
       { path: "items.productId" },
