@@ -41,6 +41,7 @@ import adminFootwearRoutes from "./Footwear/adminFootwearRoutes.js";
 import footwearRoutes from "./Footwear/footwearRoutes.js";
 import inventoryReservationRoutes from "./InventoryReservation/InventoryReservationRoutes.js";
 import { startCrons } from "./cronjob/index.js";
+import homeCollectionsRoutes from "./HomeCollection/HomeCollectionsRoutes.js";
 
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
@@ -275,6 +276,7 @@ app.use("/api/abandoned-carts", abandonedCartRoutes);
 
 // Superadmin
 app.use("/superadmin", superadminRoutes);
+app.use("/api/home-collections", homeCollectionsRoutes);
 
 // Root
 app.get("/", (req, res) => {
