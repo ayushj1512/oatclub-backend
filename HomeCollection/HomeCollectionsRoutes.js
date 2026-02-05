@@ -10,7 +10,7 @@ import {
   deleteHomeCollection,
   reorderHomeCollections,
   upsertHomeCollections,
-} from "../controllers/homeCollectionController.js";
+} from "./HomeCollectionController.js";
 
 const router = express.Router();
 

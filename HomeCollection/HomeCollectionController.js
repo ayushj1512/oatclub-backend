@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import HomeCollection from "../models/HomeCollection.js";
+import HomeCollection from "./HomeCollection.js";
 
 /* ---------------- helpers ---------------- */
 const str = (v) => (v == null ? "" : String(v)).trim();
