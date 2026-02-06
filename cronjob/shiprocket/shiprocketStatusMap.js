@@ -104,6 +104,22 @@ export function extractShiprocketStatus(payload) {
   );
 }
 
+/**
+ * Only "before OFD" statuses are eligible to be moved to OFD/Delivered by cron.
+ */
+export const BEFORE_OFD = new Set(["processing", "packed", "picked", "shipped"]);
+
+/**
+ * Never touch these from cron (RMA/return/exchange lifecycle).
+ */
+export const BLOCKED_FROM_CRON = new Set([
+  "return_requested",
+  "exchange_requested",
+  "returned",
+  "cancelled",
+  "rto",
+]);
+
 const PRIORITY = {
   processing: 1,
   packed: 2,
@@ -111,14 +127,26 @@ const PRIORITY = {
   shipped: 4,
   out_for_delivery: 5,
   delivered: 6,
-  rto: 6,
-  cancelled: 6,
 };
 
+/**
+ * ✅ Cron rule:
+ * - next must be OFD/Delivered (caller already gates this)
+ * - current must be BEFORE_OFD, OR (special case) current OFD and next Delivered
+ * - never update if current is in BLOCKED_FROM_CRON
+ * - never downgrade
+ */
 export function shouldUpdateStatus(current, next) {
-  const c = String(current || "processing");
-  const n = String(next || "processing");
+  const c = String(current || "processing").trim();
+  const n = String(next || "processing").trim();
 
-  if (["delivered", "rto", "cancelled"].includes(n)) return true;
+  if (BLOCKED_FROM_CRON.has(c)) return false;
+
+  // Allow OFD -> Delivered progression (helpful)
+  if (c === "out_for_delivery" && n === "delivered") return true;
+
+  // Only move orders that are still before OFD
+  if (!BEFORE_OFD.has(c)) return false;
+
   return (PRIORITY[n] || 0) >= (PRIORITY[c] || 0);
 }

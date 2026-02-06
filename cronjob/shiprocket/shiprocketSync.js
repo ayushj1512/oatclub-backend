@@ -6,6 +6,8 @@ import {
   mapShiprocketToLocal,
   extractShiprocketStatus,
   shouldUpdateStatus,
+  BEFORE_OFD,
+  BLOCKED_FROM_CRON,
 } from "./shiprocketStatusMap.js";
 
 const { MONGO_URI, SHIPROCKET_TOKEN } = process.env;
@@ -17,9 +19,7 @@ const DEBUG_PRINT_RAW_PAYLOAD = false;
 const RAW_PAYLOAD_PRINT_LIMIT = 2;
 
 /**
- * ✅ IMPORTANT:
- * Only allow these status updates from this cron.
- * packed/shipped/picked etc will NEVER be written by this script.
+ * ✅ Only allow these status updates from this cron.
  */
 const ALLOWED_LOCAL_UPDATES = new Set(["out_for_delivery", "delivered"]);
 
@@ -53,12 +53,12 @@ function isShippedLike(status) {
   );
 }
 
+const norm = (v) => String(v || "").trim();
+
 /* =============================
    Main runner
 ============================= */
 async function run() {
-  // ✅ IMPORTANT: Never kill the whole backend process from an imported cron file
-  // If env missing, just throw; caller (cron scheduler) will catch it.
   if (!MONGO_URI) throw new Error("Missing MONGO_URI in env");
   if (!SHIPROCKET_TOKEN) throw new Error("Missing SHIPROCKET_TOKEN in env");
 
@@ -74,13 +74,23 @@ async function run() {
   });
 
   try {
-    // ✅ candidates: confirmed + shiprocket + awb + not final
-    // (we will still only UPDATE ofd/delivered)
+    // ✅ candidates: confirmed + shiprocket + awb + not final + NOT RMA states
     const query = {
       isConfirmed: true,
       "shipment.provider": "shiprocket",
       "shipment.shiprocket.awb": { $exists: true, $ne: "" },
-      fulfillmentStatus: { $nin: ["delivered", "cancelled", "rto"] },
+
+      // Do not even fetch orders that are in final/RMA lifecycle
+      fulfillmentStatus: {
+        $nin: [
+          "delivered",
+          "cancelled",
+          "rto",
+          "return_requested",
+          "exchange_requested",
+          "returned",
+        ],
+      },
     };
 
     const orders = await Order.find(query).select(
@@ -108,47 +118,58 @@ async function run() {
 
         const srStatusRaw = extractShiprocketStatus(payload);
         const mapped = mapShiprocketToLocal(srStatusRaw);
-        const nextStatus = String(mapped || "").trim();
+        const nextStatus = norm(mapped);
 
-        // ✅ HARD GATE: Only OFD / Delivered updates allowed from this cron
+        // ✅ HARD GATE 1: only OFD/Delivered can be written
         if (!ALLOWED_LOCAL_UPDATES.has(nextStatus)) {
           skipped++;
           continue;
         }
 
-        const currentFulfillment = String(
-          order.fulfillmentStatus || "processing"
-        );
-        const currentShipmentStatus = String(
-          order?.shipment?.status || "processing"
-        );
+        const currentFulfillment = norm(order.fulfillmentStatus || "processing");
+        const currentShipmentStatus = norm(order?.shipment?.status || "processing");
 
-        // ✅ No downgrades (safety)
+        // ✅ HARD GATE 2: never touch RMA/return/exchange/cancel/rto etc
+        if (BLOCKED_FROM_CRON.has(currentFulfillment)) {
+          skipped++;
+          continue;
+        }
+
+        // ✅ HARD GATE 3:
+        // Only move "before OFD" statuses to OFD/Delivered,
+        // plus allow OFD -> Delivered.
+        const isEligibleProgression =
+          (BEFORE_OFD.has(currentFulfillment) &&
+            (nextStatus === "out_for_delivery" || nextStatus === "delivered")) ||
+          (currentFulfillment === "out_for_delivery" && nextStatus === "delivered");
+
+        if (!isEligibleProgression) {
+          skipped++;
+          continue;
+        }
+
+        // ✅ No downgrades (extra safety)
         if (!shouldUpdateStatus(currentFulfillment, nextStatus)) {
           console.log(
-            `⏭️ SKIP DOWNGRADE ${order.orderNumber}: ${currentFulfillment} -> ${nextStatus} (sr="${srStatusRaw}")`
+            `⏭️ SKIP ${order.orderNumber}: ${currentFulfillment} -> ${nextStatus} (sr="${srStatusRaw}")`
           );
           skipped++;
           continue;
         }
 
         // no change
-        if (
-          currentFulfillment === nextStatus &&
-          currentShipmentStatus === nextStatus
-        ) {
+        if (currentFulfillment === nextStatus && currentShipmentStatus === nextStatus) {
           continue;
         }
 
         const $set = {
           "shipment.status": nextStatus,
-          fulfillmentStatus: nextStatus, // ✅ we DO update fulfillment for these 2 statuses
+          fulfillmentStatus: nextStatus,
         };
 
         // optional courier/tracking url
         const td = payload?.tracking_data || {};
-        if (td?.courier_name)
-          $set["shipment.shiprocket.courierName"] = td.courier_name;
+        if (td?.courier_name) $set["shipment.shiprocket.courierName"] = td.courier_name;
         if (td?.track_url) $set["shipment.shiprocket.trackingUrl"] = td.track_url;
 
         const now = new Date();
@@ -185,7 +206,6 @@ async function run() {
       `✅ Shiprocket Sync done. Updated: ${updated}/${orders.length} | Skipped: ${skipped}`
     );
   } finally {
-    // ✅ always disconnect (but don't crash app)
     try {
       await mongoose.disconnect();
       console.log("✅ Mongo disconnected");
@@ -205,8 +225,6 @@ export async function runShiprocketSync() {
 /**
  * ✅ CLI mode (manual run):
  * node cronjob/shiprocket/shiprocketSync.js
- *
- * IMPORTANT: Do NOT process.exit() in imported mode.
  */
 const isDirectRun =
   typeof process !== "undefined" &&
@@ -218,7 +236,6 @@ if (isDirectRun) {
     .then(() => console.log("✅ Shiprocket Sync finished"))
     .catch((e) => {
       console.error("Fatal:", e);
-      // Exit only in CLI mode
       process.exit(1);
     });
 }

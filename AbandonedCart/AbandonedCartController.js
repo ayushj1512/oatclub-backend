@@ -311,23 +311,46 @@ export const markCartRecovered = async (req, res) => {
  */
 export const listAbandonedCarts = async (req, res) => {
   try {
-    const { status = "", page = 1, limit = 20, q = "" } = req.query;
+    const { status = "", page = 1, limit = 20, q = "", hasCustomer = "" } = req.query;
 
-    const filter = {};
-    if (status) filter.status = safe(status).toLowerCase();
+    const and = [];
+
+    const st = safe(status).toLowerCase();
+    if (st) and.push({ status: st });
 
     const qq = safe(q);
     if (qq) {
-      filter.$or = [
-        { cartId: { $regex: qq, $options: "i" } },
-        { customerEmail: { $regex: qq, $options: "i" } },
-        { customerFirebaseUID: { $regex: qq, $options: "i" } },
-        { customerPhone: { $regex: qq, $options: "i" } },
-      ];
+      and.push({
+        $or: [
+          { cartId: { $regex: qq, $options: "i" } },
+          { customerEmail: { $regex: qq, $options: "i" } },
+          { customerFirebaseUID: { $regex: qq, $options: "i" } },
+          { customerPhone: { $regex: qq, $options: "i" } },
+          // ✅ search populated customer fields also (optional but useful)
+          { "customerId.name": { $regex: qq, $options: "i" } },
+          { "customerId.email": { $regex: qq, $options: "i" } },
+          { "customerId.phone": { $regex: qq, $options: "i" } },
+        ],
+      });
     }
 
+    const wantCustomer = ["1", "true", "yes", "y"].includes(String(hasCustomer || "").toLowerCase());
+    if (wantCustomer) {
+      and.push({
+        $or: [
+          { customerId: { $ne: null } },
+          { customerEmail: { $exists: true, $ne: "" } },
+          { customerFirebaseUID: { $exists: true, $ne: "" } },
+          { customerPhone: { $exists: true, $ne: "" } },
+        ],
+      });
+    }
+
+    const filter = and.length ? { $and: and } : {};
+
     const safeLimit = Math.min(200, Math.max(1, Number(limit)));
-    const skip = (Number(page) - 1) * safeLimit;
+    const safePage = Math.max(1, Number(page));
+    const skip = (safePage - 1) * safeLimit;
 
     const [items, total] = await Promise.all([
       AbandonedCart.find(filter)
@@ -343,7 +366,7 @@ export const listAbandonedCarts = async (req, res) => {
       success: true,
       items: items || [],
       total: total || 0,
-      page: Number(page),
+      page: safePage,
       pages: Math.ceil((total || 0) / safeLimit),
     });
   } catch (err) {
@@ -351,6 +374,8 @@ export const listAbandonedCarts = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
+
+
 
 /**
  * ✅ Get single cart
