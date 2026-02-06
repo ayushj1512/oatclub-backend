@@ -42,7 +42,7 @@ import footwearRoutes from "./Footwear/footwearRoutes.js";
 import inventoryReservationRoutes from "./InventoryReservation/InventoryReservationRoutes.js";
 import { startCrons } from "./cronjob/index.js";
 import homeCollectionsRoutes from "./HomeCollection/HomeCollectionsRoutes.js";
-
+import metaFeedRouter from "./routes/metaFeed.js";
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
 // --------------------------------------------------
@@ -282,7 +282,10 @@ app.use("/api/home-collections", homeCollectionsRoutes);
 app.get("/", (req, res) => {
   res.send("🛒 MIRAY FASHIONS API running...");
 });
+//xml 
 
+
+app.use("/", metaFeedRouter);// startCrons();
 // Cloudinary test
 app.get("/api/cloudinary/test", async (req, res) => {
   try {
@@ -304,7 +307,7 @@ app.use((req, res) => {
   });
 });
 
-// startCrons();
+
 
 // Global error handler
 app.use((err, req, res, next) => {
