@@ -302,7 +302,7 @@ splitSuffix: { type: String, default: "", index: true }, // "A","B"
     },
 // ✅ order confirmation (separate from fulfillment)
 
-    fulfillmentStatus: {
+fulfillmentStatus: {
   type: String,
   enum: [
     "processing",         // order placed / confirmed
@@ -311,9 +311,12 @@ splitSuffix: { type: String, default: "", index: true }, // "A","B"
     "shipped",            // in transit
     "out_for_delivery",   // out for delivery
     "delivered",          // delivered ✅ (sets deliveredAt)
+
     "return_requested",   // customer raised RMA return
     "exchange_requested", // customer raised RMA exchange
     "returned",           // return completed
+    "refunded",           // 💸 refund completed
+
     "cancelled",          // cancelled
     "rto",                // delivery failed, returned to origin
   ],

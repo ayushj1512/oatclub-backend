@@ -899,6 +899,7 @@ export const updateOrderStatus = async (req, res) => {
   const normEmail = (v) => str(v).trim().toLowerCase();
   const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
   const normReason = (v) => str(v).trim().toLowerCase();
+  const lower = (v) => str(v).trim().toLowerCase();
 
   const stripUndefinedDeep = (obj) => {
     if (Array.isArray(obj)) return obj.map(stripUndefinedDeep);
@@ -972,8 +973,7 @@ export const updateOrderStatus = async (req, res) => {
           $set.adminRemarks = str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
           $unset.customerMessage = 1;
         } else {
-          $set.customerMessage =
-            str(req.body?.customerMessage).trim() || "cancelled_by_customer";
+          $set.customerMessage = str(req.body?.customerMessage).trim() || "cancelled_by_customer";
           $unset.adminRemarks = 1;
         }
 
@@ -985,7 +985,7 @@ export const updateOrderStatus = async (req, res) => {
       const order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
-      const isParent = String(order?.orderType || "").toLowerCase() === "parent";
+      const isParent = lower(order?.orderType) === "parent";
 
       // 1) Payment status
       if (paymentStatus) order.paymentStatus = paymentStatus;
@@ -1000,11 +1000,7 @@ export const updateOrderStatus = async (req, res) => {
       }
 
       // 3) Auto-confirm razorpay paid
-      if (
-        paymentStatus === "paid" &&
-        order.paymentMethod === "razorpay" &&
-        !order.isConfirmed
-      ) {
+      if (paymentStatus === "paid" && order.paymentMethod === "razorpay" && !order.isConfirmed) {
         order.isConfirmed = true;
         order.confirmedAt = new Date();
       }
@@ -1036,28 +1032,36 @@ export const updateOrderStatus = async (req, res) => {
 
       // 4) Fulfillment status update
       if (fulfillmentStatus) {
+        const next = lower(fulfillmentStatus);
         const shippingStages = ["packed", "picked", "shipped", "out_for_delivery", "delivered"];
+        const curr = lower(order.fulfillmentStatus);
 
-        if (isParent && shippingStages.includes(fulfillmentStatus)) {
+        if (isParent && shippingStages.includes(next)) {
           throw new Error(
             "Parent order cannot move to shipping stages. Update shipment orders (-A/-B) instead."
           );
         }
 
-        if (!nowConfirmed && shippingStages.includes(fulfillmentStatus)) {
+        if (!nowConfirmed && shippingStages.includes(next)) {
           throw new Error("Order must be confirmed before shipping stages");
         }
 
+        // ✅ NEW: Refunded handling (sync paymentStatus)
+        if (next === "refunded") {
+          const allowedPrev = ["returned", "cancelled", "rto"];
+          if (!allowedPrev.includes(curr)) {
+            throw new Error("Refunded can be marked only after returned/cancelled/rto");
+          }
+          order.paymentStatus = "refunded";
+        }
+
         // ✅ IMPORTANT: booking trigger should happen when it becomes PACKED
-        const becomingPacked =
-          fulfillmentStatus === "packed" && order.fulfillmentStatus !== "packed";
+        const becomingPacked = next === "packed" && curr !== "packed";
 
         // ✅ set status
-        order.fulfillmentStatus = fulfillmentStatus;
+        order.fulfillmentStatus = next;
 
         // ✅ Consume inventory reservations on PACKED
-        // NOTE: you must import this at top of file:
-        // import { consumeReservationsInternalByOrder } from "../InventoryReservation/InventoryReservationController.js";
         if (becomingPacked && !isParent) {
           await consumeReservationsInternalByOrder({
             orderId: order._id,
@@ -1066,7 +1070,8 @@ export const updateOrderStatus = async (req, res) => {
           });
         }
 
-        if (fulfillmentStatus === "delivered") {
+        // ✅ delivered timestamps
+        if (next === "delivered") {
           order.trackingDetails = order.trackingDetails || {};
           order.shipment = order.shipment || {};
           if (!order.trackingDetails.deliveredAt) order.trackingDetails.deliveredAt = new Date();
@@ -1078,7 +1083,6 @@ export const updateOrderStatus = async (req, res) => {
           const alreadyBooked =
             order?.shipment?.shiprocket?.awb || order?.shipment?.shiprocket?.shipmentId;
 
-          // prepaid guard (extra safety)
           if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
             throw new Error("Cannot book shipment before Razorpay payment is paid");
           }
@@ -1113,10 +1117,7 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     return res.status(200).json({
-      message:
-        fulfillmentStatus === "cancelled"
-          ? "Order cancelled successfully"
-          : "Order status updated",
+      message: fulfillmentStatus === "cancelled" ? "Order cancelled successfully" : "Order status updated",
       order: finalOrder,
     });
   } catch (error) {
@@ -1126,6 +1127,7 @@ export const updateOrderStatus = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 
@@ -1210,64 +1212,30 @@ export const confirmOrder = async (req, res) => {
 ============================================================ */
 export const updateTracking = async (req, res) => {
   try {
-    const {
-      trackingId, // backward compatibility
-      awb,
-      courierName,
-      trackingUrl,
-      shippedAt,
-      deliveredAt,
-      expectedDelivery,
-    } = req.body;
+    const { trackingId, awb, courierName, trackingUrl, shippedAt, deliveredAt, expectedDelivery } = req.body || {};
 
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // ✅ PATCH: block parent tracking updates (partial-shipment model)
     if (String(order?.orderType || "").toLowerCase() === "parent") {
       return res.status(400).json({
-        message:
-          "Tracking cannot be updated on parent order. Update shipment order (-A/-B) instead.",
+        message: "Tracking cannot be updated on parent order. Update shipment order (-A/-B) instead.",
         reason: "parent_order_blocked",
       });
     }
 
-    const finalAwb = String(
-      awb ??
-        trackingId ??
-        order?.shipment?.shiprocket?.awb ??
-        order?.trackingDetails?.trackingId ??
-        ""
-    ).trim();
+    const finalAwb = String(awb ?? trackingId ?? order?.shipment?.shiprocket?.awb ?? order?.trackingDetails?.trackingId ?? "").trim();
+    const finalCourier = String(courierName ?? order?.shipment?.shiprocket?.courierName ?? order?.trackingDetails?.courierName ?? "").trim();
+    const finalUrl = String(trackingUrl ?? order?.shipment?.shiprocket?.trackingUrl ?? order?.trackingDetails?.trackingUrl ?? "").trim();
 
-    const finalCourier = String(
-      courierName ??
-        order?.shipment?.shiprocket?.courierName ??
-        order?.trackingDetails?.courierName ??
-        ""
-    ).trim();
-
-    const finalUrl = String(
-      trackingUrl ??
-        order?.shipment?.shiprocket?.trackingUrl ??
-        order?.trackingDetails?.trackingUrl ??
-        ""
-    ).trim();
-
-    // ✅ Ensure shipment objects exist
     order.shipment = order.shipment && typeof order.shipment === "object" ? order.shipment : {};
     order.shipment.provider = order.shipment.provider || "shiprocket";
-    order.shipment.shiprocket =
-      order.shipment.shiprocket && typeof order.shipment.shiprocket === "object"
-        ? order.shipment.shiprocket
-        : {};
+    order.shipment.shiprocket = order.shipment.shiprocket && typeof order.shipment.shiprocket === "object" ? order.shipment.shiprocket : {};
 
-    // ✅ Save main source of truth
     if (finalAwb) order.shipment.shiprocket.awb = finalAwb;
     if (finalCourier) order.shipment.shiprocket.courierName = finalCourier;
     if (finalUrl) order.shipment.shiprocket.trackingUrl = finalUrl;
 
-    // ✅ Mirror
     order.trackingDetails = {
       ...(order.trackingDetails || {}),
       trackingId: finalAwb || order.trackingDetails?.trackingId,
@@ -1278,48 +1246,30 @@ export const updateTracking = async (req, res) => {
       expectedDelivery: expectedDelivery ?? order.trackingDetails?.expectedDelivery,
     };
 
-    // ✅ If shipped → set shipped status (but don't downgrade)
+    const curr = String(order.fulfillmentStatus || "").toLowerCase();
+    const terminal = ["cancelled", "returned", "refunded"];
+
     const hasShippedSignal = Boolean(finalAwb) || shippedAt != null;
     if (hasShippedSignal) {
-      if (order.fulfillmentStatus === "processing") order.fulfillmentStatus = "shipped";
-      if (!order.shipment.status || order.shipment.status === "pending")
-        order.shipment.status = "shipped";
-
+      if (!terminal.includes(curr) && ["processing", "packed", "picked"].includes(curr)) order.fulfillmentStatus = "shipped";
+      if (!order.shipment.status || order.shipment.status === "pending") order.shipment.status = "shipped";
       if (shippedAt && !order.shipment.shippedAt) order.shipment.shippedAt = new Date(shippedAt);
     }
 
-    // ✅ If deliveredAt set -> auto mark delivered (strongest)
     if (deliveredAt) {
-      order.fulfillmentStatus = "delivered";
+      if (!terminal.includes(curr)) order.fulfillmentStatus = "delivered";
       order.shipment.status = "delivered";
       if (!order.shipment.deliveredAt) order.shipment.deliveredAt = new Date(deliveredAt);
+      if (!order.trackingDetails.deliveredAt) order.trackingDetails.deliveredAt = new Date(deliveredAt);
     }
 
     await order.save();
 
-    // ✅ Send tracking email to customer (non-blocking)
     try {
-      const customerEmail =
-        order?.shippingAddressSnapshot?.email ||
-        order?.billingAddressSnapshot?.email ||
-        order?.customerId?.email ||
-        order?.email;
-
-      const customerName =
-        order?.shippingAddressSnapshot?.fullName ||
-        order?.shippingAddressSnapshot?.name ||
-        order?.customerId?.name ||
-        "Customer";
-
+      const customerEmail = order?.shippingAddressSnapshot?.email || order?.billingAddressSnapshot?.email || order?.customerId?.email || order?.email;
+      const customerName = order?.shippingAddressSnapshot?.fullName || order?.shippingAddressSnapshot?.name || order?.customerId?.name || "Customer";
       if (customerEmail && (finalAwb || finalUrl)) {
-        await Mailer.sendOrderTracking({
-          to: customerEmail,
-          name: customerName,
-          awb: finalAwb,
-          courierName: finalCourier || "—",
-          trackingLink: finalUrl || "#",
-          order,
-        });
+        await Mailer.sendOrderTracking({ to: customerEmail, name: customerName, awb: finalAwb, courierName: finalCourier || "—", trackingLink: finalUrl || "#", order });
       }
     } catch (mailErr) {
       console.error("❌ Tracking mail error:", mailErr?.message || mailErr);
@@ -1331,6 +1281,7 @@ export const updateTracking = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 
 /* ============================================================
    DELETE ORDER
