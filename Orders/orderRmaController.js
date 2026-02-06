@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Order from "./Orders.js";
 import { triggerRmaEmails } from "./order.emails.js";
+import Product from "../Products/Products.js";
 
 /* ============================================================
    RMA POLICY
@@ -125,20 +126,66 @@ const safeDate = (v) => {
   return isNaN(d.getTime()) ? null : d;
 };
 
+const attrKey = (a) => normalize(a?.key || a?.attributeName || a?.name || "");
+const attrVal = (a) => normalize(a?.value || a?.val || "");
+
+const normalizeWantedAttrs = (attrs = []) => {
+  const wanted = {};
+  (attrs || []).forEach((a) => {
+    const k = attrKey(a);
+    const v = attrVal(a);
+    if (k && v) wanted[k] = v;
+  });
+  return wanted;
+};
+
+const variantAttrMap = (variant) => {
+  const map = {};
+  const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
+  attrs.forEach((a) => {
+    const k = attrKey(a);
+    const v = attrVal(a);
+    if (k && v) map[k] = v;
+  });
+  return map;
+};
+
+const findVariantByAttrs = (variants = [], wantedAttrs = {}) => {
+  const keys = Object.keys(wantedAttrs || {});
+  if (!keys.length) return null;
+
+  for (const v of variants || []) {
+    const m = variantAttrMap(v);
+    let ok = true;
+    for (const k of keys) {
+      if (m[k] !== wantedAttrs[k]) { ok = false; break; }
+    }
+    if (ok) return v;
+  }
+  return null;
+};
+
 /* ============================================================
    ✅ CREATE RMA
 ============================================================ */
 export const createRma = async (req, res) => {
   try {
     const orderId = req.params.id;
-    const { type = "return", reason = "other", customerNote = "", items, exchangeTo } =
-      req.body;
+    const {
+      type = "return",
+      reason = "other",
+      customerNote = "",
+      items,
+      exchangeTo,
+    } = req.body;
 
     console.log("📦 [CREATE RMA] Request:", { orderId, type, reason });
 
     if (!isObjectId(orderId)) return badRequest(res, "Invalid order id");
-    if (!Array.isArray(items) || !items.length) return badRequest(res, "RMA items missing");
-    if (!["return", "exchange"].includes(type)) return badRequest(res, "Invalid RMA type");
+    if (!Array.isArray(items) || !items.length)
+      return badRequest(res, "RMA items missing");
+    if (!["return", "exchange"].includes(type))
+      return badRequest(res, "Invalid RMA type");
 
     const order = await Order.findById(orderId);
     if (!order) return notFound(res, "Order not found");
@@ -155,7 +202,10 @@ export const createRma = async (req, res) => {
 
     const deliveredAt = order?.trackingDetails?.deliveredAt;
     if (!deliveredAt) {
-      return badRequest(res, "Delivery date missing (deliveredAt). Cannot create RMA.");
+      return badRequest(
+        res,
+        "Delivery date missing (deliveredAt). Cannot create RMA."
+      );
     }
 
     if (!isWithinRmaWindow(deliveredAt)) {
@@ -173,7 +223,8 @@ export const createRma = async (req, res) => {
 
       if (!lineId) return badRequest(res, "orderLineId missing");
       if (rem == null) return badRequest(res, `Invalid orderLineId: ${lineId}`);
-      if (!Number.isFinite(qty) || qty < 1) return badRequest(res, "Invalid RMA quantity");
+      if (!Number.isFinite(qty) || qty < 1)
+        return badRequest(res, "Invalid RMA quantity");
       if (qty > rem)
         return badRequest(res, `Qty exceeds remaining for lineId: ${lineId}`);
     }
@@ -183,21 +234,97 @@ export const createRma = async (req, res) => {
     let fee = { amount: 0, currency: "INR", status: "waived" };
     let exchangeRequest = null;
 
+    // ✅ helpers (keep local to avoid touching global helpers)
+    const normalize = (s) => String(s || "").trim().toLowerCase();
+    const attrKey = (a) => normalize(a?.key || a?.attributeName || a?.name || "");
+    const attrVal = (a) => normalize(a?.value || a?.val || "");
+
+    const normalizeWantedAttrs = (attrs = []) => {
+      const wanted = {};
+      (attrs || []).forEach((a) => {
+        const k = attrKey(a);
+        const v = attrVal(a);
+        if (k && v) wanted[k] = v;
+      });
+      return wanted;
+    };
+
+    const variantAttrMap = (variant) => {
+      const map = {};
+      const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
+      attrs.forEach((a) => {
+        const k = attrKey(a);
+        const v = attrVal(a);
+        if (k && v) map[k] = v;
+      });
+      return map;
+    };
+
+    const findVariantByAttrs = (variants = [], wantedAttrs = {}) => {
+      const keys = Object.keys(wantedAttrs || {});
+      if (!keys.length) return null;
+
+      for (const v of variants || []) {
+        const m = variantAttrMap(v);
+        let ok = true;
+        for (const k of keys) {
+          if (m[k] !== wantedAttrs[k]) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) return v;
+      }
+      return null;
+    };
+
     if (type === "exchange") {
-      if (!exchangeTo?.variantId)
+      const ex = exchangeTo || {};
+      const productId = String(ex?.productId || "").trim();
+      if (!isObjectId(productId))
+        return badRequest(res, "exchangeTo.productId missing/invalid for exchange");
+
+      // ✅ AUTO resolve variantId from product variants + attributes (size)
+      let resolvedVariantId = String(ex?.variantId || "").trim();
+      let resolvedVariantSku = String(ex?.variantSku || "").trim();
+      const attrs = Array.isArray(ex?.attributes) ? ex.attributes : [];
+      const wanted = normalizeWantedAttrs(attrs);
+
+      if (!wanted.size)
+        return badRequest(res, "exchangeTo.attributes missing size for exchange");
+
+      if (!isObjectId(resolvedVariantId)) {
+        // IMPORTANT: ensure you have Product model imported at file top:
+        // import Product from "../Products/Products.js";
+        const prod = await Product.findById(productId).select("variants").lean();
+        if (!prod) return notFound(res, "Exchange product not found");
+
+        const matched = findVariantByAttrs(prod?.variants || [], wanted);
+        if (!matched?._id)
+          return badRequest(res, "No matching variant found for exchangeTo.attributes");
+
+        resolvedVariantId = String(matched._id);
+        if (matched?.sku) resolvedVariantSku = String(matched.sku);
+      }
+
+      if (!isObjectId(resolvedVariantId))
         return badRequest(res, "exchangeTo.variantId missing for exchange");
 
       const prevExchanges = countPreviousExchanges(order);
       const amount = computeExchangeFee(prevExchanges);
 
-      fee = { amount, currency: "INR", status: amount > 0 ? "unpaid" : "waived" };
+      fee = {
+        amount,
+        currency: "INR",
+        status: amount > 0 ? "unpaid" : "waived",
+      };
 
       exchangeRequest = {
-        productId: isObjectId(exchangeTo.productId) ? exchangeTo.productId : null,
-        variantId: isObjectId(exchangeTo.variantId) ? exchangeTo.variantId : null,
-        variantSku: String(exchangeTo.variantSku || ""),
-        attributes: Array.isArray(exchangeTo.attributes) ? exchangeTo.attributes : [],
-        note: String(exchangeTo.note || ""),
+        productId,
+        variantId: resolvedVariantId,
+        variantSku: resolvedVariantSku,
+        attributes: attrs,
+        note: String(ex?.note || ""),
       };
     }
 
@@ -217,7 +344,8 @@ export const createRma = async (req, res) => {
     });
 
     // Update order status
-    order.fulfillmentStatus = type === "exchange" ? "exchange_requested" : "return_requested";
+    order.fulfillmentStatus =
+      type === "exchange" ? "exchange_requested" : "return_requested";
 
     await order.save();
     const created = order.rmas[order.rmas.length - 1];
@@ -228,10 +356,14 @@ export const createRma = async (req, res) => {
       customerEmail: order?.shippingAddressSnapshot?.email,
     });
 
-    // ✅ Trigger emails properly (signature FIX)
+    // ✅ Trigger emails
     try {
       console.log("📩 [CREATE RMA] Triggering RMA emails...");
-      triggerRmaEmails({ order: order.toObject(), rma: created, policy: RMA_POLICY });
+      triggerRmaEmails({
+        order: order.toObject(),
+        rma: created,
+        policy: RMA_POLICY,
+      });
     } catch (e) {
       console.error("⚠️ [CREATE RMA] triggerRmaEmails failed:", e?.message || e);
     }
@@ -248,6 +380,7 @@ export const createRma = async (req, res) => {
     return res.status(500).json({ message: err.message || "Server error" });
   }
 };
+
 
 /* ============================================================
    ✅ UPDATE RMA (Admin)
