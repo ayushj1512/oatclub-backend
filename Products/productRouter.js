@@ -10,7 +10,7 @@ import {
   fetchProductsByCategory,
   getProductsByCollection,
   getProductsByIds,
-  getProductsByCodes, // ✅ NEW
+  getProductsByCodes,
   getProductBySKU,
   getProductByCode,
   getProductByIdOrSlug,
@@ -20,12 +20,13 @@ import {
   bulkImportProducts,
   bulkUpdatePricing,
   bulkSyncCollectionOnProducts,
-  updateProductStock, // ✅ NEW (simple stock endpoint)
+  updateProductStock,
   updateVariantStock,
   incrementProductAnalytics,
   updateProductRatings,
   updateProductFabrics,
   updateVariantPatternNumber,
+  updateProductColors, // ✅ NEW
 } from "./productController.js";
 
 /* ---------------- BULK CONTROLLER ---------------- */
@@ -36,7 +37,12 @@ import {
 
 /* ---------------- SETUP ---------------- */
 const router = express.Router();
+
+// CSV uploads (bulk)
 const upload = multer({ dest: "uploads/csv" });
+
+// ✅ Swatch uploads (colors admin)
+const uploadSwatches = multer({ dest: "uploads/swatch" });
 
 /* ===========================================================
    🔓 PUBLIC ROUTES (CUSTOMERS)
@@ -59,9 +65,7 @@ router.get("/fetch-by-category", fetchProductsByCategory);
 // ✅ Products by multiple IDs (single fetch)
 router.post("/by-ids", getProductsByIds);
 
-// ✅ Products by multiple productCodes (single fetch)  ✅ NEW
-// GET  /api/products/by-codes?codes=00229,00230
-// POST /api/products/by-codes  body: { codes: ["00229","00230"] } OR { codes: "00229,00230" }
+// ✅ Products by multiple productCodes (single fetch)
 router.get("/by-codes", getProductsByCodes);
 router.post("/by-codes", getProductsByCodes);
 
@@ -103,11 +107,21 @@ router.post("/:id/update-ratings", updateProductRatings);
 router.patch("/:id/analytics", incrementProductAnalytics);
 
 // ✅ Inventory endpoints (2 only)
-router.patch("/:id/stock", updateProductStock);           // ✅ SIMPLE only
-router.patch("/:id/variant-stock", updateVariantStock);   // ✅ VARIABLE only
+router.patch("/:id/stock", updateProductStock); // ✅ SIMPLE only
+router.patch("/:id/variant-stock", updateVariantStock); // ✅ VARIABLE only
 
 // ✅ Update fabrics + consumption (dedicated)
 router.patch("/:id/fabrics", updateProductFabrics);
+
+// ✅ NEW: Update product colors + swatch images
+// Expects multipart/form-data:
+// - colorsJson: JSON string of [{ name, hex, image }]
+// - swatchImages: files[] (same order as colorsJson)
+router.patch(
+  "/:id/colors",
+  uploadSwatches.fields([{ name: "swatchImages", maxCount: 50 }]),
+  updateProductColors
+);
 
 // ✅ Create product
 router.post("/", createProduct);

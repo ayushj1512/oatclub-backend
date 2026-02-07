@@ -1325,6 +1325,80 @@ export const updateVariantStock = async (req, res) => {
   }
 };
 
+export const updateProductColors = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const product = await Product.findById(id);
+    if (!product) return res.status(404).json({ message: "Product not found" });
+
+    // colorsJson can be JSON string or array
+    const raw = req.body?.colorsJson;
+    const parsed =
+      typeof raw === "string"
+        ? (() => { try { return JSON.parse(raw); } catch { return null; } })()
+        : raw;
+
+    if (!Array.isArray(parsed)) {
+      return res.status(400).json({ message: "colorsJson must be a JSON array" });
+    }
+
+    // multer files (array)
+    const files = Array.isArray(req.files?.swatchImages) ? req.files.swatchImages : [];
+
+    const normalizeName = (v) => String(v || "").trim().toLowerCase();
+    const normalizeHex = (v) => {
+      const s = String(v || "").trim();
+      if (!s) return "";
+      return /^#([0-9a-fA-F]{3}){1,2}$/.test(s) ? s : "";
+    };
+
+    // Build swatches (keep order)
+    const swatches = [];
+    const seen = new Set();
+
+    for (let i = 0; i < parsed.length; i++) {
+      const item = parsed[i] || {};
+      const name = normalizeName(item.name);
+      const hex = normalizeHex(item.hex);
+      const existingUrl = String(item.image || "").trim();
+
+      if (!name) continue; // skip empty rows
+
+      if (seen.has(name)) {
+        return res.status(400).json({ message: `Duplicate color: ${name}` });
+      }
+      seen.add(name);
+
+      // If a file exists at same index -> upload it
+      let imageUrl = existingUrl;
+      if (files[i]) {
+        const uploaded = await uploadFile(files[i], "product-color-swatches");
+        imageUrl = uploaded || "";
+      }
+
+      swatches.push({ name, hex, image: imageUrl });
+    }
+
+    // Save swatches + keep colors array in sync
+    product.colorSwatches = swatches;
+    product.colors = swatches.map((s) => s.name);
+
+    product.markModified("colorSwatches");
+    product.markModified("colors");
+
+    const saved = await product.save({ validateBeforeSave: true });
+    const full = await pop(Product.findById(saved._id));
+
+    return res.json({
+      message: "Product colors updated",
+      product: applyStockFromVariants(full),
+    });
+  } catch (e) {
+    console.error("❌ updateProductColors Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};
 
 
 
