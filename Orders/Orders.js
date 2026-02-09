@@ -727,6 +727,30 @@ orderSchema.pre("validate", async function (next) {
   }
 });
 
+// ========================================================================================
+// ✅ AUTO-SET deliveredAt when status becomes delivered
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    const isDelivered =
+      this.fulfillmentStatus === "delivered" ||
+      this.shipment?.status === "delivered";
+
+    if (isDelivered) {
+      if (!this.shipment.deliveredAt) {
+        this.shipment.deliveredAt = new Date();
+      }
+
+      if (!this.trackingDetails.deliveredAt) {
+        this.trackingDetails.deliveredAt = new Date();
+      }
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
 
 
 

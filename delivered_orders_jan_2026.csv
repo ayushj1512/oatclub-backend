@@ -1,0 +1,11 @@
+orderNumber,deliveredAt,courierName,awb,productName,hsnCode,qty,payable,taxableValue,taxAmount
+MIRAY-000001,16-01-2026,Bluedart Air,90374616522,Square Neck Leopard Print Sequin Top,62105000,1,679,646.67,32.33
+MIRAY-000007,17-01-2026,Xpressbees Air,1.31945E+12,Square Neck Leopard Print Sequin Top,62105000,1,719,684.76,34.24
+MIRAY-000004,17-01-2026,DTDC Air,I81592162,Square Neck Leopard Print Sequin Top,62105000,1,719,684.76,34.24
+MIRAY-000009,19-01-2026,Shadowfax Surface,SF2032302540KR,Square Neck Leopard Print Sequin Top,62105000,1,799,760.95,38.05
+MIRAY-000010,20-01-2026,Expressbees,1.31945E+12,Square Neck Leopard Print Sequin Top,62105000,1,719,684.76,34.24
+MIRAY-000008,20-01-2026,Xpressbees Air,1.31945E+12,Square Neck Leopard Print Sequin Top,62105000,1,679,646.67,32.33
+MIRAY-000018,22-01-2026,,,Square Neck Leopard Print Sequin Top,62105000,1,719,684.76,34.24
+MIRAY-000033,26-01-2026,Xpressbess,1.41124E+13,Black Polka Dot Halter Neck Top,62105000,1,599,570.48,28.52
+MIRAY-000017,26-01-2026,Xpressbess,1.41124E+13,Polka Dot Mesh Maxi Skirt with Ruched Waistband,62105000,1,999,951.43,47.57
+MIRAY-000034,29-01-2026,Xpressbees,1.41124E+13,Women Black Polka Dot Halter Neck Fit & Flare Dress,62105000,1,1169,1113.33,55.67
