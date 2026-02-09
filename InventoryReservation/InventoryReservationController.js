@@ -28,10 +28,13 @@ const sendErr = (res, err, fallback = "Server Error") => {
 };
 
 // ✅ Atomic reserve (prevents oversell/race)
+// ✅ Atomic reserve (prevents oversell/race)
 const tryReserveAtomic = async ({ productId, variantId, qty, session }) => {
   const q = Math.max(1, Number(qty || 0));
 
-  // SIMPLE product
+  // -----------------------
+  // SIMPLE product (root stock)
+  // -----------------------
   if (!variantId) {
     const upd = await Product.updateOne(
       {
@@ -42,27 +45,51 @@ const tryReserveAtomic = async ({ productId, variantId, qty, session }) => {
       { session }
     );
 
-    if (!upd.matchedCount) throw new Error("Insufficient stock to reserve.");
+    // ✅ must be modified, not just matched
+    if (!upd.modifiedCount) throw new Error("Insufficient stock to reserve.");
     return;
   }
 
-  // VARIABLE product (variant-level)
+  // -----------------------
+  // VARIABLE product (variant-level) ✅ CORRECT + RELIABLE
+  // - Stock check happens in QUERY via $expr (so matchedCount is meaningful)
+  // - Update uses arrayFilters to increment only the target variant
+  // -----------------------
+  const vId = new mongoose.Types.ObjectId(String(variantId));
+
   const upd = await Product.updateOne(
     {
       _id: productId,
-      variants: {
-        $elemMatch: {
-          _id: variantId,
-          $expr: { $gte: [{ $subtract: ["$stock", "$reservedStock"] }, q] },
+      $expr: {
+        $let: {
+          vars: {
+            v: {
+              $first: {
+                $filter: {
+                  input: "$variants",
+                  as: "v",
+                  cond: { $eq: ["$$v._id", vId] },
+                },
+              },
+            },
+          },
+          in: {
+            $and: [
+              { $ne: ["$$v", null] },
+              { $gte: [{ $subtract: ["$$v.stock", "$$v.reservedStock"] }, q] },
+            ],
+          },
         },
       },
     },
-    { $inc: { "variants.$.reservedStock": q } },
-    { session }
+    { $inc: { "variants.$[v].reservedStock": q } },
+    { arrayFilters: [{ "v._id": vId }], session }
   );
 
-  if (!upd.matchedCount) throw new Error("Insufficient stock to reserve.");
+  // ✅ if not modified => either variant not found OR insufficient
+  if (!upd.modifiedCount) throw new Error("Insufficient stock to reserve.");
 };
+
 
 // ✅ Release/Consume/Expire (variant consumes in 2 calls to avoid conflict)
 const applyReservationTransition = async ({ r, nextStatus, reason = "", session }) => {

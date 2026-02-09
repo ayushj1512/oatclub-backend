@@ -10,12 +10,21 @@ import {
   getReservation,
 } from "./InventoryReservationController.js";
 
+// ✅ NEW: orderNumber webhook controller
+import {
+  reserveInventoryWebhookByOrderNumber,
+} from "./inventoryWebhook.js";
+
 const router = express.Router();
 
 /**
  * Inventory Reservations
- * Base (suggested): /api/inventory-reservations
+ * Base: /api/inventory-reservations
  */
+
+// ========================================
+// STANDARD RESERVATION ROUTES
+// ========================================
 
 // ✅ create reservation
 router.post("/", createReservation);
@@ -37,5 +46,26 @@ router.post("/:id/consume", consumeReservation);
 
 // ✅ expire single reservation (manual)
 router.post("/:id/expire", expireReservation);
+
+
+// ========================================
+// 🔥 ORDER-BASED INVENTORY WEBHOOK
+// ========================================
+
+/**
+ * POST /api/inventory-reservations/webhook/reserve-order/:orderNumber
+ *
+ * Example:
+ * POST /api/inventory-reservations/webhook/reserve-order/MIRAY-000187
+ *
+ * Behavior:
+ * - Looks up order by orderNumber
+ * - Reserves inventory for available products only
+ * - Skips insufficient ones
+ */
+router.post(
+  "/webhook/reserve-order/:orderNumber",
+  reserveInventoryWebhookByOrderNumber
+);
 
 export default router;

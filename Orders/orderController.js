@@ -20,6 +20,7 @@ import {
 import Coupon from "../Coupon/Coupon.js"; 
 import { createReservationInternal } from "../InventoryReservation/InventoryReservationController.js";
 import { consumeReservationsInternalByOrder } from "../InventoryReservation/InventoryReservationController.js";
+import { reserveInventoryForOrderNumberInternal } from "../InventoryReservation/inventoryWebhook.js";
 
 // ⚠️ path tumhare project ke hisaab se adjust kar lena
 
@@ -657,6 +658,29 @@ export const createOrder = async (req, res) => {
 
     const finalOrder = await Order.findById(createdOrderId).lean();
 
+    // ✅ NON-BLOCKING: inventory auto-reserve webhook (order-number based)
+try {
+  const orderNumber = String(finalOrder?.orderNumber || "").trim();
+  if (orderNumber) {
+    setImmediate(async () => {
+      try {
+        await reserveInventoryForOrderNumberInternal({
+          orderNumber,
+          // keep it tight: only this order, only its items
+          allowedFulfillment: ["processing", "packed"],
+          confirmedOnly: true, // ✅ won’t reserve if not confirmed
+          debug: false,
+        });
+      } catch (err) {
+        console.error("⚠️ reserveInventory webhook failed:", err?.message || err);
+      }
+    });
+  }
+} catch (e) {
+  console.error("⚠️ reserveInventory webhook schedule failed:", e?.message || e);
+}
+
+
     // non-blocking emails
     try {
       triggerOrderEmails(finalOrder);
@@ -675,33 +699,69 @@ export const createOrder = async (req, res) => {
 
 
 
-/* ============================================================
-   GET ALL ORDERS (ADMIN)
-============================================================ */
+
+/* -------------------------------------------
+   ✅ Date helpers (IST-safe)
+   - If startAt/endAt provided (ISO with offset), use directly.
+   - Else use startDate/endDate (YYYY-MM-DD) and convert to IST day boundaries.
+------------------------------------------- */
+const IST_OFFSET_MIN = 330; // +05:30
+
+const parseYMD = (ymd) => {
+  const s = String(ymd || "").trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return { y, mo, d };
+};
+
+// Convert "YYYY-MM-DD" IST midnight to a UTC Date object
+const istStartUtcFromYMD = (ymd) => {
+  const p = parseYMD(ymd);
+  if (!p) return null;
+  const utcMidnightMs = Date.UTC(p.y, p.mo - 1, p.d, 0, 0, 0, 0);
+  return new Date(utcMidnightMs - IST_OFFSET_MIN * 60 * 1000);
+};
+
+// End exclusive: next day IST midnight (converted to UTC)
+const istEndExclusiveUtcFromYMD = (ymd) => {
+  const start = istStartUtcFromYMD(ymd);
+  if (!start) return null;
+  return new Date(start.getTime() + 24 * 60 * 60 * 1000);
+};
+
 export const getAllOrders = async (req, res) => {
   try {
     const {
       customerId,
       paymentStatus,
       fulfillmentStatus,
-      isConfirmed,      // supports boolean too
-      confirmFilter,    // supports "confirmed" | "not_confirmed"
+      isConfirmed,
+      confirmFilter,
       priority,
 
-      // ✅ NEW filters
-      startDate,        // "YYYY-MM-DD"
-      endDate,          // "YYYY-MM-DD"
+      // date filters
+      startDate, // "YYYY-MM-DD"
+      endDate,   // "YYYY-MM-DD"
+      startAt,   // ISO datetime (recommended): "YYYY-MM-DDT00:00:00.000+05:30"
+      endAt,     // ISO datetime (recommended): "YYYY-MM-DDT23:59:59.999+05:30" OR end-exclusive too
+      // optional
+      tz,        // ignored for now (we default IST), but kept for future
+
       minAmount,
       maxAmount,
-      paymentMethod,    // "cod" | "razorpay" | "exchange"
-      customerName,     // search: order#, name, email, phone
+      paymentMethod,
+      customerName,
     } = req.query;
 
     const filters = {};
 
     /* ----------------------------
        ✅ Basic filters
-       ---------------------------- */
+    ---------------------------- */
     if (customerId && mongoose.Types.ObjectId.isValid(String(customerId))) {
       filters.customerId = new mongoose.Types.ObjectId(String(customerId));
     }
@@ -709,45 +769,64 @@ export const getAllOrders = async (req, res) => {
     if (paymentStatus) filters.paymentStatus = String(paymentStatus).trim();
     if (fulfillmentStatus) filters.fulfillmentStatus = String(fulfillmentStatus).trim();
 
-    // ✅ confirmation: support both isConfirmed=true/false and confirmFilter dropdown
+    // confirmation
     if (confirmFilter === "confirmed") filters.isConfirmed = true;
     else if (confirmFilter === "not_confirmed") filters.isConfirmed = { $ne: true };
     else if (isConfirmed != null) filters.isConfirmed = String(isConfirmed) === "true";
 
-    // ✅ priority
+    // priority
     if (priority) {
       const p = String(priority).trim().toLowerCase();
       if (["normal", "medium", "high"].includes(p)) filters.priority = p;
     }
 
-    // ✅ paymentMethod
+    // paymentMethod
     if (paymentMethod) filters.paymentMethod = String(paymentMethod).trim().toLowerCase();
 
     /* ----------------------------
-       ✅ Date range (createdAt)
-       - startDate inclusive
-       - endDate exclusive (end + 1 day)
-       ---------------------------- */
-    const hasStart = !!startDate;
-    const hasEnd = !!endDate;
+       ✅ Date range (createdAt) — IST Correct
+       Priority:
+       1) startAt/endAt (ISO with offset) if provided
+       2) else startDate/endDate (YYYY-MM-DD) -> IST day boundaries -> UTC
+       Behavior:
+       - start inclusive
+       - end exclusive (next day 00:00 IST)
+    ---------------------------- */
+    const hasStartAt = !!String(startAt || "").trim();
+    const hasEndAt = !!String(endAt || "").trim();
+    const hasStartDate = !!String(startDate || "").trim();
+    const hasEndDate = !!String(endDate || "").trim();
 
-    if (hasStart || hasEnd) {
+    if (hasStartAt || hasEndAt || hasStartDate || hasEndDate) {
       filters.createdAt = {};
-      if (hasStart) {
-        // start of day
-        filters.createdAt.$gte = new Date(`${String(startDate)}T00:00:00.000Z`);
+
+      if (hasStartAt) {
+        const d = new Date(String(startAt));
+        if (!Number.isNaN(d.getTime())) filters.createdAt.$gte = d;
+      } else if (hasStartDate) {
+        const d = istStartUtcFromYMD(startDate);
+        if (d) filters.createdAt.$gte = d;
       }
-      if (hasEnd) {
-        // end exclusive: next day 00:00
-        const end = new Date(`${String(endDate)}T00:00:00.000Z`);
-        end.setUTCDate(end.getUTCDate() + 1);
-        filters.createdAt.$lt = end;
+
+      if (hasEndAt) {
+        // If endAt given as "end-of-day", make it inclusive by using $lte
+        // If you want strict end-exclusive from frontend, send endAt as next-day 00:00 and use $lt.
+        const d = new Date(String(endAt));
+        if (!Number.isNaN(d.getTime())) {
+          filters.createdAt.$lte = d; // inclusive end if endAt is end-of-day
+        }
+      } else if (hasEndDate) {
+        const d = istEndExclusiveUtcFromYMD(endDate);
+        if (d) filters.createdAt.$lt = d; // end exclusive
       }
+
+      // cleanup: if empty object
+      if (!filters.createdAt.$gte && !filters.createdAt.$lt && !filters.createdAt.$lte) delete filters.createdAt;
     }
 
     /* ----------------------------
        ✅ Amount range (finalPayable)
-       ---------------------------- */
+    ---------------------------- */
     const minA = Number(minAmount);
     const maxA = Number(maxAmount);
     if (Number.isFinite(minA) || Number.isFinite(maxA)) {
@@ -757,9 +836,8 @@ export const getAllOrders = async (req, res) => {
     }
 
     /* ----------------------------
-       ✅ Search (customerName param)
-       - Supports: orderNumber, name, email, phone
-       ---------------------------- */
+       ✅ Search
+    ---------------------------- */
     const q = String(customerName || "").trim();
     if (q) {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
@@ -769,13 +847,11 @@ export const getAllOrders = async (req, res) => {
         { "shippingAddressSnapshot.email": rx },
         { "shippingAddressSnapshot.phone": rx },
       ];
-      // Note: customerId populate fields can't be searched here easily without $lookup.
-      // If you want search in customer collection too, we can add $lookup in aggregate.
     }
 
     /* ----------------------------
        ✅ Aggregate: priority sort + latest
-       ---------------------------- */
+    ---------------------------- */
     const orders = await Order.aggregate([
       { $match: filters },
       {
@@ -807,6 +883,7 @@ export const getAllOrders = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 
 
 
@@ -896,10 +973,9 @@ export const updateOrderStatus = async (req, res) => {
   const session = await mongoose.startSession();
 
   const str = (v) => (v == null ? "" : String(v));
+  const lower = (v) => str(v).trim().toLowerCase();
   const normEmail = (v) => str(v).trim().toLowerCase();
   const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
-  const normReason = (v) => str(v).trim().toLowerCase();
-  const lower = (v) => str(v).trim().toLowerCase();
 
   const stripUndefinedDeep = (obj) => {
     if (Array.isArray(obj)) return obj.map(stripUndefinedDeep);
@@ -923,28 +999,45 @@ export const updateOrderStatus = async (req, res) => {
   };
 
   const pickCancelReason = () => {
-    const incoming = normReason(req.body?.reason);
-    if (incoming === "cancelled_by_admin") return "cancelled_by_admin";
-    if (incoming === "cancelled_by_customer") return "cancelled_by_customer";
-    if (incoming === "admin") return "cancelled_by_admin";
-    if (incoming === "customer") return "cancelled_by_customer";
+    const incoming = lower(req.body?.reason);
+    if (incoming === "cancelled_by_admin" || incoming === "admin") return "cancelled_by_admin";
+    if (incoming === "cancelled_by_customer" || incoming === "customer") return "cancelled_by_customer";
 
-    const actor = normReason(req.body?.cancelledBy);
+    const actor = lower(req.body?.cancelledBy);
     if (actor === "admin") return "cancelled_by_admin";
     if (actor === "customer") return "cancelled_by_customer";
 
-    const ar = normReason(req.body?.adminRemarks);
+    const ar = lower(req.body?.adminRemarks);
     if (ar === "cancelled_by_admin" || ar === "admin") return "cancelled_by_admin";
 
-    if (req.user?.role === "admin") return "cancelled_by_admin";
-    return "cancelled_by_customer";
+    return req.user?.role === "admin" ? "cancelled_by_admin" : "cancelled_by_customer";
   };
 
-  const isAdminCancel = (reason) => normReason(reason) === "cancelled_by_admin";
+  const isAdminCancel = (reason) => lower(reason) === "cancelled_by_admin";
+
+  const defer = (fn) => (typeof setImmediate === "function" ? setImmediate(fn) : setTimeout(fn, 0));
+
+  const triggerReserveNonBlocking = (orderNumber) => {
+    const on = str(orderNumber).trim();
+    if (!on) return;
+    defer(async () => {
+      try {
+        await reserveInventoryForOrderNumberInternal({
+          orderNumber: on,
+          allowedFulfillment: ["processing", "packed"],
+          confirmedOnly: true,
+          debug: false,
+        });
+      } catch (err) {
+        console.error("⚠️ reserve after paid+confirm failed:", err?.message || err);
+      }
+    });
+  };
 
   try {
     req.body = stripUndefinedDeep(req.body);
 
+    // sanitize incoming shipment partials
     if (req.body?.shipment) {
       if (req.body.shipment.xpressbees == null) delete req.body.shipment.xpressbees;
       if (req.body.shipment.shiprocket == null) delete req.body.shipment.shiprocket;
@@ -955,14 +1048,18 @@ export const updateOrderStatus = async (req, res) => {
       return res.status(400).json({ message: "Invalid order id" });
     }
 
-    const { fulfillmentStatus, paymentStatus, isConfirmed } = req.body;
+    const fulfillmentStatus = req.body?.fulfillmentStatus ? lower(req.body.fulfillmentStatus) : "";
+    const paymentStatus = req.body?.paymentStatus ? lower(req.body.paymentStatus) : "";
+    const isConfirmedReq = req.body?.isConfirmed === true;
+
     const reason = pickCancelReason();
 
     let updatedOrder = null;
     let shouldBookShiprocket = false;
+    let shouldTriggerReserve = false;
 
     await session.withTransaction(async () => {
-      // ✅ Cancel flow
+      // ✅ Cancel fast-path
       if (fulfillmentStatus === "cancelled") {
         await performOrderCancellation({ orderId, reason, session });
 
@@ -986,27 +1083,37 @@ export const updateOrderStatus = async (req, res) => {
       if (!order) throw new Error("Order not found");
 
       const isParent = lower(order?.orderType) === "parent";
+      const prevPaid = lower(order?.paymentStatus) === "paid";
+      const prevConfirmed = Boolean(order?.isConfirmed);
 
-      // 1) Payment status
+      // 1) payment status
       if (paymentStatus) order.paymentStatus = paymentStatus;
 
-      // 2) Manual confirm
-      if (isConfirmed === true && !order.isConfirmed) {
-        if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
+      // 2) confirm (manual)
+      if (isConfirmedReq && !order.isConfirmed) {
+        if (lower(order.paymentMethod) === "razorpay" && lower(order.paymentStatus) !== "paid") {
           throw new Error("Cannot confirm Razorpay order before payment is paid");
         }
         order.isConfirmed = true;
         order.confirmedAt = new Date();
       }
 
-      // 3) Auto-confirm razorpay paid
-      if (paymentStatus === "paid" && order.paymentMethod === "razorpay" && !order.isConfirmed) {
+      // 3) auto-confirm on razorpay paid
+      if (paymentStatus === "paid" && lower(order.paymentMethod) === "razorpay" && !order.isConfirmed) {
         order.isConfirmed = true;
         order.confirmedAt = new Date();
       }
 
-      // 3.1) Mark coupon used on razorpay paid (idempotent)
-      if (paymentStatus === "paid" && order.paymentMethod === "razorpay" && order?.coupon?.code) {
+      const nowPaid = lower(order?.paymentStatus) === "paid";
+      const nowConfirmed = Boolean(order?.isConfirmed);
+
+      // ✅ reserve trigger (only razorpay paid transition)
+      if (!prevPaid && nowPaid && lower(order.paymentMethod) === "razorpay") {
+        shouldTriggerReserve = true;
+      }
+
+      // 3.1) mark coupon used on razorpay paid (idempotent)
+      if (paymentStatus === "paid" && lower(order.paymentMethod) === "razorpay" && order?.coupon?.code) {
         const couponCode = str(order.coupon.code).trim().toUpperCase();
         const identity =
           str(order?.coupon?.identity).trim() ||
@@ -1028,26 +1135,28 @@ export const updateOrderStatus = async (req, res) => {
         }
       }
 
-      const nowConfirmed = Boolean(order.isConfirmed);
-
-      // 4) Fulfillment status update
+      // 4) fulfillment update
       if (fulfillmentStatus) {
-        const next = lower(fulfillmentStatus);
         const shippingStages = ["packed", "picked", "shipped", "out_for_delivery", "delivered"];
         const curr = lower(order.fulfillmentStatus);
 
-        if (isParent && shippingStages.includes(next)) {
-          throw new Error(
-            "Parent order cannot move to shipping stages. Update shipment orders (-A/-B) instead."
-          );
+        const isReversePickup = fulfillmentStatus === "pickup_initiated"; // ✅ NEW
+        const becomingPacked = fulfillmentStatus === "packed" && curr !== "packed";
+
+        // ✅ shipping guards apply ONLY to forward stages
+        if (!isReversePickup) {
+          if (isParent && shippingStages.includes(fulfillmentStatus)) {
+            throw new Error(
+              "Parent order cannot move to shipping stages. Update shipment orders (-A/-B) instead."
+            );
+          }
+          if (!nowConfirmed && shippingStages.includes(fulfillmentStatus)) {
+            throw new Error("Order must be confirmed before shipping stages");
+          }
         }
 
-        if (!nowConfirmed && shippingStages.includes(next)) {
-          throw new Error("Order must be confirmed before shipping stages");
-        }
-
-        // ✅ NEW: Refunded handling (sync paymentStatus)
-        if (next === "refunded") {
+        // refunded sync
+        if (fulfillmentStatus === "refunded") {
           const allowedPrev = ["returned", "cancelled", "rto"];
           if (!allowedPrev.includes(curr)) {
             throw new Error("Refunded can be marked only after returned/cancelled/rto");
@@ -1055,13 +1164,9 @@ export const updateOrderStatus = async (req, res) => {
           order.paymentStatus = "refunded";
         }
 
-        // ✅ IMPORTANT: booking trigger should happen when it becomes PACKED
-        const becomingPacked = next === "packed" && curr !== "packed";
+        order.fulfillmentStatus = fulfillmentStatus;
 
-        // ✅ set status
-        order.fulfillmentStatus = next;
-
-        // ✅ Consume inventory reservations on PACKED
+        // ✅ consume reservations only on PACKED (forward only)
         if (becomingPacked && !isParent) {
           await consumeReservationsInternalByOrder({
             orderId: order._id,
@@ -1070,20 +1175,20 @@ export const updateOrderStatus = async (req, res) => {
           });
         }
 
-        // ✅ delivered timestamps
-        if (next === "delivered") {
+        // delivered timestamps
+        if (fulfillmentStatus === "delivered") {
           order.trackingDetails = order.trackingDetails || {};
           order.shipment = order.shipment || {};
           if (!order.trackingDetails.deliveredAt) order.trackingDetails.deliveredAt = new Date();
           if (!order.shipment.deliveredAt) order.shipment.deliveredAt = new Date();
         }
 
-        // ✅ BOOK SHIPROCKET ONLY WHEN PACKED (not on confirm)
+        // ✅ shiprocket booking only when packed + NOT reverse pickup
         if (becomingPacked && !isParent) {
           const alreadyBooked =
             order?.shipment?.shiprocket?.awb || order?.shipment?.shiprocket?.shipmentId;
 
-          if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
+          if (lower(order.paymentMethod) === "razorpay" && lower(order.paymentStatus) !== "paid") {
             throw new Error("Cannot book shipment before Razorpay payment is paid");
           }
 
@@ -1095,25 +1200,34 @@ export const updateOrderStatus = async (req, res) => {
       updatedOrder = order;
     });
 
-    const finalOrder = await Order.findById(updatedOrder._id).lean();
+    const finalOrder = updatedOrder?._id ? await Order.findById(updatedOrder._id).lean() : null;
 
-    // ✅ Auto-book shiprocket AFTER packed (outside txn)
-    try {
-      if (shouldBookShiprocket) {
+    // ✅ reserve AFTER txn
+    if (finalOrder && shouldTriggerReserve) {
+      try {
+        triggerReserveNonBlocking(finalOrder?.orderNumber);
+      } catch (e) {
+        console.error("⚠️ reserve scheduling failed:", e?.message || e);
+      }
+    }
+
+    // ✅ shiprocket AFTER packed
+    if (finalOrder && shouldBookShiprocket) {
+      try {
         const freshOrderDoc = await Order.findById(finalOrder._id);
         await autoBookShiprocketForOrder(freshOrderDoc);
+      } catch (e) {
+        console.error("⚠️ Auto Shiprocket booking after packed failed:", e?.message || e);
       }
-    } catch (e) {
-      console.error("⚠️ Auto Shiprocket booking after packed failed:", e?.message || e);
     }
 
     // cancellation emails
-    try {
-      if (fulfillmentStatus === "cancelled") {
+    if (fulfillmentStatus === "cancelled") {
+      try {
         triggerOrderCancellationEmails(finalOrder, reason);
+      } catch (e) {
+        console.error("⚠️ Cancellation email trigger failed:", e?.message || e);
       }
-    } catch (e) {
-      console.error("⚠️ Cancellation email trigger failed:", e?.message || e);
     }
 
     return res.status(200).json({
@@ -1137,6 +1251,8 @@ export const updateOrderStatus = async (req, res) => {
 
 
 
+
+
 /* ============================================================
    ✅ CONFIRM ORDER (ADMIN / COD)
    - sets isConfirmed + confirmedAt + confirmedBy
@@ -1145,30 +1261,40 @@ export const updateOrderStatus = async (req, res) => {
 export const confirmOrder = async (req, res) => {
   const session = await mongoose.startSession();
 
+  const defer = (fn) => {
+    if (typeof setImmediate === "function") return setImmediate(fn);
+    return setTimeout(fn, 0);
+  };
+
   try {
     const orderId = req.params.id;
+    console.log("🔵 [CONFIRM] Request received for orderId:", orderId);
 
     if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      console.log("❌ [CONFIRM] Invalid orderId");
       return res.status(400).json({ message: "Invalid order id" });
     }
 
     const adminId = req.user?._id || null;
-
     let updatedOrder = null;
 
     await session.withTransaction(async () => {
       const order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
-      const isParent = String(order?.orderType || "").toLowerCase() === "parent";
+      console.log("🟡 [CONFIRM] Order found:", {
+        orderNumber: order.orderNumber,
+        paymentMethod: order.paymentMethod,
+        paymentStatus: order.paymentStatus,
+        isConfirmed: order.isConfirmed,
+      });
 
-      // ✅ prepaid guard
       if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
         throw new Error("Cannot confirm Razorpay order before payment is paid");
       }
 
-      // ✅ idempotent
       if (order.isConfirmed) {
+        console.log("⚠️ [CONFIRM] Order already confirmed");
         updatedOrder = order;
         return;
       }
@@ -1177,17 +1303,48 @@ export const confirmOrder = async (req, res) => {
       order.confirmedAt = new Date();
       if (adminId) order.confirmedBy = adminId;
 
-      // ✅ IMPORTANT: Do NOT book shipment on confirm anymore
-      // booking will happen only when fulfillmentStatus becomes "packed"
-      if (isParent) {
-        // parent order confirm is ok, but shipping actions remain blocked
-      }
-
       await order.save({ session });
       updatedOrder = order;
+
+      console.log("✅ [CONFIRM] Order marked confirmed:", order.orderNumber);
     });
 
     const finalOrder = await Order.findById(updatedOrder._id).lean();
+
+    console.log("🟢 [CONFIRM] Transaction completed. Preparing inventory trigger...");
+
+    // ✅ NON-BLOCKING reserve after confirm
+    try {
+      const orderNumber = String(finalOrder?.orderNumber || "").trim();
+
+      if (!orderNumber) {
+        console.log("⚠️ [INVENTORY] orderNumber missing — skipping reserve");
+      } else {
+        console.log("🚀 [INVENTORY] Scheduling reserve for:", orderNumber);
+
+        defer(async () => {
+          try {
+            console.log("🟣 [INVENTORY] Reserve function started for:", orderNumber);
+
+            const result = await reserveInventoryForOrderNumberInternal({
+              orderNumber,
+              allowedFulfillment: ["processing", "packed"],
+              confirmedOnly: true,
+              debug: true, // turn on deeper logs if your function supports
+            });
+
+            console.log("✅ [INVENTORY] Reserve completed:", {
+              orderNumber,
+              result,
+            });
+          } catch (err) {
+            console.error("❌ [INVENTORY] Reserve failed:", err?.message || err);
+          }
+        });
+      }
+    } catch (e) {
+      console.error("❌ [INVENTORY] Schedule failed:", e?.message || e);
+    }
 
     return res.status(200).json({
       message: "Order confirmed successfully",

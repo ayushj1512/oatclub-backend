@@ -305,24 +305,31 @@ splitSuffix: { type: String, default: "", index: true }, // "A","B"
 fulfillmentStatus: {
   type: String,
   enum: [
-    "processing",         // order placed / confirmed
-    "packed",             // packed
-    "picked",             // courier picked
-    "shipped",            // in transit
-    "out_for_delivery",   // out for delivery
-    "delivered",          // delivered ✅ (sets deliveredAt)
+    "processing",
+    "packed",
 
-    "return_requested",   // customer raised RMA return
-    "exchange_requested", // customer raised RMA exchange
-    "returned",           // return completed
-    "refunded",           // 💸 refund completed
+    // forward delivery
+    "picked",
+    "shipped",
+    "out_for_delivery",
+    "delivered",
 
-    "cancelled",          // cancelled
-    "rto",                // delivery failed, returned to origin
+    // ✅ NEW: reverse pickup (return/exchange)
+    "pickup_initiated",
+
+    "return_requested",
+    "exchange_requested",
+    "returned",
+    "refunded",
+
+    "cancelled",
+    "rto",
   ],
   default: "processing",
   index: true,
 },
+
+
 
 
    shipment: {
