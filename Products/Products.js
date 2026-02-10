@@ -23,15 +23,28 @@ const variantSchema = new mongoose.Schema(
     // ✅ Inventory (per-variant)
     stock: { type: Number, default: 0 },
     isInStock: { type: Boolean, default: false },
-reservedStock: {
-  type: Number,
-  default: 0,
-  min: 0,
-  set: (v) => Math.max(0, Number(v ?? 0)),
-},
+    reservedStock: {
+      type: Number,
+      default: 0,
+      min: 0,
+      set: (v) => Math.max(0, Number(v ?? 0)),
+    },
+
     weight: { type: Number, default: 0 },
   },
   { _id: true, timestamps: false }
+);
+
+/* ------------------------------------------------------------------
+SPECIFICATIONS (like your screenshot)
+Flexible key/value list so you can add/remove anytime ✅
+------------------------------------------------------------------- */
+const specRowSchema = new mongoose.Schema(
+  {
+    key: { type: String, trim: true, required: true }, // e.g. "Color"
+    value: { type: String, trim: true, default: "" },  // e.g. "Red"
+  },
+  { _id: false, timestamps: false }
 );
 
 /* ------------------------------------------------------------------
@@ -46,9 +59,37 @@ const productSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true },
     slug: { type: String, required: true, unique: true, lowercase: true },
 
-    description: { type: String, default: "" },
+    /**
+     * ✅ CONTENT (NO LONG DESCRIPTION ANYMORE)
+     * shortDescription now contains:
+     * - short intro
+     * - howToStyle
+     * - keyFeatures
+     * - fabricDetails
+     *
+     * But we are also storing structured fields for UI rendering.
+     */
     shortDescription: { type: String, default: "" },
-    highlights: [{ type: String }],
+    howToStyle: { type: String, default: "" },
+    keyFeatures: [{ type: String, default: "" }],
+    fabricDetails: { type: String, default: "" },
+
+    /**
+     * ✅ SPECIFICATIONS (as per screenshot)
+     * Example rows:
+     * - Color: Red
+     * - Length: Maxi
+     * - Stitch: Ready to wear
+     * - Fabric: Velvet Blend
+     * - Lining: N/A
+     * - Neckline: Halter Neck
+     * - Fit Type: Bodycon
+     * - Pattern Type: Solid
+     * - Hemline: Mermaid
+     * - Sleeve Style: Sleeveless
+     * - Care Instructions: Handwash / Machinewash
+     */
+    specifications: { type: [specRowSchema], default: [] },
 
     /* CATEGORIES / COLLECTIONS */
     categories: { type: [String], default: [] },
@@ -72,12 +113,13 @@ const productSchema = new mongoose.Schema(
     // ✅ Inventory (product level)
     stock: { type: Number, default: 0 },
     isInStock: { type: Boolean, default: false },
-reservedStock: {
-  type: Number,
-  default: 0,
-  min: 0,
-  set: (v) => Math.max(0, Number(v ?? 0)),
-},
+    reservedStock: {
+      type: Number,
+      default: 0,
+      min: 0,
+      set: (v) => Math.max(0, Number(v ?? 0)),
+    },
+
     /* HSN CODE (numeric-only) */
     hsnCode: {
       type: String,
@@ -193,50 +235,39 @@ reservedStock: {
 HELPERS
 ------------------------------------------------------------------- */
 function computeInventoryFlags(doc) {
-  const isVariable =
-    Array.isArray(doc.variants) && doc.variants.length > 0;
+  const isVariable = Array.isArray(doc.variants) && doc.variants.length > 0;
 
-  /* =========================
-     ✅ SIMPLE PRODUCT
-     ========================= */
+  /* ✅ SIMPLE PRODUCT */
   if (!isVariable) {
     const stock = Number(doc.stock ?? 0);
-const reserved = Math.max(0, Number(doc.reservedStock ?? 0));
-
+    const reserved = Math.max(0, Number(doc.reservedStock ?? 0));
     const available = Math.max(0, stock - reserved);
     doc.isInStock = available > 0;
     return;
   }
 
-  /* =========================
-     ✅ VARIABLE PRODUCT
-     ========================= */
+  /* ✅ VARIABLE PRODUCT */
   let anyVariantInStock = false;
 
   doc.variants = (doc.variants || []).map((v) => {
     const stock = Number(v.stock ?? 0);
-const reserved = Math.max(0, Number(v.reservedStock ?? 0));
+    const reserved = Math.max(0, Number(v.reservedStock ?? 0));
 
     const available = Math.max(0, stock - reserved);
     const vInStock = available > 0;
 
     if (vInStock) anyVariantInStock = true;
 
-    // mongoose subdoc safe set
     if (v && typeof v.set === "function") {
       v.set("isInStock", vInStock);
       return v;
     }
 
-    return {
-      ...v,
-      isInStock: vInStock,
-    };
+    return { ...v, isInStock: vInStock };
   });
 
   doc.isInStock = anyVariantInStock;
 }
-
 
 /**
  * ✅ PATCH:
@@ -254,7 +285,6 @@ function computeColors(doc) {
       )
     );
 
-  // Keep manual colors (but normalize)
   if (Array.isArray(doc.colors) && doc.colors.length > 0) {
     doc.colors = normalize(doc.colors);
     return;
@@ -266,7 +296,6 @@ function computeColors(doc) {
     return;
   }
 
-  // fallback: compute from variant Color attribute
   const set = new Set();
   (doc.variants || []).forEach((v) => {
     const attrs = Array.isArray(v.attributes) ? v.attributes : [];
@@ -352,9 +381,9 @@ productSchema.pre("save", function (next) {
 const hasPositionalVariantUpdate = (obj = {}) =>
   Object.keys(obj || {}).some(
     (k) =>
-      k.includes("variants.$.") || // positional "$"
-      k.includes("variants.$[") || // arrayFilters "$[v]"
-      k.startsWith("variants.$")   // safety
+      k.includes("variants.$.") ||
+      k.includes("variants.$[") ||
+      k.startsWith("variants.$")
   );
 
 async function applyInventoryToUpdateQuery(next) {
@@ -364,8 +393,6 @@ async function applyInventoryToUpdateQuery(next) {
     const $inc = update.$inc || {};
     const $unset = update.$unset || {};
 
-    // ✅ FIX: If update touches variants with "$" or "$[v]", skip auto patch
-    // Because this middleware adds variants.<idx>.$set which conflicts with variants.$ updates
     if (
       hasPositionalVariantUpdate($set) ||
       hasPositionalVariantUpdate($inc) ||
@@ -383,21 +410,15 @@ async function applyInventoryToUpdateQuery(next) {
       "reservedStock" in $set ||
       Object.keys($set).some(
         (k) =>
-          k.startsWith("variants.") ||
-          k === "stock" ||
-          k === "reservedStock"
+          k.startsWith("variants.") || k === "stock" || k === "reservedStock"
       ) ||
       Object.keys($inc).some(
         (k) =>
-          k.startsWith("variants.") ||
-          k === "stock" ||
-          k === "reservedStock"
+          k.startsWith("variants.") || k === "stock" || k === "reservedStock"
       ) ||
       Object.keys($unset).some(
         (k) =>
-          k.startsWith("variants.") ||
-          k === "stock" ||
-          k === "reservedStock"
+          k.startsWith("variants.") || k === "stock" || k === "reservedStock"
       );
 
     const touchesColors =
@@ -464,7 +485,6 @@ async function applyInventoryToUpdateQuery(next) {
     if (touchesInventory) {
       update.$set.isInStock = tempDoc.isInStock;
 
-      // ✅ only safe when we are NOT using positional updates (we already skipped those)
       if (Array.isArray(tempDoc.variants) && tempDoc.variants.length) {
         tempDoc.variants.forEach((v, idx) => {
           update.$set[`variants.${idx}.isInStock`] = !!v.isInStock;
@@ -483,7 +503,6 @@ async function applyInventoryToUpdateQuery(next) {
   }
 }
 
-
 productSchema.pre("findOneAndUpdate", applyInventoryToUpdateQuery);
 productSchema.pre("updateOne", applyInventoryToUpdateQuery);
 productSchema.pre("updateMany", applyInventoryToUpdateQuery);
@@ -493,7 +512,17 @@ INDEXES
 ------------------------------------------------------------------- */
 productSchema.index({ productCode: 1 }, { unique: true });
 productSchema.index({ "variants.patternNumber": 1 });
-productSchema.index({ title: "text", description: "text" });
+
+// ✅ OPTIONAL: search in specs too
+productSchema.index({ "specifications.key": 1 });
+
+productSchema.index({
+  title: "text",
+  shortDescription: "text",
+  howToStyle: "text",
+  fabricDetails: "text",
+});
+
 productSchema.index({ keywords: 1 });
 productSchema.index({ categories: 1 });
 productSchema.index({ isActive: 1, isFeatured: 1 });

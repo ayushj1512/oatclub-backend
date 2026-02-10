@@ -470,7 +470,75 @@ export const createProduct = async (req, res) => {
 
     /* ---------------- normalize inputs ---------------- */
     data.attributes = json(data.attributes, []);
-    data.highlights = json(data.highlights, []);
+
+    // ✅ NEW DESCRIPTION FIELDS (we don't need long anymore)
+    data.shortDescription = String(data.shortDescription ?? "").trim();
+    data.howToStyle = String(data.howToStyle ?? "").trim();
+    data.fabricDetails = String(data.fabricDetails ?? "").trim();
+
+    // ✅ keyFeatures (array) + backward compat with highlights
+    data.keyFeatures =
+      data.keyFeatures !== undefined
+        ? json(data.keyFeatures, [])
+        : data.highlights !== undefined
+          ? json(data.highlights, [])
+          : [];
+    delete data.highlights;
+
+    // ✅ NEW: specifications (screenshot table)
+    // Accept: array [{key,value}] OR JSON string OR object {Color:"Red"} OR "Color:Red|Length:Maxi"
+    const normalizeSpecs = (v) => {
+      const out = [];
+      const push = (k, val) => {
+        const key = String(k ?? "").trim();
+        const value = String(val ?? "").trim();
+        if (!key) return;
+        out.push({ key, value });
+      };
+
+      // try JSON parse if string looks like JSON
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (!t) return [];
+        try {
+          const parsed = JSON.parse(t);
+          v = parsed;
+        } catch {
+          // fallback: "k:v|k2:v2" or "k=v,k2=v2"
+          const parts = t.includes("|") ? t.split("|") : t.split(",");
+          for (const p of parts) {
+            const s = String(p || "").trim();
+            if (!s) continue;
+            const sep = s.includes(":") ? ":" : s.includes("=") ? "=" : null;
+            if (!sep) continue;
+            const [k, ...rest] = s.split(sep);
+            push(k, rest.join(sep));
+          }
+          return out;
+        }
+      }
+
+      if (Array.isArray(v)) {
+        for (const row of v) {
+          if (!row) continue;
+          push(row.key, row.value);
+        }
+        return out;
+      }
+
+      if (v && typeof v === "object") {
+        for (const [k, val] of Object.entries(v)) push(k, val);
+        return out;
+      }
+
+      return [];
+    };
+
+    data.specifications = normalizeSpecs(
+      data.specifications !== undefined ? data.specifications : data.specs
+    );
+    delete data.specs;
+
     data.keywords = arr(data.keywords);
     data.tags = tagsNorm(data.tags);
     data.collections = arr(data.collections);
@@ -546,6 +614,9 @@ export const createProduct = async (req, res) => {
 
       // ✅ In bulk, ensure colors is always an array (optional)
       if (!Array.isArray(data.colors)) data.colors = [];
+
+      // ✅ In bulk, ensure specifications always array (optional)
+      if (!Array.isArray(data.specifications)) data.specifications = [];
     } else {
       await validateAttributes(data.attributes);
 
@@ -577,6 +648,9 @@ export const createProduct = async (req, res) => {
       // ✅ If variable and colors NOT provided, keep it as empty array
       // (because variants currently don't carry color after keepOnlySizeVariants)
       if (!Array.isArray(data.colors)) data.colors = [];
+
+      // ✅ Ensure specifications always array
+      if (!Array.isArray(data.specifications)) data.specifications = [];
     }
 
     /* =====================================================
@@ -633,13 +707,30 @@ export const createProduct = async (req, res) => {
       sku: skuPayload.sku,
       variants: skuPayload.variants,
       productType: skuPayload.productType,
+
       // ✅ keep colors as well (if passed/normalized above)
       colors: Array.isArray(data.colors) ? data.colors : [],
+
+      // ✅ ensure new fields persist even if client sent empty
+      shortDescription: data.shortDescription || "",
+      howToStyle: data.howToStyle || "",
+      fabricDetails: data.fabricDetails || "",
+      keyFeatures: Array.isArray(data.keyFeatures) ? data.keyFeatures : [],
+
+      // ✅ NEW: specifications persist
+      specifications: Array.isArray(data.specifications) ? data.specifications : [],
     });
 
     // ✅ IMPORTANT: mark modified for nested variants (if variable)
     if (Array.isArray(skuPayload.variants)) created.markModified("variants");
-    created.markModified("colors"); // ✅ NEW
+    created.markModified("colors");
+    created.markModified("keyFeatures");
+    created.markModified("shortDescription");
+    created.markModified("howToStyle");
+    created.markModified("fabricDetails");
+
+    // ✅ NEW: mark specs
+    created.markModified("specifications");
 
     await created.save({ validateBeforeSave: true });
 
@@ -662,6 +753,8 @@ export const createProduct = async (req, res) => {
     return res.status(400).json({ message: e.message });
   }
 };
+
+
 
 
 
@@ -885,90 +978,112 @@ export const updateProduct = async (req, res) => {
   try {
     const data = { ...req.body };
 
+    /* ---------------- tiny helpers ---------------- */
+    const toStr = (v) => String(v ?? "").trim();
+    const toBool = (v) => {
+      if (typeof v === "boolean") return v;
+      const s = String(v ?? "").trim().toLowerCase();
+      return s === "true" || s === "1" || s === "yes";
+    };
+    const normColors = (v) => {
+      const raw = Array.isArray(v) ? v : String(v || "").split(",");
+      return Array.from(
+        new Set(raw.map((c) => String(c || "").trim().toLowerCase()).filter(Boolean))
+      );
+    };
+    const normSpecs = (v) => {
+      const out = [];
+      const push = (k, val) => {
+        const key = toStr(k);
+        const value = toStr(val);
+        if (!key) return;
+        out.push({ key, value });
+      };
+
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (!t) return [];
+        try {
+          v = JSON.parse(t);
+        } catch {
+          const parts = t.includes("|") ? t.split("|") : t.split(",");
+          for (const p of parts) {
+            const s = String(p || "").trim();
+            if (!s) continue;
+            const sep = s.includes(":") ? ":" : s.includes("=") ? "=" : null;
+            if (!sep) continue;
+            const [k, ...rest] = s.split(sep);
+            push(k, rest.join(sep));
+          }
+          return out;
+        }
+      }
+
+      if (Array.isArray(v)) {
+        v.forEach((row) => row && push(row.key, row.value));
+        return out;
+      }
+
+      if (v && typeof v === "object") {
+        Object.entries(v).forEach(([k, val]) => push(k, val));
+        return out;
+      }
+
+      return [];
+    };
+
     /* ---------------- normalize inputs ---------------- */
     data.attributes = json(data.attributes, data.attributes);
-    data.highlights = json(data.highlights, data.highlights);
+
+    if (data.shortDescription !== undefined) data.shortDescription = toStr(data.shortDescription);
+    if (data.howToStyle !== undefined) data.howToStyle = toStr(data.howToStyle);
+    if (data.fabricDetails !== undefined) data.fabricDetails = toStr(data.fabricDetails);
+
+    // ✅ keyFeatures + backward compat highlights
+    if (data.keyFeatures !== undefined) data.keyFeatures = json(data.keyFeatures, []);
+    else if (data.highlights !== undefined) data.keyFeatures = json(data.highlights, []);
+    if (data.highlights !== undefined) delete data.highlights;
+
+    // ✅ NEW: specifications (screenshot table)
+    if (data.specifications !== undefined || data.specs !== undefined) {
+      data.specifications = normSpecs(data.specifications ?? data.specs);
+      delete data.specs;
+    }
 
     if (data.keywords !== undefined) data.keywords = arr(data.keywords);
     if (data.tags !== undefined) data.tags = tagsNorm(data.tags);
     if (data.collections !== undefined) data.collections = arr(data.collections);
 
     if (data.fabrics !== undefined) data.fabrics = json(data.fabrics, data.fabrics);
-
     if (data.avgFabricConsumption !== undefined) {
-      data.avgFabricConsumption = json(
-        data.avgFabricConsumption,
-        data.avgFabricConsumption
-      );
+      data.avgFabricConsumption = json(data.avgFabricConsumption, data.avgFabricConsumption);
     }
 
-    /* ---------------------------------------------------
-       ✅ SAMPLING FLAG (manufacturing coordination)
-       Accepts: true/false, "true"/"false", 1/0, "yes"/"no"
-    ---------------------------------------------------- */
-    if (data.isSamplingDone !== undefined) {
-      const raw = data.isSamplingDone;
+    // ✅ sampling flag
+    if (data.isSamplingDone !== undefined) data.isSamplingDone = toBool(data.isSamplingDone);
 
-      if (typeof raw === "boolean") {
-        data.isSamplingDone = raw;
-      } else {
-        const s = String(raw).trim().toLowerCase();
-        data.isSamplingDone = s === "true" || s === "1" || s === "yes";
-      }
-    }
+    // ✅ colors
+    if (data.colors !== undefined) data.colors = normColors(data.colors);
 
-    /* ---------------------------------------------------
-       ✅ COLORS normalize (optional)
-       Accept "red,black" OR ["red","black"]
-    ---------------------------------------------------- */
-    if (data.colors !== undefined) {
-      const raw = Array.isArray(data.colors)
-        ? data.colors
-        : String(data.colors || "").split(",");
-
-      data.colors = Array.from(
-        new Set(
-          raw
-            .map((c) => String(c || "").trim().toLowerCase())
-            .filter(Boolean)
-        )
-      );
-    }
-
-    /* ---------------------------------------------------
-       ✅ HSN CODE normalize + validate (digits only, optional)
-    ---------------------------------------------------- */
+    // ✅ hsn
     if (data.hsnCode !== undefined) {
-      const hsn = String(data.hsnCode ?? "").trim();
-      if (hsn !== "" && !/^\d+$/.test(hsn)) {
-        return res
-          .status(400)
-          .json({ message: "HSN code must contain digits only" });
+      const hsn = toStr(data.hsnCode);
+      if (hsn && !/^\d+$/.test(hsn)) {
+        return res.status(400).json({ message: "HSN code must contain digits only" });
       }
       data.hsnCode = hsn;
     }
 
     /* ---------------- fetch existing ---------------- */
     const existing = await Product.findById(req.params.id);
-    if (!existing) {
-      return res.status(404).json({ message: "Product not found" });
-    }
+    if (!existing) return res.status(404).json({ message: "Product not found" });
 
     /* ---------------- slug ---------------- */
     if (data.slug || data.title) {
-      const nextSlug = slugify(
-        String(data.slug || data.title || existing.title),
-        { lower: true }
-      );
-
+      const nextSlug = slugify(String(data.slug || data.title || existing.title), { lower: true });
       if (nextSlug !== existing.slug) {
-        const clash = await Product.exists({
-          slug: nextSlug,
-          _id: { $ne: existing._id },
-        });
-        if (clash) {
-          return res.status(400).json({ message: "Slug already exists" });
-        }
+        const clash = await Product.exists({ slug: nextSlug, _id: { $ne: existing._id } });
+        if (clash) return res.status(400).json({ message: "Slug already exists" });
         data.slug = nextSlug;
       }
     }
@@ -981,7 +1096,6 @@ export const updateProduct = async (req, res) => {
           ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
           : [];
 
-      // ✅ Remove system categories + optionally convert new-arrivals -> tag
       const hadNewArrivals = data.categories.some(
         (c) => String(c).toLowerCase() === "new-arrivals"
       );
@@ -990,93 +1104,70 @@ export const updateProduct = async (req, res) => {
         (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase())
       );
 
-      if (hadNewArrivals) {
-        const existingTags = tagsNorm(data.tags ?? existing.tags); // ✅ safe fallback
-        data.tags = Array.from(new Set([...existingTags, "new-arrival"]));
-      }
-
       if (!data.categories.length) {
         return res.status(400).json({
           message:
             "Select a main category like dress/top/shirt etc (all-clothing/new-arrivals are not allowed as main category)",
         });
       }
+
+      if (hadNewArrivals) {
+        const baseTags = tagsNorm(data.tags ?? existing.tags);
+        data.tags = Array.from(new Set([...baseTags, "new-arrival"]));
+      }
     }
 
     /* ---------------- attribute validation ---------------- */
     await validateAttributes(data.attributes);
 
-    // If someone sends variant "image", strip it (your variant schema has no images)
-    if (Array.isArray(data.variants)) {
-      data.variants = data.variants.map(({ image, ...v }) => v);
-    }
+    // strip variant image (schema has no images)
+    if (Array.isArray(data.variants)) data.variants = data.variants.map(({ image, ...v }) => v);
 
     /* =========================================================
        ✅ STOCK REMOVAL (IMPORTANT)
-       - disallow updating product.stock and variants.stock here
-       - disallow isInStock updates here (model hooks compute it)
+       - disallow product stock/isInStock updates here
+       - model hooks compute isInStock
     ========================================================= */
-    if (data.stock !== undefined) delete data.stock;
-    if (data.isInStock !== undefined) delete data.isInStock;
+    delete data.stock;
+    delete data.isInStock;
 
-    /* ---------------- VARIANTS ----------------
-       ✅ FIX: Preserve existing variant stock/isInStock so they don't reset to 0
-       - client can send variants (patternNumber/sku/etc)
-       - but inventory fields are preserved from DB (cannot be changed here)
-    ---------------------------------------------------------- */
+    /* ---------------- variants (preserve inventory) ---------------- */
     if (Array.isArray(data.variants)) {
-      const existingById = new Map(
-        (existing.variants || []).map((v) => [String(v._id), v])
+      const existingById = new Map((existing.variants || []).map((v) => [String(v._id), v]));
+
+      data.variants = keepOnlySizeVariants(
+        data.variants.map((v) => {
+          const prev = v?._id ? existingById.get(String(v._id)) : null;
+          return {
+            ...(v._id ? { _id: v._id } : {}),
+            sku: v.sku,
+            barcode: v.barcode ?? "",
+            weight: typeof v.weight === "number" ? v.weight : 0,
+            patternNumber: toStr(v?.patternNumber || ""),
+            stock: prev?.stock ?? 0,
+            reservedStock: prev?.reservedStock ?? 0,
+            isInStock: prev?.isInStock ?? false,
+            attributes: Array.isArray(v.attributes) ? v.attributes : [],
+          };
+        })
       );
 
-      data.variants = data.variants.map((v) => {
-        const prev = v?._id ? existingById.get(String(v._id)) : null;
-
-        return {
-          ...(v._id ? { _id: v._id } : {}),
-          sku: v.sku,
-          barcode: v.barcode ?? "",
-          weight: typeof v.weight === "number" ? v.weight : 0,
-
-          // ✅ keep variant-level patternNumber
-          patternNumber: String(v?.patternNumber || "").trim(),
-
-          // ✅ inventory preserved (NOT editable via this controller)
-          stock: prev?.stock ?? 0,
-          reservedStock: prev?.reservedStock ?? 0,
-          isInStock: prev?.isInStock ?? false,
-
-          attributes: Array.isArray(v.attributes) ? v.attributes : [],
-        };
-      });
-
-      // ✅ HARD SAFETY: keep only 1 variant per size + remove color attribute
-      data.variants = keepOnlySizeVariants(data.variants);
+      data.productType = data.variants.length ? "variable" : "simple";
     } else {
-      // if not sent, do not touch variants
       delete data.variants;
     }
 
-    /* ---------------- product type ---------------- */
-    if (Array.isArray(data.variants)) {
-      data.productType = data.variants.length > 0 ? "variable" : "simple";
-    }
-
-    /* ------------------------------------------------------------------
-       ✅ CROSS-SELL PRODUCTS
-    ------------------------------------------------------------------- */
+    /* ---------------- cross-sell ---------------- */
     if (data.crossSellProducts !== undefined) {
-      data.crossSellProducts = Array.isArray(data.crossSellProducts)
+      const raw = Array.isArray(data.crossSellProducts)
         ? data.crossSellProducts
         : typeof data.crossSellProducts === "string"
           ? data.crossSellProducts.split(",").map((id) => id.trim())
           : [];
 
-      data.crossSellProducts = data.crossSellProducts.filter(isValidObjectId);
-
-      data.crossSellProducts = data.crossSellProducts.filter(
-        (id) => String(id) !== String(existing._id)
-      );
+      data.crossSellProducts = raw
+        .filter(isValidObjectId)
+        .filter((id) => String(id) !== String(existing._id));
     }
 
     /* ---------------- uploads ---------------- */
@@ -1090,8 +1181,7 @@ export const updateProduct = async (req, res) => {
 
     data.images = images;
     data.thumbnail = thumbnail;
-
-    if (data.keepImages !== undefined) delete data.keepImages;
+    delete data.keepImages;
 
     /* ---------------- SKU handling ---------------- */
     const skuData = {
@@ -1100,26 +1190,28 @@ export const updateProduct = async (req, res) => {
       variants: Array.isArray(data.variants) ? data.variants : existing.variants,
     };
 
-    // ensureSKUs will generate:
-    // - simple: CAT3-PRODUCTCODE
-    // - variable: CAT3-PRODUCTCODE-SIZE
     await ensureSKUs(skuData);
-
     data.sku = skuData.sku;
     if (Array.isArray(data.variants)) data.variants = skuData.variants;
 
-    /* ---------------- apply changes & save ---------------- */
+    /* ---------------- apply + save ---------------- */
     existing.set(data);
 
-    // help mongoose track nested replacements/changes
-    if (Array.isArray(data.variants)) existing.markModified("variants");
-    if (data.attributes !== undefined) existing.markModified("attributes");
-    if (data.fabrics !== undefined) existing.markModified("fabrics");
-    if (data.avgFabricConsumption !== undefined)
-      existing.markModified("avgFabricConsumption");
-    if (data.images !== undefined) existing.markModified("images");
-    if (data.colors !== undefined) existing.markModified("colors");
-    if (data.isSamplingDone !== undefined) existing.markModified("isSamplingDone");
+    const mark = (k, cond = true) => cond && existing.markModified(k);
+    mark("variants", Array.isArray(data.variants));
+    mark("attributes", data.attributes !== undefined);
+    mark("fabrics", data.fabrics !== undefined);
+    mark("avgFabricConsumption", data.avgFabricConsumption !== undefined);
+    mark("images", data.images !== undefined);
+    mark("colors", data.colors !== undefined);
+    mark("isSamplingDone", data.isSamplingDone !== undefined);
+
+    // new fields
+    mark("keyFeatures", data.keyFeatures !== undefined);
+    mark("shortDescription", data.shortDescription !== undefined);
+    mark("howToStyle", data.howToStyle !== undefined);
+    mark("fabricDetails", data.fabricDetails !== undefined);
+    mark("specifications", data.specifications !== undefined);
 
     const saved = await existing.save({ validateBeforeSave: true });
 
@@ -1133,15 +1225,17 @@ export const updateProduct = async (req, res) => {
       { path: "variants.attributes.attribute" },
     ]);
 
-    res.json({
+    return res.json({
       message: "Product updated successfully",
       product: applyStockFromVariants(updated),
     });
   } catch (e) {
     console.error("❌ Update Product Error:", e);
-    res.status(500).json({ message: e.message });
+    return res.status(500).json({ message: e.message });
   }
 };
+
+
 
 
 
@@ -2039,11 +2133,9 @@ export const getProductsByCollection = async (req, res) => {
       return res.status(404).json({ message: "Collection not found" });
     }
 
-    const filters = {
-      collections: collectionDoc._id,
-    };
-
     /* ---------------- optional filters ---------------- */
+    const filters = {};
+
     if (category) {
       const cats = String(category)
         .split(",")
@@ -2080,32 +2172,125 @@ export const getProductsByCollection = async (req, res) => {
     };
 
     const safeLimit = Math.min(200, Math.max(1, Number(limit)));
-    const skip = (Number(page) - 1) * safeLimit;
-    const sortObj = sortMap[sort] || { createdAt: -1 };
+    const safePage = Math.max(1, Number(page));
+    const skip = (safePage - 1) * safeLimit;
 
-    const docs = await pop(Product.find(filters))
-      .sort(sortObj)
-      .skip(skip)
-      .limit(safeLimit);
+    // ✅ treat empty string / missing sort as "default"
+    const sortKey = String(sort ?? "").trim();
+    const hasExplicitSort = Boolean(sortKey) && Boolean(sortMap[sortKey]);
 
-    const total = await Product.countDocuments(filters);
+    /* ---------------------------------------------------------
+       ✅ Manual order (DEFAULT): use collectionDoc.products order
+       - Works with pagination
+       - Still applies filters
+    --------------------------------------------------------- */
+    const extractIdsFromCollection = (col) => {
+      const arr = Array.isArray(col?.products) ? col.products : [];
+      const ids = arr
+        .map((it) => {
+          if (!it) return null;
+          if (typeof it === "string") return it;
+          if (typeof it === "object") {
+            const pr = it.product ?? it._id ?? it.id;
+            if (!pr) return null;
+            return typeof pr === "object" ? (pr._id ?? pr.id) : pr;
+          }
+          return null;
+        })
+        .filter(Boolean)
+        .map(String);
+
+      // uniq while preserving order
+      const seen = new Set();
+      const out = [];
+      for (const id of ids) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          out.push(id);
+        }
+      }
+      return out;
+    };
+
+    const orderedIdStrings = extractIdsFromCollection(collectionDoc);
+    const orderedIds = orderedIdStrings
+      .filter((x) => mongoose.Types.ObjectId.isValid(x))
+      .map((x) => new mongoose.Types.ObjectId(x));
+
+    // fallback: if collection has no ordered ids, use old behavior via collections field
+    const shouldUseManualOrder = !hasExplicitSort && orderedIds.length > 0;
+
+    let docs = [];
+    let total = 0;
+
+    if (shouldUseManualOrder) {
+      // Manual order pipeline:
+      // match: _id in orderedIds + filters
+      // addFields: _sortIndex = indexOfArray(orderedIds, _id)
+      // sort by _sortIndex asc
+      // paginate with skip/limit
+      const matchStage = { _id: { $in: orderedIds }, ...filters };
+
+      const pipeline = [
+        { $match: matchStage },
+        {
+          $addFields: {
+            _sortIndex: { $indexOfArray: [orderedIds, "$_id"] },
+          },
+        },
+        { $sort: { _sortIndex: 1 } },
+        { $skip: skip },
+        { $limit: safeLimit },
+      ];
+
+      // If you have a "pop" helper for populate, aggregation can't use it.
+      // So we fetch ids first then do a populated find in the same order.
+
+      const pageRows = await Product.aggregate(pipeline);
+      const pageIds = pageRows.map((r) => r._id);
+
+      // total count (filtered, within this collection order list)
+      total = await Product.countDocuments(matchStage);
+
+      // fetch populated docs
+      let found = await pop(Product.find({ _id: { $in: pageIds } }));
+      // re-order exactly by pageIds
+      const m = new Map(found.map((p) => [String(p._id), p]));
+      docs = pageIds.map((id) => m.get(String(id))).filter(Boolean);
+    } else {
+      // Old behavior (explicit sort OR no manual list)
+      // Ensure membership by collections field
+      const findFilters = { ...filters, collections: collectionDoc._id };
+
+      const sortObj = sortMap[sortKey] || { createdAt: -1 };
+
+      docs = await pop(Product.find(findFilters))
+        .sort(sortObj)
+        .skip(skip)
+        .limit(safeLimit);
+
+      total = await Product.countDocuments(findFilters);
+    }
 
     return res.json({
       collection: {
         _id: collectionDoc._id,
         name: collectionDoc.name,
         slug: collectionDoc.slug,
+        // ✅ send ordered ids too (helps frontend)
+        products: orderedIdStrings,
       },
       total,
-      page: Number(page),
+      page: safePage,
       pages: Math.ceil(total / safeLimit),
-      products: docs.map(applyStockFromVariants),
+      products: (docs || []).map(applyStockFromVariants),
     });
   } catch (e) {
     console.error("❌ Get Products By Collection Error:", e);
     return res.status(500).json({ message: e.message });
   }
 };
+
 
 
 
