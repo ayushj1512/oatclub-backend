@@ -1,9 +1,7 @@
 // routes/bestseller.routes.js
-// Hook this into your app: app.use("/api", bestsellerRoutes);
+// mount: app.use("/api", router);
 
 import { Router } from "express";
-
-// ✅ Your controller path (as you shared)
 import {
   createBestseller,
   getAllBestsellers,
@@ -12,29 +10,28 @@ import {
   updateBestseller,
   deleteBestseller,
   deleteBestsellerByProductId,
-} from "../BestSeller/BestSeller.Controller.js"; // adjust ONLY if routes folder level differs
+  setBestsellerOrder, // ✅ NEW
+} from "../BestSeller/BestSeller.Controller.js";
 
 const router = Router();
 
-// CREATE
+// CREATE (idempotent recommended)
 router.post("/bestseller", createBestseller);
 
 // READ
 router.get("/bestseller", getAllBestsellers);
-
-// READ (special) -> ONLY product IDs ✅
 router.get("/bestseller/ids", getAllBestsellerIds);
 
-// READ one (by bestseller doc _id)
+// ✅ ORDER (save selected order)
+router.put("/bestseller/order", setBestsellerOrder);
+router.post("/bestseller/order", setBestsellerOrder); // optional fallback
+
+// READ/UPDATE/DELETE by bestseller doc _id
 router.get("/bestseller/:id", getBestsellerById);
-
-// UPDATE (by bestseller doc _id)
 router.put("/bestseller/:id", updateBestseller);
-
-// DELETE (by bestseller doc _id)
 router.delete("/bestseller/:id", deleteBestseller);
 
-// DELETE (special) by productId
+// DELETE by productId (used by UI)
 router.delete("/bestseller/product/:productId", deleteBestsellerByProductId);
 
 export default router;
