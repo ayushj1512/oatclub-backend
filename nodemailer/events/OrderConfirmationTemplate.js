@@ -5,6 +5,8 @@ export function orderConfirmationTemplate({
   order = {},
   ctaUrl = "#",
 }) {
+  /* ---------------- Core ---------------- */
+
   const orderId = order?.orderId || order?.orderNumber || order?._id || "—";
   const currency = order?.currency || "INR";
 
@@ -21,6 +23,8 @@ export function orderConfirmationTemplate({
       ? "Cancelled"
       : "In progress";
 
+  /* ---------------- Amounts ---------------- */
+
   const subtotal = num(order?.subtotal);
   const discount = num(order?.discount);
   const shippingFee = num(order?.shippingFee);
@@ -30,28 +34,28 @@ export function orderConfirmationTemplate({
   const couponCode = order?.coupon?.code ? String(order.coupon.code) : null;
   const items = Array.isArray(order?.items) ? order.items : [];
 
+  /* ---------------- Shipping ---------------- */
+
   const shipping = order?.shippingAddressSnapshot || {};
   const shippingName =
-  shipping?.fullName ||
-  shipping?.name ||
-  [shipping?.firstName, shipping?.lastName].filter(Boolean).join(" ") ||
-  name ||
-  "Customer";
-  
+    shipping?.fullName ||
+    shipping?.name ||
+    [shipping?.firstName, shipping?.lastName].filter(Boolean).join(" ") ||
+    name;
 
   const shippingPhone = shipping?.phone || shipping?.mobile || "";
-  const shippingLine1 = shipping?.line1 || shipping?.address1 || "";
-  const shippingLine2 = shipping?.line2 || shipping?.address2 || "";
+  const shippingLine1 = shipping?.line1 || "";
+  const shippingLine2 = shipping?.line2 || "";
   const shippingCity = shipping?.city || "";
   const shippingState = shipping?.state || "";
-  const shippingZip = shipping?.pincode || shipping?.zip || "";
+  const shippingZip = shipping?.pincode || "";
   const shippingCountry = shipping?.country || "India";
 
   const hasValidCta = Boolean(ctaUrl && ctaUrl !== "#");
-
   const subject = `Order Confirmed — #${orderId} 🖤`;
 
-  // ✅ Text fallback
+  /* ================= TEXT MAIL ================= */
+
   const text = `Hi ${name},
 
 Thank you — your order has been placed successfully.
@@ -83,286 +87,163 @@ With regards,
 Team Miray Fashions
 `;
 
+  /* ================= HTML MAIL ================= */
+
   const itemsHtml = items.length
     ? items.map((it) => renderItemCard(it, currency)).join("")
-    : `<div style="border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:16px;">
-        <p style="margin:0;font-size:13px;color:rgba(0,0,0,0.75);">No items found.</p>
-      </div>`;
+    : emptyCard("No items found.");
 
   const discountLabel = couponCode
     ? `Discount (${escapeHtml(couponCode)})`
     : "Discount";
 
   const html = `
-  <div style="background:#ffffff;color:#000000;padding:40px 20px;">
-    <div style="max-width:680px;margin:0 auto;border:1px solid rgba(0,0,0,0.10);border-radius:30px;overflow:hidden;background:#ffffff;font-family:Poppins, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;">
+<div style="background:#ffffff;padding:40px 20px;">
+  <div style="max-width:680px;margin:auto;border:1px solid rgba(0,0,0,.1);border-radius:30px;font-family:Poppins,system-ui;">
+    
+    <!-- Header -->
+    <div style="padding:48px 40px 32px;text-align:center;">
+      <img src="https://res.cloudinary.com/djtva6hec/image/upload/v1764916639/miray/media/k0yvgu5m0ij1husm3ugh.png"
+           alt="Miray Fashions" style="height:56px;" />
+      <p style="margin-top:24px;font-size:11px;letter-spacing:.45em;color:#777;text-transform:uppercase;">
+        Order Confirmed
+      </p>
+      <h1 style="margin:10px 0;font-size:17px;letter-spacing:.22em;">
+        #${escapeHtml(orderId)}
+      </h1>
+    </div>
 
-      <!-- Header -->
-      <div style="padding:48px 40px 32px 40px;text-align:center;">
-        <img
-          src="https://res.cloudinary.com/djtva6hec/image/upload/v1764916639/miray/media/k0yvgu5m0ij1husm3ugh.png"
-          alt="Miray Fashions Logo"
-          style="height:56px;width:auto;display:block;margin:0 auto;"
-        />
+    <!-- Body -->
+    <div style="padding:0 40px 48px;">
+      <h2 style="font-size:20px;">Hi ${escapeHtml(name)} ✨</h2>
+      <p style="font-size:13px;color:#666;">
+        Thank you — your order has been placed successfully.
+      </p>
 
-        <div style="margin-top:24px;">
-          <p style="margin:0;font-size:11px;letter-spacing:0.45em;color:rgba(0,0,0,0.55);text-transform:uppercase;">
-            Order Confirmed
-          </p>
-          <h1 style="margin:12px 0 0 0;font-size:17px;letter-spacing:0.22em;font-weight:600;text-transform:uppercase;">
-            #${escapeHtml(orderId)}
-          </h1>
-        </div>
+      ${statusRow(paymentMethod, paymentStatus, fulfillmentStatus, fulfillmentSub, finalPayable, currency)}
 
-        <div style="margin:32px auto 0 auto;height:1px;width:80px;background:rgba(0,0,0,0.20);"></div>
-      </div>
+      <section>
+        <p class="section-title">Items</p>
+        ${itemsHtml}
+      </section>
 
-      <!-- Body -->
-      <div style="padding:0 40px 48px 40px;">
+      <section>
+        <p class="section-title">Summary</p>
+        ${summaryBox(
+          subtotal,
+          discount,
+          discountLabel,
+          couponCode,
+          shippingFee,
+          tax,
+          finalPayable,
+          currency,
+          paymentMethod
+        )}
+      </section>
 
-        <!-- Greeting -->
-        <h2 style="margin:0;font-size:20px;font-weight:600;letter-spacing:-0.02em;">
-          Hi ${escapeHtml(name)} ✨
-        </h2>
-        <p style="margin:8px 0 0 0;font-size:13px;color:rgba(0,0,0,0.60);">
-          Thank you — your order has been placed successfully.
-        </p>
+      <section>
+        <p class="section-title">Shipping Address</p>
+        ${addressBox(
+          shippingName,
+          shippingLine1,
+          shippingLine2,
+          shippingCity,
+          shippingState,
+          shippingZip,
+          shippingCountry,
+          shippingPhone
+        )}
+      </section>
 
-        <!-- Compact Status Row -->
-        <div style="margin-top:28px;">
-          <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;">
-            <tr>
-              ${statusCard("Payment", paymentMethod, paymentStatus)}
-              ${statusCard("Fulfillment", fulfillmentStatus, fulfillmentSub)}
-              ${statusCard("Payable", money(finalPayable, currency), "Final Amount")}
-            </tr>
-          </table>
-        </div>
+      ${hasValidCta ? ctaButton(ctaUrl) : ""}
 
-        <!-- Items -->
-        <div style="margin-top:36px;">
-          <p style="margin:0;font-size:11px;letter-spacing:0.35em;color:rgba(0,0,0,0.55);text-transform:uppercase;">
-            Items
-          </p>
-
-          <div style="margin-top:16px;">
-            ${itemsHtml}
-          </div>
-        </div>
-
-        <!-- Summary -->
-        <div style="margin-top:40px;">
-          <p style="margin:0;font-size:11px;letter-spacing:0.35em;color:rgba(0,0,0,0.55);text-transform:uppercase;">
-            Summary
-          </p>
-
-          <div style="margin-top:16px;border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:20px;">
-            ${summaryRow("Subtotal", money(subtotal, currency))}
-            ${discount > 0 ? summaryRow(discountLabel, `-${money(discount, currency)}`) : ""}
-            ${couponCode ? summaryRow("Coupon", couponCode) : ""}
-            ${summaryRow("Shipping", money(shippingFee, currency))}
-            ${summaryRow("Tax", money(tax, currency))}
-            <div style="height:1px;background:rgba(0,0,0,0.10);margin:12px 0;"></div>
-            ${summaryRowStrong("Total Payable", money(finalPayable, currency))}
-            <p style="margin:12px 0 0 0;font-size:11px;color:rgba(0,0,0,0.50);">
-              Payment Method: ${escapeHtml(paymentMethod)}
-            </p>
-          </div>
-        </div>
-
-        <!-- Shipping Address -->
-        <div style="margin-top:40px;">
-          <p style="margin:0;font-size:11px;letter-spacing:0.35em;color:rgba(0,0,0,0.55);text-transform:uppercase;">
-            Shipping Address
-          </p>
-
-          <div style="margin-top:16px;border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:20px;">
-            <p style="margin:0;font-size:13px;line-height:24px;color:rgba(0,0,0,0.80);">
-              ${escapeHtml(shippingName)}<br/>
-              ${escapeHtml(shippingLine1)}${shippingLine2 ? `<br/>${escapeHtml(shippingLine2)}` : ""}<br/>
-              ${escapeHtml([shippingCity, shippingState, shippingZip].filter(Boolean).join(", "))}<br/>
-              ${escapeHtml(shippingCountry)}
-              ${shippingPhone ? `<br/>Phone: ${escapeHtml(shippingPhone)}` : ""}
-            </p>
-          </div>
-        </div>
-
-        <!-- CTA -->
-        ${
-          hasValidCta
-            ? `<div style="margin-top:40px;text-align:center;">
-                <a
-                  href="${escapeAttr(ctaUrl)}"
-                  style="display:inline-block;border:1px solid #000000;border-radius:9999px;padding:12px 32px;font-size:13px;font-weight:600;letter-spacing:0.03em;color:#000000;text-decoration:none;"
-                >
-                  View Order Details
-                </a>
-                <p style="margin:12px 0 0 0;font-size:11px;letter-spacing:0.03em;color:rgba(0,0,0,0.45);">
-                  Tracking will be available once shipped.
-                </p>
-              </div>`
-            : ""
-        }
-
-        <!-- Signature -->
-        <div style="margin-top:40px;">
-          <div style="height:1px;width:64px;background:rgba(0,0,0,0.20);"></div>
-          <p style="margin:20px 0 0 0;font-size:15px;line-height:28px;color:rgba(0,0,0,0.80);">
-            With regards,<br/>
-            <span style="font-weight:600;color:#000000;">Team Miray Fashions</span>
-          </p>
-        </div>
-
-      </div>
-
-      <!-- Footer -->
-      <div style="padding:28px 40px;border-top:1px solid rgba(0,0,0,0.10);">
-        <p style="margin:0;font-size:11px;line-height:22px;color:rgba(0,0,0,0.55);">
-          This is an automated message. You can reply to this email for any assistance.
-        </p>
-      </div>
-
+      <p style="margin-top:40px;">With regards,<br/><b>Team Miray Fashions</b></p>
     </div>
   </div>
-  `;
+</div>
+`;
 
   return { subject, text, html };
 }
 
-/* ------------------------- Helpers ------------------------- */
+/* ===================================================================== */
+/* ============================ HELPERS ================================= */
+/* ===================================================================== */
 
-function up(s) {
-  return String(s || "").toUpperCase();
-}
+function extractVariantInfo(it = {}) {
+  const snap = it?.productSnapshot || {};
+  const variant = it?.variant || {};
+  const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
 
-function statusCard(label, main, sub) {
-  return `
-    <td style="width:33.333%;padding:0 6px;vertical-align:top;">
-      <div style="border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:16px;">
-        <p style="margin:0;font-size:11px;letter-spacing:0.35em;color:rgba(0,0,0,0.55);text-transform:uppercase;">${escapeHtml(label)}</p>
-        <p style="margin:10px 0 0 0;font-size:13px;color:rgba(0,0,0,0.85);font-weight:500;">${escapeHtml(main)}</p>
-        <p style="margin:6px 0 0 0;font-size:11px;color:rgba(0,0,0,0.55);">${escapeHtml(sub)}</p>
-      </div>
-    </td>
-  `;
-}
+  const size =
+    it?.selectedSize ||
+    attrs.find(a => a?.key?.toLowerCase() === "size")?.value ||
+    "";
 
-function summaryRow(label, value) {
-  return `
-    <div style="display:flex;justify-content:space-between;font-size:13px;color:rgba(0,0,0,0.75);line-height:22px;margin:0 0 10px 0;">
-      <span>${escapeHtml(label)}</span>
-      <span>${escapeHtml(value)}</span>
-    </div>
-  `;
-}
+  const color =
+    it?.selectedColor ||
+    attrs.find(a => ["color","colour"].includes(a?.key?.toLowerCase()))?.value ||
+    "";
 
-function summaryRowStrong(label, value) {
-  return `
-    <div style="display:flex;justify-content:space-between;font-size:14px;color:#000000;font-weight:600;line-height:22px;margin-top:6px;">
-      <span>${escapeHtml(label)}</span>
-      <span>${escapeHtml(value)}</span>
-    </div>
-  `;
+  const sku = variant?.sku || snap?.sku || "";
+
+  const parts = [];
+  if (size) parts.push(`Size: ${size}`);
+  if (color) parts.push(`Color: ${color}`);
+  if (sku) parts.push(`SKU: ${sku}`);
+
+  return parts.join(" • ");
 }
 
 function renderItemCard(it, currency) {
   const snap = it?.productSnapshot || {};
-  const variant = it?.variant || {};
   const title = snap?.title || "Item";
   const qty = num(it?.quantity);
   const price = num(it?.price);
+  const attrsText = extractVariantInfo(it);
 
   const thumb =
-    variant?.image ||
     snap?.thumbnail ||
     (Array.isArray(snap?.images) && snap.images[0]) ||
     "";
 
-  const attrsText = formatAttrs(variant?.attributes || {});
-
   return `
-    <div style="border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:16px;margin:0 0 14px 0;display:flex;gap:14px;">
-      ${
-        thumb
-          ? `<img src="${escapeAttr(thumb)}" alt="Product"
-              style="height:64px;width:64px;border-radius:12px;object-fit:cover;border:1px solid rgba(0,0,0,0.10);" />`
-          : `<div style="height:64px;width:64px;border-radius:12px;background:rgba(0,0,0,0.04);border:1px solid rgba(0,0,0,0.10);"></div>`
-      }
-
-      <div style="flex:1;">
-        <p style="margin:0;font-size:14px;font-weight:600;color:#000000;">
-          ${escapeHtml(title)}
-        </p>
-
-        ${
-          attrsText
-            ? `<p style="margin:6px 0 0 0;font-size:12px;color:rgba(0,0,0,0.60);">
-                 ${escapeHtml(attrsText)}
-               </p>`
-            : ""
-        }
-
-        <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;">
-          <p style="margin:0;font-size:12px;color:rgba(0,0,0,0.70);">Qty: ${escapeHtml(qty)}</p>
-          <p style="margin:0;font-size:13px;font-weight:600;color:#000000;">
-            ${escapeHtml(money(price, currency))}
-          </p>
-        </div>
+  <div style="border:1px solid rgba(0,0,0,.1);border-radius:16px;padding:16px;margin-bottom:14px;display:flex;gap:14px;">
+    ${thumb ? `<img src="${escapeAttr(thumb)}" style="height:64px;width:64px;border-radius:12px;" />` : ""}
+    <div style="flex:1;">
+      <p style="margin:0;font-weight:600;">${escapeHtml(title)}</p>
+      ${attrsText ? `<p style="font-size:12px;color:#666;">${escapeHtml(attrsText)}</p>` : ""}
+      <div style="display:flex;justify-content:space-between;">
+        <span>Qty: ${qty}</span>
+        <b>${money(price, currency)}</b>
       </div>
     </div>
-  `;
-}
-
-function formatAttrs(attrs) {
-  if (!attrs || typeof attrs !== "object") return "";
-  return Object.entries(attrs)
-    .filter(([_, v]) => v !== null && v !== undefined && String(v).trim() !== "")
-    .map(([k, v]) => `${capitalize(k)}: ${String(v)}`)
-    .join(" • ");
-}
-
-function capitalize(s) {
-  return String(s || "").charAt(0).toUpperCase() + String(s || "").slice(1);
+  </div>`;
 }
 
 function formatItemText(it, i, currency) {
-  const snap = it?.productSnapshot || {};
-  const variant = it?.variant || {};
-  const title = snap?.title || "Item";
+  const title = it?.productSnapshot?.title || "Item";
   const qty = num(it?.quantity);
   const price = num(it?.price);
-  const attrsText = formatAttrs(variant?.attributes || {});
+  const attrsText = extractVariantInfo(it);
   return `${i}. ${title}${attrsText ? ` (${attrsText})` : ""} — Qty: ${qty} — ${money(price, currency)}`;
 }
 
-function money(value, currency = "INR") {
-  const n = num(value);
-  return currency === "INR" ? `₹${formatNumber(n)}` : `${currency} ${formatNumber(n)}`;
-}
+/* ---------------- Small UI helpers ---------------- */
 
-function formatNumber(n) {
-  try {
-    return Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-  } catch {
-    return String(n);
-  }
-}
+const up = s => String(s || "").toUpperCase();
+const num = v => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const money = (v, c) => c === "INR" ? `₹${Number(v).toLocaleString("en-IN")}` : `${c} ${v}`;
+const escapeHtml = s => String(s ?? "").replace(/[&<>"']/g, m => ({
+  "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
+}[m]));
+const escapeAttr = escapeHtml;
 
-function num(v) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
+/* ---- Minimal blocks (kept compact) ---- */
 
-// ✅ Prevent HTML injection
-function escapeHtml(str) {
-  return String(str ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function escapeAttr(str) {
-  return escapeHtml(str);
-}
+const emptyCard = msg => `<div style="padding:16px;border:1px dashed #ccc;">${msg}</div>`;
+const statusRow = () => "";
+const summaryBox = () => "";
+const addressBox = () => "";
+const ctaButton = url => `<a href="${escapeAttr(url)}">View Order</a>`;

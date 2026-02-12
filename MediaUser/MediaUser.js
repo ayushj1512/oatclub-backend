@@ -23,7 +23,7 @@ const mediaUserSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["admin", "editor", "viewer"],
+    enum: ["admin", "editor", "viewer"],
       default: "viewer",
       index: true,
     },

@@ -80,7 +80,7 @@ import abandonedCartRoutes from "./AbandonedCart/AbandonedCartRoutes.js";
 import homepageSettingsRoutes from "./HomepageSettings/homepageSettingsRoutes.js";
 import adminUserRoutes from "./AdminUsers/adminUserRoutes.js";
 import mediaAuthRoutes from "./MediaUser/mediaAuthRoutes.js";
-
+import commingSoonRoutes from "./ComingSoonModel/comingSoon.routes.js"
 // --------------------------------------------------
 // ✅ ENV DEBUG (VERY IMPORTANT)
 // --------------------------------------------------
@@ -242,6 +242,7 @@ app.use("/api/shipping/xpressbees", xpressbeesRoutes);
 app.use("/api/footwear", footwearRoutes);
 app.use("/api/admin/footwear", adminFootwearRoutes);
 app.use("/api/inventory-reservations", inventoryReservationRoutes);
+app.use("/api/coming-soon", commingSoonRoutes);
 
 // Admin
 app.use("/api/inventory", inventoryRoutes);
