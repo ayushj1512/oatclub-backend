@@ -176,11 +176,7 @@ ${hasValidCta ? `Open Order: ${ctaUrl}` : ""}
       <hr/>
       ${summaryRowStrong("Final Payable", money(finalPayable, currency))}
 
-      ${
-        couponCode
-          ? `<p>Coupon: <b>${escapeHtml(couponCode)}</b></p>`
-          : ""
-      }
+      ${couponCode ? `<p>Coupon: <b>${escapeHtml(couponCode)}</b></p>` : ""}
 
       <h3>Meta</h3>
       <p>
@@ -217,12 +213,12 @@ function extractVariantInfo(it = {}) {
 
   const size =
     it?.selectedSize ||
-    attrs.find(a => a?.key?.toLowerCase() === "size")?.value ||
+    attrs.find((a) => a?.key?.toLowerCase() === "size")?.value ||
     "";
 
   const color =
     it?.selectedColor ||
-    attrs.find(a => ["color","colour"].includes(a?.key?.toLowerCase()))?.value ||
+    attrs.find((a) => ["color", "colour"].includes(a?.key?.toLowerCase()))?.value ||
     "";
 
   const sku = variant?.sku || snap?.sku || "";
@@ -258,15 +254,31 @@ function formatItemText(it, i, currency) {
 
 /* ================= SMALL UTILS ================= */
 
-const num = v => (Number.isFinite(Number(v)) ? Number(v) : 0);
-const money = (v, c) => c === "INR" ? `₹${Number(v).toLocaleString("en-IN")}` : `${c} ${v}`;
-const pretty = s => String(s || "").replaceAll("_"," ").replace(/\b\w/g,c=>c.toUpperCase());
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
+const money = (v, c) =>
+  c === "INR" ? `₹${Number(v).toLocaleString("en-IN")}` : `${c} ${v}`;
+
+const pretty = (s) =>
+  String(s || "")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+
+/**
+ * ✅ IST formatter (Asia/Kolkata)
+ * NOTE: earlier code server ke local timezone me show karta tha
+ */
 function formatDate(d) {
   try {
     return new Date(d).toLocaleString("en-IN", {
-      day:"2-digit",month:"short",year:"numeric",
-      hour:"2-digit",minute:"2-digit"
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZoneName: "short", // shows IST
+      hour12: true,
     });
   } catch {
     return "";
@@ -283,10 +295,10 @@ function summaryRowStrong(label, value) {
 
 function escapeHtml(str) {
   return String(str ?? "")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 const escapeAttr = escapeHtml;
