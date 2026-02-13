@@ -17,8 +17,8 @@ import {
   confirmOrder, // ✅ NEW
   adminBookShiprocketIfMissing,      // ✅ ADD
     updateOrderAddress, // ✅ ADD THIS
-splitOrderIntoShipments
-
+splitOrderIntoShipments,
+duplicateExchangeOrder 
 } from "./orderController.js";
 
 /* ===========================
@@ -101,6 +101,11 @@ router.post("/:id/ship", bookWithShiprocket);
 
 // Cancel order
 router.post("/:id/cancel", cancelOrder);
+
+
+// Duplicate Order
+router.post("/:orderId/duplicate-exchange", duplicateExchangeOrder);
+
 
 // ✅ Confirm order (Admin / COD confirm)
 router.post("/:id/confirm", confirmOrder);
