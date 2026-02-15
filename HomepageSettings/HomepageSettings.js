@@ -15,8 +15,18 @@ const categoryRowItemSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
 
-    // Either slug OR tag (based on your current UI)
+    // NEW: navigation type
+    navigationType: {
+      type: String,
+      enum: ["collection", "category"],
+      required: true,
+      default: "category",
+    },
+
+    // Used for navigation
     slug: { type: String, trim: true, default: "" },
+
+    // Optional: in case you still use tags somewhere
     tag: { type: String, trim: true, default: "" },
 
     // Either image OR video
@@ -28,6 +38,7 @@ const categoryRowItemSchema = new mongoose.Schema(
   },
   { _id: false }
 );
+
 
 const homepageSettingsSchema = new mongoose.Schema(
   {

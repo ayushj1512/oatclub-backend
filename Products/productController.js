@@ -277,33 +277,26 @@ const applyProductCodeFilter = (filters, query) => {
     query.code ??
     query.q ??
     query.title ??
+    query.search ??   // ✅ add this
     "";
 
   const s = String(raw ?? "").trim();
   if (!s) return;
 
-  // numeric => treat as product code search
   if (isDigitsOnly(s)) {
     const codes = buildCodeCandidates(s);
-
     const skuRegex = new RegExp(escapeRegex(normalizeCode(s, 5)), "i");
 
-    // Merge into existing $or if present
     const or = Array.isArray(filters.$or) ? filters.$or : [];
 
-    // exact productCode possibilities
     or.push({ productCode: { $in: codes } });
-
-    // sku contains (CAT-00336 or CAT-00336-XS)
     or.push({ sku: skuRegex });
     or.push({ "variants.sku": skuRegex });
 
     filters.$or = or;
-    return;
   }
-
-  // non-numeric => do nothing (your text search already handled by filters.$text)
 };
+
 
 
 /* ============================================================
@@ -782,7 +775,7 @@ export const getAllProducts = async (req, res) => {
       sort,
       sku,
 
-      // ✅ NEW (optional)
+      // ✅ optional aliases
       q,
       title,
       productCode,
@@ -815,14 +808,11 @@ export const getAllProducts = async (req, res) => {
 
     /* ---------------- SKU exact ---------------- */
     if (sku) {
-      filters.$or = [
-        { sku: String(sku) },
-        { "variants.sku": String(sku) },
-      ];
+      filters.$or = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
     }
 
-    /* ---------------- ✅ productCode search (list endpoints) ---------------- */
-    applyProductCodeFilter(filters, { q, title, productCode, code });
+    /* ---------------- ✅ productCode search (supports search/q/title too) ---------------- */
+    applyProductCodeFilter(filters, { q, title, productCode, code, search });
 
     /* ---------------- price ---------------- */
     if (minPrice || maxPrice) {
@@ -831,13 +821,26 @@ export const getAllProducts = async (req, res) => {
       if (maxPrice) filters.price.$lte = Number(maxPrice);
     }
 
-    /* ---------------- search (text index) ---------------- */
-    // allow search fallback from q/title for non-numeric
-    const searchText = String(search ?? "").trim() || (
-      !isDigitsOnly(String(q ?? "").trim()) ? String(q ?? "").trim() : ""
-    ) || (
-      !isDigitsOnly(String(title ?? "").trim()) ? String(title ?? "").trim() : ""
-    );
+    /* ---------------- ✅ $text search (ONLY when query is NOT numeric) ---------------- */
+    const qStr = String(q ?? "").trim();
+    const titleStr = String(title ?? "").trim();
+    const searchStr = String(search ?? "").trim();
+    const pcStr = String(productCode ?? "").trim();
+    const codeStr = String(code ?? "").trim();
+
+    // if any param is numeric => it's a code-search, skip $text
+    const isCodeQuery =
+      isDigitsOnly(qStr) ||
+      isDigitsOnly(titleStr) ||
+      isDigitsOnly(searchStr) ||
+      isDigitsOnly(pcStr) ||
+      isDigitsOnly(codeStr);
+
+    let searchText = "";
+    if (!isCodeQuery) {
+      // prefer explicit "search", else fallback to q/title
+      searchText = searchStr || qStr || titleStr;
+    }
 
     if (searchText) filters.$text = { $search: searchText };
 
@@ -851,7 +854,8 @@ export const getAllProducts = async (req, res) => {
     };
 
     const safeLimit = Math.min(200, Math.max(1, Number(limit)));
-    const skip = (Number(page) - 1) * safeLimit;
+    const safePage = Math.max(1, Number(page));
+    const skip = (safePage - 1) * safeLimit;
     const sortObj = sortMap[sort] || { createdAt: -1 };
 
     const docs = await pop(Product.find(filters))
@@ -863,15 +867,16 @@ export const getAllProducts = async (req, res) => {
 
     return res.json({
       total,
-      page: Number(page),
+      page: safePage,
       pages: Math.ceil(total / safeLimit),
-      products: docs.map(applyStockFromVariants),
+      products: (docs || []).map(applyStockFromVariants),
     });
   } catch (e) {
     console.error("❌ Get All Products Error:", e);
     return res.status(500).json({ message: e.message });
   }
 };
+
 
 
 

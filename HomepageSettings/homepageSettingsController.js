@@ -9,12 +9,19 @@ const validateCategoryRow = (items = []) => {
   if (!Array.isArray(items)) return "categoryRow must be an array";
 
   for (const item of items) {
-    const hasSlugOrTag = Boolean(item.slug) || Boolean(item.tag);
-    const hasImageOrVideo = Boolean(item.image) || Boolean(item.video);
-
     if (!item.name) return "Each categoryRow item must have a name";
-    if (!hasSlugOrTag) return "Each categoryRow item must have slug or tag";
-    if (!hasImageOrVideo) return "Each categoryRow item must have image or video";
+
+    if (!item.navigationType)
+      return "Each categoryRow item must have navigationType";
+
+    if (!["collection", "category"].includes(item.navigationType))
+      return "navigationType must be either collection or category";
+
+    if (!item.slug)
+      return "Each categoryRow item must have a slug";
+
+    if (!item.image && !item.video)
+      return "Each categoryRow item must have image or video";
   }
 
   return null;
@@ -31,6 +38,7 @@ const validateHeroBanners = (banners = []) => {
   return null;
 };
 
+// Get or create default settings
 const getOrCreateDefaultSettings = async () => {
   let doc = await HomepageSettings.findOne({ key: "default" });
 
@@ -46,14 +54,12 @@ const getOrCreateDefaultSettings = async () => {
 };
 
 /* =========================================================
-   GET HOMEPAGE SETTINGS (default)
-   GET /api/homepage-settings
+   GET HOMEPAGE SETTINGS
 ========================================================= */
 export const getHomepageSettings = async (req, res) => {
   try {
     const settings = await getOrCreateDefaultSettings();
 
-    // Optional: return only active items
     const heroBanners = (settings.heroBanners || [])
       .filter((b) => b.isActive !== false)
       .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
@@ -62,65 +68,58 @@ export const getHomepageSettings = async (req, res) => {
       .filter((c) => c.isActive !== false)
       .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 
-    return res.json({
+    res.json({
       ...settings.toObject(),
       heroBanners,
       categoryRow,
     });
   } catch (err) {
-    console.error("Get homepage settings error:", err);
-    return res.status(500).json({ message: err.message });
+    console.error(err);
+    res.status(500).json({ message: err.message });
   }
 };
 
 /* =========================================================
-   UPDATE HOMEPAGE SETTINGS (default)
-   PUT /api/homepage-settings
+   UPDATE HOMEPAGE SETTINGS
 ========================================================= */
 export const updateHomepageSettings = async (req, res) => {
   try {
     const updates = { ...req.body };
 
-    // ✅ Validations
     if (updates.categoryRow) {
-      const errMsg = validateCategoryRow(updates.categoryRow);
-      if (errMsg) return res.status(400).json({ message: errMsg });
+      const err = validateCategoryRow(updates.categoryRow);
+      if (err) return res.status(400).json({ message: err });
     }
 
     if (updates.heroBanners) {
-      const errMsg = validateHeroBanners(updates.heroBanners);
-      if (errMsg) return res.status(400).json({ message: errMsg });
+      const err = validateHeroBanners(updates.heroBanners);
+      if (err) return res.status(400).json({ message: err });
     }
 
-    // ✅ Ensure default settings exist
     await getOrCreateDefaultSettings();
 
     const updated = await HomepageSettings.findOneAndUpdate(
       { key: "default" },
-      {
-        ...updates,
-        key: "default",
-      },
+      { ...updates, key: "default" },
       { new: true, runValidators: true }
     );
 
-    return res.json(updated);
+    res.json(updated);
   } catch (err) {
-    console.error("Update homepage settings error:", err);
-    return res.status(500).json({ message: err.message });
+    console.error(err);
+    res.status(500).json({ message: err.message });
   }
 };
 
 /* =========================================================
-   UPDATE ONLY HERO BANNERS
-   PUT /api/homepage-settings/hero-banners
+   UPDATE HERO BANNERS ONLY
 ========================================================= */
 export const updateHeroBanners = async (req, res) => {
   try {
     const { heroBanners } = req.body;
 
-    const errMsg = validateHeroBanners(heroBanners);
-    if (errMsg) return res.status(400).json({ message: errMsg });
+    const err = validateHeroBanners(heroBanners);
+    if (err) return res.status(400).json({ message: err });
 
     await getOrCreateDefaultSettings();
 
@@ -130,23 +129,22 @@ export const updateHeroBanners = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    return res.json(updated);
+    res.json(updated);
   } catch (err) {
-    console.error("Update hero banners error:", err);
-    return res.status(500).json({ message: err.message });
+    console.error(err);
+    res.status(500).json({ message: err.message });
   }
 };
 
 /* =========================================================
-   UPDATE ONLY CATEGORY ROW
-   PUT /api/homepage-settings/category-row
+   UPDATE CATEGORY ROW ONLY
 ========================================================= */
 export const updateCategoryRow = async (req, res) => {
   try {
     const { categoryRow } = req.body;
 
-    const errMsg = validateCategoryRow(categoryRow);
-    if (errMsg) return res.status(400).json({ message: errMsg });
+    const err = validateCategoryRow(categoryRow);
+    if (err) return res.status(400).json({ message: err });
 
     await getOrCreateDefaultSettings();
 
@@ -156,9 +154,9 @@ export const updateCategoryRow = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    return res.json(updated);
+    res.json(updated);
   } catch (err) {
-    console.error("Update category row error:", err);
-    return res.status(500).json({ message: err.message });
+    console.error(err);
+    res.status(500).json({ message: err.message });
   }
 };

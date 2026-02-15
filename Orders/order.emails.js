@@ -8,7 +8,6 @@ import User from "../Customer/Customer.js"; // ✅ adjust path if your User mode
 const ADMIN_ORDER_ALERT_EMAILS = [
   "finance@mirayfashions.com",
   "support@mirayfashions.com",
-  "miray.ayushjuneja@gmail.com",
 ].filter(Boolean);
 
 /* ============================================================
