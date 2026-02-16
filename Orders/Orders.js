@@ -553,6 +553,33 @@ orderSchema.pre("validate", function (next) {
   }
 });
 
+// ========================================================================================
+// ✅ AUTO-SET PRIORITY: if paid -> default priority = medium
+// - doesn't override if already "high"
+// - only applies when priority is empty/normal
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    const isPaid = String(this.paymentStatus || "").toLowerCase() === "paid";
+
+    if (isPaid) {
+      const current = String(this.priority || "normal").toLowerCase();
+
+      // don't touch high (manual urgent)
+      if (current !== "high") {
+        // set medium only when it's missing/normal
+        if (!this.priority || current === "normal") {
+          this.priority = "medium";
+        }
+      }
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
 
 // ========================================================================================
 // ⭐ AUTO-GENERATE RMA NUMBERS for any new RMA missing rmaNumber
