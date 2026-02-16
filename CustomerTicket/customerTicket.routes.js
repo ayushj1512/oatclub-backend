@@ -7,6 +7,7 @@ import {
   updateTicketStatus,
   getTicketsAdminList,
   searchTickets,
+  deleteTicket
 } from "./customerTicket.controller.js";
 
 const router = express.Router();
@@ -33,5 +34,8 @@ router.get("/tickets/:ticketId", getTicketByTicketId);
 
 // ✅ ADMIN/SUPPORT: UPDATE status + adminNotes
 router.patch("/tickets/:ticketId/status", updateTicketStatus);
+
+router.delete("/tickets/:ticketId", deleteTicket);
+
 
 export default router;

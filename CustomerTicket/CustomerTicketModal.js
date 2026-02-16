@@ -1,11 +1,8 @@
+// models/CustomerTicketModal.js
 import mongoose from "mongoose";
+import Counter from "../models/Counter.js"; // ✅ as you asked
 
-const STATUS = ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"];
-
-function generateTicketId() {
-  const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
-  return `MF-${rand}`;
-}
+export const STATUS = ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"];
 
 const AttachmentSchema = new mongoose.Schema(
   {
@@ -18,8 +15,15 @@ const AttachmentSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const pad6 = (n) => String(n).padStart(6, "0");
+const makeTicketId = (n) => `T-${pad6(n)}`;
+
 const CustomerTicketSchema = new mongoose.Schema(
   {
+    // ✅ counter-backed number
+    ticketNo: { type: Number, unique: true, index: true },
+
+    // ✅ formatted id
     ticketId: { type: String, unique: true, index: true },
 
     name: { type: String, required: true, trim: true, maxlength: 120 },
@@ -46,30 +50,34 @@ const CustomerTicketSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// ✅ Ensure ticketId exists + handle collisions safely
+/**
+ * ✅ EXACTLY like your orderNumber logic
+ * - only on new docs
+ * - uses Counter { name, seq } with findOneAndUpdate($inc)
+ * - produces: T-000001, T-000002...
+ */
 CustomerTicketSchema.pre("validate", async function (next) {
   try {
-    if (this.ticketId) return next();
+    if (!this.isNew) return next();           // only new
+    if (this.ticketNo && this.ticketId) return next(); // already set manually
 
-    // Try multiple times (super rare collisions)
-    for (let i = 0; i < 10; i++) {
-      const id = generateTicketId();
-      const exists = await mongoose.models.CustomerTicketModal?.exists({ ticketId: id });
-      if (!exists) {
-        this.ticketId = id;
-        return next();
-      }
-    }
+    const counter = await Counter.findOneAndUpdate(
+      { name: "customer_ticket" },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
 
-    return next(new Error("Failed to generate unique ticketId"));
+    const no = Number(counter.seq || 0); // first time => 1
+    this.ticketNo = no;
+    this.ticketId = makeTicketId(no);
+
+    return next();
   } catch (err) {
     return next(err);
   }
 });
 
-// ✅ Avoid OverwriteModelError in dev / hot reload
 const CustomerTicketModal =
   mongoose.models.CustomerTicketModal || mongoose.model("CustomerTicketModal", CustomerTicketSchema);
 
 export default CustomerTicketModal;
-export { STATUS };
