@@ -4,6 +4,11 @@ import { buildShiprocketPayload } from "./shiprocket.payload.js";
 import { buildReverseShiprocketPayload } from "./shiprocket.reverse.payload.js";
 import { getShiprocketToken } from "./shiprocket.auth.js";
 
+
+const SHIPROCKET_BASE = "https://apiv2.shiprocket.in/v1/external";
+const isNonEmpty = (v) => String(v || "").trim().length > 0;
+
+
 /**
  * POST /api/orders/:id/ship
  * Book forward shipment with Shiprocket
@@ -334,6 +339,133 @@ export async function getShiprocketTokenApi(req, res) {
       success: false,
       message: "Shiprocket authentication failed",
       error: err?.message,
+    });
+  }
+}
+
+
+/**
+ * ✅ GET /api/orders/:id/tracking/sync
+ * ✅ GET /api/orders/tracking/sync?orderNumber=MIRAY-000271
+ */
+export async function syncShiprocketTrackingFlex(req, res) {
+  try {
+    const id = req.params?.id;
+    const orderNumber = String(req.query?.orderNumber || "").trim();
+
+    // 1) Find order by id OR orderNumber
+    let order = null;
+    if (id) {
+      order = await Order.findById(id);
+    } else if (orderNumber) {
+      order = await Order.findOne({ orderNumber });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Provide order id or orderNumber",
+      });
+    }
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // 2) Extract identifiers (use whatever is available)
+    const shipmentId = order?.shipment?.shiprocket?.shipmentId;
+    const shiprocketOrderId = order?.shipment?.shiprocket?.orderId;
+
+    const awb =
+      order?.shipment?.shiprocket?.awb ||
+      order?.trackingDetails?.trackingId ||
+      "";
+
+    // 3) Must have shipmentId or shiprocketOrderId for /courier/track
+    if (!isNonEmpty(shipmentId) && !isNonEmpty(shiprocketOrderId)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Shiprocket shipmentId/orderId missing in order. Save these during booking; AWB alone is present.",
+        orderNumber: order.orderNumber,
+        awb,
+      });
+    }
+
+    // 4) token
+    const token = await getShiprocketToken();
+    if (!token) {
+      return res.status(500).json({
+        success: false,
+        message: "Shiprocket token not available",
+      });
+    }
+
+    // 5) Track call
+    const trackRes = await axios.get(`${SHIPROCKET_BASE}/courier/track`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: {
+        shipment_id: isNonEmpty(shipmentId) ? shipmentId : undefined,
+        order_id: isNonEmpty(shiprocketOrderId) ? shiprocketOrderId : undefined,
+      },
+    });
+
+    const td = trackRes.data?.tracking_data || {};
+    const st = td?.shipment_track?.[0] || {};
+
+    // 6) Extract normalized values
+    const nextAwb =
+      st?.awb_code ||
+      td?.awb_code ||
+      awb ||
+      "";
+
+    const nextCourier =
+      st?.courier_name ||
+      order?.shipment?.shiprocket?.courierName ||
+      order?.trackingDetails?.courierName ||
+      "";
+
+    const nextUrl =
+      st?.tracking_url ||
+      order?.shipment?.shiprocket?.trackingUrl ||
+      order?.trackingDetails?.trackingUrl ||
+      "";
+
+    // 7) Update order (DON'T overwrite shiprocket object)
+    const update = {
+      "shipment.provider": "shiprocket",
+      "shipment.shiprocket.awb": nextAwb,
+      "shipment.shiprocket.courierName": nextCourier,
+      "shipment.shiprocket.trackingUrl": nextUrl,
+
+      "trackingDetails.trackingId": nextAwb,
+      "trackingDetails.courierName": nextCourier,
+      "trackingDetails.trackingUrl": nextUrl,
+    };
+
+    await Order.updateOne({ _id: order._id }, { $set: update });
+
+    return res.status(200).json({
+      success: true,
+      message: "Tracking synced from Shiprocket",
+      orderId: String(order._id),
+      orderNumber: order.orderNumber,
+      shipmentId: shipmentId || "",
+      shiprocketOrderId: shiprocketOrderId || "",
+      trackingId: nextAwb,
+      courierName: nextCourier,
+      trackingUrl: nextUrl,
+    });
+  } catch (err) {
+    const shiprocketError = err?.response?.data || null;
+    console.error("❌ Shiprocket Tracking Sync Error:", shiprocketError || err.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Shiprocket tracking sync failed",
+      error: shiprocketError || err.message,
     });
   }
 }

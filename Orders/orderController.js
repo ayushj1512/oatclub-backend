@@ -75,6 +75,22 @@ const sendAdminOrderReceivedMail = async (order) => {
   }
 };
 
+const scrubXpressbees = (order) => {
+  if (!order || !order.shipment) return;
+
+  // If xpressbees exists but is undefined / not an object, remove it
+  if (order.shipment.xpressbees === undefined) {
+    order.shipment.xpressbees = undefined; // keep for clarity
+    delete order.shipment.xpressbees;
+  } else if (
+    order.shipment.xpressbees != null &&
+    typeof order.shipment.xpressbees !== "object"
+  ) {
+    delete order.shipment.xpressbees;
+  }
+};
+
+
 
 
 /* ============================================================
@@ -2157,29 +2173,50 @@ async function performOrderCancellation({ orderId, reason, session }) {
 
 
 
-// SHIPROCKET AUTOBOOK
+/**
+ * Auto book Shiprocket once order is PACKED.
+ * ✅ Fix included: prevents "shipment.xpressbees cast" from blocking shiprocket save
+ * (even if you don't use xpressbees, old/undefined values can still fail validation)
+ */
 async function autoBookShiprocketForOrder(order) {
   const TAG = "🚀[AUTO-SHIPROCKET]";
 
-// 🚫 Never book shipment for parent order
-if (isParentOrder(order)) {
-  return console.log(`${TAG} 🚫 SKIP: parent order cannot be shipped`, {
-    orderNumber: order?.orderNumber,
-  });
-}
+  /* ---------------- small helpers ---------------- */
+  const low = (v) => String(v || "").trim().toLowerCase();
+  const log = (m, o) => console.log(`${TAG} ${m}`, o || "");
+  const scrubXpressbees = () => {
+    // if xpressbees exists but isn't a proper object, remove it (prevents cast error)
+    if (!order?.shipment || typeof order.shipment !== "object") return;
+    if (order.shipment.xpressbees === undefined) delete order.shipment.xpressbees;
+    else if (order.shipment.xpressbees != null && typeof order.shipment.xpressbees !== "object")
+      delete order.shipment.xpressbees;
+  };
+  const ensureShipment = () => {
+    order.shipment = order.shipment && typeof order.shipment === "object" ? order.shipment : {};
+    order.shipment.shiprocket =
+      order.shipment.shiprocket && typeof order.shipment.shiprocket === "object"
+        ? order.shipment.shiprocket
+        : {};
+    scrubXpressbees();
+  };
+  const saveSafe = async () => {
+    scrubXpressbees();
+    await order.save();
+  };
 
-if (!order?.isConfirmed) return console.log(`${TAG} 🚫 SKIP: not confirmed`);
+  /* ---------------- guards ---------------- */
+  if (isParentOrder(order))
+    return log("🚫 SKIP: parent order cannot be shipped", { orderNumber: order?.orderNumber });
 
-// ✅ NEW: only packed
-if (String(order?.fulfillmentStatus || "").toLowerCase() !== "packed") {
-  return console.log(`${TAG} 🚫 SKIP: not packed yet`, {
-    orderNumber: order?.orderNumber,
-    fulfillmentStatus: order?.fulfillmentStatus,
-  });
-}
+  if (!order?.isConfirmed) return log("🚫 SKIP: not confirmed");
+  if (low(order?.fulfillmentStatus) !== "packed")
+    return log("🚫 SKIP: not packed yet", {
+      orderNumber: order?.orderNumber,
+      fulfillmentStatus: order?.fulfillmentStatus,
+    });
 
   try {
-    console.log(`${TAG} START`, {
+    log("START", {
       orderNumber: order?.orderNumber,
       orderId: order?._id?.toString(),
       paymentMethod: order?.paymentMethod,
@@ -2187,41 +2224,34 @@ if (String(order?.fulfillmentStatus || "").toLowerCase() !== "packed") {
       isConfirmed: order?.isConfirmed,
     });
 
-    // 0) Guards
-    if (!order?.isConfirmed) return console.log(`${TAG} 🚫 SKIP: not confirmed`);
-    if (!order?.shippingAddressSnapshot?.pincode)
-      return console.log(`${TAG} ❌ SKIP: shipping pincode missing`);
-    if (!process.env.SHIPROCKET_PICKUP_PINCODE)
-      return console.log(`${TAG} ❌ SKIP: SHIPROCKET_PICKUP_PINCODE missing`);
-    if (!process.env.SHIPROCKET_PICKUP_LOCATION)
-      return console.log(`${TAG} ❌ SKIP: SHIPROCKET_PICKUP_LOCATION missing`);
+    // env/address guards
+    if (!order?.shippingAddressSnapshot?.pincode) return log("❌ SKIP: shipping pincode missing");
+    if (!process.env.SHIPROCKET_PICKUP_PINCODE) return log("❌ SKIP: SHIPROCKET_PICKUP_PINCODE missing");
+    if (!process.env.SHIPROCKET_PICKUP_LOCATION) return log("❌ SKIP: SHIPROCKET_PICKUP_LOCATION missing");
 
-    // already booked?
+    // prepaid guard
+    if (low(order?.paymentMethod) === "razorpay" && low(order?.paymentStatus) !== "paid")
+      return log("⏳ SKIP: prepaid not paid yet");
+
+    ensureShipment();
+
+    // already has AWB -> done
     if (order?.shipment?.shiprocket?.awb)
-      return console.log(`${TAG} ✅ SKIP: AWB exists`, {
-        awb: order.shipment.shiprocket.awb,
-      });
+      return log("✅ SKIP: AWB exists", { awb: order.shipment.shiprocket.awb });
 
-    // shipment exists -> only assign awb
-    if (order?.shipment?.shiprocket?.shipmentId) {
-      const existingShipmentId = String(order.shipment.shiprocket.shipmentId || "").trim();
-      if (!existingShipmentId) return;
-
-      console.log(`${TAG} ✅ Shipment exists. Trying assign AWB...`, { existingShipmentId });
+    // shipment exists but AWB missing -> assign AWB
+    const existingShipmentId = String(order?.shipment?.shiprocket?.shipmentId || "").trim();
+    if (existingShipmentId) {
+      log("✅ Shipment exists. Trying assign AWB...", { existingShipmentId });
 
       try {
         const assigned = await assignAwb(existingShipmentId);
         const awb = String(assigned?.awb_code || assigned?.awb || "").trim();
+        if (!awb) return log("⚠️ Assign AWB response missing awb_code", { shipmentId: existingShipmentId });
 
-        if (!awb) {
-          return console.log(`${TAG} ⚠️ Assign AWB response missing awb_code`, {
-            shipmentId: existingShipmentId,
-            data: assigned,
-          });
-        }
-
-        order.shipment = order.shipment || {};
-        order.shipment.shiprocket = order.shipment.shiprocket || {};
+        ensureShipment();
+        order.shipment.provider = order.shipment.provider || "shiprocket";
+        order.shipment.status = "processing";
 
         order.shipment.shiprocket.awb = awb;
         order.shipment.shiprocket.courierName =
@@ -2231,7 +2261,7 @@ if (String(order?.fulfillmentStatus || "").toLowerCase() !== "packed") {
           order.shipment.shiprocket.trackingUrl ||
           `https://shiprocket.co/tracking/${awb}`;
         order.shipment.shiprocket.status = "processing";
-        order.shipment.status = "processing";
+        order.shipment.shiprocket.lastUpdatedAt = new Date();
 
         order.trackingDetails = {
           ...(order.trackingDetails || {}),
@@ -2240,10 +2270,10 @@ if (String(order?.fulfillmentStatus || "").toLowerCase() !== "packed") {
           trackingUrl: order.shipment.shiprocket.trackingUrl,
         };
 
-        await order.save();
-        return console.log(`${TAG} ✅ AWB assigned & saved`, { existingShipmentId, awb });
+        await saveSafe();
+        return log("✅ AWB assigned & saved", { shipmentId: existingShipmentId, awb });
       } catch (e) {
-        return console.log(`${TAG} ⚠️ Assign AWB failed`, {
+        return log("⚠️ Assign AWB failed", {
           shipmentId: existingShipmentId,
           message: e?.message,
           status: e?.response?.status,
@@ -2252,108 +2282,67 @@ if (String(order?.fulfillmentStatus || "").toLowerCase() !== "packed") {
       }
     }
 
-    // prepaid guard
-    if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
-      return console.log(`${TAG} ⏳ SKIP: prepaid not paid yet`);
-    }
-
-    // 1) Weight
+    /* ---------------- weight ---------------- */
     const totalWeight =
       order.items?.reduce((sum, it) => {
         const w = Number(it.variant?.weight) || Number(it.productSnapshot?.weight) || 0.5;
         return sum + w * Number(it.quantity || 1);
       }, 0) || 0.5;
 
-    // 2) Serviceability
-    const isCOD = String(order.paymentMethod || "").toLowerCase() === "cod";
+    /* ---------------- serviceability ---------------- */
+    const isCOD = low(order.paymentMethod) === "cod";
     const couriers = await checkServiceability({
       pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE,
       deliveryPincode: String(order.shippingAddressSnapshot.pincode || ""),
       weight: totalWeight,
       cod: isCOD ? 1 : 0,
     });
+    if (!Array.isArray(couriers) || couriers.length === 0) return log("⚠️ SKIP: No courier available");
 
-    if (!Array.isArray(couriers) || couriers.length === 0) {
-      return console.log(`${TAG} ⚠️ SKIP: No courier available`);
-    }
-
-    // 3) Build payload (✅ NET model should be implemented in buildShiprocketPayload)
+    /* ---------------- payload ---------------- */
     const payload = buildShiprocketPayload(order);
-
-    // ✅ Shiprocket wants "COD" or "Prepaid"
     payload.payment_method = isCOD ? "COD" : "Prepaid";
-
-    // ✅ Shipping charges from your order
     payload.shipping_charges = Number(order.shippingFee || 0);
-
-    // ✅ Collectable amount (COD)
     payload.collectable_amount = isCOD ? Number(order.finalPayable || 0) : 0;
-
-    // ✅ Avoid accidental extra additions
     if (payload.transaction_charges == null) payload.transaction_charges = 0;
 
-    // ✅ STRONG CONSISTENCY GUARD (NET)
+    // ✅ NET consistency (COD): sub_total should equal (finalPayable - shipping - tax)
     if (isCOD) {
       const expectedSubTotal = Math.max(
         0,
-        Number(order.finalPayable || 0) -
-          Number(order.shippingFee || 0) -
-          Number(order.tax || 0)
+        Number(order.finalPayable || 0) - Number(order.shippingFee || 0) - Number(order.tax || 0)
       );
-
-      // If rounding drift/mismatch happens, force to expected
       if (Number.isFinite(expectedSubTotal) && Math.abs(Number(payload.sub_total || 0) - expectedSubTotal) >= 1) {
         payload.sub_total = expectedSubTotal;
 
-        // keep items aligned (simple rebalance)
+        // quick rebalance order_items selling_price
         if (Array.isArray(payload.order_items) && payload.order_items.length) {
           const totalUnits = payload.order_items.reduce((s, x) => s + Number(x.units || 0), 0) || 1;
           const perUnit = Math.round(expectedSubTotal / totalUnits);
 
-          // reset all to perUnit first
           payload.order_items = payload.order_items.map((x) => ({
             ...x,
             selling_price: String(perUnit),
             discount: "0",
           }));
 
-          // adjust last item to fix remainder
-          const after = payload.order_items.reduce((s, x) => s + (Number(x.selling_price) * Number(x.units)), 0);
-          const delta = expectedSubTotal - after; // could be +/- small
-          const last = payload.order_items[payload.order_items.length - 1];
+          const after = payload.order_items.reduce(
+            (s, x) => s + Number(x.selling_price || 0) * Number(x.units || 0),
+            0
+          );
+          const delta = expectedSubTotal - after;
+          const lastIdx = payload.order_items.length - 1;
+          const last = payload.order_items[lastIdx];
           const lastUnits = Number(last.units || 1);
-          const lastPrice = Number(last.selling_price || 0);
-          payload.order_items[payload.order_items.length - 1] = {
+          payload.order_items[lastIdx] = {
             ...last,
-            selling_price: String(Math.max(0, lastPrice + Math.round(delta / lastUnits))),
+            selling_price: String(Math.max(0, Number(last.selling_price || 0) + Math.round(delta / lastUnits))),
           };
         }
       }
     }
 
-    // ✅ Sanity log (NET model)
-    console.log(`${TAG} 🧾 AMOUNT CHECK (NET model)`, {
-      orderSubtotal: Number(order.subtotal || 0),
-      discount: Number(order.discount || 0),
-      finalPayable: Number(order.finalPayable || 0),
-      shippingFee: Number(order.shippingFee || 0),
-      tax: Number(order.tax || 0),
-
-      payload_payment_method: payload.payment_method,
-      payload_sub_total: Number(payload.sub_total || 0),
-      payload_shipping_charges: Number(payload.shipping_charges || 0),
-      payload_transaction_charges: Number(payload.transaction_charges || 0),
-      payload_collectable_amount: Number(payload.collectable_amount || 0),
-
-      payload_expected_collectable: Math.max(
-        0,
-        Number(payload.sub_total || 0) +
-          Number(payload.shipping_charges || 0) +
-          Number(order.tax || 0)
-      ),
-    });
-
-    console.log(`${TAG} 📦 Creating shipment...`, {
+    log("📦 Creating shipment...", {
       order_id: payload?.order_id,
       payment_method: payload?.payment_method,
       weight: payload?.weight || totalWeight,
@@ -2361,39 +2350,34 @@ if (String(order?.fulfillmentStatus || "").toLowerCase() !== "packed") {
     });
 
     const shipment = await createShipment(payload);
-
     const shipmentId = shipment?.shipment_id ? String(shipment.shipment_id) : "";
     const shiprocketOrderId = shipment?.order_id ? String(shipment.order_id) : "";
     let awb = String(shipment?.awb_code || "").trim();
 
-    if (!shipmentId) return console.log(`${TAG} ❌ FAIL: shipment_id missing`, { shipment });
+    if (!shipmentId) return log("❌ FAIL: shipment_id missing", { shipment });
 
-    // 4) Save snapshot
-    order.shipment = {
-      ...(order.shipment || {}),
-      provider: "shiprocket",
-      shiprocket: {
-        ...(order.shipment?.shiprocket || {}),
-        shipmentId,
-        orderId: shiprocketOrderId,
-        awb: order.shipment?.shiprocket?.awb || "",
-        courierName: shipment?.courier_name || order.shipment?.shiprocket?.courierName || "",
-        trackingUrl: shipment?.tracking_url || order.shipment?.shiprocket?.trackingUrl || "",
-        status: "processing",
-        lastUpdatedAt: new Date(),
-      },
-      status: "processing",
-    };
+    /* ---------------- save shiprocket snapshot (NO overwrite) ---------------- */
+    ensureShipment();
+    order.shipment.provider = "shiprocket";
+    order.shipment.status = "processing";
 
-    await order.save();
+    order.shipment.shiprocket.shipmentId = shipmentId;
+    order.shipment.shiprocket.orderId = shiprocketOrderId;
+    order.shipment.shiprocket.courierName = shipment?.courier_name || order.shipment.shiprocket.courierName || "";
+    order.shipment.shiprocket.trackingUrl = shipment?.tracking_url || order.shipment.shiprocket.trackingUrl || "";
+    order.shipment.shiprocket.status = "processing";
+    order.shipment.shiprocket.lastUpdatedAt = new Date();
 
-    // 5) Assign AWB if missing
+    await saveSafe();
+
+    /* ---------------- assign AWB if missing ---------------- */
     if (!awb) {
       try {
         const assigned = await assignAwb(shipmentId);
         awb = String(assigned?.awb_code || assigned?.awb || "").trim();
 
         if (awb) {
+          ensureShipment();
           order.shipment.shiprocket.awb = awb;
           order.shipment.shiprocket.courierName =
             assigned?.courier_name || order.shipment.shiprocket.courierName || "";
@@ -2409,16 +2393,13 @@ if (String(order?.fulfillmentStatus || "").toLowerCase() !== "packed") {
             trackingUrl: order.shipment.shiprocket.trackingUrl,
           };
 
-          await order.save();
-          console.log(`${TAG} ✅ AWB assigned & saved`, { shipmentId, awb });
+          await saveSafe();
+          log("✅ AWB assigned & saved", { shipmentId, awb });
         } else {
-          console.log(`${TAG} ⚠️ Assign AWB success but awb_code missing`, {
-            shipmentId,
-            assigned,
-          });
+          log("⚠️ Assign AWB success but awb_code missing", { shipmentId });
         }
       } catch (e) {
-        console.log(`${TAG} ⚠️ Assign AWB failed`, {
+        log("⚠️ Assign AWB failed", {
           shipmentId,
           message: e?.message,
           status: e?.response?.status,
@@ -2427,7 +2408,7 @@ if (String(order?.fulfillmentStatus || "").toLowerCase() !== "packed") {
       }
     }
 
-    console.log(`${TAG} END ✅`, {
+    log("END ✅", {
       orderNumber: order.orderNumber,
       shipmentId: order.shipment?.shiprocket?.shipmentId,
       awb: order.shipment?.shiprocket?.awb,
@@ -2446,22 +2427,42 @@ if (String(order?.fulfillmentStatus || "").toLowerCase() !== "packed") {
 
 
 
+
 // Admin trigger: Book Shiprocket only if details missing
 // Route example: POST /admin/orders/:id/shiprocket/book
+// Admin trigger: Book Shiprocket ONLY if missing
+// Route: POST /admin/orders/:id/shiprocket/book
 export const adminBookShiprocketIfMissing = async (req, res) => {
   const TAG = "🛠️[ADMIN-BOOK-SHIPROCKET]";
+
+  // tiny helpers
+  const str = (v) => (v == null ? "" : String(v));
+  const low = (v) => str(v).trim().toLowerCase();
+  const trim = (v) => str(v).trim();
+
+  // ✅ Fix: if xpressbees (unused) is present as undefined/bad type, it can block order.save()
+  const scrubXpressbees = (order) => {
+    if (!order?.shipment || typeof order.shipment !== "object") return;
+    if (order.shipment.xpressbees === undefined) delete order.shipment.xpressbees;
+    else if (order.shipment.xpressbees != null && typeof order.shipment.xpressbees !== "object")
+      delete order.shipment.xpressbees;
+  };
 
   try {
     const orderId = req.params.id;
 
+    /* ---------------- validate id ---------------- */
     if (!mongoose.Types.ObjectId.isValid(orderId)) {
       return res.status(400).json({ success: false, message: "Invalid order id" });
     }
 
+    /* ---------------- load order (Mongoose doc, not lean) ---------------- */
     const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
 
-    // ✅ block parent orders
+    /* ---------------- guards ---------------- */
     if (isParentOrder(order)) {
       return res.status(400).json({
         success: false,
@@ -2470,7 +2471,6 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
       });
     }
 
-    // ✅ Must be confirmed
     if (!order.isConfirmed) {
       return res.status(400).json({
         success: false,
@@ -2479,8 +2479,7 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
       });
     }
 
-    // ✅ NEW: Must be packed
-    if (String(order.fulfillmentStatus || "").toLowerCase() !== "packed") {
+    if (low(order.fulfillmentStatus) !== "packed") {
       return res.status(400).json({
         success: false,
         message: "Shiprocket booking allowed only when order is packed.",
@@ -2489,8 +2488,7 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
       });
     }
 
-    // prepaid guard
-    if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
+    if (low(order.paymentMethod) === "razorpay" && low(order.paymentStatus) !== "paid") {
       return res.status(400).json({
         success: false,
         message: "Razorpay order is not paid yet.",
@@ -2498,7 +2496,7 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
       });
     }
 
-    if (!order?.shippingAddressSnapshot?.pincode) {
+    if (!trim(order?.shippingAddressSnapshot?.pincode)) {
       return res.status(400).json({
         success: false,
         message: "Shipping pincode missing in order.",
@@ -2506,7 +2504,7 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
       });
     }
 
-    if (!process.env.SHIPROCKET_PICKUP_PINCODE) {
+    if (!trim(process.env.SHIPROCKET_PICKUP_PINCODE)) {
       return res.status(500).json({
         success: false,
         message: "SHIPROCKET_PICKUP_PINCODE missing in env.",
@@ -2514,43 +2512,47 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
       });
     }
 
+    /* ---------------- already booked? ---------------- */
     const sr = order?.shipment?.shiprocket || {};
-    const hasAwb = Boolean(String(sr.awb || "").trim());
-    const hasShipmentId = Boolean(String(sr.shipmentId || "").trim());
-
-    const hasTrackingId = Boolean(String(order?.trackingDetails?.trackingId || "").trim());
+    const hasAwb = Boolean(trim(sr.awb));
+    const hasShipmentId = Boolean(trim(sr.shipmentId));
 
     if (hasAwb || hasShipmentId) {
       return res.status(200).json({
         success: true,
-        message: "Shiprocket already exists for this order. Skipping booking.",
         skipped: true,
+        message: "Shiprocket already exists for this order. Skipping booking.",
         reason: hasAwb ? "awb_exists" : "shipmentId_exists",
         shiprocket: {
-          shipmentId: String(sr.shipmentId || ""),
-          awb: String(sr.awb || ""),
-          courierName: String(sr.courierName || ""),
-          trackingUrl: String(sr.trackingUrl || ""),
+          shipmentId: trim(sr.shipmentId),
+          awb: trim(sr.awb),
+          courierName: trim(sr.courierName),
+          trackingUrl: trim(sr.trackingUrl),
         },
         trackingDetails: {
-          trackingId: String(order?.trackingDetails?.trackingId || ""),
-          courierName: String(order?.trackingDetails?.courierName || ""),
-          trackingUrl: String(order?.trackingDetails?.trackingUrl || ""),
+          trackingId: trim(order?.trackingDetails?.trackingId),
+          courierName: trim(order?.trackingDetails?.courierName),
+          trackingUrl: trim(order?.trackingDetails?.trackingUrl),
         },
       });
     }
 
+    /* ---------------- book now ---------------- */
     console.log(`${TAG} Booking Shiprocket...`, {
       orderId: order._id.toString(),
       orderNumber: order.orderNumber,
       paymentMethod: order.paymentMethod,
       paymentStatus: order.paymentStatus,
       fulfillmentStatus: order.fulfillmentStatus,
-      hasTrackingId,
     });
 
+    // ✅ important: remove bad xpressbees before booking (prevents cast error on save)
+    scrubXpressbees(order);
+
+    // This function will set shipment.shiprocket fields & save
     await autoBookShiprocketForOrder(order);
 
+    /* ---------------- fetch fresh view ---------------- */
     const fresh = await Order.findById(orderId).lean();
     const freshSr = fresh?.shipment?.shiprocket || {};
 
@@ -2560,19 +2562,25 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
       orderId: fresh?._id,
       orderNumber: fresh?.orderNumber,
       shiprocket: {
-        shipmentId: String(freshSr.shipmentId || ""),
-        awb: String(freshSr.awb || ""),
-        courierName: String(freshSr.courierName || ""),
-        trackingUrl: String(freshSr.trackingUrl || ""),
+        shipmentId: trim(freshSr.shipmentId),
+        awb: trim(freshSr.awb),
+        courierName: trim(freshSr.courierName),
+        trackingUrl: trim(freshSr.trackingUrl),
       },
       trackingDetails: {
-        trackingId: String(fresh?.trackingDetails?.trackingId || ""),
-        courierName: String(fresh?.trackingDetails?.courierName || ""),
-        trackingUrl: String(fresh?.trackingDetails?.trackingUrl || ""),
+        trackingId: trim(fresh?.trackingDetails?.trackingId),
+        courierName: trim(fresh?.trackingDetails?.courierName),
+        trackingUrl: trim(fresh?.trackingDetails?.trackingUrl),
       },
     });
   } catch (err) {
-    console.error("❌ adminBookShiprocketIfMissing error:", err?.message || err);
+    console.error(`${TAG} ❌ error:`, err?.message || err);
+
+    // ✅ helpful: show validation paths if any
+    if (err?.name === "ValidationError") {
+      console.error(`${TAG} Validation paths:`, Object.keys(err.errors || {}));
+    }
+
     return res.status(500).json({
       success: false,
       message: "Server error",
@@ -2580,6 +2588,7 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
     });
   }
 };
+
 
 
 

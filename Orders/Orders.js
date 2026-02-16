@@ -355,8 +355,8 @@ fulfillmentStatus: {
     courierName: { type: String, default: "XpressBees" },
     trackingUrl: { type: String, default: "" },
 
-    lastWebhook: { type: Object, default: null },
-    lastTrack: { type: Object, default: null },
+lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
+lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
   },
 
   status: {

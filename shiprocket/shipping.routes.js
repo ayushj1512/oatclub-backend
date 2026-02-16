@@ -3,6 +3,7 @@ import {
   bookWithShiprocket,
   createReversePickup,
   getShiprocketTokenApi,
+  syncShiprocketTrackingFlex
 } from "./shipping.controller.js";
 import { shiprocketWebhook } from "./shiprocket.webhook.js";
 
@@ -29,5 +30,15 @@ router.post("/1bfc4cf60e6c2cc8/1bfc4cf60e6c2cc8", shiprocketWebhook);
 
 // Reverse pickup (RMA)
 router.post("/shiprocket/reverse/:orderId/:rmaNumber", createReversePickup);
+
+
+/**
+ * ✅ ONE SYNC ENDPOINT
+ * - by orderId:      /api/orders/:id/tracking/sync
+ * - by orderNumber:  /api/orders/tracking/sync?orderNumber=MIRAY-000271
+ */
+router.get("/orders/:id/tracking/sync", syncShiprocketTrackingFlex);
+router.get("/orders/tracking/sync", syncShiprocketTrackingFlex);
+
 
 export default router;
