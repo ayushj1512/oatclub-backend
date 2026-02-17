@@ -1,6 +1,6 @@
 // customerTicket.controller.js
 import CustomerTicketModal from "./CustomerTicketModal.js";
-import { uploadToCloudinary, cloudinary } from "../config/cloudinary.js"; // ✅ cloudinary optional (see notes)
+import { uploadToCloudinary, cloudinary } from "../config/cloudinary.js";
 
 export const STATUS = ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"];
 export const ISSUE_TYPES = [
@@ -28,11 +28,12 @@ const mapAttachment = (a) => ({
 
 const mapTicket = (t) => ({
   ticketId: t.ticketId,
+  ticketNo: t.ticketNo || null,
   status: t.status,
   name: t.name,
   email: t.email,
   phone: t.phone,
-  orderId: t.orderId,
+  orderNumber: t.orderNumber || "",
   issueType: t.issueType,
   subject: t.subject,
   message: t.message,
@@ -43,6 +44,19 @@ const mapTicket = (t) => ({
   resolvedAt: t.resolvedAt || null,
 });
 
+const pickFiles = (req) => {
+  if (Array.isArray(req.files)) return req.files;
+  if (req.files && typeof req.files === "object") {
+    return Object.values(req.files).flat().filter(Boolean);
+  }
+  return req.file ? [req.file] : [];
+};
+
+const toInt = (v, d) => {
+  const n = parseInt(String(v ?? ""), 10);
+  return Number.isFinite(n) && n > 0 ? n : d;
+};
+
 /* ===================================================================
    USER: Create ticket (multipart/form-data)
    POST /api/support/tickets   (upload.array("files", 5))
@@ -52,19 +66,26 @@ export const createTicket = async (req, res) => {
     const name = s(req.body?.name);
     const email = lower(req.body?.email);
     const phone = s(req.body?.phone);
-    const orderId = s(req.body?.orderId);
+
+    // ✅ OPTIONAL orderNumber (store "" if not provided)
+    const orderNumberRaw = s(req.body?.orderNumber);
+    const orderNumber = orderNumberRaw ? upper(orderNumberRaw) : "";
+
     const subject = s(req.body?.subject);
     const issueType = s(req.body?.issueType) || "Order Issue";
     const message = s(req.body?.message);
 
     if (!name || !email || !subject || !message) {
-      return res.status(400).json({ success: false, message: "name, email, subject, message are required." });
+      return res.status(400).json({
+        success: false,
+        message: "name, email, subject, message are required.",
+      });
     }
     if (issueType && !ISSUE_TYPES.includes(issueType)) {
       return res.status(400).json({ success: false, message: "Invalid issueType." });
     }
 
-    const files = Array.isArray(req.files) ? req.files.slice(0, 5) : [];
+    const files = pickFiles(req).slice(0, 5);
     let attachments = [];
 
     if (files.length) {
@@ -88,7 +109,7 @@ export const createTicket = async (req, res) => {
       name,
       email,
       phone,
-      orderId,
+      orderNumber, // ✅ "" if not provided
       subject,
       issueType,
       message,
@@ -99,20 +120,33 @@ export const createTicket = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "Ticket created successfully.",
-      ticketId: ticket.ticketId,
       ticket: {
         ticketId: ticket.ticketId,
+        ticketNo: ticket.ticketNo || null,
+        orderNumber: ticket.orderNumber || "",
         status: ticket.status,
         createdAt: ticket.createdAt,
-        attachments: (ticket.attachments || []).map((a) => ({ url: a.url, filename: a.filename })),
+        attachments: (ticket.attachments || []).map((a) => ({
+          url: a.url,
+          filename: a.filename,
+        })),
       },
     });
   } catch (err) {
     console.error("createTicket error:", err);
-    if (err?.code === 11000) return res.status(409).json({ success: false, message: "Duplicate ticketId, try again." });
-    return res.status(500).json({ success: false, message: err?.message || "Server error creating ticket." });
+    if (err?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Duplicate ticketId/ticketNo, try again.",
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Server error creating ticket.",
+    });
   }
 };
+
 
 /* ===================================================================
    GET single ticket
@@ -121,7 +155,9 @@ export const createTicket = async (req, res) => {
 export const getTicketByTicketId = async (req, res) => {
   try {
     const ticketId = s(req.params?.ticketId);
-    if (!ticketId) return res.status(400).json({ success: false, message: "ticketId is required." });
+    if (!ticketId) {
+      return res.status(400).json({ success: false, message: "ticketId is required." });
+    }
 
     const ticket = await CustomerTicketModal.findOne({ ticketId }).lean();
     if (!ticket) return res.status(404).json({ success: false, message: "Ticket not found." });
@@ -147,7 +183,10 @@ export const updateTicketStatus = async (req, res) => {
     if (!ticketId) return res.status(400).json({ success: false, message: "ticketId is required." });
     if (!STATUS.includes(status)) return res.status(400).json({ success: false, message: "Invalid status." });
 
-    const update = { status, resolvedAt: status === "RESOLVED" ? new Date() : null };
+    const update = {
+      status,
+      resolvedAt: status === "RESOLVED" || status === "CLOSED" ? new Date() : null,
+    };
     if (adminNotes !== "") update.adminNotes = adminNotes;
 
     const ticket = await CustomerTicketModal.findOneAndUpdate({ ticketId }, update, { new: true }).lean();
@@ -171,6 +210,136 @@ export const updateTicketStatus = async (req, res) => {
 };
 
 /* ===================================================================
+   ✅ PATCH: edit ticket details (admin / internal)
+   PATCH /api/support/tickets/:ticketId
+   Body (any):
+   { name, email, phone, orderNumber, issueType, subject, message, adminNotes, status }
+   - status update also updates resolvedAt automatically
+=================================================================== */
+export const patchTicketDetails = async (req, res) => {
+  try {
+    const ticketId = s(req.params?.ticketId);
+    if (!ticketId) return res.status(400).json({ success: false, message: "ticketId is required." });
+
+    const b = req.body || {};
+    const update = {};
+
+    // ✅ editable fields (only set if provided)
+    if (b.name !== undefined) update.name = s(b.name);
+    if (b.email !== undefined) update.email = lower(b.email);
+    if (b.phone !== undefined) update.phone = s(b.phone);
+    if (b.orderNumber !== undefined) update.orderNumber = upper(b.orderNumber);
+    if (b.subject !== undefined) update.subject = s(b.subject);
+    if (b.message !== undefined) update.message = s(b.message);
+    if (b.adminNotes !== undefined) update.adminNotes = s(b.adminNotes);
+
+    if (b.issueType !== undefined) {
+      const it = s(b.issueType);
+      if (it && !ISSUE_TYPES.includes(it)) {
+        return res.status(400).json({ success: false, message: "Invalid issueType." });
+      }
+      update.issueType = it;
+    }
+
+    // ✅ optional status change here too
+    if (b.status !== undefined) {
+      const st = upper(b.status);
+      if (!STATUS.includes(st)) return res.status(400).json({ success: false, message: "Invalid status." });
+      update.status = st;
+      update.resolvedAt = st === "RESOLVED" || st === "CLOSED" ? new Date() : null;
+    }
+
+    // ✅ optional: add attachments if files provided
+    const files = pickFiles(req).slice(0, 5);
+    if (files.length) {
+      const folder = "miray/support-tickets";
+      const uploads = await Promise.all(
+        files.map(async (file) => {
+          const r = await uploadToCloudinary(file, folder, "image");
+          return {
+            url: s(r?.secure_url),
+            publicId: s(r?.public_id),
+            filename: s(file?.originalname),
+            mimeType: s(file?.mimetype),
+            size: Number(file?.size || 0),
+          };
+        })
+      );
+      const added = uploads.filter((u) => u?.url);
+      if (added.length) update.$push = { attachments: { $each: added } };
+    }
+
+    // nothing to update
+    const hasAny =
+      Object.keys(update).length > 0 ||
+      (update.$push && update.$push.attachments && update.$push.attachments.$each?.length);
+
+    if (!hasAny) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid fields provided to update.",
+      });
+    }
+
+    const ticket = await CustomerTicketModal.findOneAndUpdate({ ticketId }, update, {
+      new: true,
+      runValidators: true,
+    }).lean();
+
+    if (!ticket) return res.status(404).json({ success: false, message: "Ticket not found." });
+
+    return res.json({
+      success: true,
+      message: "Ticket details updated.",
+      ticket: mapTicket(ticket),
+    });
+  } catch (err) {
+    console.error("patchTicketDetails error:", err);
+    if (err?.code === 11000) {
+      return res.status(409).json({ success: false, message: "Duplicate value (unique field conflict)." });
+    }
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Server error updating ticket details.",
+    });
+  }
+};
+
+/* ===================================================================
+   ✅ UPDATE orderNumber (admin)
+   PATCH /api/support/tickets/:ticketId/order
+   Body: { orderNumber }
+=================================================================== */
+export const updateTicketOrderNumber = async (req, res) => {
+  try {
+    const ticketId = s(req.params?.ticketId);
+    const orderNumber = upper(req.body?.orderNumber);
+
+    if (!ticketId) return res.status(400).json({ success: false, message: "ticketId is required." });
+    if (!orderNumber) return res.status(400).json({ success: false, message: "orderNumber is required." });
+
+    const ticket = await CustomerTicketModal.findOneAndUpdate({ ticketId }, { orderNumber }, { new: true }).lean();
+    if (!ticket) return res.status(404).json({ success: false, message: "Ticket not found." });
+
+    return res.json({
+      success: true,
+      message: "Order number updated.",
+      ticket: {
+        ticketId: ticket.ticketId,
+        orderNumber: ticket.orderNumber || "",
+        updatedAt: ticket.updatedAt,
+      },
+    });
+  } catch (err) {
+    console.error("updateTicketOrderNumber error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Server error updating order number.",
+    });
+  }
+};
+
+/* ===================================================================
    GET tickets by email (exact)
    GET /api/support/tickets/by-email?email=..&status=OPEN&page=1&limit=10
 =================================================================== */
@@ -178,11 +347,17 @@ export const getTicketsByEmail = async (req, res) => {
   try {
     const email = lower(req.query?.email);
     const status = upper(req.query?.status);
-    const page = Math.max(1, Number(req.query?.page || 1));
-    const limit = Math.min(50, Math.max(1, Number(req.query?.limit || 10)));
+
+    const page = toInt(req.query?.page, 1);
+    const limit = Math.min(50, toInt(req.query?.limit, 10));
     const skip = (page - 1) * limit;
 
-    if (!email) return res.status(400).json({ success: false, message: "email is required in query (?email=...)." });
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "email is required in query (?email=...).",
+      });
+    }
 
     const filter = { email };
     if (status) {
@@ -195,7 +370,15 @@ export const getTicketsByEmail = async (req, res) => {
       CustomerTicketModal.countDocuments(filter),
     ]);
 
-    return res.json({ success: true, mode: "by-email", email, page, limit, total, tickets: items.map(mapTicket) });
+    return res.json({
+      success: true,
+      mode: "by-email",
+      email,
+      page,
+      limit,
+      total,
+      tickets: items.map(mapTicket),
+    });
   } catch (err) {
     console.error("getTicketsByEmail error:", err);
     return res.status(500).json({ success: false, message: "Server error fetching tickets by email." });
@@ -203,16 +386,64 @@ export const getTicketsByEmail = async (req, res) => {
 };
 
 /* ===================================================================
+   ✅ GET tickets by orderNumber (exact)
+   GET /api/support/tickets/by-order?orderNumber=MIRAY-000271&status=OPEN&page=1&limit=10
+=================================================================== */
+export const getTicketsByOrderNumber = async (req, res) => {
+  try {
+    const orderNumber = upper(req.query?.orderNumber);
+    const status = upper(req.query?.status);
+
+    const page = toInt(req.query?.page, 1);
+    const limit = Math.min(50, toInt(req.query?.limit, 10));
+    const skip = (page - 1) * limit;
+
+    if (!orderNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "orderNumber is required in query (?orderNumber=...).",
+      });
+    }
+
+    const filter = { orderNumber };
+    if (status) {
+      if (!STATUS.includes(status)) return res.status(400).json({ success: false, message: "Invalid status filter." });
+      filter.status = status;
+    }
+
+    const [items, total] = await Promise.all([
+      CustomerTicketModal.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      CustomerTicketModal.countDocuments(filter),
+    ]);
+
+    return res.json({
+      success: true,
+      mode: "by-order",
+      orderNumber,
+      page,
+      limit,
+      total,
+      tickets: items.map(mapTicket),
+    });
+  } catch (err) {
+    console.error("getTicketsByOrderNumber error:", err);
+    return res.status(500).json({ success: false, message: "Server error fetching tickets by order number." });
+  }
+};
+
+/* ===================================================================
    ADMIN list (filters + pagination)
-   GET /api/support/tickets?status=OPEN&issueType=Order%20Issue&q=damage&page=1&limit=15
+   GET /api/support/tickets?status=OPEN&issueType=Order%20Issue&q=damage&orderNumber=MIRAY-000271&page=1&limit=15
 =================================================================== */
 export const getTicketsAdminList = async (req, res) => {
   try {
     const status = upper(req.query?.status);
     const issueType = s(req.query?.issueType);
     const q = s(req.query?.q);
-    const page = Math.max(1, Number(req.query?.page || 1));
-    const limit = Math.min(50, Math.max(1, Number(req.query?.limit || 15)));
+    const orderNumber = upper(req.query?.orderNumber);
+
+    const page = toInt(req.query?.page, 1);
+    const limit = Math.min(50, toInt(req.query?.limit, 15));
     const skip = (page - 1) * limit;
 
     const filter = {};
@@ -223,10 +454,13 @@ export const getTicketsAdminList = async (req, res) => {
     }
 
     if (issueType && issueType !== "All") {
-      if (![...ISSUE_TYPES, "All"].includes(issueType))
+      if (![...ISSUE_TYPES, "All"].includes(issueType)) {
         return res.status(400).json({ success: false, message: "Invalid issueType." });
+      }
       filter.issueType = issueType;
     }
+
+    if (orderNumber) filter.orderNumber = orderNumber;
 
     if (q) {
       const re = new RegExp(escRe(q), "i");
@@ -235,7 +469,7 @@ export const getTicketsAdminList = async (req, res) => {
         { name: re },
         { email: re },
         { phone: re },
-        { orderId: re },
+        { orderNumber: re },
         { subject: re },
         { message: re },
       ];
@@ -246,7 +480,14 @@ export const getTicketsAdminList = async (req, res) => {
       CustomerTicketModal.countDocuments(filter),
     ]);
 
-    return res.json({ success: true, mode: "admin", page, limit, total, tickets: items.map(mapTicket) });
+    return res.json({
+      success: true,
+      mode: "admin",
+      page,
+      limit,
+      total,
+      tickets: items.map(mapTicket),
+    });
   } catch (err) {
     console.error("getTicketsAdminList error:", err);
     return res.status(500).json({ success: false, message: "Server error fetching tickets." });
@@ -261,8 +502,9 @@ export const searchTickets = async (req, res) => {
   try {
     const q = s(req.query?.q);
     const status = upper(req.query?.status);
-    const page = Math.max(1, Number(req.query?.page || 1));
-    const limit = Math.min(50, Math.max(1, Number(req.query?.limit || 50)));
+
+    const page = toInt(req.query?.page, 1);
+    const limit = Math.min(50, toInt(req.query?.limit, 50));
     const skip = (page - 1) * limit;
 
     if (!q) return res.status(400).json({ success: false, message: "q is required (?q=...)." });
@@ -279,7 +521,7 @@ export const searchTickets = async (req, res) => {
       { name: re },
       { email: re },
       { phone: re },
-      { orderId: re },
+      { orderNumber: re },
       { subject: re },
       { message: re },
     ];
@@ -289,7 +531,15 @@ export const searchTickets = async (req, res) => {
       CustomerTicketModal.countDocuments(filter),
     ]);
 
-    return res.json({ success: true, mode: "search", q, page, limit, total, tickets: items.map(mapTicket) });
+    return res.json({
+      success: true,
+      mode: "search",
+      q,
+      page,
+      limit,
+      total,
+      tickets: items.map(mapTicket),
+    });
   } catch (err) {
     console.error("searchTickets error:", err);
     return res.status(500).json({ success: false, message: "Server error searching tickets." });
@@ -308,9 +558,8 @@ export const deleteTicket = async (req, res) => {
     const ticket = await CustomerTicketModal.findOne({ ticketId }).lean();
     if (!ticket) return res.status(404).json({ success: false, message: "Ticket not found." });
 
-    // ✅ best effort: delete attachments from Cloudinary (won't fail delete if cloudinary not wired)
+    // ✅ best effort: delete attachments from Cloudinary
     const publicIds = (ticket.attachments || []).map((a) => s(a?.publicId)).filter(Boolean);
-
     if (publicIds.length && cloudinary?.uploader?.destroy) {
       await Promise.allSettled(publicIds.map((pid) => cloudinary.uploader.destroy(pid)));
     }

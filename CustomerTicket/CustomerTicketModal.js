@@ -23,29 +23,91 @@ const CustomerTicketSchema = new mongoose.Schema(
     // ✅ counter-backed number
     ticketNo: { type: Number, unique: true, index: true },
 
-    // ✅ formatted id
+    // ✅ formatted id (T-000001)
     ticketId: { type: String, unique: true, index: true },
 
-    name: { type: String, required: true, trim: true, maxlength: 120 },
-    email: { type: String, required: true, trim: true, lowercase: true, maxlength: 160 },
-    phone: { type: String, trim: true, maxlength: 20 },
-    orderId: { type: String, trim: true, maxlength: 80 },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 120,
+    },
+
+    email: {
+      type: String,
+      required: true,
+      trim: true,
+      lowercase: true,
+      maxlength: 160,
+    },
+
+    phone: {
+      type: String,
+      trim: true,
+      maxlength: 20,
+    },
+
+    /* =====================================================
+       ✅ NEW: ORDER NUMBER ASSOCIATION (for tracking ease)
+       Example: MIRAY-000271
+    ====================================================== */
+    orderNumber: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      maxlength: 40,
+      index: true, // 🔥 important for fast search
+    },
 
     issueType: {
       type: String,
-      enum: ["Order Issue", "Delivery / Shipment", "Exchange / Return", "Payment / Refund", "Product / Quality", "Other"],
+      enum: [
+        "Order Issue",
+        "Delivery / Shipment",
+        "Exchange / Return",
+        "Payment / Refund",
+        "Product / Quality",
+        "Other",
+      ],
       default: "Order Issue",
     },
 
-    subject: { type: String, required: true, trim: true, maxlength: 180 },
-    message: { type: String, required: true, trim: true, maxlength: 5000 },
+    subject: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 180,
+    },
 
-    attachments: { type: [AttachmentSchema], default: [] },
+    message: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 5000,
+    },
 
-    status: { type: String, enum: STATUS, default: "OPEN", index: true },
+    attachments: {
+      type: [AttachmentSchema],
+      default: [],
+    },
 
-    adminNotes: { type: String, trim: true, maxlength: 5000 },
-    resolvedAt: { type: Date, default: null },
+    status: {
+      type: String,
+      enum: STATUS,
+      default: "OPEN",
+      index: true,
+    },
+
+    adminNotes: {
+      type: String,
+      trim: true,
+      maxlength: 5000,
+    },
+
+    resolvedAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );
@@ -53,13 +115,13 @@ const CustomerTicketSchema = new mongoose.Schema(
 /**
  * ✅ EXACTLY like your orderNumber logic
  * - only on new docs
- * - uses Counter { name, seq } with findOneAndUpdate($inc)
+ * - uses Counter { name, seq }
  * - produces: T-000001, T-000002...
  */
 CustomerTicketSchema.pre("validate", async function (next) {
   try {
-    if (!this.isNew) return next();           // only new
-    if (this.ticketNo && this.ticketId) return next(); // already set manually
+    if (!this.isNew) return next();
+    if (this.ticketNo && this.ticketId) return next();
 
     const counter = await Counter.findOneAndUpdate(
       { name: "customer_ticket" },
@@ -67,7 +129,8 @@ CustomerTicketSchema.pre("validate", async function (next) {
       { new: true, upsert: true }
     );
 
-    const no = Number(counter.seq || 0); // first time => 1
+    const no = Number(counter.seq || 0);
+
     this.ticketNo = no;
     this.ticketId = makeTicketId(no);
 
@@ -78,6 +141,7 @@ CustomerTicketSchema.pre("validate", async function (next) {
 });
 
 const CustomerTicketModal =
-  mongoose.models.CustomerTicketModal || mongoose.model("CustomerTicketModal", CustomerTicketSchema);
+  mongoose.models.CustomerTicketModal ||
+  mongoose.model("CustomerTicketModal", CustomerTicketSchema);
 
 export default CustomerTicketModal;
