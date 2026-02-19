@@ -1,3 +1,4 @@
+// reviewController.js
 import Review from "./Review.js";
 import Product from "../Products/Products.js";
 import Customer from "../Customer/Customer.js";
@@ -58,12 +59,18 @@ const getSort = (sort = "latest") => {
   }
 };
 
+const safeStr = (v) => String(v ?? "").trim();
+const lowerStr = (v) => safeStr(v).toLowerCase();
+
+const VALID_STATUS = new Set(["approved", "rejected", "pending"]);
+
 /* -------------------------------------------------------------
-  PUBLIC: CREATE REVIEW
+  PUBLIC: CREATE REVIEW (customer required)
   - saves productCode + customer snapshots
 ------------------------------------------------------------- */
 export const createReview = async (req, res) => {
   try {
+    const body = req.body || {};
     const {
       product,
       customer,
@@ -71,19 +78,22 @@ export const createReview = async (req, res) => {
       reviewText = "",
       title = "",
       verifiedPurchase = false,
-    } = req.body;
+      images: bodyImages = [],
+    } = body;
 
-    if (!product || !customer || rating === undefined)
-      return res.status(400).json({ message: "Product, customer & rating are required" });
+    if (!product || !customer || rating === undefined) {
+      return res
+        .status(400)
+        .json({ message: "Product, customer & rating are required" });
+    }
 
     const r = parseRating(rating);
     if (!r) return res.status(400).json({ message: "Rating must be between 1 and 5" });
 
-    // prevent duplicates
+    // nice error before mongo unique index
     const exists = await Review.findOne({ product, customer }).lean();
     if (exists) return res.status(400).json({ message: "You have already reviewed this product" });
 
-    // snapshots
     const [p, c] = await Promise.all([
       Product.findById(product).select("productCode").lean(),
       Customer.findById(customer).select("name email phone").lean(),
@@ -92,35 +102,236 @@ export const createReview = async (req, res) => {
     if (!p) return res.status(404).json({ message: "Product not found" });
     if (!c) return res.status(404).json({ message: "Customer not found" });
 
-    const images = await uploadReviewImages(req.files);
+    let finalImages = Array.isArray(bodyImages)
+      ? bodyImages.map((x) => safeStr(x)).filter(Boolean)
+      : [];
+
+    if (!finalImages.length && Array.isArray(req.files) && req.files.length) {
+      finalImages = await uploadReviewImages(req.files);
+    }
 
     const review = await Review.create({
       product,
       productCode: p.productCode,
       customer,
-      customerName: c?.name || "",
-      customerEmail: c?.email || "",
-      customerPhone: c?.phone || "",
+      customerName: safeStr(c?.name || ""),
+      customerEmail: lowerStr(c?.email || ""),
+      customerPhone: safeStr(c?.phone || ""),
       rating: r,
-      title,
-      reviewText,
+      title: safeStr(title),
+      reviewText: safeStr(reviewText),
       verifiedPurchase: !!verifiedPurchase,
-      images,
+      images: finalImages,
     });
 
-    // keep Product.reviews[] in sync
     await Product.findByIdAndUpdate(product, { $addToSet: { reviews: review._id } });
-
-    // update rating stats
     await updateProductRating(product);
 
     return res.status(201).json({ message: "Review added successfully", review });
   } catch (error) {
     console.error("❌ Error creating review:", error);
 
-    if (error?.code === 11000)
+    if (error?.code === 11000) {
       return res.status(400).json({ message: "You have already reviewed this product" });
+    }
 
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+/* -------------------------------------------------------------
+  PUBLIC: CREATE PRODUCT RATING (customer optional)
+  - supports rating-only submissions
+  - accepts: product OR productCode
+  - optional: customer OR customerEmail/customerName/customerPhone (snapshots)
+  - duplicates:
+      if customerId exists -> block (product+customer)
+      else if customerEmail exists -> block (product+customerEmail where customer=null)
+------------------------------------------------------------- */
+export const createProductRating = async (req, res) => {
+  try {
+    const body = req.body || {};
+    const {
+      product, // ObjectId optional
+      productCode, // string optional
+      customer, // ObjectId optional
+      customerName = "",
+      customerEmail = "",
+      customerPhone = "",
+      rating,
+      title = "",
+      reviewText = "",
+      verifiedPurchase = false,
+      images: bodyImages = [],
+    } = body;
+
+    if (rating === undefined) {
+      return res.status(400).json({ message: "Rating is required" });
+    }
+    const r = parseRating(rating);
+    if (!r) return res.status(400).json({ message: "Rating must be between 1 and 5" });
+
+    // ✅ resolve product by id OR productCode
+    let p = null;
+    if (product) {
+      p = await Product.findById(product).select("_id productCode").lean();
+    } else if (productCode) {
+      p = await Product.findOne({ productCode: safeStr(productCode) })
+        .select("_id productCode")
+        .lean();
+    } else {
+      return res.status(400).json({ message: "Provide product or productCode" });
+    }
+    if (!p?._id) return res.status(404).json({ message: "Product not found" });
+
+    // ✅ if customer ObjectId is provided, pull snapshots from DB (optional)
+    let snapName = safeStr(customerName);
+    let snapEmail = lowerStr(customerEmail);
+    let snapPhone = safeStr(customerPhone);
+
+    if (customer) {
+      const c = await Customer.findById(customer).select("name email phone").lean();
+      if (!c) return res.status(404).json({ message: "Customer not found" });
+      snapName = safeStr(c?.name || snapName);
+      snapEmail = lowerStr(c?.email || snapEmail || "");
+      snapPhone = safeStr(c?.phone || snapPhone);
+    }
+
+    // ✅ duplicates (consistent with schema unique indexes)
+    if (customer) {
+      const exists = await Review.findOne({ product: p._id, customer }).lean();
+      if (exists) return res.status(400).json({ message: "You have already rated this product" });
+    } else if (snapEmail) {
+      const existsEmail = await Review.findOne({
+        product: p._id,
+        customer: null,
+        customerEmail: snapEmail,
+      }).lean();
+      if (existsEmail) {
+        return res.status(400).json({ message: "You have already rated this product" });
+      }
+    }
+
+    let finalImages = Array.isArray(bodyImages)
+      ? bodyImages.map((x) => safeStr(x)).filter(Boolean)
+      : [];
+    if (!finalImages.length && Array.isArray(req.files) && req.files.length) {
+      finalImages = await uploadReviewImages(req.files);
+    }
+
+    const newReview = await Review.create({
+      product: p._id,
+      productCode: p.productCode,
+      customer: customer || null,
+      customerName: snapName,
+      customerEmail: snapEmail,
+      customerPhone: snapPhone,
+      rating: r,
+      title: safeStr(title),
+      reviewText: safeStr(reviewText),
+      verifiedPurchase: !!verifiedPurchase,
+      images: finalImages,
+    });
+
+    await Product.findByIdAndUpdate(p._id, { $addToSet: { reviews: newReview._id } });
+    await updateProductRating(p._id);
+
+    return res.status(201).json({ message: "Rating submitted successfully", review: newReview });
+  } catch (error) {
+    console.error("❌ Error creating product rating:", error);
+
+    if (error?.code === 11000) {
+      return res.status(400).json({ message: "You have already rated this product" });
+    }
+
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+/* -------------------------------------------------------------
+  PUBLIC: GET REVIEWS BY PRODUCT CODE
+  - only approved reviews (frontend)
+  - supports pagination + sort
+------------------------------------------------------------- */
+export const getReviewsByProductCode = async (req, res) => {
+  try {
+    const { productCode } = req.params;
+    const { page = 1, limit = 10, sort = "latest" } = req.query;
+
+    if (!productCode) return res.status(400).json({ message: "Product code is required" });
+
+    const pageNum = Math.max(Number(page) || 1, 1);
+    const limitNum = Math.min(Math.max(Number(limit) || 10, 1), 50);
+
+    const filter = { productCode: safeStr(productCode), status: "approved" };
+
+    const [reviews, total] = await Promise.all([
+      Review.find(filter)
+        .populate("product", "title slug thumbnail productCode")
+        .populate("customer", "name email phone")
+        .sort(getSort(sort))
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum),
+      Review.countDocuments(filter),
+    ]);
+
+    return res.status(200).json({
+      items: reviews,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum) || 1,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Error fetching reviews by productCode:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+/* -------------------------------------------------------------
+  PUBLIC: GET PRODUCT RATING SUMMARY BY PRODUCT CODE
+  - avg rating + total + distribution (approved only)
+------------------------------------------------------------- */
+export const getRatingSummaryByProductCode = async (req, res) => {
+  try {
+    const productCode = safeStr(req.params.productCode);
+    if (!productCode) return res.status(400).json({ message: "Product code is required" });
+
+    const stats = await Review.aggregate([
+      { $match: { productCode, status: "approved" } },
+      {
+        $group: {
+          _id: "$productCode",
+          avg: { $avg: "$rating" },
+          total: { $sum: 1 },
+          r1: { $sum: { $cond: [{ $eq: ["$rating", 1] }, 1, 0] } },
+          r2: { $sum: { $cond: [{ $eq: ["$rating", 2] }, 1, 0] } },
+          r3: { $sum: { $cond: [{ $eq: ["$rating", 3] }, 1, 0] } },
+          r4: { $sum: { $cond: [{ $eq: ["$rating", 4] }, 1, 0] } },
+          r5: { $sum: { $cond: [{ $eq: ["$rating", 5] }, 1, 0] } },
+        },
+      },
+    ]);
+
+    const s = stats?.[0] || null;
+    const averageRating = Math.round(((s?.avg ?? 0) * 10)) / 10;
+
+    return res.status(200).json({
+      productCode,
+      averageRating,
+      totalReviews: s?.total ?? 0,
+      distribution: {
+        5: s?.r5 ?? 0,
+        4: s?.r4 ?? 0,
+        3: s?.r3 ?? 0,
+        2: s?.r2 ?? 0,
+        1: s?.r1 ?? 0,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Error fetching rating summary:", error);
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
@@ -135,7 +346,7 @@ export const getAllReviews = async (req, res) => {
 
     const filter = {
       ...(product && { product }),
-      ...(productCode && { productCode: String(productCode).trim() }),
+      ...(productCode && { productCode: safeStr(productCode) }),
       ...(customer && { customer }),
       ...(status && { status }),
     };
@@ -171,25 +382,42 @@ export const getReviewById = async (req, res) => {
 
 /* -------------------------------------------------------------
   PUBLIC/ADMIN: UPDATE REVIEW
-  - can update: rating, title, reviewText, status, verifiedPurchase
-  - if product/customer changed: refresh snapshots + sync product.reviews[]
 ------------------------------------------------------------- */
 export const updateReview = async (req, res) => {
   try {
-    const { rating, reviewText, title, status, verifiedPurchase, product, customer } = req.body;
+    const body = req.body || {};
+    const {
+      rating,
+      reviewText,
+      title,
+      status,
+      verifiedPurchase,
+      product,
+      customer,
+      customerName,
+      customerEmail,
+      customerPhone,
+    } = body;
 
     const current = await Review.findById(req.params.id).select("product").lean();
     if (!current) return res.status(404).json({ message: "Review not found" });
 
     const update = {};
+
     if (rating !== undefined) {
       const r = parseRating(rating);
       if (!r) return res.status(400).json({ message: "Rating must be between 1 and 5" });
       update.rating = r;
     }
-    if (reviewText !== undefined) update.reviewText = reviewText;
-    if (title !== undefined) update.title = title;
-    if (status !== undefined) update.status = status;
+
+    if (reviewText !== undefined) update.reviewText = safeStr(reviewText);
+    if (title !== undefined) update.title = safeStr(title);
+
+    if (status !== undefined) {
+      if (!VALID_STATUS.has(status)) return res.status(400).json({ message: "Invalid status" });
+      update.status = status;
+    }
+
     if (verifiedPurchase !== undefined) update.verifiedPurchase = !!verifiedPurchase;
 
     // product change -> productCode snapshot
@@ -200,14 +428,26 @@ export const updateReview = async (req, res) => {
       update.productCode = p.productCode;
     }
 
-    // customer change -> customer snapshots
-    if (customer) {
-      const c = await Customer.findById(customer).select("name email phone").lean();
-      if (!c) return res.status(404).json({ message: "Customer not found" });
-      update.customer = customer;
-      update.customerName = c?.name || "";
-      update.customerEmail = c?.email || "";
-      update.customerPhone = c?.phone || "";
+    // ✅ customer can be set to null (admin rating)
+    if (customer !== undefined) {
+      if (customer) {
+        const c = await Customer.findById(customer).select("name email phone").lean();
+        if (!c) return res.status(404).json({ message: "Customer not found" });
+
+        update.customer = customer;
+        update.customerName = safeStr(c?.name || "");
+        update.customerEmail = lowerStr(c?.email || "");
+        update.customerPhone = safeStr(c?.phone || "");
+      } else {
+        update.customer = null;
+        if (customerName !== undefined) update.customerName = safeStr(customerName);
+        if (customerEmail !== undefined) update.customerEmail = lowerStr(customerEmail);
+        if (customerPhone !== undefined) update.customerPhone = safeStr(customerPhone);
+      }
+    } else {
+      if (customerName !== undefined) update.customerName = safeStr(customerName);
+      if (customerEmail !== undefined) update.customerEmail = lowerStr(customerEmail);
+      if (customerPhone !== undefined) update.customerPhone = safeStr(customerPhone);
     }
 
     const updated = await Review.findByIdAndUpdate(req.params.id, update, {
@@ -233,10 +473,11 @@ export const updateReview = async (req, res) => {
   } catch (error) {
     console.error("❌ Error updating review:", error);
 
-    if (error?.code === 11000)
-      return res
-        .status(400)
-        .json({ message: "A review already exists for this product by this customer" });
+    if (error?.code === 11000) {
+      return res.status(400).json({
+        message: "A review already exists for this product by this customer/email",
+      });
+    }
 
     return res.status(500).json({ message: "Server error", error: error.message });
   }
@@ -266,11 +507,6 @@ export const deleteReview = async (req, res) => {
 
 /* -------------------------------------------------------------
   ADMIN: LIST REVIEWS (pagination + filters + search)
-  Query:
-   - page, limit
-   - status, rating, productCode, customerEmail
-   - q (search in title/reviewText/customerName/customerEmail)
-   - sort: latest | oldest | ratingHigh | ratingLow
 ------------------------------------------------------------- */
 export const adminGetReviews = async (req, res) => {
   try {
@@ -290,12 +526,11 @@ export const adminGetReviews = async (req, res) => {
 
     const filter = {
       ...(status && { status }),
-      ...(productCode && { productCode: String(productCode).trim() }),
-      ...(customerEmail && { customerEmail: String(customerEmail).trim().toLowerCase() }),
+      ...(productCode && { productCode: safeStr(productCode) }),
+      ...(customerEmail && { customerEmail: lowerStr(customerEmail) }),
       ...(rating && { rating: Number(rating) }),
     };
 
-    // search text
     if (q) {
       const rx = new RegExp(escapeRegex(q), "i");
       filter.$or = [
@@ -335,7 +570,6 @@ export const adminGetReviews = async (req, res) => {
 
 /* -------------------------------------------------------------
   ADMIN: BULK STATUS UPDATE
-  Body: { ids: ["..."], status: "approved"|"rejected"|"pending" }
 ------------------------------------------------------------- */
 export const adminBulkUpdateStatus = async (req, res) => {
   try {
@@ -344,16 +578,13 @@ export const adminBulkUpdateStatus = async (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0)
       return res.status(400).json({ message: "ids[] is required" });
 
-    if (!["approved", "rejected", "pending"].includes(status))
-      return res.status(400).json({ message: "Invalid status" });
+    if (!VALID_STATUS.has(status)) return res.status(400).json({ message: "Invalid status" });
 
-    // get affected products BEFORE update
     const affected = await Review.find({ _id: { $in: ids } }).select("product").lean();
     const productIds = [...new Set(affected.map((r) => String(r.product)))];
 
     await Review.updateMany({ _id: { $in: ids } }, { $set: { status } });
 
-    // refresh ratings for affected products
     await Promise.all(productIds.map((pid) => updateProductRating(pid)));
 
     return res.status(200).json({ message: "Status updated", count: ids.length });
@@ -365,7 +596,7 @@ export const adminBulkUpdateStatus = async (req, res) => {
 
 /* -------------------------------------------------------------
   ADMIN: BULK DELETE REVIEWS
-  Body: { ids: ["..."] }
+  ✅ FIX: do NOT update all products; only affected products
 ------------------------------------------------------------- */
 export const adminBulkDeleteReviews = async (req, res) => {
   try {
@@ -374,17 +605,20 @@ export const adminBulkDeleteReviews = async (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0)
       return res.status(400).json({ message: "ids[] is required" });
 
-    // fetch reviews to know product ids + sync Product.reviews[]
+    // find affected product ids (only)
     const reviews = await Review.find({ _id: { $in: ids } }).select("product").lean();
     const productIds = [...new Set(reviews.map((r) => String(r.product)))];
 
     await Review.deleteMany({ _id: { $in: ids } });
 
-    // pull deleted review ids from all products (safe)
-    await Product.updateMany({}, { $pull: { reviews: { $in: ids } } });
-
-    // refresh ratings
-    await Promise.all(productIds.map((pid) => updateProductRating(pid)));
+    // ✅ only update affected products
+    if (productIds.length) {
+      await Product.updateMany(
+        { _id: { $in: productIds } },
+        { $pull: { reviews: { $in: ids } } }
+      );
+      await Promise.all(productIds.map((pid) => updateProductRating(pid)));
+    }
 
     return res.status(200).json({ message: "Reviews deleted", count: ids.length });
   } catch (error) {

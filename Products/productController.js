@@ -479,7 +479,6 @@ export const createProduct = async (req, res) => {
     delete data.highlights;
 
     // ✅ NEW: specifications (screenshot table)
-    // Accept: array [{key,value}] OR JSON string OR object {Color:"Red"} OR "Color:Red|Length:Maxi"
     const normalizeSpecs = (v) => {
       const out = [];
       const push = (k, val) => {
@@ -489,7 +488,6 @@ export const createProduct = async (req, res) => {
         out.push({ key, value });
       };
 
-      // try JSON parse if string looks like JSON
       if (typeof v === "string") {
         const t = v.trim();
         if (!t) return [];
@@ -497,7 +495,6 @@ export const createProduct = async (req, res) => {
           const parsed = JSON.parse(t);
           v = parsed;
         } catch {
-          // fallback: "k:v|k2:v2" or "k=v,k2=v2"
           const parts = t.includes("|") ? t.split("|") : t.split(",");
           for (const p of parts) {
             const s = String(p || "").trim();
@@ -542,17 +539,15 @@ export const createProduct = async (req, res) => {
       data.avgFabricConsumption
     );
 
-    // ✅ NEW: COLORS normalize (accept "red,black" OR ["red","black"])
-    // This is for easy UI selection at product level.
+    // ✅ NEW: COLORS normalize
     if (data.colors !== undefined) {
       data.colors = arr(data.colors)
         .map((c) => String(c || "").trim().toLowerCase())
         .filter(Boolean);
-      // remove duplicates
       data.colors = Array.from(new Set(data.colors));
     }
 
-    // ✅ HSN CODE normalize + validate (digits only, optional)
+    // ✅ HSN CODE normalize + validate
     if (data.hsnCode !== undefined) {
       const hsn = String(data.hsnCode ?? "").trim();
       if (hsn !== "" && !/^\d+$/.test(hsn)) {
@@ -561,6 +556,20 @@ export const createProduct = async (req, res) => {
           .json({ message: "HSN code must contain digits only" });
       }
       data.hsnCode = hsn;
+    }
+
+    /* =====================================================
+       ✅ BEST SELLER FLAG (NEW)
+    ===================================================== */
+    const toBool = (v) => {
+      if (typeof v === "boolean") return v;
+      const s = String(v ?? "").trim().toLowerCase();
+      return s === "true" || s === "1" || s === "yes";
+    };
+    if (data.isBestSeller !== undefined) {
+      data.isBestSeller = toBool(data.isBestSeller);
+    } else {
+      data.isBestSeller = false; // default
     }
 
     /* ---------------- slug ---------------- */
@@ -577,7 +586,6 @@ export const createProduct = async (req, res) => {
         ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
         : [];
 
-    // ✅ Remove system categories + optionally convert new-arrivals -> tag
     const hadNewArrivals = data.categories.some(
       (c) => String(c).toLowerCase() === "new-arrivals"
     );
@@ -605,32 +613,25 @@ export const createProduct = async (req, res) => {
       data.variants = [];
       data.productType = "simple";
 
-      // ✅ In bulk, ensure colors is always an array (optional)
       if (!Array.isArray(data.colors)) data.colors = [];
-
-      // ✅ In bulk, ensure specifications always array (optional)
       if (!Array.isArray(data.specifications)) data.specifications = [];
     } else {
       await validateAttributes(data.attributes);
 
-      // safety: strip variant image if any incoming
       if (Array.isArray(data.variants)) {
         data.variants = data.variants.map(({ image, ...v }) => v);
       }
 
-      /* ---------------- auto-generate variants ---------------- */
       data.variants = generateVariants({
         productAttributes: data.attributes,
         existingVariants: [],
-        variantKeys: VARIANT_KEYS, // ✅ ["size"]
+        variantKeys: VARIANT_KEYS,
       });
 
-      // ✅ HARD SAFETY: keep only 1 variant per size + remove color attribute
       data.variants = keepOnlySizeVariants(data.variants);
 
       data.productType = data.variants.length > 0 ? "variable" : "simple";
 
-      // ✅ normalize variant-level patternNumber
       if (Array.isArray(data.variants)) {
         data.variants = data.variants.map((v) => ({
           ...v,
@@ -638,11 +639,7 @@ export const createProduct = async (req, res) => {
         }));
       }
 
-      // ✅ If variable and colors NOT provided, keep it as empty array
-      // (because variants currently don't carry color after keepOnlySizeVariants)
       if (!Array.isArray(data.colors)) data.colors = [];
-
-      // ✅ Ensure specifications always array
       if (!Array.isArray(data.specifications)) data.specifications = [];
     }
 
@@ -668,7 +665,6 @@ export const createProduct = async (req, res) => {
     data.images = images;
     data.thumbnail = thumbnail;
 
-    /* ❗ Images REQUIRED only for NON-bulk products */
     if (!isBulk && (!data.images || !data.images.length)) {
       return res
         .status(400)
@@ -690,10 +686,6 @@ export const createProduct = async (req, res) => {
 
     /* ---------------- SKU handling AFTER create ---------------- */
     const skuPayload = created.toObject();
-
-    // ensureSKUs will now generate:
-    // - simple: CAT3-PRODUCTCODE
-    // - variable: CAT3-PRODUCTCODE-SIZE
     await ensureSKUs(skuPayload);
 
     created.set({
@@ -701,33 +693,34 @@ export const createProduct = async (req, res) => {
       variants: skuPayload.variants,
       productType: skuPayload.productType,
 
-      // ✅ keep colors as well (if passed/normalized above)
       colors: Array.isArray(data.colors) ? data.colors : [],
 
-      // ✅ ensure new fields persist even if client sent empty
       shortDescription: data.shortDescription || "",
       howToStyle: data.howToStyle || "",
       fabricDetails: data.fabricDetails || "",
       keyFeatures: Array.isArray(data.keyFeatures) ? data.keyFeatures : [],
 
-      // ✅ NEW: specifications persist
-      specifications: Array.isArray(data.specifications) ? data.specifications : [],
+      specifications: Array.isArray(data.specifications)
+        ? data.specifications
+        : [],
+
+      // ✅ BEST SELLER persist (NEW)
+      isBestSeller: !!data.isBestSeller,
     });
 
-    // ✅ IMPORTANT: mark modified for nested variants (if variable)
     if (Array.isArray(skuPayload.variants)) created.markModified("variants");
     created.markModified("colors");
     created.markModified("keyFeatures");
     created.markModified("shortDescription");
     created.markModified("howToStyle");
     created.markModified("fabricDetails");
-
-    // ✅ NEW: mark specs
     created.markModified("specifications");
+
+    // ✅ NEW
+    created.markModified("isBestSeller");
 
     await created.save({ validateBeforeSave: true });
 
-    /* prevent self cross-sell (safety net) */
     await Product.updateOne(
       { _id: created._id },
       { $pull: { crossSellProducts: created._id } }
@@ -736,9 +729,7 @@ export const createProduct = async (req, res) => {
     const full = await pop(Product.findById(created._id));
 
     return res.status(201).json({
-      message: isBulk
-        ? "Bulk draft product created"
-        : "Product created successfully",
+      message: isBulk ? "Bulk draft product created" : "Product created successfully",
       product: applyStockFromVariants(full),
     });
   } catch (e) {
@@ -746,6 +737,7 @@ export const createProduct = async (req, res) => {
     return res.status(400).json({ message: e.message });
   }
 };
+
 
 
 
@@ -1079,6 +1071,13 @@ export const updateProduct = async (req, res) => {
       data.hsnCode = hsn;
     }
 
+    /* =========================================================
+       ✅ BEST SELLER FLAG (NEW)
+    ========================================================= */
+    if (data.isBestSeller !== undefined) {
+      data.isBestSeller = toBool(data.isBestSeller);
+    }
+
     /* ---------------- fetch existing ---------------- */
     const existing = await Product.findById(req.params.id);
     if (!existing) return res.status(404).json({ message: "Product not found" });
@@ -1130,8 +1129,6 @@ export const updateProduct = async (req, res) => {
 
     /* =========================================================
        ✅ STOCK REMOVAL (IMPORTANT)
-       - disallow product stock/isInStock updates here
-       - model hooks compute isInStock
     ========================================================= */
     delete data.stock;
     delete data.isInStock;
@@ -1211,6 +1208,9 @@ export const updateProduct = async (req, res) => {
     mark("colors", data.colors !== undefined);
     mark("isSamplingDone", data.isSamplingDone !== undefined);
 
+    // ✅ NEW: best seller
+    mark("isBestSeller", data.isBestSeller !== undefined);
+
     // new fields
     mark("keyFeatures", data.keyFeatures !== undefined);
     mark("shortDescription", data.shortDescription !== undefined);
@@ -1239,6 +1239,7 @@ export const updateProduct = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
 
 
 
@@ -2426,5 +2427,47 @@ export const updateProductStock = async (req, res) => {
 
 
 
+// PATCH /api/products/:id/best-seller
+// Body optional:
+// - { isBestSeller: true/false } -> direct set
+// - empty body -> toggle current value
+export const toggleBestSeller = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const toBool = (v) => {
+      if (typeof v === "boolean") return v;
+      const s = String(v ?? "").trim().toLowerCase();
+      return s === "true" || s === "1" || s === "yes";
+    };
+
+    const exists = await Product.findById(id);
+    if (!exists) return res.status(404).json({ message: "Product not found" });
+
+    let nextVal;
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "isBestSeller")) {
+      nextVal = toBool(req.body.isBestSeller);
+    } else {
+      nextVal = !Boolean(exists.isBestSeller);
+    }
+
+    const updated = await pop(
+      Product.findByIdAndUpdate(
+        id,
+        { $set: { isBestSeller: nextVal } },
+        { new: true, runValidators: true }
+      )
+    );
+
+    return res.json({
+      message: `Best Seller ${nextVal ? "enabled" : "disabled"}`,
+      isBestSeller: nextVal,
+      product: applyStockFromVariants(updated),
+    });
+  } catch (e) {
+    console.error("❌ toggleBestSeller Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};
 
 

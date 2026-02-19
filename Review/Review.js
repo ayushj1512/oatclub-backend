@@ -1,9 +1,10 @@
+// Review.js
 import mongoose from "mongoose";
 
 const reviewSchema = new mongoose.Schema(
   {
     /* ---------------------------------------------------------
-       PRODUCT (REQUIRED)
+      PRODUCT (REQUIRED)
     --------------------------------------------------------- */
     product: {
       type: mongoose.Schema.Types.ObjectId,
@@ -24,18 +25,22 @@ const reviewSchema = new mongoose.Schema(
     },
 
     /* ---------------------------------------------------------
-       CUSTOMER (REQUIRED)
+      CUSTOMER (OPTIONAL now)
+      - Admin can add reviews without linking to Customer
+      - If customer exists, keep snapshots + unique rule
     --------------------------------------------------------- */
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
-      required: true,
+      required: false,
       index: true,
+      default: null,
     },
 
     /**
      * ✅ Store customer snapshot fields (denormalized)
      * (Name, email, phone/mobile at the time of review)
+     * - Admin can type these manually even if customer is null
      */
     customerName: {
       type: String,
@@ -60,17 +65,20 @@ const reviewSchema = new mongoose.Schema(
     },
 
     /* ---------------------------------------------------------
-       RATING (1–5)
+      PRODUCT RATING (OPTIONAL)
+      - If someone only wants to rate the product without text
+      - Allows empty title/reviewText, but rating is still required
     --------------------------------------------------------- */
     rating: {
       type: Number,
       min: 1,
       max: 5,
       required: true,
+      index: true,
     },
 
     /* ---------------------------------------------------------
-       OPTIONAL TITLE OF REVIEW
+      OPTIONAL TITLE OF REVIEW
     --------------------------------------------------------- */
     title: {
       type: String,
@@ -80,7 +88,7 @@ const reviewSchema = new mongoose.Schema(
     },
 
     /* ---------------------------------------------------------
-       LONG/TEXT REVIEW
+      LONG/TEXT REVIEW
     --------------------------------------------------------- */
     reviewText: {
       type: String,
@@ -90,17 +98,12 @@ const reviewSchema = new mongoose.Schema(
     },
 
     /* ---------------------------------------------------------
-       IMAGES (CLOUDINARY URLS)
+      IMAGES (CLOUDINARY URLS)
     --------------------------------------------------------- */
-    images: [
-      {
-        type: String,
-        default: "",
-      },
-    ],
+    images: [{ type: String, default: "" }],
 
     /* ---------------------------------------------------------
-       VERIFIED PURCHASE TAG
+      VERIFIED PURCHASE TAG
     --------------------------------------------------------- */
     verifiedPurchase: {
       type: Boolean,
@@ -108,7 +111,7 @@ const reviewSchema = new mongoose.Schema(
     },
 
     /* ---------------------------------------------------------
-       STATUS
+      STATUS
     --------------------------------------------------------- */
     status: {
       type: String,
@@ -118,30 +121,54 @@ const reviewSchema = new mongoose.Schema(
     },
 
     /* ---------------------------------------------------------
-       ANALYTICS
+      ANALYTICS
     --------------------------------------------------------- */
-    helpfulCount: {
-      type: Number,
-      default: 0,
-    },
-
-    reportedCount: {
-      type: Number,
-      default: 0,
-    },
+    helpfulCount: { type: Number, default: 0 },
+    reportedCount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
 
 /* ---------------------------------------------------------
-   UNIQUE REVIEW RULE:
-   A customer should review a product only once
+  UNIQUE REVIEW RULE (UPDATED):
+  A customer should review a product only once
+  ✅ but only enforce when customer exists
 --------------------------------------------------------- */
-reviewSchema.index({ product: 1, customer: 1 }, { unique: true });
+reviewSchema.index(
+  { product: 1, customer: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { customer: { $type: "objectId" } },
+  }
+);
 
 /* ---------------------------------------------------------
-   HOOKS: auto-fill snapshots if only ObjectIds provided
-   (requires Product + Customer models to exist)
+  OPTIONAL QUALITY RULE:
+  If user is only rating, allow empty title/reviewText.
+  But if they provided text, enforce minimum length (optional).
+--------------------------------------------------------- */
+reviewSchema.pre("validate", function (next) {
+  try {
+    const title = String(this.title || "").trim();
+    const text = String(this.reviewText || "").trim();
+
+    // ✅ rating-only is allowed (no title/text needed)
+    // If you want to enforce minimum when text exists:
+    if (text && text.length < 3) {
+      return next(new Error("Review text is too short"));
+    }
+    if (title && title.length < 2) {
+      return next(new Error("Title is too short"));
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* ---------------------------------------------------------
+  HOOKS: auto-fill snapshots if only ObjectIds provided
 --------------------------------------------------------- */
 reviewSchema.pre("validate", async function (next) {
   try {
@@ -152,7 +179,7 @@ reviewSchema.pre("validate", async function (next) {
       if (p?.productCode) this.productCode = p.productCode;
     }
 
-    // Fill customer snapshot fields from Customer if missing
+    // Fill customer snapshot fields from Customer if missing AND customer provided
     if (
       this.customer &&
       (!this.customerName || !this.customerEmail || !this.customerPhone)

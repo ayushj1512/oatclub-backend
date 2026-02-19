@@ -27,6 +27,7 @@ import {
   updateProductFabrics,
   updateVariantPatternNumber,
   updateProductColors, // ✅ NEW
+  toggleBestSeller,   // ✅ NEW (ADD THIS)
 } from "./productController.js";
 
 /* ---------------- BULK CONTROLLER ---------------- */
@@ -112,6 +113,12 @@ router.patch("/:id/variant-stock", updateVariantStock); // ✅ VARIABLE only
 
 // ✅ Update fabrics + consumption (dedicated)
 router.patch("/:id/fabrics", updateProductFabrics);
+
+// ✅ NEW: Toggle / Set Best Seller
+// PATCH /api/products/:id/best-seller
+// - empty body -> toggle
+// - { isBestSeller: true/false } -> force set
+router.patch("/:id/best-seller", toggleBestSeller);
 
 // ✅ NEW: Update product colors + swatch images
 // Expects multipart/form-data:

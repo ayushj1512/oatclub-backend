@@ -224,6 +224,8 @@ const productSchema = new mongoose.Schema(
     isDraft: { type: Boolean, default: false },
     publishAt: { type: Date, default: Date.now },
 
+    isBestSeller: { type: Boolean, default: false, index: true },
+
     isSamplingDone: { type: Boolean, default: false },
 
     wordpressId: { type: Number, default: null },

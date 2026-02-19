@@ -1,31 +1,25 @@
-// BestSeller/BestSeller.jsx
-// Controller for Bestseller (idempotent create + ordered list + reorder endpoint)
-
 import mongoose from "mongoose";
 import Bestseller from "../BestSeller/BestSeller.js";
 
 const s = (v) => String(v ?? "").trim();
 const isOid = (v) => mongoose.Types.ObjectId.isValid(String(v || "").trim());
 
-// ✅ CREATE (idempotent): if exists => return existing (200), else create (201)
+// ✅ CREATE (idempotent)
 export const createBestseller = async (req, res) => {
   try {
     const productId = s(req.body?.productId);
     if (!productId) return res.status(400).json({ message: "productId is required" });
     if (!isOid(productId)) return res.status(400).json({ message: "Invalid productId" });
 
-    // already exists? return it (idempotent)
     const existing = await Bestseller.findOne({ productId }).lean();
     if (existing) return res.status(200).json(existing);
 
-    // position = append to end
     const last = await Bestseller.findOne().sort({ position: -1 }).select("position").lean();
     const position = Number(last?.position || 0) + 1;
 
     const created = await Bestseller.create({ productId, position });
     return res.status(201).json(created);
   } catch (err) {
-    // if race condition created duplicate, return existing instead of 409
     if (err?.code === 11000) {
       const productId = s(req.body?.productId);
       const existing = await Bestseller.findOne({ productId }).lean();
@@ -35,7 +29,7 @@ export const createBestseller = async (req, res) => {
   }
 };
 
-// ✅ READ: all docs (ordered)
+// ✅ READ: ordered list
 export const getAllBestsellers = async (_req, res) => {
   try {
     const data = await Bestseller.find().sort({ position: 1, createdAt: -1 });
@@ -45,7 +39,7 @@ export const getAllBestsellers = async (_req, res) => {
   }
 };
 
-// ✅ READ: ids only (ordered by position)
+// ✅ READ: ids only (ordered)
 export const getAllBestsellerIds = async (_req, res) => {
   try {
     const docs = await Bestseller.find({}, { productId: 1, _id: 0 })
@@ -58,24 +52,25 @@ export const getAllBestsellerIds = async (_req, res) => {
   }
 };
 
-// ✅ REORDER: set order by array of productIds
-// Route: PUT /api/bestseller/order   body: { ids: ["..."] }
+// ✅ REORDER: PUT /api/bestseller/order  body: { ids: ["..."] }
 export const setBestsellerOrder = async (req, res) => {
   try {
-    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(s).filter(Boolean) : [];
+    const idsRaw = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const ids = idsRaw.map(s).filter(Boolean);
+
     if (!ids.length) return res.status(400).json({ message: "ids[] is required" });
 
-    // keep only valid objectIds (optional strict)
     const clean = ids.filter(isOid);
     if (!clean.length) return res.status(400).json({ message: "No valid ids provided" });
 
-    // Ensure all in DB exist (optional: create missing)
-    // We'll only reorder existing ones.
+    // fetch existing docs
     const existing = await Bestseller.find({ productId: { $in: clean } }, { productId: 1 }).lean();
     const existingSet = new Set(existing.map((d) => String(d.productId)));
+
+    // order only those that exist
     const orderedExisting = clean.filter((id) => existingSet.has(String(id)));
 
-    // bulk update positions
+    // bulk update (positions 1..n)
     const ops = orderedExisting.map((productId, i) => ({
       updateOne: {
         filter: { productId },
@@ -85,11 +80,13 @@ export const setBestsellerOrder = async (req, res) => {
 
     if (ops.length) await Bestseller.bulkWrite(ops, { ordered: false });
 
-    // any not included (but present in DB) push to end to keep consistent
+    // ✅ compact the rest (those not present in ids array) to the end
     const tail = await Bestseller.find(
       { productId: { $nin: orderedExisting } },
       { productId: 1 }
-    ).lean();
+    )
+      .sort({ position: 1, createdAt: 1 })
+      .lean();
 
     if (tail.length) {
       const base = orderedExisting.length;
@@ -102,7 +99,11 @@ export const setBestsellerOrder = async (req, res) => {
       await Bestseller.bulkWrite(tailOps, { ordered: false });
     }
 
-    return res.status(200).json({ message: "Order saved", count: orderedExisting.length });
+    return res.status(200).json({
+      message: "Order saved",
+      count: orderedExisting.length,
+      ignored: clean.length - orderedExisting.length, // ids not found in DB
+    });
   } catch (err) {
     return res.status(500).json({ message: "Failed to save order", error: err?.message });
   }
@@ -149,6 +150,14 @@ export const deleteBestseller = async (req, res) => {
     const { id } = req.params;
     const deleted = await Bestseller.findByIdAndDelete(id);
     if (!deleted) return res.status(404).json({ message: "Bestseller not found" });
+
+    // ✅ optional compact after delete
+    const rest = await Bestseller.find({}, { productId: 1 }).sort({ position: 1 }).lean();
+    const ops = rest.map((d, i) => ({
+      updateOne: { filter: { productId: d.productId }, update: { $set: { position: i + 1 } } },
+    }));
+    if (ops.length) await Bestseller.bulkWrite(ops, { ordered: false });
+
     return res.status(200).json({ message: "Deleted", deleted });
   } catch (err) {
     return res.status(400).json({ message: "Invalid id", error: err?.message });
@@ -160,12 +169,12 @@ export const deleteBestsellerByProductId = async (req, res) => {
   try {
     const productId = s(req.params?.productId);
     if (!productId) return res.status(400).json({ message: "productId is required" });
+    if (!isOid(productId)) return res.status(400).json({ message: "Invalid productId" });
 
     const deleted = await Bestseller.findOneAndDelete({ productId });
     if (!deleted) return res.status(404).json({ message: "Bestseller not found for this productId" });
 
-    // optional: compact positions after delete (quick + safe)
-    // (skip if you don't care)
+    // ✅ compact after delete
     const rest = await Bestseller.find({}, { productId: 1 }).sort({ position: 1 }).lean();
     const ops = rest.map((d, i) => ({
       updateOne: { filter: { productId: d.productId }, update: { $set: { position: i + 1 } } },
@@ -174,6 +183,6 @@ export const deleteBestsellerByProductId = async (req, res) => {
 
     return res.status(200).json({ message: "Deleted", deleted });
   } catch (err) {
-    return res.status(400).json({ message: "Invalid productId", error: err?.message });
+    return res.status(500).json({ message: "Failed to delete", error: err?.message });
   }
 };
