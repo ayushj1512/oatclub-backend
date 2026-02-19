@@ -455,21 +455,96 @@ const keepOnlySizeVariants = (variants = []) => {
 export const createProduct = async (req, res) => {
   try {
     const data = { ...req.body };
-
-    /* =====================================================
-       BULK MODE FLAG
-    ===================================================== */
     const isBulk = data.importSource === "bulk";
 
-    /* ---------------- normalize inputs ---------------- */
+    /* ---------------- helpers ---------------- */
+    const s = (v) => String(v ?? "").trim();
+    const toBool = (v) =>
+      typeof v === "boolean" ? v : ["true", "1", "yes"].includes(s(v).toLowerCase());
+
+    const normSpecs = (v) => {
+      const out = [];
+      const push = (k, val) => {
+        const key = s(k), value = s(val);
+        if (key) out.push({ key, value });
+      };
+
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (!t) return [];
+        try { v = JSON.parse(t); }
+        catch {
+          (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => {
+            const x = s(p); if (!x) return;
+            const sep = x.includes(":") ? ":" : x.includes("=") ? "=" : null;
+            if (!sep) return;
+            const [k, ...rest] = x.split(sep);
+            push(k, rest.join(sep));
+          });
+          return out;
+        }
+      }
+
+      if (Array.isArray(v)) { v.forEach((r) => r && push(r.key, r.value)); return out; }
+      if (v && typeof v === "object") { Object.entries(v).forEach(([k, val]) => push(k, val)); return out; }
+      return [];
+    };
+
+    const normFabrics = (v) => {
+      const ROLES = new Set(["main", "lining", "contrast", "padding", "other"]);
+      const out = [];
+      const push = (row) => {
+        if (!row) return;
+
+        if (typeof row === "string") {
+          const name = s(row);
+          if (name) out.push({ fabricName: name, fabricCode: "", fabricColor: "", role: "main" });
+          return;
+        }
+        if (typeof row !== "object") return;
+
+        const fabricName = s(row.fabricName);
+        const fabricCode = s(row.fabricCode);
+        const fabricColor = s(row.fabricColor);
+        const roleRaw = s(row.role || "main").toLowerCase();
+        const role = ROLES.has(roleRaw) ? roleRaw : "main";
+
+        const hasAny = !!(fabricName || fabricCode || fabricColor || s(row.role));
+        if (!hasAny) return;
+
+        const finalName = fabricName || fabricCode; // backward compat
+        if (!finalName) throw new Error("Fabric name is required in fabrics[]");
+
+        out.push({ fabricName: finalName, fabricCode: fabricCode || "", fabricColor: fabricColor || "", role });
+      };
+
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (!t) return [];
+        try { v = JSON.parse(t); }
+        catch {
+          (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => push(String(p || "")));
+          return out;
+        }
+      }
+
+      if (Array.isArray(v)) { v.forEach(push); return out; }
+      if (v && typeof v === "object") {
+        const looksSingle = ("fabricName" in v) || ("fabricCode" in v) || ("fabricColor" in v) || ("role" in v);
+        if (looksSingle) { push(v); return out; }
+        Object.entries(v).forEach(([role, name]) => push({ role, fabricName: name }));
+        return out;
+      }
+      return [];
+    };
+
+    /* ---------------- normalize basics ---------------- */
     data.attributes = json(data.attributes, []);
 
-    // ✅ NEW DESCRIPTION FIELDS (we don't need long anymore)
-    data.shortDescription = String(data.shortDescription ?? "").trim();
-    data.howToStyle = String(data.howToStyle ?? "").trim();
-    data.fabricDetails = String(data.fabricDetails ?? "").trim();
+    data.shortDescription = s(data.shortDescription);
+    data.howToStyle = s(data.howToStyle);
+    data.fabricDetails = s(data.fabricDetails);
 
-    // ✅ keyFeatures (array) + backward compat with highlights
     data.keyFeatures =
       data.keyFeatures !== undefined
         ? json(data.keyFeatures, [])
@@ -478,103 +553,41 @@ export const createProduct = async (req, res) => {
           : [];
     delete data.highlights;
 
-    // ✅ NEW: specifications (screenshot table)
-    const normalizeSpecs = (v) => {
-      const out = [];
-      const push = (k, val) => {
-        const key = String(k ?? "").trim();
-        const value = String(val ?? "").trim();
-        if (!key) return;
-        out.push({ key, value });
-      };
-
-      if (typeof v === "string") {
-        const t = v.trim();
-        if (!t) return [];
-        try {
-          const parsed = JSON.parse(t);
-          v = parsed;
-        } catch {
-          const parts = t.includes("|") ? t.split("|") : t.split(",");
-          for (const p of parts) {
-            const s = String(p || "").trim();
-            if (!s) continue;
-            const sep = s.includes(":") ? ":" : s.includes("=") ? "=" : null;
-            if (!sep) continue;
-            const [k, ...rest] = s.split(sep);
-            push(k, rest.join(sep));
-          }
-          return out;
-        }
-      }
-
-      if (Array.isArray(v)) {
-        for (const row of v) {
-          if (!row) continue;
-          push(row.key, row.value);
-        }
-        return out;
-      }
-
-      if (v && typeof v === "object") {
-        for (const [k, val] of Object.entries(v)) push(k, val);
-        return out;
-      }
-
-      return [];
-    };
-
-    data.specifications = normalizeSpecs(
-      data.specifications !== undefined ? data.specifications : data.specs
-    );
+    data.specifications = normSpecs(data.specifications ?? data.specs);
     delete data.specs;
 
     data.keywords = arr(data.keywords);
     data.tags = tagsNorm(data.tags);
     data.collections = arr(data.collections);
 
-    data.fabrics = json(data.fabrics, []);
-    data.avgFabricConsumption = json(
-      data.avgFabricConsumption,
-      data.avgFabricConsumption
-    );
-
-    // ✅ NEW: COLORS normalize
-    if (data.colors !== undefined) {
-      data.colors = arr(data.colors)
-        .map((c) => String(c || "").trim().toLowerCase())
-        .filter(Boolean);
-      data.colors = Array.from(new Set(data.colors));
+    // ✅ fabrics (optional)
+    try {
+      if (data.fabrics !== undefined) data.fabrics = normFabrics(data.fabrics);
+      else data.fabrics = [];
+    } catch (err) {
+      return res.status(400).json({ message: err.message || "Invalid fabrics" });
     }
 
-    // ✅ HSN CODE normalize + validate
+    data.avgFabricConsumption = json(data.avgFabricConsumption, data.avgFabricConsumption);
+
+    if (data.colors !== undefined) {
+      data.colors = Array.from(
+        new Set(arr(data.colors).map((c) => s(c).toLowerCase()).filter(Boolean))
+      );
+    }
+
     if (data.hsnCode !== undefined) {
-      const hsn = String(data.hsnCode ?? "").trim();
-      if (hsn !== "" && !/^\d+$/.test(hsn)) {
-        return res
-          .status(400)
-          .json({ message: "HSN code must contain digits only" });
+      const hsn = s(data.hsnCode);
+      if (hsn && !/^\d+$/.test(hsn)) {
+        return res.status(400).json({ message: "HSN code must contain digits only" });
       }
       data.hsnCode = hsn;
     }
 
-    /* =====================================================
-       ✅ BEST SELLER FLAG (NEW)
-    ===================================================== */
-    const toBool = (v) => {
-      if (typeof v === "boolean") return v;
-      const s = String(v ?? "").trim().toLowerCase();
-      return s === "true" || s === "1" || s === "yes";
-    };
-    if (data.isBestSeller !== undefined) {
-      data.isBestSeller = toBool(data.isBestSeller);
-    } else {
-      data.isBestSeller = false; // default
-    }
+    data.isBestSeller = data.isBestSeller !== undefined ? toBool(data.isBestSeller) : false;
 
     /* ---------------- slug ---------------- */
     data.slug = slugify(String(data.slug || data.title || ""), { lower: true });
-
     if (await Product.exists({ slug: data.slug })) {
       return res.status(400).json({ message: "Slug already exists" });
     }
@@ -583,20 +596,13 @@ export const createProduct = async (req, res) => {
     data.categories = Array.isArray(data.categories)
       ? data.categories
       : typeof data.categories === "string"
-        ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
+        ? data.categories.split(",").map((c) => s(c)).filter(Boolean)
         : [];
 
-    const hadNewArrivals = data.categories.some(
-      (c) => String(c).toLowerCase() === "new-arrivals"
-    );
+    const hadNewArrivals = data.categories.some((c) => String(c).toLowerCase() === "new-arrivals");
+    data.categories = data.categories.filter((c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase()));
 
-    data.categories = data.categories.filter(
-      (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase())
-    );
-
-    if (hadNewArrivals) {
-      data.tags = Array.from(new Set([...(data.tags || []), "new-arrival"]));
-    }
+    if (hadNewArrivals) data.tags = Array.from(new Set([...(data.tags || []), "new-arrival"]));
 
     if (!data.categories.length) {
       return res.status(400).json({
@@ -605,58 +611,41 @@ export const createProduct = async (req, res) => {
       });
     }
 
-    /* =====================================================
-       BULK PRODUCTS → FORCE SIMPLE + NO VARIANTS
-    ===================================================== */
+    /* ---------------- variants ---------------- */
     if (isBulk) {
       data.attributes = [];
       data.variants = [];
       data.productType = "simple";
-
-      if (!Array.isArray(data.colors)) data.colors = [];
-      if (!Array.isArray(data.specifications)) data.specifications = [];
+      data.colors = Array.isArray(data.colors) ? data.colors : [];
+      data.specifications = Array.isArray(data.specifications) ? data.specifications : [];
     } else {
       await validateAttributes(data.attributes);
 
-      if (Array.isArray(data.variants)) {
-        data.variants = data.variants.map(({ image, ...v }) => v);
-      }
+      if (Array.isArray(data.variants)) data.variants = data.variants.map(({ image, ...v }) => v);
 
-      data.variants = generateVariants({
-        productAttributes: data.attributes,
-        existingVariants: [],
-        variantKeys: VARIANT_KEYS,
-      });
+      data.variants = keepOnlySizeVariants(
+        generateVariants({
+          productAttributes: data.attributes,
+          existingVariants: [],
+          variantKeys: VARIANT_KEYS,
+        })
+      );
 
-      data.variants = keepOnlySizeVariants(data.variants);
-
-      data.productType = data.variants.length > 0 ? "variable" : "simple";
-
-      if (Array.isArray(data.variants)) {
-        data.variants = data.variants.map((v) => ({
-          ...v,
-          patternNumber: String(v?.patternNumber || "").trim(),
-        }));
-      }
+      data.productType = data.variants.length ? "variable" : "simple";
+      data.variants = (data.variants || []).map((v) => ({ ...v, patternNumber: s(v?.patternNumber) }));
 
       if (!Array.isArray(data.colors)) data.colors = [];
       if (!Array.isArray(data.specifications)) data.specifications = [];
     }
 
-    /* =====================================================
-       CROSS-SELL PRODUCTS
-    ===================================================== */
-    data.crossSellProducts = Array.isArray(data.crossSellProducts)
+    /* ---------------- cross-sell ---------------- */
+    data.crossSellProducts = (Array.isArray(data.crossSellProducts)
       ? data.crossSellProducts
       : typeof data.crossSellProducts === "string"
-        ? data.crossSellProducts.split(",").map((id) => id.trim())
-        : [];
+        ? data.crossSellProducts.split(",").map((id) => s(id))
+        : []).filter(isValidObjectId);
 
-    data.crossSellProducts = data.crossSellProducts.filter(isValidObjectId);
-
-    /* =====================================================
-       MEDIA HANDLING
-    ===================================================== */
+    /* ---------------- uploads ---------------- */
     const { images, thumbnail } = await mergeUploads(req, {
       images: data.images,
       thumbnail: data.thumbnail,
@@ -666,14 +655,9 @@ export const createProduct = async (req, res) => {
     data.thumbnail = thumbnail;
 
     if (!isBulk && (!data.images || !data.images.length)) {
-      return res
-        .status(400)
-        .json({ message: "At least one product image is required" });
+      return res.status(400).json({ message: "At least one product image is required" });
     }
 
-    /* =====================================================
-       BULK FLAGS (VERY IMPORTANT)
-    ===================================================== */
     if (isBulk) {
       data.images = [];
       data.thumbnail = "";
@@ -681,10 +665,9 @@ export const createProduct = async (req, res) => {
       data.isActive = false;
     }
 
-    /* ---------------- create FIRST (so productCode exists) ---------------- */
+    /* ---------------- create + sku ---------------- */
     const created = await Product.create(data);
 
-    /* ---------------- SKU handling AFTER create ---------------- */
     const skuPayload = created.toObject();
     await ensureSKUs(skuPayload);
 
@@ -692,39 +675,23 @@ export const createProduct = async (req, res) => {
       sku: skuPayload.sku,
       variants: skuPayload.variants,
       productType: skuPayload.productType,
-
       colors: Array.isArray(data.colors) ? data.colors : [],
-
       shortDescription: data.shortDescription || "",
       howToStyle: data.howToStyle || "",
       fabricDetails: data.fabricDetails || "",
       keyFeatures: Array.isArray(data.keyFeatures) ? data.keyFeatures : [],
-
-      specifications: Array.isArray(data.specifications)
-        ? data.specifications
-        : [],
-
-      // ✅ BEST SELLER persist (NEW)
+      specifications: Array.isArray(data.specifications) ? data.specifications : [],
       isBestSeller: !!data.isBestSeller,
     });
 
     if (Array.isArray(skuPayload.variants)) created.markModified("variants");
-    created.markModified("colors");
-    created.markModified("keyFeatures");
-    created.markModified("shortDescription");
-    created.markModified("howToStyle");
-    created.markModified("fabricDetails");
-    created.markModified("specifications");
-
-    // ✅ NEW
-    created.markModified("isBestSeller");
+    ["colors", "keyFeatures", "shortDescription", "howToStyle", "fabricDetails", "specifications", "isBestSeller"].forEach((k) =>
+      created.markModified(k)
+    );
 
     await created.save({ validateBeforeSave: true });
 
-    await Product.updateOne(
-      { _id: created._id },
-      { $pull: { crossSellProducts: created._id } }
-    );
+    await Product.updateOne({ _id: created._id }, { $pull: { crossSellProducts: created._id } });
 
     const full = await pop(Product.findById(created._id));
 
@@ -737,6 +704,8 @@ export const createProduct = async (req, res) => {
     return res.status(400).json({ message: e.message });
   }
 };
+
+
 
 
 
@@ -975,73 +944,115 @@ export const updateProduct = async (req, res) => {
   try {
     const data = { ...req.body };
 
-    /* ---------------- tiny helpers ---------------- */
-    const toStr = (v) => String(v ?? "").trim();
-    const toBool = (v) => {
-      if (typeof v === "boolean") return v;
-      const s = String(v ?? "").trim().toLowerCase();
-      return s === "true" || s === "1" || s === "yes";
-    };
-    const normColors = (v) => {
-      const raw = Array.isArray(v) ? v : String(v || "").split(",");
-      return Array.from(
-        new Set(raw.map((c) => String(c || "").trim().toLowerCase()).filter(Boolean))
+    /* ---------------- helpers ---------------- */
+    const s = (v) => String(v ?? "").trim();
+    const toBool = (v) =>
+      typeof v === "boolean" ? v : ["true", "1", "yes"].includes(s(v).toLowerCase());
+
+    const normColors = (v) =>
+      Array.from(
+        new Set(
+          (Array.isArray(v) ? v : String(v || "").split(","))
+            .map((c) => s(c).toLowerCase())
+            .filter(Boolean)
+        )
       );
-    };
+
     const normSpecs = (v) => {
       const out = [];
       const push = (k, val) => {
-        const key = toStr(k);
-        const value = toStr(val);
-        if (!key) return;
-        out.push({ key, value });
+        const key = s(k), value = s(val);
+        if (key) out.push({ key, value });
       };
 
       if (typeof v === "string") {
         const t = v.trim();
         if (!t) return [];
-        try {
-          v = JSON.parse(t);
-        } catch {
-          const parts = t.includes("|") ? t.split("|") : t.split(",");
-          for (const p of parts) {
-            const s = String(p || "").trim();
-            if (!s) continue;
-            const sep = s.includes(":") ? ":" : s.includes("=") ? "=" : null;
-            if (!sep) continue;
-            const [k, ...rest] = s.split(sep);
+        try { v = JSON.parse(t); }
+        catch {
+          (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => {
+            const x = s(p); if (!x) return;
+            const sep = x.includes(":") ? ":" : x.includes("=") ? "=" : null;
+            if (!sep) return;
+            const [k, ...rest] = x.split(sep);
             push(k, rest.join(sep));
-          }
+          });
           return out;
         }
       }
 
-      if (Array.isArray(v)) {
-        v.forEach((row) => row && push(row.key, row.value));
-        return out;
+      if (Array.isArray(v)) { v.forEach((r) => r && push(r.key, r.value)); return out; }
+      if (v && typeof v === "object") { Object.entries(v).forEach(([k, val]) => push(k, val)); return out; }
+      return [];
+    };
+
+    const normFabrics = (v) => {
+      const ROLES = new Set(["main", "lining", "contrast", "padding", "other"]);
+      const out = [];
+
+      const push = (row) => {
+        if (!row) return;
+
+        if (typeof row === "string") {
+          const name = s(row);
+          if (name) out.push({ fabricName: name, fabricCode: "", fabricColor: "", role: "main" });
+          return;
+        }
+        if (typeof row !== "object") return;
+
+        const fabricName = s(row.fabricName);
+        const fabricCode = s(row.fabricCode);
+        const fabricColor = s(row.fabricColor);
+        const roleRaw = s(row.role || "main").toLowerCase();
+        const role = ROLES.has(roleRaw) ? roleRaw : "main";
+
+        const hasAny = !!(fabricName || fabricCode || fabricColor || s(row.role));
+        if (!hasAny) return;
+
+        const finalName = fabricName || fabricCode; // backward compat
+        if (!finalName) throw new Error("Fabric name is required in fabrics[]");
+
+        out.push({
+          fabricName: finalName,
+          fabricCode: fabricCode || "",
+          fabricColor: fabricColor || "",
+          role,
+        });
+      };
+
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (!t) return [];
+        try { v = JSON.parse(t); }
+        catch {
+          (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => push(String(p || "")));
+          return out;
+        }
       }
 
+      if (Array.isArray(v)) { v.forEach(push); return out; }
       if (v && typeof v === "object") {
-        Object.entries(v).forEach(([k, val]) => push(k, val));
+        const looksSingle =
+          ("fabricName" in v) || ("fabricCode" in v) || ("fabricColor" in v) || ("role" in v);
+        if (looksSingle) { push(v); return out; }
+        Object.entries(v).forEach(([role, name]) => push({ role, fabricName: name }));
         return out;
       }
 
       return [];
     };
 
-    /* ---------------- normalize inputs ---------------- */
-    data.attributes = json(data.attributes, data.attributes);
+    /* ---------------- normalize (only if provided) ---------------- */
+    if (data.attributes !== undefined) data.attributes = json(data.attributes, data.attributes);
 
-    if (data.shortDescription !== undefined) data.shortDescription = toStr(data.shortDescription);
-    if (data.howToStyle !== undefined) data.howToStyle = toStr(data.howToStyle);
-    if (data.fabricDetails !== undefined) data.fabricDetails = toStr(data.fabricDetails);
+    if (data.shortDescription !== undefined) data.shortDescription = s(data.shortDescription);
+    if (data.howToStyle !== undefined) data.howToStyle = s(data.howToStyle);
+    if (data.fabricDetails !== undefined) data.fabricDetails = s(data.fabricDetails);
 
-    // ✅ keyFeatures + backward compat highlights
     if (data.keyFeatures !== undefined) data.keyFeatures = json(data.keyFeatures, []);
     else if (data.highlights !== undefined) data.keyFeatures = json(data.highlights, []);
     if (data.highlights !== undefined) delete data.highlights;
 
-    // ✅ NEW: specifications (screenshot table)
     if (data.specifications !== undefined || data.specs !== undefined) {
       data.specifications = normSpecs(data.specifications ?? data.specs);
       delete data.specs;
@@ -1051,31 +1062,25 @@ export const updateProduct = async (req, res) => {
     if (data.tags !== undefined) data.tags = tagsNorm(data.tags);
     if (data.collections !== undefined) data.collections = arr(data.collections);
 
-    if (data.fabrics !== undefined) data.fabrics = json(data.fabrics, data.fabrics);
+    if (data.fabrics !== undefined) {
+      try { data.fabrics = normFabrics(json(data.fabrics, data.fabrics)); }
+      catch (err) { return res.status(400).json({ message: err.message || "Invalid fabrics" }); }
+    }
+
     if (data.avgFabricConsumption !== undefined) {
       data.avgFabricConsumption = json(data.avgFabricConsumption, data.avgFabricConsumption);
     }
 
-    // ✅ sampling flag
     if (data.isSamplingDone !== undefined) data.isSamplingDone = toBool(data.isSamplingDone);
-
-    // ✅ colors
+    if (data.isBestSeller !== undefined) data.isBestSeller = toBool(data.isBestSeller);
     if (data.colors !== undefined) data.colors = normColors(data.colors);
 
-    // ✅ hsn
     if (data.hsnCode !== undefined) {
-      const hsn = toStr(data.hsnCode);
+      const hsn = s(data.hsnCode);
       if (hsn && !/^\d+$/.test(hsn)) {
         return res.status(400).json({ message: "HSN code must contain digits only" });
       }
       data.hsnCode = hsn;
-    }
-
-    /* =========================================================
-       ✅ BEST SELLER FLAG (NEW)
-    ========================================================= */
-    if (data.isBestSeller !== undefined) {
-      data.isBestSeller = toBool(data.isBestSeller);
     }
 
     /* ---------------- fetch existing ---------------- */
@@ -1094,26 +1099,23 @@ export const updateProduct = async (req, res) => {
 
     /* ---------------- categories ---------------- */
     if (data.categories !== undefined) {
-      data.categories = Array.isArray(data.categories)
+      const raw = Array.isArray(data.categories)
         ? data.categories
         : typeof data.categories === "string"
-          ? data.categories.split(",").map((c) => c.trim()).filter(Boolean)
+          ? data.categories.split(",").map((c) => s(c)).filter(Boolean)
           : [];
 
-      const hadNewArrivals = data.categories.some(
-        (c) => String(c).toLowerCase() === "new-arrivals"
-      );
+      const hadNewArrivals = raw.some((c) => String(c).toLowerCase() === "new-arrivals");
+      const filtered = raw.filter((c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase()));
 
-      data.categories = data.categories.filter(
-        (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase())
-      );
-
-      if (!data.categories.length) {
+      if (!filtered.length) {
         return res.status(400).json({
           message:
             "Select a main category like dress/top/shirt etc (all-clothing/new-arrivals are not allowed as main category)",
         });
       }
+
+      data.categories = filtered;
 
       if (hadNewArrivals) {
         const baseTags = tagsNorm(data.tags ?? existing.tags);
@@ -1121,15 +1123,12 @@ export const updateProduct = async (req, res) => {
       }
     }
 
-    /* ---------------- attribute validation ---------------- */
-    await validateAttributes(data.attributes);
+    /* ---------------- validate attributes ---------------- */
+    await validateAttributes(data.attributes ?? existing.attributes);
 
-    // strip variant image (schema has no images)
     if (Array.isArray(data.variants)) data.variants = data.variants.map(({ image, ...v }) => v);
 
-    /* =========================================================
-       ✅ STOCK REMOVAL (IMPORTANT)
-    ========================================================= */
+    // ✅ never accept product stock update here
     delete data.stock;
     delete data.isInStock;
 
@@ -1145,7 +1144,7 @@ export const updateProduct = async (req, res) => {
             sku: v.sku,
             barcode: v.barcode ?? "",
             weight: typeof v.weight === "number" ? v.weight : 0,
-            patternNumber: toStr(v?.patternNumber || ""),
+            patternNumber: s(v?.patternNumber || ""),
             stock: prev?.stock ?? 0,
             reservedStock: prev?.reservedStock ?? 0,
             isInStock: prev?.isInStock ?? false,
@@ -1164,7 +1163,7 @@ export const updateProduct = async (req, res) => {
       const raw = Array.isArray(data.crossSellProducts)
         ? data.crossSellProducts
         : typeof data.crossSellProducts === "string"
-          ? data.crossSellProducts.split(",").map((id) => id.trim())
+          ? data.crossSellProducts.split(",").map((id) => s(id))
           : [];
 
       data.crossSellProducts = raw
@@ -1199,24 +1198,31 @@ export const updateProduct = async (req, res) => {
     /* ---------------- apply + save ---------------- */
     existing.set(data);
 
-    const mark = (k, cond = true) => cond && existing.markModified(k);
-    mark("variants", Array.isArray(data.variants));
-    mark("attributes", data.attributes !== undefined);
-    mark("fabrics", data.fabrics !== undefined);
-    mark("avgFabricConsumption", data.avgFabricConsumption !== undefined);
-    mark("images", data.images !== undefined);
-    mark("colors", data.colors !== undefined);
-    mark("isSamplingDone", data.isSamplingDone !== undefined);
-
-    // ✅ NEW: best seller
-    mark("isBestSeller", data.isBestSeller !== undefined);
-
-    // new fields
-    mark("keyFeatures", data.keyFeatures !== undefined);
-    mark("shortDescription", data.shortDescription !== undefined);
-    mark("howToStyle", data.howToStyle !== undefined);
-    mark("fabricDetails", data.fabricDetails !== undefined);
-    mark("specifications", data.specifications !== undefined);
+    [
+      "variants",
+      "attributes",
+      "fabrics",
+      "avgFabricConsumption",
+      "images",
+      "colors",
+      "isSamplingDone",
+      "isBestSeller",
+      "keyFeatures",
+      "shortDescription",
+      "howToStyle",
+      "fabricDetails",
+      "specifications",
+      "categories",
+      "tags",
+      "collections",
+      "keywords",
+      "crossSellProducts",
+      "thumbnail",
+      "sku",
+      "hsnCode",
+      "slug",
+      "productType",
+    ].forEach((k) => data[k] !== undefined && existing.markModified(k));
 
     const saved = await existing.save({ validateBeforeSave: true });
 
@@ -1239,6 +1245,8 @@ export const updateProduct = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
+
 
 
 

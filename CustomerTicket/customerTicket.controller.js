@@ -147,7 +147,6 @@ export const createTicket = async (req, res) => {
   }
 };
 
-
 /* ===================================================================
    GET single ticket
    GET /api/support/tickets/:ticketId
@@ -212,9 +211,6 @@ export const updateTicketStatus = async (req, res) => {
 /* ===================================================================
    ✅ PATCH: edit ticket details (admin / internal)
    PATCH /api/support/tickets/:ticketId
-   Body (any):
-   { name, email, phone, orderNumber, issueType, subject, message, adminNotes, status }
-   - status update also updates resolvedAt automatically
 =================================================================== */
 export const patchTicketDetails = async (req, res) => {
   try {
@@ -224,7 +220,6 @@ export const patchTicketDetails = async (req, res) => {
     const b = req.body || {};
     const update = {};
 
-    // ✅ editable fields (only set if provided)
     if (b.name !== undefined) update.name = s(b.name);
     if (b.email !== undefined) update.email = lower(b.email);
     if (b.phone !== undefined) update.phone = s(b.phone);
@@ -241,7 +236,6 @@ export const patchTicketDetails = async (req, res) => {
       update.issueType = it;
     }
 
-    // ✅ optional status change here too
     if (b.status !== undefined) {
       const st = upper(b.status);
       if (!STATUS.includes(st)) return res.status(400).json({ success: false, message: "Invalid status." });
@@ -249,7 +243,6 @@ export const patchTicketDetails = async (req, res) => {
       update.resolvedAt = st === "RESOLVED" || st === "CLOSED" ? new Date() : null;
     }
 
-    // ✅ optional: add attachments if files provided
     const files = pickFiles(req).slice(0, 5);
     if (files.length) {
       const folder = "miray/support-tickets";
@@ -269,7 +262,6 @@ export const patchTicketDetails = async (req, res) => {
       if (added.length) update.$push = { attachments: { $each: added } };
     }
 
-    // nothing to update
     const hasAny =
       Object.keys(update).length > 0 ||
       (update.$push && update.$push.attachments && update.$push.attachments.$each?.length);
@@ -308,7 +300,6 @@ export const patchTicketDetails = async (req, res) => {
 /* ===================================================================
    ✅ UPDATE orderNumber (admin)
    PATCH /api/support/tickets/:ticketId/order
-   Body: { orderNumber }
 =================================================================== */
 export const updateTicketOrderNumber = async (req, res) => {
   try {
@@ -547,7 +538,7 @@ export const searchTickets = async (req, res) => {
 };
 
 /* ===================================================================
-   ✅ DELETE ticket (and optionally delete cloudinary attachments)
+   ✅ DELETE ticket (single) + best-effort Cloudinary cleanup
    DELETE /api/support/tickets/:ticketId
 =================================================================== */
 export const deleteTicket = async (req, res) => {
@@ -558,7 +549,6 @@ export const deleteTicket = async (req, res) => {
     const ticket = await CustomerTicketModal.findOne({ ticketId }).lean();
     if (!ticket) return res.status(404).json({ success: false, message: "Ticket not found." });
 
-    // ✅ best effort: delete attachments from Cloudinary
     const publicIds = (ticket.attachments || []).map((a) => s(a?.publicId)).filter(Boolean);
     if (publicIds.length && cloudinary?.uploader?.destroy) {
       await Promise.allSettled(publicIds.map((pid) => cloudinary.uploader.destroy(pid)));
@@ -572,3 +562,119 @@ export const deleteTicket = async (req, res) => {
     return res.status(500).json({ success: false, message: err?.message || "Server error deleting ticket." });
   }
 };
+
+/* ===================================================================
+   ✅ BULK DELETE (admin)
+   DELETE /api/support/tickets/bulk-delete
+   Body: { ticketIds: ["TICKET-1", "TICKET-2"] }
+   - Deletes tickets + best-effort deletes cloudinary attachments
+=================================================================== */
+export const bulkDeleteTickets = async (req, res) => {
+  try {
+    const idsRaw = req.body?.ticketIds;
+    const ticketIds = Array.isArray(idsRaw) ? idsRaw.map(s).filter(Boolean) : [];
+
+    if (!ticketIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "ticketIds array is required.",
+      });
+    }
+
+    // fetch tickets for cloudinary cleanup
+    const tickets = await CustomerTicketModal.find({ ticketId: { $in: ticketIds } })
+      .select({ ticketId: 1, attachments: 1 })
+      .lean();
+
+    if (!tickets.length) {
+      return res.status(404).json({ success: false, message: "No matching tickets found." });
+    }
+
+    // best-effort: delete cloudinary attachments
+    const publicIds = tickets
+      .flatMap((t) => (t.attachments || []).map((a) => s(a?.publicId)))
+      .filter(Boolean);
+
+    if (publicIds.length && cloudinary?.uploader?.destroy) {
+      await Promise.allSettled(publicIds.map((pid) => cloudinary.uploader.destroy(pid)));
+    }
+
+    const foundIds = tickets.map((t) => t.ticketId);
+    const del = await CustomerTicketModal.deleteMany({ ticketId: { $in: foundIds } });
+
+    return res.json({
+      success: true,
+      message: "Bulk delete complete.",
+      requested: ticketIds.length,
+      found: foundIds.length,
+      deleted: Number(del?.deletedCount || 0),
+      deletedIds: foundIds,
+    });
+  } catch (err) {
+    console.error("bulkDeleteTickets error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Server error bulk deleting tickets.",
+    });
+  }
+};
+
+
+/* ===================================================================
+   ✅ BULK STATUS UPDATE (admin)
+   PATCH /api/support/tickets/bulk-status
+   Body: { ticketIds: ["T1","T2"], status: "IN_PROGRESS" }
+=================================================================== */
+export const bulkUpdateTicketStatus = async (req, res) => {
+  try {
+    const idsRaw = req.body?.ticketIds;
+    const status = upper(req.body?.status);
+
+    const ticketIds = Array.isArray(idsRaw)
+      ? idsRaw.map(s).filter(Boolean)
+      : [];
+
+    if (!ticketIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "ticketIds array is required.",
+      });
+    }
+
+    if (!STATUS.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status.",
+      });
+    }
+
+    const update = {
+      status,
+      resolvedAt:
+        status === "RESOLVED" || status === "CLOSED"
+          ? new Date()
+          : null,
+    };
+
+    const result = await CustomerTicketModal.updateMany(
+      { ticketId: { $in: ticketIds } },
+      { $set: update }
+    );
+
+    return res.json({
+      success: true,
+      message: "Bulk status update complete.",
+      requested: ticketIds.length,
+      matched: result?.matchedCount || 0,
+      modified: result?.modifiedCount || 0,
+      status,
+    });
+  } catch (err) {
+    console.error("bulkUpdateTicketStatus error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Server error bulk updating tickets.",
+    });
+  }
+};
+

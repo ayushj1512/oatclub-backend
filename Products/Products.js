@@ -134,23 +134,37 @@ const productSchema = new mongoose.Schema(
       },
     },
 
-    /* FABRICS (MULTIPLE ✅) — store by Fabric.code */
-    fabrics: [
-      {
-        fabricCode: {
-          type: String,
-          trim: true,
-          required: true,
-          index: true,
-        },
-        role: {
-          type: String,
-          trim: true,
-          default: "main",
-          enum: ["main", "lining", "contrast", "padding", "other"],
-        },
-      },
-    ],
+    /* FABRICS (MULTIPLE ✅) — fabricName required, rest optional */
+fabrics: [
+  {
+    fabricName: {
+      type: String,
+      trim: true,
+      required: [true, "Fabric name is required"],
+      index: true,
+    },
+    fabricCode: {
+      type: String,
+      trim: true,
+      default: "",
+      index: true,
+    },
+    fabricColor: {
+      type: String,
+      trim: true,
+      default: "",
+      index: true, // optional, useful for filtering
+    },
+    role: {
+      type: String,
+      trim: true,
+      default: "main",
+      enum: ["main", "lining", "contrast", "padding", "other"],
+    },
+  },
+],
+
+
 
     /* AVG FABRIC CONSUMPTION (PRODUCT LEVEL ✅) */
     avgFabricConsumption: {
