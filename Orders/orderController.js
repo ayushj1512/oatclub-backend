@@ -2837,3 +2837,142 @@ export const splitOrderIntoShipments = async (req, res) => {
     session.endSession();
   }
 };
+
+
+
+
+
+/* ============================================================
+   ✅ LOOKUP ORDERS BY EMAIL / PHONE  (for Customer Support)
+   Route: GET /api/orders/lookup?email=&phone=
+   - searches in shipping/billing snapshots + coupon/analytics identity
+   - returns latest first (and priority rank if you want)
+   - includes enough fields for support panel
+============================================================ */
+
+export const lookupOrdersByIdentity = async (req, res) => {
+  try {
+    const str = (v) => (v == null ? "" : String(v));
+    const normEmail = (v) => str(v).trim().toLowerCase();
+    const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
+
+    const email = normEmail(req.query.email);
+    const phone = normPhone(req.query.phone);
+
+    if (!email && !phone) {
+      return res.status(400).json({ message: "email or phone required" });
+    }
+
+    // build identities (matches your createOrder analytics.couponIdentity style)
+    const identities = [];
+    if (email && email.includes("@")) identities.push(`email:${email}`);
+    if (phone) identities.push(`phone:${phone}`);
+
+    // escape for regex contains search (fallback)
+    const escapeRegExp = (s) => String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rxEmail = email ? new RegExp(`^${escapeRegExp(email)}$`, "i") : null;
+    const rxPhone = phone ? new RegExp(`^${escapeRegExp(phone)}$`, "i") : null;
+
+    const or = [];
+
+    // ✅ primary: snapshot exact matches (case-insensitive for email)
+    if (email) {
+      or.push(
+        { "shippingAddressSnapshot.email": rxEmail },
+        { "billingAddressSnapshot.email": rxEmail }
+      );
+    }
+    if (phone) {
+      or.push(
+        { "shippingAddressSnapshot.phone": phone },
+        { "billingAddressSnapshot.phone": phone }
+      );
+    }
+
+    // ✅ coupon / analytics identity matches
+    if (identities.length) {
+      or.push(
+        { "coupon.identity": { $in: identities } },
+        { "analytics.couponIdentity": { $in: identities } }
+      );
+    }
+
+    // ✅ optional fallback: if your phone snapshots sometimes store +91 etc
+    // do a "contains digits" regex (kept small to avoid slow scans)
+    if (phone && phone.length >= 8) {
+      const rxDigits = new RegExp(escapeRegExp(phone.slice(-10))); // last 10
+      or.push(
+        { "shippingAddressSnapshot.phone": rxDigits },
+        { "billingAddressSnapshot.phone": rxDigits }
+      );
+    }
+
+    // If somehow no OR built (shouldn’t happen), guard
+    if (!or.length) {
+      return res.status(400).json({ message: "Invalid lookup query" });
+    }
+
+    // ✅ Query with priority rank sort like your getAllOrders
+    const orders = await Order.aggregate([
+      { $match: { $or: or } },
+      {
+        $addFields: {
+          _priorityRank: {
+            $switch: {
+              branches: [
+                { case: { $eq: ["$priority", "high"] }, then: 3 },
+                { case: { $eq: ["$priority", "medium"] }, then: 2 },
+                { case: { $eq: ["$priority", "normal"] }, then: 1 },
+              ],
+              default: 1,
+            },
+          },
+        },
+      },
+      { $sort: { createdAt: -1, _priorityRank: -1 } }, // latest first (support wants latest)
+      { $limit: 50 },
+      {
+        $project: {
+          // keep payload light but useful for support panel
+          orderNumber: 1,
+          createdAt: 1,
+          orderDate: 1,
+          priority: 1,
+
+          paymentMethod: 1,
+          paymentStatus: 1,
+          fulfillmentStatus: 1,
+          isConfirmed: 1,
+
+          subtotal: 1,
+          discount: 1,
+          shippingFee: 1,
+          tax: 1,
+          totalAmount: 1,
+          finalPayable: 1,
+          currency: 1,
+
+          shippingAddressSnapshot: 1,
+          billingAddressSnapshot: 1,
+
+          trackingDetails: 1,
+          shipment: 1,
+
+          items: 1,
+          rmas: 1,
+        },
+      },
+    ]);
+
+    // if you want customer details too (optional):
+    // const populated = await Order.populate(orders, [
+    //   { path: "customerId", select: "name email phone" },
+    //   { path: "items.productId" },
+    // ]);
+
+    return res.status(200).json({ orders });
+  } catch (error) {
+    console.error("❌ lookupOrdersByIdentity Error:", error);
+    return res.status(500).json({ message: "Server error", error: error.message });
+  }
+};

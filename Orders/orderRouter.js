@@ -1,3 +1,4 @@
+// routes/orderRoutes.js
 import express from "express";
 
 /* ===========================
@@ -14,11 +15,14 @@ import {
   getOrderAnalytics,
   getOrderByOrderNumber,
   cancelOrder,
-  confirmOrder, // ✅ NEW
-  adminBookShiprocketIfMissing,      // ✅ ADD
-    updateOrderAddress, // ✅ ADD THIS
-splitOrderIntoShipments,
-duplicateExchangeOrder 
+  confirmOrder,
+  adminBookShiprocketIfMissing,
+  updateOrderAddress,
+  splitOrderIntoShipments,
+  duplicateExchangeOrder,
+
+  // ✅ NEW: lookup by email/phone (support)
+  lookupOrdersByIdentity,
 } from "./orderController.js";
 
 /* ===========================
@@ -29,17 +33,17 @@ import {
   updateRma,
   getRmasByOrder,
   getRmaByNumber,
-  getAllRmasAdmin, // ✅ NEW
+  getAllRmasAdmin,
 } from "./orderRmaController.js";
 
 /* ===========================
-   ✅ PRODUCTION CONTROLLER (Production Flow)
+   ✅ PRODUCTION CONTROLLER
 =========================== */
 import {
   getProductionQueue,
   getProductionSummary,
   markOrderShippedFromProduction,
-} from "./order.production.controller.js"; // ✅ NEW FILE
+} from "./order.production.controller.js";
 
 /* ===========================
    SHIPROCKET
@@ -58,6 +62,10 @@ router.post("/", createOrder);
 // Admin: all orders (supports query filters)
 router.get("/", getAllOrders);
 
+// ✅ Support lookup: find orders by email/phone
+// GET /api/orders/lookup?email=a@b.com OR ?phone=99999...
+router.get("/lookup", lookupOrdersByIdentity);
+
 // Analytics summary
 router.get("/analytics/summary", getOrderAnalytics);
 
@@ -65,14 +73,13 @@ router.get("/analytics/summary", getOrderAnalytics);
    ✅ PRODUCTION ROUTES (CONFIRMED ONLY)
 ============================================================ */
 
-// ✅ Production Summary
 router.get("/production/summary", getProductionSummary);
-
-// ✅ Production Queue (default = confirmed + processing)
 router.get("/production/queue", getProductionQueue);
-
-// ✅ Production complete -> mark shipped
 router.post("/production/:id/shipped", markOrderShippedFromProduction);
+
+/* ============================================================
+   CUSTOMER / LOOKUPS
+============================================================ */
 
 // Customer orders
 router.get("/customer/:customerId", getOrdersByCustomer);
@@ -82,18 +89,13 @@ router.get("/by-number/:orderNumber", getOrderByOrderNumber);
 
 /* ============================================================
    ✅ SHIPROCKET ADMIN TRIGGERS
-   (Only books if shipment.shiprocket details are missing)
 ============================================================ */
-
-// ✅ Bulk: Book Shiprocket for eligible orders (confirmed + missing SR details)
-// Optional query filters supported by controller: ?limit=50&paymentMethod=cod&fulfillmentStatus=processing
-// 
 
 // ✅ Single: Book Shiprocket only if missing
 router.post("/:id/shiprocket/book", adminBookShiprocketIfMissing);
 
 /* ============================================================
-   ORDER ACTIONS (Ship / Cancel / Confirm)
+   ORDER ACTIONS (Ship / Cancel / Confirm / Exchange)
 ============================================================ */
 
 // Book shipment (existing route)
@@ -102,19 +104,24 @@ router.post("/:id/ship", bookWithShiprocket);
 // Cancel order
 router.post("/:id/cancel", cancelOrder);
 
-
-// Duplicate Order
+// Duplicate Exchange Order
 router.post("/:orderId/duplicate-exchange", duplicateExchangeOrder);
 
-
-// ✅ Confirm order (Admin / COD confirm)
+// Confirm order (Admin / COD confirm)
 router.post("/:id/confirm", confirmOrder);
+
+/* ============================================================
+   SPLIT ORDER
+   ✅ Fix: remove extra "/orders" prefix (already under /api/orders)
+============================================================ */
+
+router.post("/:id/split", splitOrderIntoShipments);
 
 /* ============================================================
    RMA (Return / Exchange)
 ============================================================ */
 
-// ✅ ADMIN: Get all RMAs (global list)
+// Admin: Get all RMAs (global list)
 router.get("/rma", getAllRmasAdmin);
 
 // Create RMA (return / exchange)
@@ -129,22 +136,24 @@ router.get("/:id/rma/:rmaNumber", getRmaByNumber);
 // Admin update RMA
 router.patch("/:id/rma/:rmaNumber", updateRma);
 
-router.post(
-  "/orders/:id/split",
-        
-  splitOrderIntoShipments
-);
-
 /* ============================================================
-   ORDER BY ID (Keep at bottom)
+   ORDER BY ID (KEEP AT BOTTOM)
 ============================================================ */
+
+// Update full order (PATCH preferred)
 router.patch("/:id", updateOrder);
-router.get("/:id", getOrderById);
+
+// (optional legacy) PUT update
 router.put("/:id", updateOrder);
+
+// Read
+router.get("/:id", getOrderById);
+
+// Status / tracking
 router.patch("/:id/status", updateOrderStatus);
 router.patch("/:id/tracking", updateTracking);
 
-// address update
+// Address update
 router.patch("/:id/address", updateOrderAddress);
 
 export default router;

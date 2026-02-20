@@ -8,6 +8,7 @@ import {
   getTicketsAdminList,
   searchTickets,
   deleteTicket,
+   updateTicketOrderNumber,
   bulkDeleteTickets,      // ✅ NEW
   bulkUpdateTicketStatus, // ✅ NEW (if you already have it / add it)
 } from "./customerTicket.controller.js";
@@ -52,5 +53,7 @@ router.patch("/tickets/:ticketId/status", updateTicketStatus);
 
 // DELETE /api/support/tickets/:ticketId
 router.delete("/tickets/:ticketId", deleteTicket);
+
+router.patch("/tickets/:ticketId/order", updateTicketOrderNumber);
 
 export default router;
