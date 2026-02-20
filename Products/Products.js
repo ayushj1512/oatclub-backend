@@ -42,7 +42,7 @@ Flexible key/value list so you can add/remove anytime ✅
 const specRowSchema = new mongoose.Schema(
   {
     key: { type: String, trim: true, required: true }, // e.g. "Color"
-    value: { type: String, trim: true, default: "" },  // e.g. "Red"
+    value: { type: String, trim: true, default: "" }, // e.g. "Red"
   },
   { _id: false, timestamps: false }
 );
@@ -76,18 +76,6 @@ const productSchema = new mongoose.Schema(
 
     /**
      * ✅ SPECIFICATIONS (as per screenshot)
-     * Example rows:
-     * - Color: Red
-     * - Length: Maxi
-     * - Stitch: Ready to wear
-     * - Fabric: Velvet Blend
-     * - Lining: N/A
-     * - Neckline: Halter Neck
-     * - Fit Type: Bodycon
-     * - Pattern Type: Solid
-     * - Hemline: Mermaid
-     * - Sleeve Style: Sleeveless
-     * - Care Instructions: Handwash / Machinewash
      */
     specifications: { type: [specRowSchema], default: [] },
 
@@ -135,36 +123,34 @@ const productSchema = new mongoose.Schema(
     },
 
     /* FABRICS (MULTIPLE ✅) — fabricName required, rest optional */
-fabrics: [
-  {
-    fabricName: {
-      type: String,
-      trim: true,
-      required: [true, "Fabric name is required"],
-      index: true,
-    },
-    fabricCode: {
-      type: String,
-      trim: true,
-      default: "",
-      index: true,
-    },
-    fabricColor: {
-      type: String,
-      trim: true,
-      default: "",
-      index: true, // optional, useful for filtering
-    },
-    role: {
-      type: String,
-      trim: true,
-      default: "main",
-      enum: ["main", "lining", "contrast", "padding", "other"],
-    },
-  },
-],
-
-
+    fabrics: [
+      {
+        fabricName: {
+          type: String,
+          trim: true,
+          required: [true, "Fabric name is required"],
+          index: true,
+        },
+        fabricCode: {
+          type: String,
+          trim: true,
+          default: "",
+          index: true,
+        },
+        fabricColor: {
+          type: String,
+          trim: true,
+          default: "",
+          index: true, // optional, useful for filtering
+        },
+        role: {
+          type: String,
+          trim: true,
+          default: "main",
+          enum: ["main", "lining", "contrast", "padding", "other"],
+        },
+      },
+    ],
 
     /* AVG FABRIC CONSUMPTION (PRODUCT LEVEL ✅) */
     avgFabricConsumption: {
@@ -240,7 +226,15 @@ fabrics: [
 
     isBestSeller: { type: Boolean, default: false, index: true },
 
+    // ✅ NEW: Pattern ready flag (product level)
+    isPatternReady: { type: Boolean, default: false, index: true },
+
+    // ✅ Existing (already present)
     isSamplingDone: { type: Boolean, default: false },
+
+    // ✅ NEW: Original product link (string)
+    // (keeps it flexible: can store URL, productCode, slug, or _id as string)
+    originalProductLink: { type: String, trim: true, default: "" },
 
     wordpressId: { type: Number, default: null },
   },
@@ -382,6 +376,27 @@ productSchema.pre("save", function (next) {
   try {
     computeInventoryFlags(this);
     computeColors(this);
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* ------------------------------------------------------------------
+AUTO SET isPatternReady
+If any variant has patternNumber -> true
+Else -> false
+------------------------------------------------------------------- */
+productSchema.pre("validate", function (next) {
+  try {
+    const hasPattern =
+      Array.isArray(this.variants) &&
+      this.variants.some(
+        (v) => v?.patternNumber && String(v.patternNumber).trim() !== ""
+      );
+
+    this.isPatternReady = !!hasPattern;
+
     next();
   } catch (e) {
     next(e);
@@ -549,5 +564,9 @@ productSchema.index({ "variants.sku": 1 }, { sparse: true });
 productSchema.index({ tags: 1 });
 productSchema.index({ "fabrics.fabricCode": 1 });
 productSchema.index({ colors: 1 });
+
+// ✅ NEW indexes
+productSchema.index({ isPatternReady: 1 });
+productSchema.index({ originalProductLink: 1 });
 
 export default mongoose.models.Product || mongoose.model("Product", productSchema);

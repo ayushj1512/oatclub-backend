@@ -26,15 +26,13 @@ import {
   updateProductRatings,
   updateProductFabrics,
   updateVariantPatternNumber,
-  updateProductColors, // ✅ NEW
-  toggleBestSeller,   // ✅ NEW (ADD THIS)
+  updateProductColors,
+  toggleBestSeller,
+  markPatternReady, // ✅ NEW
 } from "./productController.js";
 
 /* ---------------- BULK CONTROLLER ---------------- */
-import {
-  bulkPreviewProducts,
-  bulkCreateDraftProducts,
-} from "./BulkproductController.js";
+import { bulkPreviewProducts, bulkCreateDraftProducts } from "./BulkproductController.js";
 
 /* ---------------- SETUP ---------------- */
 const router = express.Router();
@@ -42,7 +40,7 @@ const router = express.Router();
 // CSV uploads (bulk)
 const upload = multer({ dest: "uploads/csv" });
 
-// ✅ Swatch uploads (colors admin)
+// Swatch uploads (colors admin)
 const uploadSwatches = multer({ dest: "uploads/swatch" });
 
 /* ===========================================================
@@ -50,54 +48,54 @@ const uploadSwatches = multer({ dest: "uploads/swatch" });
    (keep specific routes above generic ones)
 =========================================================== */
 
-// ✅ Products by tag(s)
+// Products by tag(s)
 router.get("/by-tag", getProductsByTag);
 
-// ✅ Products by category (slug OR id OR name)
+// Products by category (slug OR id OR name)
 router.get("/by-category/:category", getProductsByCategory);
 
-// ✅ Products by collection (slug OR id)
+// Products by collection (slug OR id)
 router.get("/by-collection/:collection", getProductsByCollection);
 
-// ✅ Alternative fetch-by-category (param + query supported)
+// Alternative fetch-by-category (param + query supported)
 router.get("/fetch-by-category/:category", fetchProductsByCategory);
 router.get("/fetch-by-category", fetchProductsByCategory);
 
-// ✅ Products by multiple IDs (single fetch)
+// Products by multiple IDs
 router.post("/by-ids", getProductsByIds);
 
-// ✅ Products by multiple productCodes (single fetch)
+// Products by multiple productCodes
 router.get("/by-codes", getProductsByCodes);
 router.post("/by-codes", getProductsByCodes);
 
-// ✅ Fetch by SKU (product or variant)
+// Fetch by SKU (product or variant)
 router.get("/sku/:sku", getProductBySKU);
 
-// ✅ Fetch by productCode (IMPORTANT: must be above /:id fallback)
+// Fetch by productCode (IMPORTANT: must be above /:id fallback)
 router.get("/code/:code", getProductByCode);
 
-// ✅ Product details by slug OR id (explicit details route)
+// Product details by slug OR id
 router.get("/details/:id", getProductByIdOrSlug);
 
-// ✅ Get all products (filters, pagination, search)
+// Get all products (filters, pagination, search)
 router.get("/", getAllProducts);
 
 /* ===========================================================
    🔐 ADMIN ROUTES (BULK)
 =========================================================== */
 
-// ✅ CSV PREVIEW (NO DB WRITE)
+// CSV PREVIEW (NO DB WRITE)
 router.post("/bulk/preview", upload.single("file"), bulkPreviewProducts);
 
-// ✅ CREATE DRAFT PRODUCTS (NO IMAGES)
+// CREATE DRAFT PRODUCTS (NO IMAGES)
 router.post("/bulk/create-draft", bulkCreateDraftProducts);
 
-// ✅ Existing bulk operations
+// Existing bulk operations
 router.post("/bulk/delete", bulkDeleteProducts);
 router.post("/bulk/import", bulkImportProducts);
 router.patch("/bulk/pricing", bulkUpdatePricing);
 
-// ✅ Bulk sync collection ↔ products
+// Bulk sync collection ↔ products
 router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 
 /* ===========================================================
@@ -107,21 +105,23 @@ router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 router.post("/:id/update-ratings", updateProductRatings);
 router.patch("/:id/analytics", incrementProductAnalytics);
 
-// ✅ Inventory endpoints (2 only)
-router.patch("/:id/stock", updateProductStock); // ✅ SIMPLE only
-router.patch("/:id/variant-stock", updateVariantStock); // ✅ VARIABLE only
+// Inventory endpoints (2 only)
+router.patch("/:id/stock", updateProductStock); // SIMPLE only
+router.patch("/:id/variant-stock", updateVariantStock); // VARIABLE only
 
-// ✅ Update fabrics + consumption (dedicated)
+// Update fabrics + consumption (dedicated)
 router.patch("/:id/fabrics", updateProductFabrics);
 
-// ✅ NEW: Toggle / Set Best Seller
+// ✅ NEW: Mark Pattern Ready (manual)
+router.patch("/:id/mark-pattern-ready", markPatternReady);
+
+// Toggle / Set Best Seller
 // PATCH /api/products/:id/best-seller
 // - empty body -> toggle
 // - { isBestSeller: true/false } -> force set
 router.patch("/:id/best-seller", toggleBestSeller);
 
-// ✅ NEW: Update product colors + swatch images
-// Expects multipart/form-data:
+// Update product colors + swatch images (multipart)
 // - colorsJson: JSON string of [{ name, hex, image }]
 // - swatchImages: files[] (same order as colorsJson)
 router.patch(
@@ -130,15 +130,17 @@ router.patch(
   updateProductColors
 );
 
-// ✅ Create product
+// Create product
 router.post("/", createProduct);
 
-// ✅ Update product
+// Update product
 router.patch("/:id", updateProduct);
 router.put("/:id", updateProduct);
+
+// Variant pattern number update
 router.patch("/:id/variant-pattern", updateVariantPatternNumber);
 
-// ✅ Delete product
+// Delete product
 router.delete("/:id", deleteProduct);
 
 /* ===========================================================

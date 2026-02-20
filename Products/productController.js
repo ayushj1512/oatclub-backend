@@ -452,6 +452,7 @@ const keepOnlySizeVariants = (variants = []) => {
 };
 
 
+// controllers/productController.js
 export const createProduct = async (req, res) => {
   try {
     const data = { ...req.body };
@@ -465,17 +466,20 @@ export const createProduct = async (req, res) => {
     const normSpecs = (v) => {
       const out = [];
       const push = (k, val) => {
-        const key = s(k), value = s(val);
+        const key = s(k),
+          value = s(val);
         if (key) out.push({ key, value });
       };
 
       if (typeof v === "string") {
         const t = v.trim();
         if (!t) return [];
-        try { v = JSON.parse(t); }
-        catch {
+        try {
+          v = JSON.parse(t);
+        } catch {
           (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => {
-            const x = s(p); if (!x) return;
+            const x = s(p);
+            if (!x) return;
             const sep = x.includes(":") ? ":" : x.includes("=") ? "=" : null;
             if (!sep) return;
             const [k, ...rest] = x.split(sep);
@@ -485,14 +489,17 @@ export const createProduct = async (req, res) => {
         }
       }
 
-      if (Array.isArray(v)) { v.forEach((r) => r && push(r.key, r.value)); return out; }
-      if (v && typeof v === "object") { Object.entries(v).forEach(([k, val]) => push(k, val)); return out; }
+      if (Array.isArray(v)) return v.forEach((r) => r && push(r.key, r.value)), out;
+      if (v && typeof v === "object")
+        return Object.entries(v).forEach(([k, val]) => push(k, val)), out;
+
       return [];
     };
 
     const normFabrics = (v) => {
       const ROLES = new Set(["main", "lining", "contrast", "padding", "other"]);
       const out = [];
+
       const push = (row) => {
         if (!row) return;
 
@@ -501,6 +508,7 @@ export const createProduct = async (req, res) => {
           if (name) out.push({ fabricName: name, fabricCode: "", fabricColor: "", role: "main" });
           return;
         }
+
         if (typeof row !== "object") return;
 
         const fabricName = s(row.fabricName);
@@ -515,26 +523,36 @@ export const createProduct = async (req, res) => {
         const finalName = fabricName || fabricCode; // backward compat
         if (!finalName) throw new Error("Fabric name is required in fabrics[]");
 
-        out.push({ fabricName: finalName, fabricCode: fabricCode || "", fabricColor: fabricColor || "", role });
+        out.push({
+          fabricName: finalName,
+          fabricCode: fabricCode || "",
+          fabricColor: fabricColor || "",
+          role,
+        });
       };
 
       if (typeof v === "string") {
         const t = v.trim();
         if (!t) return [];
-        try { v = JSON.parse(t); }
-        catch {
+        try {
+          v = JSON.parse(t);
+        } catch {
           (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => push(String(p || "")));
           return out;
         }
       }
 
-      if (Array.isArray(v)) { v.forEach(push); return out; }
+      if (Array.isArray(v)) return v.forEach(push), out;
+
       if (v && typeof v === "object") {
-        const looksSingle = ("fabricName" in v) || ("fabricCode" in v) || ("fabricColor" in v) || ("role" in v);
-        if (looksSingle) { push(v); return out; }
+        const looksSingle =
+          "fabricName" in v || "fabricCode" in v || "fabricColor" in v || "role" in v;
+        if (looksSingle) return push(v), out;
+
         Object.entries(v).forEach(([role, name]) => push({ role, fabricName: name }));
         return out;
       }
+
       return [];
     };
 
@@ -560,10 +578,14 @@ export const createProduct = async (req, res) => {
     data.tags = tagsNorm(data.tags);
     data.collections = arr(data.collections);
 
-    // ✅ fabrics (optional)
+    // ✅ NEW: fields you added in schema
+    data.isPatternReady = data.isPatternReady !== undefined ? toBool(data.isPatternReady) : false;
+    data.originalProductLink = s(data.originalProductLink || data.productLink); // supports old key too
+    delete data.productLink;
+
+    // ✅ fabrics
     try {
-      if (data.fabrics !== undefined) data.fabrics = normFabrics(data.fabrics);
-      else data.fabrics = [];
+      data.fabrics = data.fabrics !== undefined ? normFabrics(data.fabrics) : [];
     } catch (err) {
       return res.status(400).json({ message: err.message || "Invalid fabrics" });
     }
@@ -571,9 +593,7 @@ export const createProduct = async (req, res) => {
     data.avgFabricConsumption = json(data.avgFabricConsumption, data.avgFabricConsumption);
 
     if (data.colors !== undefined) {
-      data.colors = Array.from(
-        new Set(arr(data.colors).map((c) => s(c).toLowerCase()).filter(Boolean))
-      );
+      data.colors = Array.from(new Set(arr(data.colors).map((c) => s(c).toLowerCase()).filter(Boolean)));
     }
 
     if (data.hsnCode !== undefined) {
@@ -638,12 +658,20 @@ export const createProduct = async (req, res) => {
       if (!Array.isArray(data.specifications)) data.specifications = [];
     }
 
+    // ✅ AUTO set isPatternReady based on variants (server-side)
+    // (schema hook will also do it, but controller keeps response stable)
+    data.isPatternReady =
+      Array.isArray(data.variants) &&
+      data.variants.some((v) => v?.patternNumber && String(v.patternNumber).trim());
+
     /* ---------------- cross-sell ---------------- */
-    data.crossSellProducts = (Array.isArray(data.crossSellProducts)
-      ? data.crossSellProducts
-      : typeof data.crossSellProducts === "string"
-        ? data.crossSellProducts.split(",").map((id) => s(id))
-        : []).filter(isValidObjectId);
+    data.crossSellProducts = (
+      Array.isArray(data.crossSellProducts)
+        ? data.crossSellProducts
+        : typeof data.crossSellProducts === "string"
+          ? data.crossSellProducts.split(",").map((id) => s(id))
+          : []
+    ).filter(isValidObjectId);
 
     /* ---------------- uploads ---------------- */
     const { images, thumbnail } = await mergeUploads(req, {
@@ -663,6 +691,8 @@ export const createProduct = async (req, res) => {
       data.thumbnail = "";
       data.isDraft = true;
       data.isActive = false;
+      // bulk drafts should not be pattern-ready by default
+      data.isPatternReady = false;
     }
 
     /* ---------------- create + sku ---------------- */
@@ -682,12 +712,15 @@ export const createProduct = async (req, res) => {
       keyFeatures: Array.isArray(data.keyFeatures) ? data.keyFeatures : [],
       specifications: Array.isArray(data.specifications) ? data.specifications : [],
       isBestSeller: !!data.isBestSeller,
+      isPatternReady: !!data.isPatternReady,
+      originalProductLink: data.originalProductLink || "",
     });
 
     if (Array.isArray(skuPayload.variants)) created.markModified("variants");
-    ["colors", "keyFeatures", "shortDescription", "howToStyle", "fabricDetails", "specifications", "isBestSeller"].forEach((k) =>
-      created.markModified(k)
+    ["colors", "keyFeatures", "shortDescription", "howToStyle", "fabricDetails", "specifications"].forEach(
+      (k) => created.markModified(k)
     );
+    ["isBestSeller", "isPatternReady", "originalProductLink"].forEach((k) => created.markModified(k));
 
     await created.save({ validateBeforeSave: true });
 
@@ -961,17 +994,20 @@ export const updateProduct = async (req, res) => {
     const normSpecs = (v) => {
       const out = [];
       const push = (k, val) => {
-        const key = s(k), value = s(val);
+        const key = s(k),
+          value = s(val);
         if (key) out.push({ key, value });
       };
 
       if (typeof v === "string") {
         const t = v.trim();
         if (!t) return [];
-        try { v = JSON.parse(t); }
-        catch {
+        try {
+          v = JSON.parse(t);
+        } catch {
           (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => {
-            const x = s(p); if (!x) return;
+            const x = s(p);
+            if (!x) return;
             const sep = x.includes(":") ? ":" : x.includes("=") ? "=" : null;
             if (!sep) return;
             const [k, ...rest] = x.split(sep);
@@ -981,8 +1017,10 @@ export const updateProduct = async (req, res) => {
         }
       }
 
-      if (Array.isArray(v)) { v.forEach((r) => r && push(r.key, r.value)); return out; }
-      if (v && typeof v === "object") { Object.entries(v).forEach(([k, val]) => push(k, val)); return out; }
+      if (Array.isArray(v)) return v.forEach((r) => r && push(r.key, r.value)), out;
+      if (v && typeof v === "object")
+        return Object.entries(v).forEach(([k, val]) => push(k, val)), out;
+
       return [];
     };
 
@@ -998,6 +1036,7 @@ export const updateProduct = async (req, res) => {
           if (name) out.push({ fabricName: name, fabricCode: "", fabricColor: "", role: "main" });
           return;
         }
+
         if (typeof row !== "object") return;
 
         const fabricName = s(row.fabricName);
@@ -1023,18 +1062,21 @@ export const updateProduct = async (req, res) => {
       if (typeof v === "string") {
         const t = v.trim();
         if (!t) return [];
-        try { v = JSON.parse(t); }
-        catch {
+        try {
+          v = JSON.parse(t);
+        } catch {
           (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => push(String(p || "")));
           return out;
         }
       }
 
-      if (Array.isArray(v)) { v.forEach(push); return out; }
+      if (Array.isArray(v)) return v.forEach(push), out;
+
       if (v && typeof v === "object") {
         const looksSingle =
-          ("fabricName" in v) || ("fabricCode" in v) || ("fabricColor" in v) || ("role" in v);
-        if (looksSingle) { push(v); return out; }
+          "fabricName" in v || "fabricCode" in v || "fabricColor" in v || "role" in v;
+        if (looksSingle) return push(v), out;
+
         Object.entries(v).forEach(([role, name]) => push({ role, fabricName: name }));
         return out;
       }
@@ -1063,13 +1105,25 @@ export const updateProduct = async (req, res) => {
     if (data.collections !== undefined) data.collections = arr(data.collections);
 
     if (data.fabrics !== undefined) {
-      try { data.fabrics = normFabrics(json(data.fabrics, data.fabrics)); }
-      catch (err) { return res.status(400).json({ message: err.message || "Invalid fabrics" }); }
+      try {
+        data.fabrics = normFabrics(json(data.fabrics, data.fabrics));
+      } catch (err) {
+        return res.status(400).json({ message: err.message || "Invalid fabrics" });
+      }
     }
 
     if (data.avgFabricConsumption !== undefined) {
       data.avgFabricConsumption = json(data.avgFabricConsumption, data.avgFabricConsumption);
     }
+
+    // ✅ NEW fields
+    if (data.originalProductLink !== undefined) data.originalProductLink = s(data.originalProductLink);
+    if (data.productLink !== undefined && data.originalProductLink === undefined) {
+      data.originalProductLink = s(data.productLink);
+      delete data.productLink;
+    }
+    // allow manual set, but we will recompute if variants provided
+    if (data.isPatternReady !== undefined) data.isPatternReady = toBool(data.isPatternReady);
 
     if (data.isSamplingDone !== undefined) data.isSamplingDone = toBool(data.isSamplingDone);
     if (data.isBestSeller !== undefined) data.isBestSeller = toBool(data.isBestSeller);
@@ -1154,8 +1208,14 @@ export const updateProduct = async (req, res) => {
       );
 
       data.productType = data.variants.length ? "variable" : "simple";
+
+      // ✅ AUTO set isPatternReady if variants changed
+      data.isPatternReady = data.variants.some(
+        (v) => v?.patternNumber && String(v.patternNumber).trim()
+      );
     } else {
       delete data.variants;
+      // if variants not provided, leave isPatternReady as-is unless explicitly sent
     }
 
     /* ---------------- cross-sell ---------------- */
@@ -1195,6 +1255,13 @@ export const updateProduct = async (req, res) => {
     data.sku = skuData.sku;
     if (Array.isArray(data.variants)) data.variants = skuData.variants;
 
+    // ✅ FINAL SAFETY: compute pattern ready from final variants (if variable)
+    const finalVariants = Array.isArray(data.variants) ? data.variants : existing.variants;
+    const finalIsPatternReady =
+      Array.isArray(finalVariants) &&
+      finalVariants.some((v) => v?.patternNumber && String(v.patternNumber).trim());
+    if (data.isPatternReady === undefined) data.isPatternReady = !!finalIsPatternReady;
+
     /* ---------------- apply + save ---------------- */
     existing.set(data);
 
@@ -1207,6 +1274,8 @@ export const updateProduct = async (req, res) => {
       "colors",
       "isSamplingDone",
       "isBestSeller",
+      "isPatternReady",
+      "originalProductLink",
       "keyFeatures",
       "shortDescription",
       "howToStyle",
@@ -2479,3 +2548,26 @@ export const toggleBestSeller = async (req, res) => {
 };
 
 
+// Mark Product Pattern Ready (Manual Override)
+export const markPatternReady = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    product.isPatternReady = true;
+
+    await product.save({ validateBeforeSave: false });
+
+    return res.json({
+      message: "Product marked as Pattern Ready",
+      product,
+    });
+  } catch (error) {
+    console.error("❌ Mark Pattern Ready Error:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};
