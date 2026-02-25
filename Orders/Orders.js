@@ -301,7 +301,6 @@ splitSuffix: { type: String, default: "", index: true }, // "A","B"
       index: true,
     },
 // ✅ order confirmation (separate from fulfillment)
-
 fulfillmentStatus: {
   type: String,
   enum: [
@@ -314,13 +313,16 @@ fulfillmentStatus: {
     "out_for_delivery",
     "delivered",
 
-    // ✅ NEW: reverse pickup (return/exchange)
+    // reverse pickup (return/exchange)
     "pickup_initiated",
 
     "return_requested",
     "exchange_requested",
     "returned",
     "refunded",
+
+    // ✅ NEW STATUS
+    "exchanged",
 
     "cancelled",
     "rto",

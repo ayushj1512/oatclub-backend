@@ -761,16 +761,19 @@ export const getAllOrders = async (req, res) => {
 
       // date filters
       startDate, // "YYYY-MM-DD"
-      endDate,   // "YYYY-MM-DD"
-      startAt,   // ISO datetime (recommended): "YYYY-MM-DDT00:00:00.000+05:30"
-      endAt,     // ISO datetime (recommended): "YYYY-MM-DDT23:59:59.999+05:30" OR end-exclusive too
-      // optional
-      tz,        // ignored for now (we default IST), but kept for future
+      endDate, // "YYYY-MM-DD"
+      startAt, // ISO datetime: "YYYY-MM-DDT00:00:00.000+05:30"
+      endAt, // ISO datetime: "YYYY-MM-DDT23:59:59.999+05:30" (inclusive) OR end-exclusive if you send next-day 00:00 + use $lt
+      tz, // ignored for now (we default IST), kept for future
 
       minAmount,
       maxAmount,
       paymentMethod,
       customerName,
+
+      // ✅ NEW (keep old behavior if not provided)
+      page = "1",
+      limit = "500",
     } = req.query;
 
     const filters = {};
@@ -802,11 +805,12 @@ export const getAllOrders = async (req, res) => {
     /* ----------------------------
        ✅ Date range (createdAt) — IST Correct
        Priority:
-       1) startAt/endAt (ISO with offset) if provided
-       2) else startDate/endDate (YYYY-MM-DD) -> IST day boundaries -> UTC
+       1) startAt/endAt if provided
+       2) else startDate/endDate (YYYY-MM-DD) -> IST boundaries -> UTC
        Behavior:
        - start inclusive
-       - end exclusive (next day 00:00 IST)
+       - end exclusive (next day 00:00 IST) when endDate used
+       - end inclusive when endAt used (as you already do with $lte)
     ---------------------------- */
     const hasStartAt = !!String(startAt || "").trim();
     const hasEndAt = !!String(endAt || "").trim();
@@ -825,19 +829,16 @@ export const getAllOrders = async (req, res) => {
       }
 
       if (hasEndAt) {
-        // If endAt given as "end-of-day", make it inclusive by using $lte
-        // If you want strict end-exclusive from frontend, send endAt as next-day 00:00 and use $lt.
         const d = new Date(String(endAt));
-        if (!Number.isNaN(d.getTime())) {
-          filters.createdAt.$lte = d; // inclusive end if endAt is end-of-day
-        }
+        if (!Number.isNaN(d.getTime())) filters.createdAt.$lte = d; // inclusive end
       } else if (hasEndDate) {
         const d = istEndExclusiveUtcFromYMD(endDate);
         if (d) filters.createdAt.$lt = d; // end exclusive
       }
 
-      // cleanup: if empty object
-      if (!filters.createdAt.$gte && !filters.createdAt.$lt && !filters.createdAt.$lte) delete filters.createdAt;
+      if (!filters.createdAt.$gte && !filters.createdAt.$lt && !filters.createdAt.$lte) {
+        delete filters.createdAt;
+      }
     }
 
     /* ----------------------------
@@ -866,9 +867,22 @@ export const getAllOrders = async (req, res) => {
     }
 
     /* ----------------------------
-       ✅ Aggregate: priority sort + latest
+       ✅ Pagination (default keeps old behavior)
+       - Old: limit 500 always
+       - New: page/limit optional, still capped to protect server
     ---------------------------- */
-    const orders = await Order.aggregate([
+    const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
+    const limitNumRaw = parseInt(String(limit), 10) || 500;
+    const limitNum = Math.min(Math.max(1, limitNumRaw), 500); // hard cap 500 (safe)
+    const skip = (pageNum - 1) * limitNum;
+
+    /* ----------------------------
+       ✅ Aggregate: priority sort + latest (paged)
+       ✅ Also returns meta so frontend can show accurate totals
+       - totalCount = total matched documents
+       - totalSum = sum(finalPayable) across ALL matched documents
+    ---------------------------- */
+    const [result] = await Order.aggregate([
       { $match: filters },
       {
         $addFields: {
@@ -884,16 +898,50 @@ export const getAllOrders = async (req, res) => {
           },
         },
       },
-      { $sort: { _priorityRank: -1, createdAt: -1 } },
-      { $limit: 500 },
+      {
+        $facet: {
+          orders: [
+            { $sort: { _priorityRank: -1, createdAt: -1 } },
+            { $skip: skip },
+            { $limit: limitNum },
+          ],
+          meta: [
+            {
+              $group: {
+                _id: null,
+                totalCount: { $sum: 1 },
+                totalSum: { $sum: { $ifNull: ["$finalPayable", 0] } },
+              },
+            },
+          ],
+        },
+      },
     ]);
+
+    const orders = result?.orders || [];
+    const meta0 = result?.meta?.[0] || { totalCount: 0, totalSum: 0 };
 
     const populated = await Order.populate(orders, [
       { path: "customerId", select: "name email phone" },
       { path: "items.productId" },
     ]);
 
-    return res.status(200).json(populated);
+    const totalCount = Number(meta0.totalCount || 0);
+    const totalSum = Number(meta0.totalSum || 0);
+    const hasMore = skip + populated.length < totalCount;
+
+    // ✅ Backward compatible:
+    // If client expects array, it can still read data.orders (recommended now)
+    return res.status(200).json({
+      orders: populated,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        totalCount,
+        totalSum,
+        hasMore,
+      },
+    });
   } catch (error) {
     console.error("❌ Fetch Orders Error:", error);
     return res.status(500).json({ message: "Server error", error: error.message });
