@@ -24,11 +24,7 @@ const customerSchema = new mongoose.Schema(
     },
 
     // 👤 Basic Profile
-    name: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+    name: { type: String, trim: true, default: "" },
 
     email: {
       type: String,
@@ -38,22 +34,12 @@ const customerSchema = new mongoose.Schema(
       index: true,
     },
 
-    phone: {
-      type: String,
-      trim: true,
-      default: "",
-    },
+    phone: { type: String, trim: true, default: "" },
 
-    profileImage: {
-      type: String,
-      default: "",
-    },
+    profileImage: { type: String, default: "" },
 
     // 🎂 Optional
-    dateOfBirth: {
-      type: Date,
-      default: null,
-    },
+    dateOfBirth: { type: Date, default: null },
 
     gender: {
       type: String,
@@ -72,46 +58,53 @@ const customerSchema = new mongoose.Schema(
     state: { type: String, trim: true, default: "" },
     city: { type: String, trim: true, default: "" },
 
-  cartAdds: {
-  type: [
-    new mongoose.Schema(
-      {
-        // product identity
-        productId: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "Product",
-          default: null,
-          index: true,
-        },
-        productCode: {
-          type: String,
-          trim: true,
-          required: true,
-          index: true,
-        },
-
-        // ✅ variant identity
-        variantId: {
-          type: mongoose.Schema.Types.ObjectId,
-          default: null,
-          index: true,
-        },
-        size: {
-          type: String,
-          trim: true,
-          default: "", // "S", "M", "L", "42"
-        },
-
-        lastAddedAt: { type: Date, default: Date.now },
+    // ✅ Banking + UPI details (for refunds / payouts) — NO VALIDATORS
+    payoutDetails: {
+      bank: {
+        accountHolderName: { type: String, trim: true, default: "" },
+        accountNumber: { type: String, trim: true, default: "" },
+        ifscCode: { type: String, trim: true, uppercase: true, default: "" },
       },
-      { _id: false }
-    ),
-  ],
-  default: [],
-},
+      upi: {
+        upiId: { type: String, trim: true, lowercase: true, default: "" },
+      },
+      // optional: track when user last updated payout details
+      updatedAt: { type: Date, default: null },
+    },
 
+    cartAdds: {
+      type: [
+        new mongoose.Schema(
+          {
+            // product identity
+            productId: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "Product",
+              default: null,
+              index: true,
+            },
+            productCode: {
+              type: String,
+              trim: true,
+              required: true,
+              index: true,
+            },
 
+            // ✅ variant identity
+            variantId: {
+              type: mongoose.Schema.Types.ObjectId,
+              default: null,
+              index: true,
+            },
+            size: { type: String, trim: true, default: "" },
 
+            lastAddedAt: { type: Date, default: Date.now },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
 
     cart: {
       activeCartId: {
@@ -190,6 +183,12 @@ customerSchema.pre("save", async function (next) {
       this.customerId = String(counter.seq).padStart(4, "0");
     }
 
+    // ✅ mark payoutDetails.updatedAt when payout details are modified
+    if (this.isModified("payoutDetails")) {
+      this.payoutDetails = this.payoutDetails || {};
+      this.payoutDetails.updatedAt = new Date();
+    }
+
     // ✅ Auto set ageGroup if DOB exists
     if (this.dateOfBirth) {
       const age = Math.floor(
@@ -223,14 +222,8 @@ customerSchema.index(
   }
 );
 
-customerSchema.index({
-  "cartAdds.productCode": 1,
-  "cartAdds.size": 1,
-});
-
-customerSchema.index({
-  "cartAdds.variantId": 1,
-});
+customerSchema.index({ "cartAdds.productCode": 1, "cartAdds.size": 1 });
+customerSchema.index({ "cartAdds.variantId": 1 });
 
 /**
  * ✅ Other Indexes
@@ -241,5 +234,4 @@ customerSchema.index({ ageGroup: 1 });
 customerSchema.index({ country: 1 });
 customerSchema.index({ "cartAdds.productCode": 1 });
 
-export default mongoose.models.Customer ||
-  mongoose.model("Customer", customerSchema);
+export default mongoose.models.Customer || mongoose.model("Customer", customerSchema);

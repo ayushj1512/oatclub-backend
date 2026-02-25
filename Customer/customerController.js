@@ -21,16 +21,54 @@ const normalizeIncomingCustomer = (body = {}) => {
 };
 
 // Only set if incoming has value; for existing fields choose policy
-const buildSafeUpdate = ({ email, phone, name, profileImage }) => {
+const buildSafeUpdate = ({
+  email,
+  phone,
+  name,
+  profileImage,
+  payoutDetails,
+}) => {
   const $set = {};
 
-  // keep these as "always update if provided" (your choice)
+  // ✅ Basic fields (update only if provided)
   if (email) $set.email = email;
   if (phone) $set.phone = phone;
   if (name) $set.name = name;
   if (profileImage) $set.profileImage = profileImage;
 
+  // ✅ Banking / UPI (optional — update only if provided)
+  const bank = payoutDetails?.bank || {};
+  const upi = payoutDetails?.upi || {};
+
+  if (bank.accountHolderName)
+    $set["payoutDetails.bank.accountHolderName"] =
+      bank.accountHolderName.trim();
+
+  if (bank.accountNumber)
+    $set["payoutDetails.bank.accountNumber"] =
+      bank.accountNumber.trim();
+
+  if (bank.ifscCode)
+    $set["payoutDetails.bank.ifscCode"] =
+      bank.ifscCode.trim().toUpperCase();
+
+  if (upi.upiId)
+    $set["payoutDetails.upi.upiId"] =
+      upi.upiId.trim().toLowerCase();
+
+  // ✅ If any payout field updated → update payoutDetails.updatedAt
+  if (
+    bank.accountHolderName ||
+    bank.accountNumber ||
+    bank.ifscCode ||
+    upi.upiId
+  ) {
+    $set["payoutDetails.updatedAt"] = new Date();
+  }
+
+  // ✅ Always update document updatedAt
   $set.updatedAt = new Date();
+
   return $set;
 };
 
@@ -112,6 +150,9 @@ export const createCustomer = async (req, res) => {
       profileImage = "",
       referralCode,
       referredBy,
+
+      // ✅ NEW: payout details (optional)
+      payoutDetails = {},
     } = req.body;
 
     // ✅ Normalize
@@ -120,6 +161,27 @@ export const createCustomer = async (req, res) => {
     const safePhone = phone ? String(phone).trim() : "";
     const safeName = name ? String(name).trim() : "";
     const safeProfileImage = profileImage ? String(profileImage).trim() : "";
+
+    // ✅ Normalize payout details (optional)
+    const bank = payoutDetails?.bank || {};
+    const upi = payoutDetails?.upi || {};
+
+    const safeAccountHolderName = bank?.accountHolderName
+      ? String(bank.accountHolderName).trim()
+      : "";
+    const safeAccountNumber = bank?.accountNumber
+      ? String(bank.accountNumber).trim()
+      : "";
+    const safeIfscCode = bank?.ifscCode
+      ? String(bank.ifscCode).trim().toUpperCase()
+      : "";
+    const safeUpiId = upi?.upiId ? String(upi.upiId).trim().toLowerCase() : "";
+
+    const hasPayout =
+      !!safeAccountHolderName ||
+      !!safeAccountNumber ||
+      !!safeIfscCode ||
+      !!safeUpiId;
 
     // ✅ Referral Code (only used on insert)
     const finalReferralCode =
@@ -221,6 +283,19 @@ export const createCustomer = async (req, res) => {
       if (safePhone) $set.phone = safePhone;
       if (safeProfileImage) $set.profileImage = safeProfileImage;
     }
+
+    // ✅ NEW: payout details (optional updates)
+    if (safeAccountHolderName)
+      $set["payoutDetails.bank.accountHolderName"] = safeAccountHolderName;
+
+    if (safeAccountNumber)
+      $set["payoutDetails.bank.accountNumber"] = safeAccountNumber;
+
+    if (safeIfscCode) $set["payoutDetails.bank.ifscCode"] = safeIfscCode;
+
+    if (safeUpiId) $set["payoutDetails.upi.upiId"] = safeUpiId;
+
+    if (hasPayout) $set["payoutDetails.updatedAt"] = new Date();
 
     // ✅ Insert-only defaults (do NOT include email/phone/name/profileImage here)
     const $setOnInsert = {
@@ -437,10 +512,65 @@ export const updateCustomer = async (req, res) => {
   try {
     const payload = { ...req.body };
 
+    // ❌ never allow these from client
     delete payload.firebaseUID;
     delete payload.customerId;
     delete payload.cart;
     delete payload.analytics;
+
+    // ✅ OPTIONAL: whitelist to avoid updating random fields
+    const ALLOWED_TOP_LEVEL = [
+      "name",
+      "email",
+      "phone",
+      "profileImage",
+      "dateOfBirth",
+      "gender",
+      "country",
+      "state",
+      "city",
+      "preferences",
+      "referralCode",
+      "referredBy",
+      "isActive",
+
+      // ✅ NEW
+      "payoutDetails",
+    ];
+
+    for (const k of Object.keys(payload)) {
+      if (!ALLOWED_TOP_LEVEL.includes(k)) delete payload[k];
+    }
+
+    // ✅ Normalize payoutDetails (optional) + set payoutDetails.updatedAt only if payoutDetails provided
+    if (payload.payoutDetails) {
+      const bank = payload?.payoutDetails?.bank || {};
+      const upi = payload?.payoutDetails?.upi || {};
+
+      const safeAccountHolderName = bank?.accountHolderName
+        ? String(bank.accountHolderName).trim()
+        : "";
+      const safeAccountNumber = bank?.accountNumber
+        ? String(bank.accountNumber).trim()
+        : "";
+      const safeIfscCode = bank?.ifscCode
+        ? String(bank.ifscCode).trim().toUpperCase()
+        : "";
+      const safeUpiId = upi?.upiId ? String(upi.upiId).trim().toLowerCase() : "";
+
+      // rebuild payoutDetails so only expected fields go in
+      payload.payoutDetails = {
+        bank: {
+          accountHolderName: safeAccountHolderName,
+          accountNumber: safeAccountNumber,
+          ifscCode: safeIfscCode,
+        },
+        upi: { upiId: safeUpiId },
+        updatedAt: new Date(),
+      };
+    }
+
+    payload.updatedAt = new Date();
 
     const customer = await Customer.findByIdAndUpdate(req.params.id, payload, {
       new: true,
@@ -767,3 +897,92 @@ export const mergeGuestCartAddsByCustomerId = async (req, res) => {
   }
 };
 
+
+/**
+ * ---------------------------------------------------------
+ * ✅ Add / Update Customer Banking Details (Bank OR UPI)
+ * @route PATCH /api/customers/:id/payout-details
+ * Body:
+ *  - Bank: { bank: { accountHolderName, accountNumber, ifscCode } }
+ *  - UPI:  { upi: { upiId } }
+ *  - Or both
+ * Notes:
+ *  - Either UPI or Bank must be provided (at least one)
+ *  - Fields are optional individually, but must form a valid payload for that method
+ * ---------------------------------------------------------
+ */
+export const addCustomerBankingDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const bankIn = req.body?.bank || req.body?.payoutDetails?.bank || {};
+    const upiIn = req.body?.upi || req.body?.payoutDetails?.upi || {};
+
+    const accountHolderName = bankIn?.accountHolderName
+      ? String(bankIn.accountHolderName).trim()
+      : "";
+    const accountNumber = bankIn?.accountNumber
+      ? String(bankIn.accountNumber).trim()
+      : "";
+    const ifscCode = bankIn?.ifscCode
+      ? String(bankIn.ifscCode).trim().toUpperCase()
+      : "";
+
+    const upiId = upiIn?.upiId ? String(upiIn.upiId).trim().toLowerCase() : "";
+
+    const hasAnyBank = !!(accountHolderName || accountNumber || ifscCode);
+    const hasUpi = !!upiId;
+
+    // ✅ Must send at least one method
+    if (!hasAnyBank && !hasUpi) {
+      return res.status(400).json({
+        message: "Provide either UPI ID or Bank account details",
+      });
+    }
+
+    // ✅ If bank method used, enforce required bank fields
+    if (hasAnyBank) {
+      if (!accountHolderName || !accountNumber || !ifscCode) {
+        return res.status(400).json({
+          message:
+            "For bank details, accountHolderName, accountNumber and ifscCode are required",
+        });
+      }
+    }
+
+    // ✅ Build safe $set (update only what is provided)
+    const $set = {
+      updatedAt: new Date(),
+      "payoutDetails.updatedAt": new Date(),
+    };
+
+    if (hasAnyBank) {
+      $set["payoutDetails.bank.accountHolderName"] = accountHolderName;
+      $set["payoutDetails.bank.accountNumber"] = accountNumber;
+      $set["payoutDetails.bank.ifscCode"] = ifscCode;
+    }
+
+    if (hasUpi) {
+      $set["payoutDetails.upi.upiId"] = upiId;
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      id,
+      { $set },
+      { new: true, runValidators: true }
+    );
+
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    return res.status(200).json({
+      message: "Payout details updated",
+      payoutDetails: customer.payoutDetails,
+      customer,
+    });
+  } catch (err) {
+    console.error("Add Customer Banking Details Error:", err);
+    return res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
