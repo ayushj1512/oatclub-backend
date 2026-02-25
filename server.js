@@ -49,6 +49,7 @@ import metaFeedRouter from "./routes/metaFeed.js";
 import inventoryRoutes from "./routes/admin/inventoryRouter.js";
 import ticketRoutes from "./routes/admin/tickets.js";
 import superadminRoutes from "./routes/superadmin.js";
+import marketingSpendRoutes from "./MarketingSpend/marketingSpendRoutes.js";
 
 // --------------------------------------------------
 // EXTRA FEATURES
@@ -243,6 +244,7 @@ app.use("/api/footwear", footwearRoutes);
 app.use("/api/admin/footwear", adminFootwearRoutes);
 app.use("/api/inventory-reservations", inventoryReservationRoutes);
 app.use("/api/coming-soon", commingSoonRoutes);
+app.use("/api/marketing", marketingSpendRoutes);
 
 // Admin
 app.use("/api/inventory", inventoryRoutes);
