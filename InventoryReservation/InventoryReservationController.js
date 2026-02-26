@@ -286,19 +286,35 @@ export async function expireReservation(req, res) {
 /* ---------------- API: list/get ---------------- */
 export async function listReservations(req, res) {
   try {
-    const { productId, variantId, status, refType, refId, productCode, orderNumber } = req.query || {};
+    const {
+      productId,
+      variantId,
+      status,
+      refType,
+      refId,
+      productCode,
+      orderNumber,
+    } = req.query || {};
+
     const filter = {};
 
     if (productId) {
-      if (!isObjectId(productId)) return res.status(400).json({ ok: false, message: "Invalid productId" });
+      if (!isObjectId(productId))
+        return res
+          .status(400)
+          .json({ ok: false, message: "Invalid productId" });
       filter.productId = oid(productId);
     }
     if (variantId) {
-      if (!isObjectId(variantId)) return res.status(400).json({ ok: false, message: "Invalid variantId" });
+      if (!isObjectId(variantId))
+        return res
+          .status(400)
+          .json({ ok: false, message: "Invalid variantId" });
       filter.variantId = oid(variantId);
     }
     if (refId) {
-      if (!isObjectId(refId)) return res.status(400).json({ ok: false, message: "Invalid refId" });
+      if (!isObjectId(refId))
+        return res.status(400).json({ ok: false, message: "Invalid refId" });
       filter.refId = oid(refId);
     }
 
@@ -307,7 +323,72 @@ export async function listReservations(req, res) {
     if (status) filter.status = String(status).trim();
     if (refType) filter.refType = String(refType).trim();
 
-    const data = await InventoryReservation.find(filter).sort({ createdAt: -1 }).limit(500);
+    // ✅ ONLY when Product Inventory page is used (productId present)
+    // Sort reservations by: priority (high>medium>normal) then orderNumber ASC then createdAt ASC
+    if (filter.productId) {
+      const pipeline = [
+        { $match: filter },
+
+        // join orders to fetch priority (works when refType="order")
+        {
+          $lookup: {
+            from: "orders",
+            localField: "refId",
+            foreignField: "_id",
+            as: "orderDoc",
+          },
+        },
+        { $unwind: { path: "$orderDoc", preserveNullAndEmptyArrays: true } },
+
+        // priority rank: high first
+        {
+          $addFields: {
+            _priorityRank: {
+              $switch: {
+                branches: [
+                  { case: { $eq: ["$orderDoc.priority", "high"] }, then: 0 },
+                  { case: { $eq: ["$orderDoc.priority", "medium"] }, then: 1 },
+                  { case: { $eq: ["$orderDoc.priority", "normal"] }, then: 2 },
+                ],
+                default: 3, // production/manual/unknown
+              },
+            },
+          },
+        },
+
+        // ✅ ASC sorting as requested
+        {
+          $sort: {
+            _priorityRank: 1,
+            orderNumber: 1,
+            createdAt: 1,
+          },
+        },
+
+        { $limit: 500 },
+
+        // cleanup
+        {
+          $project: {
+            _priorityRank: 0,
+            // keep reservation fields; drop heavy orderDoc fields
+            "orderDoc.items": 0,
+            "orderDoc.rmas": 0,
+            "orderDoc.analytics": 0,
+            "orderDoc.razorpay": 0,
+          },
+        },
+      ];
+
+      const data = await InventoryReservation.aggregate(pipeline);
+      return res.json({ ok: true, count: data.length, data });
+    }
+
+    // default (everywhere else): latest first
+    const data = await InventoryReservation.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(500);
+
     return res.json({ ok: true, count: data.length, data });
   } catch (e) {
     return sendErr(res, e, "Failed to list reservations");
