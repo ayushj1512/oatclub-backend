@@ -50,6 +50,7 @@ import inventoryRoutes from "./routes/admin/inventoryRouter.js";
 import ticketRoutes from "./routes/admin/tickets.js";
 import superadminRoutes from "./routes/superadmin.js";
 import marketingSpendRoutes from "./MarketingSpend/marketingSpendRoutes.js";
+import marqueeRoutes from "./MarqueeItem/marquee.routes.js";
 
 // --------------------------------------------------
 // EXTRA FEATURES
@@ -280,7 +281,7 @@ app.use("/api/abandoned-carts", abandonedCartRoutes);
 // Superadmin
 app.use("/superadmin", superadminRoutes);
 app.use("/api/home-collections", homeCollectionsRoutes);
-
+app.use("/api", marqueeRoutes);
 // Root
 app.get("/", (req, res) => {
   res.send("🛒 MIRAY FASHIONS API running...");
