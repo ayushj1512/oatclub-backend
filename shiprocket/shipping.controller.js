@@ -344,18 +344,26 @@ export async function getShiprocketTokenApi(req, res) {
 }
 
 
-/**
- * ✅ GET /api/orders/:id/tracking/sync
- * ✅ GET /api/orders/tracking/sync?orderNumber=MIRAY-000271
- *
- * Priority:
- * 1) Shiprocket Orders Show API (needs shiprocket orderId)
- * 2) Fallback: courier/track (needs shipmentId or orderId)
- */
+// ✅ Shiprocket Tracking Sync (SHIPMENT ID ONLY)
+// Uses: GET /courier/track/shipment/{shipment_id}
+// - Only relies on shipmentId stored in order.shipment.shiprocket.shipmentId
+// - Updates AWB, courierName, trackingUrl safely (won't overwrite with blanks)
+
+// ✅ UPDATED: Shiprocket Tracking Sync (shipmentId PRIMARY, orderId SHOW fallback)
+// Goal: always try to fetch AWB + courierName for portal
+// 1) PRIMARY: GET /courier/track/shipment/{shipment_id}
+// 2) FALLBACK (when upstream down / fails): GET /orders/show/{order_id} (if saved)
+// 3) Safe DB update: never overwrite with blanks
+// 4) Better error codes: "SHIPROCKET_UPSTREAM_DOWN" for temporary outages
+
 export async function syncShiprocketTrackingFlex(req, res) {
   try {
     const id = req.params?.id;
     const orderNumber = String(req.query?.orderNumber || "").trim();
+
+    const s = (v) => (v == null ? "" : String(v)).trim();
+    const isNonEmpty = (v) => s(v).length > 0;
+    const lower = (v) => s(v).toLowerCase();
 
     // 1) Find order by id OR orderNumber
     let order = null;
@@ -372,14 +380,29 @@ export async function syncShiprocketTrackingFlex(req, res) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    // 2) Extract identifiers
-    const shipmentId = order?.shipment?.shiprocket?.shipmentId || "";
-    const shiprocketOrderId = order?.shipment?.shiprocket?.orderId || "";
+    // 2) IDs (shipmentId primary; orderId fallback for orders/show)
+    const shipmentId = s(order?.shipment?.shiprocket?.shipmentId);
+    const shiprocketOrderId = s(order?.shipment?.shiprocket?.orderId);
 
-    const existingAwb =
-      order?.shipment?.shiprocket?.awb || order?.trackingDetails?.trackingId || "";
+    if (!isNonEmpty(shipmentId) && !isNonEmpty(shiprocketOrderId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Shiprocket shipmentId/orderId missing in order. Cannot sync tracking.",
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+      });
+    }
 
-    // 3) token
+    // 3) existing values (fallback)
+    const existingAwb = s(order?.shipment?.shiprocket?.awb || order?.trackingDetails?.trackingId);
+    const existingCourier = s(
+      order?.shipment?.shiprocket?.courierName || order?.trackingDetails?.courierName
+    );
+    const existingUrl = s(
+      order?.shipment?.shiprocket?.trackingUrl || order?.trackingDetails?.trackingUrl
+    );
+
+    // 4) token
     const token = await getShiprocketToken();
     if (!token) {
       return res.status(500).json({
@@ -388,138 +411,189 @@ export async function syncShiprocketTrackingFlex(req, res) {
       });
     }
 
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    };
+
     let nextAwb = existingAwb;
-    let nextCourier =
-      order?.shipment?.shiprocket?.courierName || order?.trackingDetails?.courierName || "";
-    let nextUrl =
-      order?.shipment?.shiprocket?.trackingUrl || order?.trackingDetails?.trackingUrl || "";
+    let nextCourier = existingCourier;
+    let nextUrl = existingUrl;
 
     let source = "";
-    let fulfillmentStatus = "";
+    let rawTrack = null;
+    let rawShow = null;
+
+    const markUpstream = (msg) => {
+      const m = lower(msg);
+      return (
+        m.includes("no healthy upstream") ||
+        m.includes("bad gateway") ||
+        m.includes("upstream") ||
+        m.includes("gateway") ||
+        m.includes("timeout") ||
+        m.includes("etimedout") ||
+        m.includes("econnreset")
+      );
+    };
 
     /* =========================================================
-       A) PRIMARY: Orders Show API (best for AWB + courier)
-       GET /orders/show/:orderId
+       A) PRIMARY: Track by SHIPMENT ID
+       GET /courier/track/shipment/{shipment_id}
     ========================================================= */
-    if (isNonEmpty(shiprocketOrderId)) {
+    let trackFailed = false;
+    let trackWasUpstream = false;
+    let trackErrPayload = null;
+
+    if (isNonEmpty(shipmentId)) {
+      try {
+        const trackRes = await axios.get(
+          `${SHIPROCKET_BASE}/courier/track/shipment/${encodeURIComponent(shipmentId)}`,
+          { headers, timeout: 20000 }
+        );
+
+        rawTrack = trackRes.data || {};
+        const td = rawTrack?.tracking_data || {};
+        const st = (td?.shipment_track && td.shipment_track[0]) || {};
+
+        const awbFromTrack = s(st?.awb_code || td?.awb_code);
+        const courierFromTrack = s(st?.courier_name);
+        const urlFromTrack = s(st?.tracking_url);
+
+        if (isNonEmpty(awbFromTrack)) nextAwb = awbFromTrack;
+        if (isNonEmpty(courierFromTrack)) nextCourier = courierFromTrack;
+        if (isNonEmpty(urlFromTrack)) nextUrl = urlFromTrack;
+
+        source = "courier/track/shipment";
+      } catch (e) {
+        trackFailed = true;
+        trackErrPayload = e?.response?.data || null;
+        const msg = trackErrPayload?.message || e.message || "";
+        trackWasUpstream = markUpstream(msg);
+
+        console.error("❌ Shiprocket track/shipment failed:", trackErrPayload || e.message);
+      }
+    } else {
+      trackFailed = true; // no shipmentId, force fallback if possible
+    }
+
+    /* =========================================================
+       B) FALLBACK: Orders Show by ORDER ID (if tracking failed OR missing key data)
+       GET /orders/show/{order_id}
+       Works even when tracking upstream is flaky sometimes.
+    ========================================================= */
+    const needMore = !isNonEmpty(nextAwb) || !isNonEmpty(nextCourier);
+
+    if ((trackFailed || needMore) && isNonEmpty(shiprocketOrderId)) {
       try {
         const showRes = await axios.get(
           `${SHIPROCKET_BASE}/orders/show/${encodeURIComponent(shiprocketOrderId)}`,
-          {
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            timeout: 20000,
-          }
+          { headers, timeout: 20000 }
         );
 
-        const data = showRes.data || {};
+        rawShow = showRes.data || {};
 
-        // Shiprocket show response keys can vary; keep robust fallbacks
-        nextAwb =
-          data?.awb_code ||
-          data?.awb ||
-          data?.shipment?.awb_code ||
-          data?.shipment?.awb ||
-          nextAwb ||
-          "";
+        const awbFromShow = s(
+          rawShow?.awb_code ||
+            rawShow?.awb ||
+            rawShow?.shipment?.awb_code ||
+            rawShow?.shipment?.awb
+        );
 
-        nextCourier =
-          data?.courier_name ||
-          data?.courier ||
-          data?.shipment?.courier_name ||
-          data?.shipment?.courier ||
-          nextCourier ||
-          "";
+        const courierFromShow = s(
+          rawShow?.courier_name ||
+            rawShow?.courier ||
+            rawShow?.shipment?.courier_name ||
+            rawShow?.shipment?.courier
+        );
 
-        nextUrl =
-          data?.tracking_url ||
-          data?.shipment?.tracking_url ||
-          nextUrl ||
-          "";
+        const urlFromShow = s(rawShow?.tracking_url || rawShow?.shipment?.tracking_url);
 
-        fulfillmentStatus = data?.fulfillment_status || "";
-        source = "orders/show";
+        if (isNonEmpty(awbFromShow)) nextAwb = awbFromShow;
+        if (isNonEmpty(courierFromShow)) nextCourier = courierFromShow;
+        if (isNonEmpty(urlFromShow)) nextUrl = urlFromShow;
+
+        source = source ? `${source} + orders/show` : "orders/show";
       } catch (e) {
-        // ignore here; fallback below
-        console.error("⚠️ Shiprocket orders/show failed:", e?.response?.data || e.message);
+        const srErr = e?.response?.data || null;
+        console.error("⚠️ Shiprocket orders/show fallback failed:", srErr || e.message);
       }
     }
 
     /* =========================================================
-       B) FALLBACK: courier/track (if show didn't give awb/courier)
+       C) If still no meaningful data
     ========================================================= */
-    const needFallback =
-      !isNonEmpty(nextAwb) || !isNonEmpty(nextCourier);
+    const gotAny = isNonEmpty(nextAwb) || isNonEmpty(nextCourier) || isNonEmpty(nextUrl);
 
-    if (needFallback && (isNonEmpty(shipmentId) || isNonEmpty(shiprocketOrderId))) {
-      const trackRes = await axios.get(`${SHIPROCKET_BASE}/courier/track`, {
-        headers: { Authorization: `Bearer ${token}` },
-        params: {
-          shipment_id: isNonEmpty(shipmentId) ? shipmentId : undefined,
-          order_id: isNonEmpty(shiprocketOrderId) ? shiprocketOrderId : undefined,
-        },
-        timeout: 20000,
+    // If primary failed due to upstream and we couldn't recover via show -> return 503 (retry)
+    if (!gotAny && trackFailed && trackWasUpstream) {
+      return res.status(503).json({
+        success: false,
+        code: "SHIPROCKET_UPSTREAM_DOWN",
+        message: "Shiprocket service temporary issue. Please retry in a few minutes.",
+        retryAfterSec: 120,
+        shipmentId: shipmentId || "",
+        shiprocketOrderId: shiprocketOrderId || "",
+        error: trackErrPayload || "no healthy upstream",
       });
+    }
 
-      const td = trackRes.data?.tracking_data || {};
-      const st = td?.shipment_track?.[0] || {};
-
-      nextAwb = st?.awb_code || td?.awb_code || nextAwb || "";
-      nextCourier = st?.courier_name || nextCourier || "";
-      nextUrl = st?.tracking_url || nextUrl || "";
-
-      if (!source) source = "courier/track";
+    // Otherwise: no AWB yet (courier not assigned)
+    if (!gotAny) {
+      return res.status(200).json({
+        success: true,
+        message: "Tracking not available yet (AWB/Carrier not generated or courier not assigned).",
+        source: source || (trackFailed ? "none" : "courier/track/shipment"),
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        shipmentId: shipmentId || "",
+        shiprocketOrderId: shiprocketOrderId || "",
+        trackingId: existingAwb || "",
+        courierName: existingCourier || "",
+        trackingUrl: existingUrl || "",
+        // helpful debug (optional)
+        rawTrack,
+        rawShow,
+      });
     }
 
     /* =========================================================
-       C) Guard: if we still have nothing meaningful
+       D) Safe DB update (only non-empty)
     ========================================================= */
-    if (!isNonEmpty(shipmentId) && !isNonEmpty(shiprocketOrderId)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Shiprocket shipmentId/orderId missing in order. Cannot sync tracking.",
-        orderNumber: order.orderNumber,
-        existingAwb,
-      });
-    }
-
-    // 7) Update order
-    const update = {
+    const $set = {
       "shipment.provider": "shiprocket",
-
-      // keep ids intact, just update tracking fields
-      "shipment.shiprocket.awb": nextAwb,
-      "shipment.shiprocket.courierName": nextCourier,
-      "shipment.shiprocket.trackingUrl": nextUrl,
       "shipment.shiprocket.lastUpdatedAt": new Date(),
-
-      "trackingDetails.trackingId": nextAwb,
-      "trackingDetails.courierName": nextCourier,
-      "trackingDetails.trackingUrl": nextUrl,
     };
 
-    // optional SRF fulfillment status (safe store)
-    if (isNonEmpty(fulfillmentStatus)) {
-      update["shipment.shiprocket.fulfillmentStatus"] = fulfillmentStatus;
+    if (isNonEmpty(nextAwb)) {
+      $set["shipment.shiprocket.awb"] = nextAwb;
+      $set["trackingDetails.trackingId"] = nextAwb;
+    }
+    if (isNonEmpty(nextCourier)) {
+      $set["shipment.shiprocket.courierName"] = nextCourier;
+      $set["trackingDetails.courierName"] = nextCourier;
+    }
+    if (isNonEmpty(nextUrl)) {
+      $set["shipment.shiprocket.trackingUrl"] = nextUrl;
+      $set["trackingDetails.trackingUrl"] = nextUrl;
     }
 
-    await Order.updateOne({ _id: order._id }, { $set: update });
+    await Order.updateOne({ _id: order._id }, { $set });
 
+    /* =========================================================
+       E) Respond
+    ========================================================= */
     return res.status(200).json({
       success: true,
       message: "Tracking synced from Shiprocket",
-      source,
+      source: source || "shiprocket",
       orderId: String(order._id),
       orderNumber: order.orderNumber,
       shipmentId: shipmentId || "",
       shiprocketOrderId: shiprocketOrderId || "",
-      trackingId: nextAwb,
-      courierName: nextCourier,
-      trackingUrl: nextUrl,
-      fulfillmentStatus: fulfillmentStatus || null,
+      trackingId: nextAwb || "",
+      courierName: nextCourier || "",
+      trackingUrl: nextUrl || "",
     });
   } catch (err) {
     const shiprocketError = err?.response?.data || null;
