@@ -321,11 +321,13 @@ fulfillmentStatus: {
     "returned",
     "refunded",
 
-    // ✅ NEW STATUS
     "exchanged",
 
     "cancelled",
     "rto",
+
+    // ✅ NEW
+    "failed",
   ],
   default: "processing",
   index: true,
@@ -789,7 +791,33 @@ orderSchema.pre("validate", function (next) {
 });
 
 
+// ========================================================================================
+// ✅ AUTO-MARK ORDER FAILED IF PAYMENT FAILS
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    const isPaymentFailed =
+      String(this.paymentStatus || "").toLowerCase() === "failed";
 
+    if (isPaymentFailed) {
+      this.fulfillmentStatus = "failed";
+      this.priority = "normal";
+
+      // prevent accidental confirmation
+      this.isConfirmed = false;
+      this.confirmedAt = null;
+
+      // shipment safety
+      if (this.shipment) {
+        this.shipment.status = "cancelled";
+      }
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
 
 
 
