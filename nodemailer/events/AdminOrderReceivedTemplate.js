@@ -15,24 +15,16 @@ export function orderReceivedAdminTemplate({ order = {}, ctaUrl = "#" }) {
   const billing = order?.billingAddressSnapshot || {};
 
   const customerName =
-    shipping?.fullName ||
-    billing?.fullName ||
-    order?.customer?.name ||
-    "Customer";
+    shipping?.fullName || billing?.fullName || order?.customer?.name || "Customer";
 
   const customerEmail =
-    shipping?.email ||
-    billing?.email ||
-    order?.customer?.email ||
-    "—";
+    shipping?.email || billing?.email || order?.customer?.email || "—";
 
   const customerPhone =
-    shipping?.phone ||
-    billing?.phone ||
-    order?.customer?.phone ||
-    "—";
+    shipping?.phone || billing?.phone || order?.customer?.phone || "—";
 
   const shippingAddress = [
+    shipping?.fullName,
     shipping?.line1,
     shipping?.line2,
     shipping?.city,
@@ -51,10 +43,7 @@ export function orderReceivedAdminTemplate({ order = {}, ctaUrl = "#" }) {
 
   const razorpay = order?.razorpay || {};
   const paymentRef =
-    razorpay?.paymentId ||
-    razorpay?.orderId ||
-    order?.transactionId ||
-    "—";
+    razorpay?.paymentId || razorpay?.orderId || order?.transactionId || "—";
 
   /* ================= AMOUNTS ================= */
 
@@ -128,76 +117,110 @@ Priority: ${priority}
 Gift Order: ${isGiftOrder}
 
 ${hasValidCta ? `Open Order: ${ctaUrl}` : ""}
-`;
+`.trim();
 
   /* ================= HTML ================= */
 
   const itemsHtml = items.length
     ? items.map((it) => renderItemRow(it, currency)).join("")
-    : `<tr><td>No items</td></tr>`;
+    : `
+      <tr>
+        <td style="padding:14px;border-bottom:1px solid #eee;color:#555;">
+          No items
+        </td>
+      </tr>
+    `;
 
   const html = `
 <div style="padding:30px;background:#fff;">
-  <div style="max-width:720px;margin:auto;border:1px solid #ddd;border-radius:16px;font-family:system-ui;">
-    <div style="padding:24px;border-bottom:1px solid #eee;">
-      <h2 style="margin:0;">🆕 New Order Received</h2>
-      <p style="margin:6px 0;color:#555;">#${escapeHtml(orderId)} • ${escapeHtml(orderDate)}</p>
+  <div style="max-width:760px;margin:auto;border:1px solid #e6e6e6;border-radius:16px;overflow:hidden;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;">
+    <div style="padding:22px 24px;border-bottom:1px solid #eee;background:#fafafa;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+        <div>
+          <h2 style="margin:0;font-size:20px;line-height:1.2;">🆕 New Order Received</h2>
+          <p style="margin:6px 0 0;color:#666;font-size:13px;">
+            #${escapeHtml(orderId)} • ${escapeHtml(orderDate)}
+          </p>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:12px;color:#666;">Final Payable</div>
+          <div style="font-weight:800;font-size:18px;margin-top:2px;">${escapeHtml(
+            money(finalPayable, currency)
+          )}</div>
+        </div>
+      </div>
     </div>
 
     <div style="padding:24px;">
-      <h3>Customer</h3>
-      <p>
-        <b>${escapeHtml(customerName)}</b><br/>
-        Email: ${escapeHtml(customerEmail)}<br/>
-        Phone: ${escapeHtml(customerPhone)}
-      </p>
+      <h3 style="margin:0 0 10px;font-size:16px;">Customer</h3>
+      <div style="padding:14px;border:1px solid #eee;border-radius:14px;">
+        <div style="font-weight:700;">${escapeHtml(customerName)}</div>
+        <div style="margin-top:6px;color:#444;font-size:13px;line-height:1.5;">
+          Email: ${escapeHtml(customerEmail)}<br/>
+          Phone: ${escapeHtml(customerPhone)}
+        </div>
+      </div>
 
-      <h3>Shipping Address</h3>
-      <p>${escapeHtml(shippingAddress)}</p>
+      <h3 style="margin:18px 0 10px;font-size:16px;">Shipping Address</h3>
+      <div style="padding:14px;border:1px solid #eee;border-radius:14px;color:#444;font-size:13px;line-height:1.5;">
+        ${escapeHtml(shippingAddress || "—")}
+      </div>
 
-      <h3>Status</h3>
-      <p>
+      <h3 style="margin:18px 0 10px;font-size:16px;">Status</h3>
+      <div style="padding:14px;border:1px solid #eee;border-radius:14px;color:#444;font-size:13px;line-height:1.6;">
         Payment: <b>${escapeHtml(paymentMethod)}</b> (${escapeHtml(paymentStatus)})<br/>
         Fulfillment: <b>${escapeHtml(fulfillmentStatus)}</b><br/>
         Confirmed: <b>${escapeHtml(isConfirmed)}</b><br/>
         Payment Ref: ${escapeHtml(paymentRef)}
-      </p>
+      </div>
 
-      <h3>Items (${items.length} • Qty ${totalQty})</h3>
-      <table width="100%" cellpadding="0" cellspacing="0">
+      <h3 style="margin:18px 0 10px;font-size:16px;">Items (${items.length} • Qty ${totalQty})</h3>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid #eee;border-radius:14px;overflow:hidden;">
         ${itemsHtml}
       </table>
 
-      <h3>Pricing</h3>
-      ${summaryRow("Subtotal", money(subtotal, currency))}
-      ${summaryRow("Discount", `-${money(discount, currency)}`)}
-      ${summaryRow("Shipping", money(shippingFee, currency))}
-      ${summaryRow("Tax", money(tax, currency))}
-      <hr/>
-      ${summaryRowStrong("Final Payable", money(finalPayable, currency))}
+      <h3 style="margin:18px 0 10px;font-size:16px;">Pricing</h3>
+      <div style="border:1px solid #eee;border-radius:14px;padding:14px;">
+        ${summaryRow("Subtotal", money(subtotal, currency))}
+        ${summaryRow("Discount", `-${money(discount, currency)}`)}
+        ${summaryRow("Shipping", money(shippingFee, currency))}
+        ${summaryRow("Tax", money(tax, currency))}
+        <div style="height:1px;background:#eee;margin:10px 0;"></div>
+        ${summaryRowStrong("Final Payable", money(finalPayable, currency))}
+        ${
+          couponCode
+            ? `<div style="margin-top:10px;color:#444;font-size:13px;">Coupon: <b>${escapeHtml(
+                couponCode
+              )}</b> (−${escapeHtml(money(couponDiscount, currency))})</div>`
+            : ""
+        }
+      </div>
 
-      ${couponCode ? `<p>Coupon: <b>${escapeHtml(couponCode)}</b></p>` : ""}
-
-      <h3>Meta</h3>
-      <p>
+      <h3 style="margin:18px 0 10px;font-size:16px;">Meta</h3>
+      <div style="padding:14px;border:1px solid #eee;border-radius:14px;color:#444;font-size:13px;line-height:1.6;">
         Source: ${escapeHtml(source)}<br/>
         Priority: ${escapeHtml(priority)}<br/>
         Gift Order: ${escapeHtml(isGiftOrder)}
-      </p>
+      </div>
 
       ${
         hasValidCta
-          ? `<p style="margin-top:20px;">
-              <a href="${escapeAttr(ctaUrl)}" style="padding:10px 20px;border:1px solid #000;border-radius:999px;text-decoration:none;">
+          ? `<div style="margin-top:18px;text-align:center;">
+              <a href="${escapeAttr(ctaUrl)}"
+                 style="display:inline-block;padding:10px 18px;border:1px solid #111;border-radius:999px;text-decoration:none;color:#111;font-weight:700;font-size:13px;">
                 Open Order in Admin
               </a>
-            </p>`
+            </div>`
           : ""
       }
+
+      <div style="margin-top:18px;color:#999;font-size:12px;">
+        This is an automated notification.
+      </div>
     </div>
   </div>
 </div>
-`;
+`.trim();
 
   return { subject, text, html };
 }
@@ -213,12 +236,13 @@ function extractVariantInfo(it = {}) {
 
   const size =
     it?.selectedSize ||
-    attrs.find((a) => a?.key?.toLowerCase() === "size")?.value ||
+    attrs.find((a) => String(a?.key || "").toLowerCase() === "size")?.value ||
     "";
 
   const color =
     it?.selectedColor ||
-    attrs.find((a) => ["color", "colour"].includes(a?.key?.toLowerCase()))?.value ||
+    attrs.find((a) => ["color", "colour"].includes(String(a?.key || "").toLowerCase()))
+      ?.value ||
     "";
 
   const sku = variant?.sku || snap?.sku || "";
@@ -228,20 +252,73 @@ function extractVariantInfo(it = {}) {
     .join(" • ");
 }
 
+/**
+ * ✅ Choose best product image
+ * Priority:
+ * 1) productSnapshot.thumbnail
+ * 2) productSnapshot.images[0]
+ */
+function getItemImage(it = {}) {
+  const snap = it?.productSnapshot || {};
+  const thumb = String(snap?.thumbnail || "").trim();
+  const img0 = Array.isArray(snap?.images) ? String(snap.images[0] || "").trim() : "";
+  const url = thumb || img0;
+  return url || ""; // empty => hide image cell
+}
+
 function renderItemRow(it, currency) {
   const title = it?.productSnapshot?.title || "Item";
   const qty = num(it?.quantity);
   const price = num(it?.price);
+  const lineSubtotal = num(it?.subtotal ?? price * qty);
   const attrs = extractVariantInfo(it);
+
+  const img = getItemImage(it);
+  const hasImg = Boolean(img);
 
   return `
 <tr>
-  <td style="padding:10px 0;border-bottom:1px solid #eee;">
-    <b>${escapeHtml(title)}</b><br/>
-    ${attrs ? escapeHtml(attrs) + "<br/>" : ""}
-    Qty: ${qty} • ${money(price, currency)}
+  <td style="padding:14px;border-bottom:1px solid #eee;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+      <tr>
+        ${
+          hasImg
+            ? `
+          <td width="84" style="vertical-align:top;padding-right:12px;">
+            <img
+              src="${escapeAttr(img)}"
+              alt="${escapeAttr(title)}"
+              width="72"
+              height="72"
+              style="display:block;width:72px;height:72px;object-fit:cover;border-radius:12px;border:1px solid #eee;background:#f7f7f7;"
+            />
+          </td>
+        `
+            : ""
+        }
+        <td style="vertical-align:top;">
+          <div style="font-weight:800;color:#111;line-height:1.2;">${escapeHtml(title)}</div>
+          ${
+            attrs
+              ? `<div style="margin-top:6px;color:#555;font-size:12px;line-height:1.4;">${escapeHtml(
+                  attrs
+                )}</div>`
+              : ""
+          }
+          <div style="margin-top:8px;color:#444;font-size:12px;">
+            Qty: <b>${qty}</b> • Price: <b>${escapeHtml(money(price, currency))}</b>
+            ${
+              lineSubtotal
+                ? ` • Line: <b>${escapeHtml(money(lineSubtotal, currency))}</b>`
+                : ""
+            }
+          </div>
+        </td>
+      </tr>
+    </table>
   </td>
-</tr>`;
+</tr>
+`.trim();
 }
 
 function formatItemText(it, i, currency) {
@@ -249,7 +326,12 @@ function formatItemText(it, i, currency) {
   const qty = num(it?.quantity);
   const price = num(it?.price);
   const attrs = extractVariantInfo(it);
-  return `${i}. ${title}${attrs ? ` (${attrs})` : ""} — Qty: ${qty} — ${money(price, currency)}`;
+  const img = getItemImage(it);
+
+  return `${i}. ${title}${attrs ? ` (${attrs})` : ""} — Qty: ${qty} — ${money(
+    price,
+    currency
+  )}${img ? ` — Image: ${img}` : ""}`;
 }
 
 /* ================= SMALL UTILS ================= */
@@ -257,7 +339,7 @@ function formatItemText(it, i, currency) {
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 const money = (v, c) =>
-  c === "INR" ? `₹${Number(v).toLocaleString("en-IN")}` : `${c} ${v}`;
+  c === "INR" ? `₹${Number(v).toLocaleString("en-IN")}` : `${c} ${Number(v)}`;
 
 const pretty = (s) =>
   String(s || "")
@@ -266,7 +348,6 @@ const pretty = (s) =>
 
 /**
  * ✅ IST formatter (Asia/Kolkata)
- * NOTE: earlier code server ke local timezone me show karta tha
  */
 function formatDate(d) {
   try {
@@ -277,7 +358,7 @@ function formatDate(d) {
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-      timeZoneName: "short", // shows IST
+      timeZoneName: "short",
       hour12: true,
     });
   } catch {
@@ -286,11 +367,17 @@ function formatDate(d) {
 }
 
 function summaryRow(label, value) {
-  return `<div style="display:flex;justify-content:space-between;"><span>${label}</span><span>${value}</span></div>`;
+  return `<div style="display:flex;justify-content:space-between;gap:12px;margin:4px 0;">
+    <span style="color:#555;">${escapeHtml(label)}</span>
+    <span style="color:#111;font-weight:600;">${escapeHtml(value)}</span>
+  </div>`;
 }
 
 function summaryRowStrong(label, value) {
-  return `<div style="display:flex;justify-content:space-between;font-weight:700;"><span>${label}</span><span>${value}</span></div>`;
+  return `<div style="display:flex;justify-content:space-between;gap:12px;margin:6px 0;font-weight:800;">
+    <span>${escapeHtml(label)}</span>
+    <span>${escapeHtml(value)}</span>
+  </div>`;
 }
 
 function escapeHtml(str) {
