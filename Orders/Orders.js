@@ -821,26 +821,41 @@ orderSchema.pre("validate", function (next) {
 
 
 
+// Core list performance
+orderSchema.index({ createdAt: -1 });
+orderSchema.index({ priorityRank: -1, createdAt: -1 });
 
-// Indexes
+// Common admin filters
+orderSchema.index({ isConfirmed: 1, createdAt: -1 });
+orderSchema.index({ fulfillmentStatus: 1, createdAt: -1 });
+orderSchema.index({ paymentStatus: 1, createdAt: -1 });
+orderSchema.index({ paymentMethod: 1, createdAt: -1 });
+orderSchema.index({ customerId: 1, createdAt: -1 });
+
+// Range queries
+orderSchema.index({ finalPayable: 1, createdAt: -1 });
+
+// Shipment dashboards
+orderSchema.index({ "shipment.status": 1, createdAt: -1 });
+
+// Existing useful ones
 orderSchema.index({ "trackingDetails.trackingId": 1 });
 orderSchema.index({ "items.lineId": 1 });
-// ========================================================================================
-// ✅ PATCH 5: Helpful indexes for confirmation workflows
-// ========================================================================================
-orderSchema.index({ isConfirmed: 1, orderDate: -1 });
-orderSchema.index({ isConfirmed: 1, paymentStatus: 1 });
-orderSchema.index({ isConfirmed: 1, fulfillmentStatus: 1 });
-orderSchema.index({ "shipment.xpressbees.awb": 1 });
-orderSchema.index({ "shipment.xpressbees.shipmentId": 1 });
+
+// Split orders
 orderSchema.index({ orderType: 1, parentOrderId: 1 });
 orderSchema.index({ parentOrderId: 1, splitSuffix: 1 });
-// Helpful indexes for RMA queries
+
+// RMA queries
 orderSchema.index({ "rmas.rmaNumber": 1 });
 orderSchema.index({ "rmas.status": 1 });
 orderSchema.index({ "rmas.items.orderLineId": 1 });
 orderSchema.index({ "rmas.fee.status": 1 });
 orderSchema.index({ "rmas.reverseShipment.awb": 1 });
 orderSchema.index({ "rmas.reverseShipment.shipmentId": 1 });
+
+// Xpressbees
+orderSchema.index({ "shipment.xpressbees.awb": 1 });
+orderSchema.index({ "shipment.xpressbees.shipmentId": 1 });
 
 export default mongoose.models.Order || mongoose.model("Order", orderSchema);

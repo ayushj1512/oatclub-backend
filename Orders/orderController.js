@@ -762,16 +762,15 @@ export const getAllOrders = async (req, res) => {
       // date filters
       startDate, // "YYYY-MM-DD"
       endDate, // "YYYY-MM-DD"
-      startAt, // ISO datetime: "YYYY-MM-DDT00:00:00.000+05:30"
-      endAt, // ISO datetime: "YYYY-MM-DDT23:59:59.999+05:30" (inclusive) OR end-exclusive if you send next-day 00:00 + use $lt
-      tz, // ignored for now (we default IST), kept for future
+      startAt, // ISO datetime
+      endAt, // ISO datetime (inclusive) OR end-exclusive if you send next-day 00:00 + use $lt
+      tz, // ignored for now
 
       minAmount,
       maxAmount,
       paymentMethod,
       customerName,
 
-      // ✅ NEW (keep old behavior if not provided)
       page = "1",
       limit = "500",
     } = req.query;
@@ -786,12 +785,15 @@ export const getAllOrders = async (req, res) => {
     }
 
     if (paymentStatus) filters.paymentStatus = String(paymentStatus).trim();
-    if (fulfillmentStatus) filters.fulfillmentStatus = String(fulfillmentStatus).trim();
+    if (fulfillmentStatus)
+      filters.fulfillmentStatus = String(fulfillmentStatus).trim();
 
     // confirmation
     if (confirmFilter === "confirmed") filters.isConfirmed = true;
-    else if (confirmFilter === "not_confirmed") filters.isConfirmed = { $ne: true };
-    else if (isConfirmed != null) filters.isConfirmed = String(isConfirmed) === "true";
+    else if (confirmFilter === "not_confirmed")
+      filters.isConfirmed = { $ne: true };
+    else if (isConfirmed != null)
+      filters.isConfirmed = String(isConfirmed) === "true";
 
     // priority
     if (priority) {
@@ -800,17 +802,11 @@ export const getAllOrders = async (req, res) => {
     }
 
     // paymentMethod
-    if (paymentMethod) filters.paymentMethod = String(paymentMethod).trim().toLowerCase();
+    if (paymentMethod)
+      filters.paymentMethod = String(paymentMethod).trim().toLowerCase();
 
     /* ----------------------------
        ✅ Date range (createdAt) — IST Correct
-       Priority:
-       1) startAt/endAt if provided
-       2) else startDate/endDate (YYYY-MM-DD) -> IST boundaries -> UTC
-       Behavior:
-       - start inclusive
-       - end exclusive (next day 00:00 IST) when endDate used
-       - end inclusive when endAt used (as you already do with $lte)
     ---------------------------- */
     const hasStartAt = !!String(startAt || "").trim();
     const hasEndAt = !!String(endAt || "").trim();
@@ -836,7 +832,11 @@ export const getAllOrders = async (req, res) => {
         if (d) filters.createdAt.$lt = d; // end exclusive
       }
 
-      if (!filters.createdAt.$gte && !filters.createdAt.$lt && !filters.createdAt.$lte) {
+      if (
+        !filters.createdAt.$gte &&
+        !filters.createdAt.$lt &&
+        !filters.createdAt.$lte
+      ) {
         delete filters.createdAt;
       }
     }
@@ -867,73 +867,60 @@ export const getAllOrders = async (req, res) => {
     }
 
     /* ----------------------------
-       ✅ Pagination (default keeps old behavior)
-       - Old: limit 500 always
-       - New: page/limit optional, still capped to protect server
+       ✅ Pagination
     ---------------------------- */
     const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
     const limitNumRaw = parseInt(String(limit), 10) || 500;
-    const limitNum = Math.min(Math.max(1, limitNumRaw), 500); // hard cap 500 (safe)
+    const limitNum = Math.min(Math.max(1, limitNumRaw), 500);
     const skip = (pageNum - 1) * limitNum;
 
     /* ----------------------------
-       ✅ Aggregate: priority sort + latest (paged)
-       ✅ Also returns meta so frontend can show accurate totals
-       - totalCount = total matched documents
-       - totalSum = sum(finalPayable) across ALL matched documents
+       ✅ Priority sort WITHOUT aggregate:
+       1) priority rank via JS mapping in sort
+          (requires priorityRank field OR use string mapping)
+       ✅ Meta done separately to avoid full facet scan
+       ✅ Keep ALL order fields (no select)
     ---------------------------- */
-    const [result] = await Order.aggregate([
-      { $match: filters },
-      {
-        $addFields: {
-          _priorityRank: {
-            $switch: {
-              branches: [
-                { case: { $eq: ["$priority", "high"] }, then: 3 },
-                { case: { $eq: ["$priority", "medium"] }, then: 2 },
-                { case: { $eq: ["$priority", "normal"] }, then: 1 },
-              ],
-              default: 1,
-            },
+
+    // If you added priorityRank in schema, use it:
+    // sort: { priorityRank: -1, createdAt: -1 }
+    // If not, fallback: sort priority alphabetically won't match desired ranks.
+    // Best: ensure schema has priorityRank.
+
+    const sort = { priorityRank: -1, createdAt: -1 };
+
+    const [orders, totalCount, sumAgg] = await Promise.all([
+      Order.find(filters)
+        .sort(sort)
+        .skip(skip)
+        .limit(limitNum)
+        .lean()
+        .populate({ path: "customerId", select: "name email phone" })
+        .populate({
+          path: "items.productId",
+          // ✅ keep payload sane but still "all displayed" fields (edit as per UI)
+          select:
+            "title slug thumbnail images sku productType tags hsnCode weight currency",
+        }),
+
+      Order.countDocuments(filters),
+
+      Order.aggregate([
+        { $match: filters },
+        {
+          $group: {
+            _id: null,
+            totalSum: { $sum: { $ifNull: ["$finalPayable", 0] } },
           },
         },
-      },
-      {
-        $facet: {
-          orders: [
-            { $sort: { _priorityRank: -1, createdAt: -1 } },
-            { $skip: skip },
-            { $limit: limitNum },
-          ],
-          meta: [
-            {
-              $group: {
-                _id: null,
-                totalCount: { $sum: 1 },
-                totalSum: { $sum: { $ifNull: ["$finalPayable", 0] } },
-              },
-            },
-          ],
-        },
-      },
+      ]),
     ]);
 
-    const orders = result?.orders || [];
-    const meta0 = result?.meta?.[0] || { totalCount: 0, totalSum: 0 };
+    const totalSum = Number(sumAgg?.[0]?.totalSum || 0);
+    const hasMore = skip + orders.length < totalCount;
 
-    const populated = await Order.populate(orders, [
-      { path: "customerId", select: "name email phone" },
-      { path: "items.productId" },
-    ]);
-
-    const totalCount = Number(meta0.totalCount || 0);
-    const totalSum = Number(meta0.totalSum || 0);
-    const hasMore = skip + populated.length < totalCount;
-
-    // ✅ Backward compatible:
-    // If client expects array, it can still read data.orders (recommended now)
     return res.status(200).json({
-      orders: populated,
+      orders,
       meta: {
         page: pageNum,
         limit: limitNum,
@@ -944,7 +931,9 @@ export const getAllOrders = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Fetch Orders Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
