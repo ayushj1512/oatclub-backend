@@ -720,6 +720,68 @@ orderSchema.statics.confirmOrder = async function (orderId, adminId = null) {
 return this.findByIdAndUpdate(orderId, update, { new: true, runValidators: true });
 };
 
+
+
+
+// ========================================================================================
+// ✅ AUTO-MARK ORDER FAILED IF PAYMENT FAILS (place this BEFORE shipping guard hook)
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    const paymentStatus = String(this.paymentStatus || "").toLowerCase();
+    const paymentMethod = String(this.paymentMethod || "").toLowerCase();
+
+    const isPaymentFailed = paymentStatus === "failed";
+
+    // ✅ Only mark failed for online-like methods (optional)
+    // If you want "failed" to apply for ANY method, remove paymentMethod check.
+    const shouldApply =
+      isPaymentFailed && (paymentMethod === "razorpay" || paymentMethod === "exchange" || paymentMethod === "cod" || paymentMethod === ""); 
+    // ^ if you only want Razorpay:  isPaymentFailed && paymentMethod === "razorpay"
+
+    if (!shouldApply) return next();
+
+    // ✅ Order becomes failed
+    this.fulfillmentStatus = "failed";
+    this.priority = "normal";
+
+    // ✅ prevent accidental confirmation
+    this.isConfirmed = false;
+    this.confirmedAt = null;
+    this.confirmedBy = null;
+
+    // ✅ optional: clear razorpay paidAt if failed (safety)
+    if (this.razorpay) {
+      this.razorpay.paidAt = null;
+    }
+
+    // ✅ shipment safety (don't override if already shipped/delivered)
+    const safeCancelableStages = new Set(["pending", "processing", "packed"]);
+    const curShipmentStatus = String(this.shipment?.status || "").toLowerCase();
+
+    if (!this.shipment) this.shipment = {};
+    if (!this.shipment.shiprocket) this.shipment.shiprocket = {};
+    if (!this.shipment.xpressbees) this.shipment.xpressbees = {};
+
+    // Cancel only if still in early stages
+    if (!curShipmentStatus || safeCancelableStages.has(curShipmentStatus)) {
+      this.shipment.status = "cancelled";
+    }
+
+    // ✅ also keep tracking clean (optional)
+    if (!this.trackingDetails) this.trackingDetails = {};
+    this.trackingDetails.trackingId = this.trackingDetails.trackingId || "";
+    this.trackingDetails.trackingUrl = this.trackingDetails.trackingUrl || "";
+
+    return next();
+  } catch (e) {
+    return next(e);
+  }
+});
+
+
+
+
 // ========================================================================================
 // ✅ PATCH 4: Safety guard — prevent shipping stages unless confirmed
 // ✅ PLUS: Parent order can't be shipped (only shipment split orders can)
