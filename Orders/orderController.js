@@ -749,6 +749,12 @@ const istEndExclusiveUtcFromYMD = (ymd) => {
   return new Date(start.getTime() + 24 * 60 * 60 * 1000);
 };
 
+// ✅ Updated: getAllOrders
+// - supports array query params (fulfillmentStatus, paymentStatus, paymentMethod, priority)
+// - safer parsing + sanitization
+// - optional higher limit for admin (still capped, configurable)
+// - keeps your IST date helpers as-is
+
 export const getAllOrders = async (req, res) => {
   try {
     const {
@@ -772,11 +778,33 @@ export const getAllOrders = async (req, res) => {
       page = "1",
       limit = "100",
 
-      // ✅ NEW: only compute sum when asked
+      // ✅ only compute sum when asked
       includeSum = "false",
     } = req.query;
 
     const filters = {};
+
+    /* ----------------------------
+       ✅ helpers
+    ---------------------------- */
+    const toStr = (v) => String(v ?? "").trim();
+    const toLower = (v) => toStr(v).toLowerCase();
+
+    // normalize query that can be string OR array
+    const normalizeArrayParam = (v) => {
+      if (v == null) return [];
+      const arr = Array.isArray(v) ? v : [v];
+      return arr
+        .map((x) => toStr(x))
+        .filter(Boolean);
+    };
+
+    const setInOrEq = (field, raw, mapFn = (x) => x) => {
+      const arr = normalizeArrayParam(raw).map(mapFn).filter(Boolean);
+      if (!arr.length) return;
+      if (arr.length === 1) filters[field] = arr[0];
+      else filters[field] = { $in: arr };
+    };
 
     /* ----------------------------
        ✅ Basic filters
@@ -785,36 +813,40 @@ export const getAllOrders = async (req, res) => {
       filters.customerId = new mongoose.Types.ObjectId(String(customerId));
     }
 
-    if (paymentStatus) filters.paymentStatus = String(paymentStatus).trim();
-    if (fulfillmentStatus) filters.fulfillmentStatus = String(fulfillmentStatus).trim();
+    // ✅ paymentStatus: supports multi
+    setInOrEq("paymentStatus", paymentStatus, (x) => toStr(x));
+
+    // ✅ fulfillmentStatus: supports multi (processing/packed etc)
+    setInOrEq("fulfillmentStatus", fulfillmentStatus, (x) => toStr(x));
 
     // confirmation
     if (confirmFilter === "confirmed") filters.isConfirmed = true;
     else if (confirmFilter === "not_confirmed") filters.isConfirmed = { $ne: true };
-    else if (isConfirmed != null) filters.isConfirmed = String(isConfirmed) === "true";
+    else if (isConfirmed != null) filters.isConfirmed = toLower(isConfirmed) === "true";
 
-    // priority
-    if (priority) {
-      const p = String(priority).trim().toLowerCase();
-      if (["normal", "medium", "high"].includes(p)) filters.priority = p;
-    }
+    // ✅ priority: supports multi + whitelist
+    const allowedPriority = new Set(["normal", "medium", "high"]);
+    const prArr = normalizeArrayParam(priority).map((x) => toLower(x));
+    const prClean = prArr.filter((p) => allowedPriority.has(p));
+    if (prClean.length === 1) filters.priority = prClean[0];
+    else if (prClean.length > 1) filters.priority = { $in: prClean };
 
-    // paymentMethod
-    if (paymentMethod) filters.paymentMethod = String(paymentMethod).trim().toLowerCase();
+    // ✅ paymentMethod: supports multi + lowercased
+    setInOrEq("paymentMethod", paymentMethod, (x) => toLower(x));
 
     /* ----------------------------
        ✅ Date range (createdAt) — IST Correct
     ---------------------------- */
-    const hasStartAt = !!String(startAt || "").trim();
-    const hasEndAt = !!String(endAt || "").trim();
-    const hasStartDate = !!String(startDate || "").trim();
-    const hasEndDate = !!String(endDate || "").trim();
+    const hasStartAt = !!toStr(startAt);
+    const hasEndAt = !!toStr(endAt);
+    const hasStartDate = !!toStr(startDate);
+    const hasEndDate = !!toStr(endDate);
 
     if (hasStartAt || hasEndAt || hasStartDate || hasEndDate) {
       filters.createdAt = {};
 
       if (hasStartAt) {
-        const d = new Date(String(startAt));
+        const d = new Date(toStr(startAt));
         if (!Number.isNaN(d.getTime())) filters.createdAt.$gte = d;
       } else if (hasStartDate) {
         const d = istStartUtcFromYMD(startDate);
@@ -822,7 +854,7 @@ export const getAllOrders = async (req, res) => {
       }
 
       if (hasEndAt) {
-        const d = new Date(String(endAt));
+        const d = new Date(toStr(endAt));
         if (!Number.isNaN(d.getTime())) filters.createdAt.$lte = d;
       } else if (hasEndDate) {
         const d = istEndExclusiveUtcFromYMD(endDate);
@@ -846,10 +878,9 @@ export const getAllOrders = async (req, res) => {
     }
 
     /* ----------------------------
-       ✅ Search
-       (keep, but note: regex can be slow on big set)
+       ✅ Search (regex)
     ---------------------------- */
-    const q = String(customerName || "").trim();
+    const q = toStr(customerName);
     if (q) {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       filters.$or = [
@@ -861,16 +892,21 @@ export const getAllOrders = async (req, res) => {
     }
 
     /* ----------------------------
-       ✅ Pagination (cap at 200 for safety)
+       ✅ Pagination
+       - default 100
+       - cap configurable
+       NOTE: if you want to allow admin to pull more, increase MAX_LIMIT.
     ---------------------------- */
     const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
+
     const limitNumRaw = parseInt(String(limit), 10) || 100;
-    const limitNum = Math.min(Math.max(1, limitNumRaw), 200);
+    const MAX_LIMIT = 200; // ✅ keep 200 OR change to 500/1000 for admin panel
+    const limitNum = Math.min(Math.max(1, limitNumRaw), MAX_LIMIT);
+
     const skip = (pageNum - 1) * limitNum;
 
     /* ----------------------------
        ✅ FAST projection for list
-       (no rmas, no huge shipment webhooks, no product populate)
     ---------------------------- */
     const LIST_FIELDS = {
       orderNumber: 1,
@@ -918,12 +954,11 @@ export const getAllOrders = async (req, res) => {
     };
 
     /* ----------------------------
-       ✅ Sort (requires priorityRank in schema)
-       If you don't have it yet, fallback to createdAt.
+       ✅ Sort
     ---------------------------- */
     const sort = { priorityRank: -1, createdAt: -1 };
 
-    const wantSum = String(includeSum) === "true";
+    const wantSum = toLower(includeSum) === "true";
 
     const promises = [
       Order.find(filters)
@@ -954,7 +989,7 @@ export const getAllOrders = async (req, res) => {
     const [orders, totalCount, sumAgg] = await Promise.all(promises);
 
     const totalSum = wantSum ? Number(sumAgg?.[0]?.totalSum || 0) : null;
-    const hasMore = skip + orders.length < totalCount;
+    const hasMore = skip + (orders?.length || 0) < totalCount;
 
     return res.status(200).json({
       orders,

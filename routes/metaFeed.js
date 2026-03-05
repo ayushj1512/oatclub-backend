@@ -8,7 +8,9 @@ const SITE_BASE = "https://www.mirayfashions.com";
 const BRAND = "Miray Fashions";
 const CURRENCY = "INR";
 
-const ALWAYS_IN_STOCK = false;
+// ✅ FORCE ALL PRODUCTS AS IN STOCK (unlimited)
+const ALWAYS_IN_STOCK = true;
+
 const CACHE_TTL_MS = 55 * 60 * 1000;
 
 // ✅ Inventory: "infinite" quantity to satisfy Meta Commerce surfaces
@@ -108,10 +110,6 @@ const getGoogleProductCategory = (categories = []) => {
   return "Apparel & Accessories";
 };
 
-// ✅ Convert availability -> inventory number
-const inventoryFromAvailability = (availability) =>
-  String(availability || "").toLowerCase() === "in stock" ? INVENTORY_INFINITE : 0;
-
 const buildItemXml = ({
   id,
   itemGroupId,
@@ -122,7 +120,7 @@ const buildItemXml = ({
   price,
   compareAtPrice,
   availability,
-  inventory, // ✅ NEW
+  inventory,
   color,
   size,
   gtin,
@@ -173,7 +171,7 @@ ${
 ${gtin ? `<g:gtin>${esc(gtin)}</g:gtin>` : ""}
 ${mpn ? `<g:mpn>${esc(mpn)}</g:mpn>` : ""}
 
-${invNum >= 0 ? `<g:inventory>${esc(invNum)}</g:inventory>` : ""}
+<g:inventory>${esc(invNum)}</g:inventory>
 
 </item>`;
 };
@@ -189,7 +187,17 @@ ${itemsXml}
 </rss>`;
 
 async function rebuildFeed() {
-  const products = await Product.find({ isActive: true, isDraft: false })
+  // ✅ Only "published" products:
+  // - isActive true
+  // - isDraft false
+  // - publishAt <= now
+  const now = new Date();
+
+  const products = await Product.find({
+    isActive: true,
+    isDraft: false,
+    publishAt: { $lte: now },
+  })
     .select(
       [
         "title",
@@ -203,11 +211,9 @@ async function rebuildFeed() {
         "images",
         "price",
         "compareAtPrice",
-        "isInStock",
         "productType",
         "variants.sku",
         "variants.barcode",
-        "variants.isInStock",
         "variants.attributes",
         "updatedAt",
       ].join(" ")
@@ -239,22 +245,15 @@ async function rebuildFeed() {
     const isVariable =
       p?.productType === "variable" || safeArr(p?.variants).length > 0;
 
+    // ✅ Forced availability + inventory for EVERY item
+    const availability = ALWAYS_IN_STOCK ? "in stock" : "out of stock";
+    const inventory = ALWAYS_IN_STOCK ? INVENTORY_INFINITE : 0;
+
     if (isVariable && safeArr(p?.variants).length) {
       for (const v of p.variants) {
         const sku = String(v?.sku || "").trim();
         const variantId = String(v?._id || "").trim();
         const id = sku || `${productId}-${variantId}`;
-
-        const availability = ALWAYS_IN_STOCK
-          ? "in stock"
-          : v?.isInStock
-          ? "in stock"
-          : "out of stock";
-
-        // ✅ infinite inventory when in stock, else 0
-        const inventory = ALWAYS_IN_STOCK
-          ? INVENTORY_INFINITE
-          : inventoryFromAvailability(availability);
 
         const color = getAttr(v?.attributes, "color");
         const size = getAttr(v?.attributes, "size");
@@ -273,7 +272,7 @@ async function rebuildFeed() {
             price: p?.price,
             compareAtPrice: p?.compareAtPrice,
             availability,
-            inventory, // ✅
+            inventory,
             color,
             size,
             gtin,
@@ -285,17 +284,6 @@ async function rebuildFeed() {
         );
       }
     } else {
-      const availability = ALWAYS_IN_STOCK
-        ? "in stock"
-        : p?.isInStock
-        ? "in stock"
-        : "out of stock";
-
-      // ✅ infinite inventory when in stock, else 0
-      const inventory = ALWAYS_IN_STOCK
-        ? INVENTORY_INFINITE
-        : inventoryFromAvailability(availability);
-
       items.push(
         buildItemXml({
           id: productId,
@@ -307,7 +295,7 @@ async function rebuildFeed() {
           price: p?.price,
           compareAtPrice: p?.compareAtPrice,
           availability,
-          inventory, // ✅
+          inventory,
           color: "",
           size: "",
           gtin: "",
