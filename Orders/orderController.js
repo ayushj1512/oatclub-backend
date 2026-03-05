@@ -759,12 +759,10 @@ export const getAllOrders = async (req, res) => {
       confirmFilter,
       priority,
 
-      // date filters
-      startDate, // "YYYY-MM-DD"
-      endDate, // "YYYY-MM-DD"
-      startAt, // ISO datetime
-      endAt, // ISO datetime (inclusive) OR end-exclusive if you send next-day 00:00 + use $lt
-      tz, // ignored for now
+      startDate,
+      endDate,
+      startAt,
+      endAt,
 
       minAmount,
       maxAmount,
@@ -772,7 +770,10 @@ export const getAllOrders = async (req, res) => {
       customerName,
 
       page = "1",
-      limit = "500",
+      limit = "100",
+
+      // ✅ NEW: only compute sum when asked
+      includeSum = "false",
     } = req.query;
 
     const filters = {};
@@ -785,15 +786,12 @@ export const getAllOrders = async (req, res) => {
     }
 
     if (paymentStatus) filters.paymentStatus = String(paymentStatus).trim();
-    if (fulfillmentStatus)
-      filters.fulfillmentStatus = String(fulfillmentStatus).trim();
+    if (fulfillmentStatus) filters.fulfillmentStatus = String(fulfillmentStatus).trim();
 
     // confirmation
     if (confirmFilter === "confirmed") filters.isConfirmed = true;
-    else if (confirmFilter === "not_confirmed")
-      filters.isConfirmed = { $ne: true };
-    else if (isConfirmed != null)
-      filters.isConfirmed = String(isConfirmed) === "true";
+    else if (confirmFilter === "not_confirmed") filters.isConfirmed = { $ne: true };
+    else if (isConfirmed != null) filters.isConfirmed = String(isConfirmed) === "true";
 
     // priority
     if (priority) {
@@ -802,8 +800,7 @@ export const getAllOrders = async (req, res) => {
     }
 
     // paymentMethod
-    if (paymentMethod)
-      filters.paymentMethod = String(paymentMethod).trim().toLowerCase();
+    if (paymentMethod) filters.paymentMethod = String(paymentMethod).trim().toLowerCase();
 
     /* ----------------------------
        ✅ Date range (createdAt) — IST Correct
@@ -826,17 +823,13 @@ export const getAllOrders = async (req, res) => {
 
       if (hasEndAt) {
         const d = new Date(String(endAt));
-        if (!Number.isNaN(d.getTime())) filters.createdAt.$lte = d; // inclusive end
+        if (!Number.isNaN(d.getTime())) filters.createdAt.$lte = d;
       } else if (hasEndDate) {
         const d = istEndExclusiveUtcFromYMD(endDate);
-        if (d) filters.createdAt.$lt = d; // end exclusive
+        if (d) filters.createdAt.$lt = d;
       }
 
-      if (
-        !filters.createdAt.$gte &&
-        !filters.createdAt.$lt &&
-        !filters.createdAt.$lte
-      ) {
+      if (!filters.createdAt.$gte && !filters.createdAt.$lt && !filters.createdAt.$lte) {
         delete filters.createdAt;
       }
     }
@@ -854,6 +847,7 @@ export const getAllOrders = async (req, res) => {
 
     /* ----------------------------
        ✅ Search
+       (keep, but note: regex can be slow on big set)
     ---------------------------- */
     const q = String(customerName || "").trim();
     if (q) {
@@ -867,56 +861,99 @@ export const getAllOrders = async (req, res) => {
     }
 
     /* ----------------------------
-       ✅ Pagination
+       ✅ Pagination (cap at 200 for safety)
     ---------------------------- */
     const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
-    const limitNumRaw = parseInt(String(limit), 10) || 500;
-    const limitNum = Math.min(Math.max(1, limitNumRaw), 500);
+    const limitNumRaw = parseInt(String(limit), 10) || 100;
+    const limitNum = Math.min(Math.max(1, limitNumRaw), 200);
     const skip = (pageNum - 1) * limitNum;
 
     /* ----------------------------
-       ✅ Priority sort WITHOUT aggregate:
-       1) priority rank via JS mapping in sort
-          (requires priorityRank field OR use string mapping)
-       ✅ Meta done separately to avoid full facet scan
-       ✅ Keep ALL order fields (no select)
+       ✅ FAST projection for list
+       (no rmas, no huge shipment webhooks, no product populate)
     ---------------------------- */
+    const LIST_FIELDS = {
+      orderNumber: 1,
+      createdAt: 1,
+      orderDate: 1,
 
-    // If you added priorityRank in schema, use it:
-    // sort: { priorityRank: -1, createdAt: -1 }
-    // If not, fallback: sort priority alphabetically won't match desired ranks.
-    // Best: ensure schema has priorityRank.
+      priority: 1,
+      priorityRank: 1,
 
+      paymentMethod: 1,
+      paymentStatus: 1,
+      fulfillmentStatus: 1,
+      isConfirmed: 1,
+
+      subtotal: 1,
+      discount: 1,
+      shippingFee: 1,
+      tax: 1,
+      totalAmount: 1,
+      finalPayable: 1,
+      currency: 1,
+
+      "shippingAddressSnapshot.fullName": 1,
+      "shippingAddressSnapshot.phone": 1,
+      "shippingAddressSnapshot.email": 1,
+      "shippingAddressSnapshot.pincode": 1,
+
+      // light tracking
+      "shipment.status": 1,
+      "shipment.shiprocket.awb": 1,
+      "shipment.shiprocket.courierName": 1,
+      "shipment.shiprocket.trackingUrl": 1,
+
+      // items but light + snapshot
+      "items.lineId": 1,
+      "items.quantity": 1,
+      "items.price": 1,
+      "items.subtotal": 1,
+      "items.selectedSize": 1,
+      "items.selectedColor": 1,
+      "items.productSnapshot.productCode": 1,
+      "items.productSnapshot.title": 1,
+      "items.productSnapshot.thumbnail": 1,
+      "items.variant.sku": 1,
+    };
+
+    /* ----------------------------
+       ✅ Sort (requires priorityRank in schema)
+       If you don't have it yet, fallback to createdAt.
+    ---------------------------- */
     const sort = { priorityRank: -1, createdAt: -1 };
 
-    const [orders, totalCount, sumAgg] = await Promise.all([
+    const wantSum = String(includeSum) === "true";
+
+    const promises = [
       Order.find(filters)
+        .select(LIST_FIELDS)
         .sort(sort)
         .skip(skip)
         .limit(limitNum)
         .lean()
-        .populate({ path: "customerId", select: "name email phone" })
-        .populate({
-          path: "items.productId",
-          // ✅ keep payload sane but still "all displayed" fields (edit as per UI)
-          select:
-            "title slug thumbnail images sku productType tags hsnCode weight currency",
-        }),
+        .populate({ path: "customerId", select: "name email phone" }),
 
       Order.countDocuments(filters),
+    ];
 
-      Order.aggregate([
-        { $match: filters },
-        {
-          $group: {
-            _id: null,
-            totalSum: { $sum: { $ifNull: ["$finalPayable", 0] } },
+    if (wantSum) {
+      promises.push(
+        Order.aggregate([
+          { $match: filters },
+          {
+            $group: {
+              _id: null,
+              totalSum: { $sum: { $ifNull: ["$finalPayable", 0] } },
+            },
           },
-        },
-      ]),
-    ]);
+        ])
+      );
+    }
 
-    const totalSum = Number(sumAgg?.[0]?.totalSum || 0);
+    const [orders, totalCount, sumAgg] = await Promise.all(promises);
+
+    const totalSum = wantSum ? Number(sumAgg?.[0]?.totalSum || 0) : null;
     const hasMore = skip + orders.length < totalCount;
 
     return res.status(200).json({
@@ -931,9 +968,7 @@ export const getAllOrders = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Fetch Orders Error:", error);
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
