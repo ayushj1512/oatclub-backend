@@ -847,7 +847,7 @@ export const getAllProducts = async (req, res) => {
       popularity: { "analytics.views": -1 },
     };
 
-    const safeLimit = Math.min(200, Math.max(1, Number(limit)));
+const safeLimit = Math.min(5000, Math.max(1, Number(limit) || 20));
     const safePage = Math.max(1, Number(page));
     const skip = (safePage - 1) * safeLimit;
     const sortObj = sortMap[sort] || { createdAt: -1 };
