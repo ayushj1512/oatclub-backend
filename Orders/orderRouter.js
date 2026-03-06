@@ -26,6 +26,14 @@ import {
 } from "./orderController.js";
 
 /* ===========================
+   ✅ CUSTOMER SUPPORT CONTROLLER
+=========================== */
+import {
+  getCustomerSupportOrders,
+  getCustomerSupportOrderDetail,
+} from "../Orders/customerSupportOrderController.js";
+
+/* ===========================
    RMA CONTROLLER (RMA Only)
 =========================== */
 import {
@@ -65,6 +73,14 @@ router.get("/", getAllOrders);
 // ✅ Support lookup: find orders by email/phone
 // GET /api/orders/lookup?email=a@b.com OR ?phone=99999...
 router.get("/lookup", lookupOrdersByIdentity);
+
+// ✅ Customer support lightweight list
+// GET /api/orders/customer-support
+router.get("/customer-support", getCustomerSupportOrders);
+
+// ✅ Customer support single detail
+// GET /api/orders/customer-support/:id
+router.get("/customer-support/:id", getCustomerSupportOrderDetail);
 
 // Analytics summary
 router.get("/analytics/summary", getOrderAnalytics);
