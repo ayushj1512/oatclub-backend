@@ -2571,3 +2571,100 @@ export const markPatternReady = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+
+
+// controllers/productController.js
+
+// PATCH /api/products/inventory/zero-all
+// Optional body:
+// {
+//   "clearReservedStock": true
+// }
+export const zeroAllVariantStock = async (req, res) => {
+  try {
+    const clearReservedStock =
+      req.body?.clearReservedStock === true ||
+      String(req.body?.clearReservedStock || "").trim().toLowerCase() === "true";
+
+    const BATCH_SIZE = 500;
+
+    let totalMatched = 0;
+    let totalModified = 0;
+    let simpleCount = 0;
+    let variableCount = 0;
+
+    const cursor = Product.find(
+      {},
+      {
+        _id: 1,
+        stock: 1,
+        reservedStock: 1,
+        isInStock: 1,
+        variants: 1,
+        productType: 1,
+      }
+    )
+      .lean()
+      .cursor();
+
+    let ops = [];
+
+    const flush = async () => {
+      if (!ops.length) return;
+
+      const result = await Product.bulkWrite(ops, { ordered: false });
+      totalMatched += result.matchedCount || 0;
+      totalModified += result.modifiedCount || 0;
+      ops = [];
+    };
+
+    for await (const product of cursor) {
+      const variants = Array.isArray(product.variants) ? product.variants : [];
+      const isVariable =
+        product.productType === "variable" || variants.length > 0;
+
+      if (isVariable) variableCount += 1;
+      else simpleCount += 1;
+
+      const nextVariants = variants.map((v) => ({
+        ...v,
+        stock: 0,
+        isInStock: false,
+        ...(clearReservedStock ? { reservedStock: 0 } : {}),
+      }));
+
+      ops.push({
+        updateOne: {
+          filter: { _id: product._id },
+          update: {
+            $set: {
+              stock: 0,
+              isInStock: false,
+              variants: nextVariants,
+              ...(clearReservedStock ? { reservedStock: 0 } : {}),
+            },
+          },
+        },
+      });
+
+      if (ops.length >= BATCH_SIZE) {
+        await flush();
+      }
+    }
+
+    await flush();
+
+    return res.json({
+      message: "All product inventory marked as 0 successfully",
+      clearReservedStock,
+      matchedCount: totalMatched,
+      modifiedCount: totalModified,
+      simpleProducts: simpleCount,
+      variableProducts: variableCount,
+    });
+  } catch (e) {
+    console.error("❌ zeroAllProductsInventory Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};

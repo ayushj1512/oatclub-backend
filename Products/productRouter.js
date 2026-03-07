@@ -28,7 +28,8 @@ import {
   updateVariantPatternNumber,
   updateProductColors,
   toggleBestSeller,
-  markPatternReady, // ✅ NEW
+  markPatternReady,
+  zeroAllVariantStock, // ✅ NEW
 } from "./productController.js";
 
 /* ---------------- BULK CONTROLLER ---------------- */
@@ -94,6 +95,9 @@ router.post("/bulk/create-draft", bulkCreateDraftProducts);
 router.post("/bulk/delete", bulkDeleteProducts);
 router.post("/bulk/import", bulkImportProducts);
 router.patch("/bulk/pricing", bulkUpdatePricing);
+
+// ✅ NEW: Zero all variant stock
+router.patch("/bulk/variant-stock/zero-all", zeroAllVariantStock);
 
 // Bulk sync collection ↔ products
 router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
