@@ -24,6 +24,7 @@ import {
   // ✅ NEW: lookup by email/phone (support)
   lookupOrdersByIdentity,
 } from "./orderController.js";
+import { getSalesReport } from "./orderAccountsController.js";
 
 /* ===========================
    ✅ CUSTOMER SUPPORT CONTROLLER
@@ -171,5 +172,10 @@ router.patch("/:id/tracking", updateTracking);
 
 // Address update
 router.patch("/:id/address", updateOrderAddress);
+
+
+
+router.get("/accounts/sales-report", getSalesReport);
+
 
 export default router;
