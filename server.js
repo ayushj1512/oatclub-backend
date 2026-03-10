@@ -119,12 +119,16 @@ const ALLOWED_ORIGINS = [
   "https://www.mirayfashions.com",
   "https://mirayfashions.com",
 
+  // ✅ Product frontend
+  "https://product.mirayfashions.com",
+
   // ✅ Media Panel / Media site
   "https://media.mirayfashions.com",
   "https://www.media.mirayfashions.com",
-"https://miray-media-project.vercel.app",
-"https://www.miray-media-project.vercel.app",
-  // ✅ Vercel Preview/Deployment
+  "https://miray-media-project.vercel.app",
+  "https://www.miray-media-project.vercel.app",
+
+  // ✅ Vercel deployments / previews
   "https://miray-nine.vercel.app",
 
   // ✅ Admin Panel
