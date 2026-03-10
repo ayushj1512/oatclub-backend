@@ -46,14 +46,10 @@ const buildDateRangeIST = (from, to) => {
   const range = {};
 
   const mkUTCFromIST = (ymd, endOfDay = false) => {
-    // create UTC milliseconds corresponding to IST local time
-    // start: 00:00:00.000 IST
-    // end:   23:59:59.999 IST
     const time = endOfDay ? "23:59:59.999" : "00:00:00.000";
-    // treat string as if it's in IST, then subtract IST offset to get UTC
-    const d = new Date(`${ymd}T${time}Z`); // temporary UTC
+    const d = new Date(`${ymd}T${time}Z`);
     if (Number.isNaN(d.getTime())) return null;
-    const ms = d.getTime() - IST_OFFSET_MIN * 60 * 1000; // shift back to UTC
+    const ms = d.getTime() - IST_OFFSET_MIN * 60 * 1000;
     return new Date(ms);
   };
 
@@ -69,12 +65,79 @@ const buildDateRangeIST = (from, to) => {
   return Object.keys(range).length ? range : null;
 };
 
+const escapeRegex = (s = "") =>
+  String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildPackedSearchOr = (q) => {
+  const search = String(q || "").trim();
+  if (!search) return null;
+
+  const rx = new RegExp(escapeRegex(search), "i");
+
+  return [
+    { orderNumber: rx },
+    { "customerId.name": rx }, // only works if populated in memory; kept harmless
+    { "shippingAddressSnapshot.fullName": rx },
+    { "shippingAddressSnapshot.phone": rx },
+    { "shippingAddressSnapshot.email": rx },
+    { "billingAddressSnapshot.fullName": rx },
+    { "billingAddressSnapshot.phone": rx },
+    { "billingAddressSnapshot.email": rx },
+  ];
+};
+
+const buildMarkAllPackedFilters = (query = {}) => {
+  const {
+    q = "",
+    customerName = "",
+    from,
+    to,
+    provider,
+    orderType,
+    priority,
+  } = query;
+
+  const searchText = String(q || customerName || "").trim();
+
+  const filters = {
+    isConfirmed: true,
+    fulfillmentStatus: "packed",
+
+    // safety
+    paymentStatus: { $ne: "failed" },
+    orderType: { $ne: "parent" }, // avoid split-parent shipping
+    $or: [{ "shipment.status": { $exists: false } }, { "shipment.status": { $ne: "cancelled" } }],
+  };
+
+  const dateRange = buildDateRangeIST(from, to);
+  if (dateRange) filters.orderDate = dateRange;
+
+  const providers = toArray(provider);
+  if (providers.length) {
+    filters["shipment.provider"] =
+      providers.length === 1 ? providers[0] : { $in: providers };
+  }
+
+  const orderTypes = toArray(orderType);
+  if (orderTypes.length) {
+    filters.orderType =
+      orderTypes.length === 1 ? orderTypes[0] : { $in: orderTypes };
+  }
+
+  const priorities = toArray(priority);
+  if (priorities.length) {
+    filters.priority =
+      priorities.length === 1 ? priorities[0] : { $in: priorities };
+  }
+
+  const searchOr = buildPackedSearchOr(searchText);
+  if (searchOr) filters.$and = [{ $or: searchOr }];
+
+  return filters;
+};
+
 /* ============================================================
    ✅ PRODUCTION QUEUE (Confirmed Orders Only)
-   - Default fulfillmentStatus = processing
-   - Supports:
-     - all=true  -> returns all matching orders (no pagination)
-     - limit=0   -> returns all matching orders (no pagination)
 ============================================================ */
 export const getProductionQueue = async (req, res) => {
   try {
@@ -92,45 +155,38 @@ export const getProductionQueue = async (req, res) => {
       all,
     } = req.query;
 
-    // ✅ base filters
     const filters = { isConfirmed: true };
 
-    // ✅ fulfillmentStatus
     const statuses = toArray(fulfillmentStatus);
     if (statuses.length) {
       filters.fulfillmentStatus =
         statuses.length === 1 ? statuses[0] : { $in: statuses };
     }
 
-    // ✅ priority
     const priorities = toArray(priority);
     if (priorities.length) {
       filters.priority =
         priorities.length === 1 ? priorities[0] : { $in: priorities };
     }
 
-    // ✅ orderType
     const orderTypes = toArray(orderType);
     if (orderTypes.length) {
       filters.orderType =
         orderTypes.length === 1 ? orderTypes[0] : { $in: orderTypes };
     }
 
-    // ✅ provider
     const providers = toArray(provider);
     if (providers.length) {
       filters["shipment.provider"] =
         providers.length === 1 ? providers[0] : { $in: providers };
     }
 
-    // ✅ date range (IST-safe by orderDate)
     const dateRange = buildDateRangeIST(from, to);
     if (dateRange) filters.orderDate = dateRange;
 
-    // ✅ search
     const search = String(q ?? "").trim();
     if (search) {
-      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      const rx = new RegExp(escapeRegex(search), "i");
       filters.$or = [
         { orderNumber: rx },
         { "shippingAddressSnapshot.fullName": rx },
@@ -143,12 +199,7 @@ export const getProductionQueue = async (req, res) => {
     }
 
     const sortObj = buildSort(sort);
-
-    // ✅ all mode: disable pagination completely
     const wantsAll = parseBool(all) || String(limit) === "0";
-
-    // ✅ safety cap (server protect) — still allows a LOT
-    // If you truly want infinite, set this very high, but never recommended.
     const MAX_LIMIT = 5000;
 
     if (wantsAll) {
@@ -166,7 +217,7 @@ export const getProductionQueue = async (req, res) => {
         count: orders.length,
         total,
         page: 1,
-        limit: orders.length, // informational
+        limit: orders.length,
         all: true,
         filtersApplied: {
           fulfillmentStatus: statuses,
@@ -182,7 +233,6 @@ export const getProductionQueue = async (req, res) => {
       });
     }
 
-    // ✅ pagination (with cap)
     const pageNum = parseIntSafe(page, 1);
     const limitNumRaw = parseIntSafe(limit, 50);
     const limitNum = Math.min(limitNumRaw, MAX_LIMIT);
@@ -229,7 +279,7 @@ export const getProductionQueue = async (req, res) => {
 };
 
 /* ============================================================
-   ✅ MARK PRODUCTION COMPLETE (Update fulfillmentStatus)
+   ✅ SINGLE: MARK ORDER SHIPPED FROM PRODUCTION
 ============================================================ */
 export const markOrderShippedFromProduction = async (req, res) => {
   const session = await mongoose.startSession();
@@ -259,16 +309,34 @@ export const markOrderShippedFromProduction = async (req, res) => {
         throw new Error("Cancelled order cannot be shipped");
       }
 
+      if (order.fulfillmentStatus === "failed") {
+        throw new Error("Failed order cannot be shipped");
+      }
+
+      if (String(order.orderType || "").toLowerCase() === "parent") {
+        throw new Error("Parent split order cannot be shipped");
+      }
+
       if (order.fulfillmentStatus === "shipped") {
         updatedOrder = order;
         return;
       }
 
+      const now = new Date();
+
       order.fulfillmentStatus = "shipped";
 
       order.shipment = order.shipment || {};
-      if (order.shipment.status && order.shipment.status !== "cancelled") {
+      if (order.shipment.status !== "cancelled") {
         order.shipment.status = "shipped";
+      }
+      if (!order.shipment.shippedAt) {
+        order.shipment.shippedAt = now;
+      }
+
+      order.trackingDetails = order.trackingDetails || {};
+      if (!order.trackingDetails.shippedAt) {
+        order.trackingDetails.shippedAt = now;
       }
 
       await order.save({ session });
@@ -302,7 +370,82 @@ export const markOrderShippedFromProduction = async (req, res) => {
 };
 
 /* ============================================================
-   ✅ PRODUCTION SUMMARY (Counts for dashboard)
+   ✅ BULK: MARK ALL PACKED AS SHIPPED
+   Supports search/filter based bulk update
+============================================================ */
+export const markAllPackedOrdersShipped = async (req, res) => {
+  const session = await mongoose.startSession();
+  const TAG = "🏭[BULK PACKED->SHIPPED]";
+
+  try {
+    let responsePayload = null;
+
+    await session.withTransaction(async () => {
+      const filters = buildMarkAllPackedFilters(req.query);
+      const now = new Date();
+
+      const matchingIds = await Order.find(filters)
+        .select("_id orderNumber")
+        .session(session)
+        .lean();
+
+      if (!matchingIds.length) {
+        responsePayload = {
+          success: true,
+          message: "No packed orders found to mark as shipped",
+          matchedCount: 0,
+          modifiedCount: 0,
+          orderIds: [],
+          orderNumbers: [],
+        };
+        return;
+      }
+
+      const ids = matchingIds.map((o) => o._id);
+
+      const updateResult = await Order.updateMany(
+        { _id: { $in: ids } },
+        {
+          $set: {
+            fulfillmentStatus: "shipped",
+            "shipment.status": "shipped",
+            "shipment.shippedAt": now,
+            "trackingDetails.shippedAt": now,
+            updatedAt: now,
+          },
+        },
+        { session }
+      );
+
+      responsePayload = {
+        success: true,
+        message: `${updateResult.modifiedCount || 0} packed orders marked as shipped`,
+        matchedCount: matchingIds.length,
+        modifiedCount: updateResult.modifiedCount || 0,
+        orderIds: ids,
+        orderNumbers: matchingIds.map((o) => o.orderNumber).filter(Boolean),
+      };
+    });
+
+    console.log(`${TAG} ✅ Bulk shipped`, {
+      matchedCount: responsePayload?.matchedCount || 0,
+      modifiedCount: responsePayload?.modifiedCount || 0,
+    });
+
+    return res.status(200).json(responsePayload);
+  } catch (error) {
+    console.error(`${TAG} ❌ Error:`, error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Server error",
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+/* ============================================================
+   ✅ PRODUCTION SUMMARY
 ============================================================ */
 export const getProductionSummary = async (req, res) => {
   try {

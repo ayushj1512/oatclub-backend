@@ -52,6 +52,7 @@ import {
   getProductionQueue,
   getProductionSummary,
   markOrderShippedFromProduction,
+  markAllPackedOrdersShipped,
 } from "./order.production.controller.js";
 
 /* ===========================
@@ -92,7 +93,14 @@ router.get("/analytics/summary", getOrderAnalytics);
 
 router.get("/production/summary", getProductionSummary);
 router.get("/production/queue", getProductionQueue);
+
+// ✅ Single order -> shipped
 router.post("/production/:id/shipped", markOrderShippedFromProduction);
+
+// ✅ Bulk packed -> shipped
+// supports optional query params like:
+// /api/orders/production/packed/mark-all-shipped?q=abc
+router.patch("/production/packed/mark-all-shipped", markAllPackedOrdersShipped);
 
 /* ============================================================
    CUSTOMER / LOOKUPS
@@ -173,9 +181,10 @@ router.patch("/:id/tracking", updateTracking);
 // Address update
 router.patch("/:id/address", updateOrderAddress);
 
-
+/* ============================================================
+   ACCOUNTS
+============================================================ */
 
 router.get("/accounts/sales-report", getSalesReport);
-
 
 export default router;
