@@ -29,11 +29,20 @@ import {
   updateProductColors,
   toggleBestSeller,
   markPatternReady,
-  zeroAllVariantStock, // ✅ NEW
+  zeroAllVariantStock,
 } from "./productController.js";
 
+/* ---------------- INVENTORY PRODUCT CONTROLLER ---------------- */
+import {
+  getInventoryAdminProducts,
+  getInventoryAdminCategories,
+} from "./inventory.product.controller.js";
+
 /* ---------------- BULK CONTROLLER ---------------- */
-import { bulkPreviewProducts, bulkCreateDraftProducts } from "./BulkproductController.js";
+import {
+  bulkPreviewProducts,
+  bulkCreateDraftProducts,
+} from "./BulkproductController.js";
 
 /* ---------------- SETUP ---------------- */
 const router = express.Router();
@@ -45,9 +54,13 @@ const upload = multer({ dest: "uploads/csv" });
 const uploadSwatches = multer({ dest: "uploads/swatch" });
 
 /* ===========================================================
-   🔓 PUBLIC ROUTES (CUSTOMERS)
+   🔓 PUBLIC + SHARED ROUTES
    (keep specific routes above generic ones)
 =========================================================== */
+
+// ✅ INVENTORY ADMIN ROUTES (must stay above /:id)
+router.get("/admin/inventory", getInventoryAdminProducts);
+router.get("/admin/inventory/categories", getInventoryAdminCategories);
 
 // Products by tag(s)
 router.get("/by-tag", getProductsByTag);
@@ -96,7 +109,7 @@ router.post("/bulk/delete", bulkDeleteProducts);
 router.post("/bulk/import", bulkImportProducts);
 router.patch("/bulk/pricing", bulkUpdatePricing);
 
-// ✅ NEW: Zero all variant stock
+// Zero all variant stock
 router.patch("/bulk/variant-stock/zero-all", zeroAllVariantStock);
 
 // Bulk sync collection ↔ products
@@ -109,20 +122,17 @@ router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 router.post("/:id/update-ratings", updateProductRatings);
 router.patch("/:id/analytics", incrementProductAnalytics);
 
-// Inventory endpoints (2 only)
+// Inventory endpoints
 router.patch("/:id/stock", updateProductStock); // SIMPLE only
 router.patch("/:id/variant-stock", updateVariantStock); // VARIABLE only
 
 // Update fabrics + consumption (dedicated)
 router.patch("/:id/fabrics", updateProductFabrics);
 
-// ✅ NEW: Mark Pattern Ready (manual)
+// Mark Pattern Ready (manual)
 router.patch("/:id/mark-pattern-ready", markPatternReady);
 
 // Toggle / Set Best Seller
-// PATCH /api/products/:id/best-seller
-// - empty body -> toggle
-// - { isBestSeller: true/false } -> force set
 router.patch("/:id/best-seller", toggleBestSeller);
 
 // Update product colors + swatch images (multipart)

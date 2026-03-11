@@ -51,6 +51,7 @@ import ticketRoutes from "./routes/admin/tickets.js";
 import superadminRoutes from "./routes/superadmin.js";
 import marketingSpendRoutes from "./MarketingSpend/marketingSpendRoutes.js";
 import marqueeRoutes from "./MarqueeItem/marquee.routes.js";
+import bluedartRoutes from "./BlueDart/bluedart.routes.js";
 
 // --------------------------------------------------
 // EXTRA FEATURES
@@ -256,7 +257,7 @@ app.use("/api/inventory", inventoryRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/homepage-settings", homepageSettingsRoutes);
 app.use("/api/newsletters", newsletterRouter);
-
+app.use("/api/bluedart", bluedartRoutes);
 // Media
 app.use("/api/media", mediaRoutes);
 app.use("/media-user", mediaAuthRoutes);
