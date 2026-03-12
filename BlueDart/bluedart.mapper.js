@@ -88,6 +88,31 @@ const getDefaultSender = () => ({
   pincode: process.env.BLUEDART_SENDER_PINCODE || "",
 });
 
+const getShipmentWeight = (shipment = {}, fallback = FIXED_WEIGHT) => {
+  return positive(shipment?.weight, fallback);
+};
+
+const getShipmentLength = (shipment = {}, fallback = FIXED_LENGTH) => {
+  return positive(shipment?.dimensions?.length ?? shipment?.length, fallback);
+};
+
+const getShipmentBreadth = (shipment = {}, fallback = FIXED_BREADTH) => {
+  return positive(
+    shipment?.dimensions?.breadth ??
+      shipment?.dimensions?.width ??
+      shipment?.breadth ??
+      shipment?.width,
+    fallback
+  );
+};
+
+const getShipmentHeight = (shipment = {}, fallback = FIXED_HEIGHT) => {
+  return positive(
+    shipment?.dimensions?.height ?? shipment?.height,
+    fallback
+  );
+};
+
 export const mapOrderAddressToRecipient = (order = {}) => {
   const a = order?.shippingAddressSnapshot || order?.shippingAddress || {};
   return {
@@ -118,6 +143,11 @@ export const buildBlueDartShipmentDocFromOrder = (order = {}, overrides = {}) =>
   const declaredValue = getOrderDeclaredValue(order);
   const currency = getOrderCurrency(order);
 
+  const finalWeight = positive(overrides.weight, FIXED_WEIGHT);
+  const finalLength = positive(overrides.length, FIXED_LENGTH);
+  const finalBreadth = positive(overrides.breadth, FIXED_BREADTH);
+  const finalHeight = positive(overrides.height, FIXED_HEIGHT);
+
   return {
     orderNumber: safe(order?.orderNumber),
     orderId: order?._id || null,
@@ -129,11 +159,11 @@ export const buildBlueDartShipmentDocFromOrder = (order = {}, overrides = {}) =>
     codAmount: paymentMode === "COD" ? declaredValue : 0,
     declaredValue,
     currency,
-    weight: FIXED_WEIGHT,
+    weight: finalWeight,
     dimensions: {
-      length: FIXED_LENGTH,
-      breadth: FIXED_BREADTH,
-      height: FIXED_HEIGHT,
+      length: finalLength,
+      breadth: finalBreadth,
+      height: finalHeight,
     },
     pieces: positive(
       overrides.pieces,
@@ -157,6 +187,11 @@ const getOrderItemsForPayload = (order = {}, shipment = {}) => {
   const orderItems = Array.isArray(order?.items) ? order.items : [];
   const currency = safe(shipment?.currency || getOrderCurrency(order)) || "INR";
 
+  const shipmentWeight = getShipmentWeight(shipment, FIXED_WEIGHT);
+  const shipmentLength = getShipmentLength(shipment, FIXED_LENGTH);
+  const shipmentBreadth = getShipmentBreadth(shipment, FIXED_BREADTH);
+  const shipmentHeight = getShipmentHeight(shipment, FIXED_HEIGHT);
+
   if (!orderItems.length) {
     return [
       {
@@ -164,13 +199,13 @@ const getOrderItemsForPayload = (order = {}, shipment = {}) => {
         quantity: 1,
         weight: {
           unit_of_measurement: "kg",
-          value: FIXED_WEIGHT,
+          value: shipmentWeight,
         },
         dimensions: {
           unit_of_measurement: "cms",
-          length: FIXED_LENGTH,
-          width: FIXED_BREADTH,
-          height: FIXED_HEIGHT,
+          length: shipmentLength,
+          width: shipmentBreadth,
+          height: shipmentHeight,
           irregular_parcel_girth: "",
         },
         value: {
@@ -188,13 +223,13 @@ const getOrderItemsForPayload = (order = {}, shipment = {}) => {
     quantity: getItemQuantity(item),
     weight: {
       unit_of_measurement: "kg",
-      value: FIXED_WEIGHT,
+      value: shipmentWeight,
     },
     dimensions: {
       unit_of_measurement: "cms",
-      length: FIXED_LENGTH,
-      width: FIXED_BREADTH,
-      height: FIXED_HEIGHT,
+      length: shipmentLength,
+      width: shipmentBreadth,
+      height: shipmentHeight,
       irregular_parcel_girth: "",
     },
     value: {
@@ -298,13 +333,13 @@ export const buildCreateShipmentPayload = (shipment = {}, order = null) => {
         quantity: totalPieces,
         weight: {
           unit_of_measurement: "kg",
-          value: FIXED_WEIGHT,
+          value: getShipmentWeight(shipment, FIXED_WEIGHT),
         },
         dimensions: {
           unit_of_measurement: "cm",
-          length: FIXED_LENGTH,
-          width: FIXED_BREADTH,
-          height: FIXED_HEIGHT,
+          length: getShipmentLength(shipment, FIXED_LENGTH),
+          width: getShipmentBreadth(shipment, FIXED_BREADTH),
+          height: getShipmentHeight(shipment, FIXED_HEIGHT),
         },
       },
     ],
@@ -316,6 +351,14 @@ export const buildCreateShipmentPayload = (shipment = {}, order = null) => {
 
   return {
     data: [payloadOrder],
+  };
+};
+
+export const getEddPayloadFromShipment = (shipment = {}) => {
+  return {
+    originPincode: safe(shipment?.sender?.pincode),
+    destinationPincode: safe(shipment?.recipient?.pincode),
+    slug: safe(shipment?.carrierSlug || BLUEDART?.CARRIER_SLUG || "bluedart"),
   };
 };
 

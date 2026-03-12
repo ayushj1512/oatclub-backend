@@ -8,6 +8,9 @@ import {
 import {
   createShipmentOnBlueDart,
   trackShipmentOnBlueDart,
+  getOrdersFromBlueDart,
+  getSingleOrderFromBlueDart,
+  getEddPredictionFromBlueDart,
 } from "./bluedart.service.js";
 import {
   normalizeTrackingStatus,
@@ -617,6 +620,197 @@ export const bulkSyncShipments = async (req, res) => {
       meta.status || 500,
       meta.message || "Failed to bulk sync shipments",
       { errorData: meta.data }
+    );
+  }
+};
+
+
+/* =========================================================
+   LIST BLUEDART / ESHIPZ ORDERS FROM API
+   Example:
+   GET /api/bluedart/orders-api?perPage=10&page=1&shipStatus=shipped
+========================================================= */
+export const listBlueDartOrdersFromApi = async (req, res) => {
+  try {
+    const { perPage = 10, page = 1, shipStatus = "" } = req.query;
+
+    console.log("\n========== BLUEDART GET ORDERS FROM API ==========");
+    console.log("QUERY:", req.query);
+
+    const apiResponse = await getOrdersFromBlueDart({
+      perPage: Number(perPage) || 10,
+      page: Number(page) || 1,
+      shipStatus: safe(shipStatus),
+    });
+
+    console.log("GET ORDERS API RESPONSE:", JSON.stringify(apiResponse, null, 2));
+    console.log("==================================================\n");
+
+    const orders = Array.isArray(apiResponse?.data)
+      ? apiResponse.data
+      : Array.isArray(apiResponse?.orders)
+      ? apiResponse.orders
+      : Array.isArray(apiResponse?.results)
+      ? apiResponse.results
+      : [];
+
+    return ok(res, "BlueDart orders fetched successfully", {
+      orders,
+      externalResponse: apiResponse,
+      pagination: apiResponse?.pagination || apiResponse?.meta || null,
+    });
+  } catch (error) {
+    const meta = getErrorMeta(error);
+
+    console.error("\n========== BLUEDART GET ORDERS ERROR ==========");
+    console.error("MESSAGE:", meta.message);
+    console.error("STATUS:", meta.status);
+    console.error("STATUS TEXT:", meta.statusText);
+    console.error("DATA:", meta.data);
+    console.error("==============================================\n");
+
+    return fail(
+      res,
+      meta.status || 500,
+      meta?.data?.meta?.message ||
+        meta?.data?.message ||
+        meta?.data?.error ||
+        meta.message ||
+        "Failed to fetch BlueDart orders",
+      {
+        errorData: meta.data,
+      }
+    );
+  }
+};
+
+/* =========================================================
+   GET SINGLE BLUEDART / ESHIPZ ORDER FROM API
+   Example:
+   GET /api/bluedart/orders-api/1198
+========================================================= */
+export const getBlueDartOrderBySalesChannelId = async (req, res) => {
+  try {
+    const salesChannelOrderId =
+      req.params.salesChannelOrderId || req.params.orderId || "";
+
+    if (!safe(salesChannelOrderId)) {
+      return fail(res, 400, "salesChannelOrderId is required");
+    }
+
+    console.log("\n========== BLUEDART GET SINGLE ORDER ==========");
+    console.log("SALES CHANNEL ORDER ID:", salesChannelOrderId);
+
+    const apiResponse = await getSingleOrderFromBlueDart(salesChannelOrderId);
+
+    console.log(
+      "GET SINGLE ORDER API RESPONSE:",
+      JSON.stringify(apiResponse, null, 2)
+    );
+    console.log("===============================================\n");
+
+    return ok(res, "BlueDart order fetched successfully", {
+      order: apiResponse?.data || apiResponse?.order || apiResponse,
+      externalResponse: apiResponse,
+    });
+  } catch (error) {
+    const meta = getErrorMeta(error);
+
+    console.error("\n========== BLUEDART GET SINGLE ORDER ERROR ==========");
+    console.error("MESSAGE:", meta.message);
+    console.error("STATUS:", meta.status);
+    console.error("STATUS TEXT:", meta.statusText);
+    console.error("DATA:", meta.data);
+    console.error("====================================================\n");
+
+    return fail(
+      res,
+      meta.status || 500,
+      meta?.data?.meta?.message ||
+        meta?.data?.message ||
+        meta?.data?.error ||
+        meta.message ||
+        "Failed to fetch BlueDart order",
+      {
+        errorData: meta.data,
+      }
+    );
+  }
+};
+
+/* =========================================================
+   EDD PREDICTION FROM API
+   Example:
+   POST /api/bluedart/edd-prediction
+   Body:
+   {
+     "originPincode": "110001",
+     "destinationPincode": "400011",
+     "slug": "bluedart"
+   }
+========================================================= */
+export const getBlueDartEddPrediction = async (req, res) => {
+  try {
+    const {
+      originPincode,
+      destinationPincode,
+      slug,
+      origin_pincode,
+      destination_pincode,
+    } = req.body || {};
+
+    const finalOrigin = safe(originPincode || origin_pincode);
+    const finalDestination = safe(destinationPincode || destination_pincode);
+    const finalSlug = safe(slug) || BLUEDART?.CARRIER_SLUG || "bluedart";
+
+    if (!finalOrigin) {
+      return fail(res, 400, "originPincode is required");
+    }
+
+    if (!finalDestination) {
+      return fail(res, 400, "destinationPincode is required");
+    }
+
+    console.log("\n========== BLUEDART EDD PREDICTION ==========");
+    console.log("REQUEST BODY:", req.body);
+
+    const apiResponse = await getEddPredictionFromBlueDart({
+      originPincode: finalOrigin,
+      destinationPincode: finalDestination,
+      slug: finalSlug,
+    });
+
+    console.log(
+      "EDD PREDICTION API RESPONSE:",
+      JSON.stringify(apiResponse, null, 2)
+    );
+    console.log("=============================================\n");
+
+    return ok(res, "BlueDart EDD prediction fetched successfully", {
+      prediction: apiResponse?.data || apiResponse,
+      externalResponse: apiResponse,
+    });
+  } catch (error) {
+    const meta = getErrorMeta(error);
+
+    console.error("\n========== BLUEDART EDD ERROR ==========");
+    console.error("MESSAGE:", meta.message);
+    console.error("STATUS:", meta.status);
+    console.error("STATUS TEXT:", meta.statusText);
+    console.error("DATA:", meta.data);
+    console.error("========================================\n");
+
+    return fail(
+      res,
+      meta.status || 500,
+      meta?.data?.meta?.message ||
+        meta?.data?.message ||
+        meta?.data?.error ||
+        meta.message ||
+        "Failed to fetch BlueDart EDD prediction",
+      {
+        errorData: meta.data,
+      }
     );
   }
 };
