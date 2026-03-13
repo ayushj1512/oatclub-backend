@@ -28,6 +28,8 @@ import {
   updateVariantPatternNumber,
   updateProductColors,
   toggleBestSeller,
+  toggleTrending,
+  bulkMarkTrendingByCodes,
   markPatternReady,
   zeroAllVariantStock,
 } from "./productController.js";
@@ -115,6 +117,9 @@ router.patch("/bulk/variant-stock/zero-all", zeroAllVariantStock);
 // Bulk sync collection ↔ products
 router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 
+// ✅ Bulk mark trending by product codes
+router.patch("/bulk/trending/by-codes", bulkMarkTrendingByCodes);
+
 /* ===========================================================
    🔐 ADMIN ROUTES (SINGLE PRODUCT OPS)
 =========================================================== */
@@ -134,6 +139,9 @@ router.patch("/:id/mark-pattern-ready", markPatternReady);
 
 // Toggle / Set Best Seller
 router.patch("/:id/best-seller", toggleBestSeller);
+
+// ✅ Toggle / Set Trending
+router.patch("/:id/trending", toggleTrending);
 
 // Update product colors + swatch images (multipart)
 // - colorsJson: JSON string of [{ name, hex, image }]

@@ -225,6 +225,7 @@ const productSchema = new mongoose.Schema(
     publishAt: { type: Date, default: Date.now },
 
     isBestSeller: { type: Boolean, default: false, index: true },
+    isTrending: { type: Boolean, default: false, index: true },
 
     // ✅ NEW: Pattern ready flag (product level)
     isPatternReady: { type: Boolean, default: false, index: true },
@@ -568,5 +569,6 @@ productSchema.index({ colors: 1 });
 // ✅ NEW indexes
 productSchema.index({ isPatternReady: 1 });
 productSchema.index({ originalProductLink: 1 });
+productSchema.index({ isTrending: 1 });
 
 export default mongoose.models.Product || mongoose.model("Product", productSchema);

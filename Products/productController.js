@@ -505,7 +505,14 @@ export const createProduct = async (req, res) => {
 
         if (typeof row === "string") {
           const name = s(row);
-          if (name) out.push({ fabricName: name, fabricCode: "", fabricColor: "", role: "main" });
+          if (name) {
+            out.push({
+              fabricName: name,
+              fabricCode: "",
+              fabricColor: "",
+              role: "main",
+            });
+          }
           return;
         }
 
@@ -537,7 +544,9 @@ export const createProduct = async (req, res) => {
         try {
           v = JSON.parse(t);
         } catch {
-          (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => push(String(p || "")));
+          (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) =>
+            push(String(p || ""))
+          );
           return out;
         }
       }
@@ -546,10 +555,16 @@ export const createProduct = async (req, res) => {
 
       if (v && typeof v === "object") {
         const looksSingle =
-          "fabricName" in v || "fabricCode" in v || "fabricColor" in v || "role" in v;
+          "fabricName" in v ||
+          "fabricCode" in v ||
+          "fabricColor" in v ||
+          "role" in v;
+
         if (looksSingle) return push(v), out;
 
-        Object.entries(v).forEach(([role, name]) => push({ role, fabricName: name }));
+        Object.entries(v).forEach(([role, name]) =>
+          push({ role, fabricName: name })
+        );
         return out;
       }
 
@@ -578,10 +593,17 @@ export const createProduct = async (req, res) => {
     data.tags = tagsNorm(data.tags);
     data.collections = arr(data.collections);
 
-    // ✅ NEW: fields you added in schema
-    data.isPatternReady = data.isPatternReady !== undefined ? toBool(data.isPatternReady) : false;
-    data.originalProductLink = s(data.originalProductLink || data.productLink); // supports old key too
+    // ✅ extra schema fields
+    data.isPatternReady =
+      data.isPatternReady !== undefined ? toBool(data.isPatternReady) : false;
+    data.originalProductLink = s(data.originalProductLink || data.productLink);
     delete data.productLink;
+
+    // ✅ trending + bestseller
+    data.isBestSeller =
+      data.isBestSeller !== undefined ? toBool(data.isBestSeller) : false;
+    data.isTrending =
+      data.isTrending !== undefined ? toBool(data.isTrending) : false;
 
     // ✅ fabrics
     try {
@@ -590,21 +612,26 @@ export const createProduct = async (req, res) => {
       return res.status(400).json({ message: err.message || "Invalid fabrics" });
     }
 
-    data.avgFabricConsumption = json(data.avgFabricConsumption, data.avgFabricConsumption);
+    data.avgFabricConsumption = json(
+      data.avgFabricConsumption,
+      data.avgFabricConsumption
+    );
 
     if (data.colors !== undefined) {
-      data.colors = Array.from(new Set(arr(data.colors).map((c) => s(c).toLowerCase()).filter(Boolean)));
+      data.colors = Array.from(
+        new Set(arr(data.colors).map((c) => s(c).toLowerCase()).filter(Boolean))
+      );
     }
 
     if (data.hsnCode !== undefined) {
       const hsn = s(data.hsnCode);
       if (hsn && !/^\d+$/.test(hsn)) {
-        return res.status(400).json({ message: "HSN code must contain digits only" });
+        return res
+          .status(400)
+          .json({ message: "HSN code must contain digits only" });
       }
       data.hsnCode = hsn;
     }
-
-    data.isBestSeller = data.isBestSeller !== undefined ? toBool(data.isBestSeller) : false;
 
     /* ---------------- slug ---------------- */
     data.slug = slugify(String(data.slug || data.title || ""), { lower: true });
@@ -619,10 +646,17 @@ export const createProduct = async (req, res) => {
         ? data.categories.split(",").map((c) => s(c)).filter(Boolean)
         : [];
 
-    const hadNewArrivals = data.categories.some((c) => String(c).toLowerCase() === "new-arrivals");
-    data.categories = data.categories.filter((c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase()));
+    const hadNewArrivals = data.categories.some(
+      (c) => String(c).toLowerCase() === "new-arrivals"
+    );
 
-    if (hadNewArrivals) data.tags = Array.from(new Set([...(data.tags || []), "new-arrival"]));
+    data.categories = data.categories.filter(
+      (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase())
+    );
+
+    if (hadNewArrivals) {
+      data.tags = Array.from(new Set([...(data.tags || []), "new-arrival"]));
+    }
 
     if (!data.categories.length) {
       return res.status(400).json({
@@ -637,11 +671,15 @@ export const createProduct = async (req, res) => {
       data.variants = [];
       data.productType = "simple";
       data.colors = Array.isArray(data.colors) ? data.colors : [];
-      data.specifications = Array.isArray(data.specifications) ? data.specifications : [];
+      data.specifications = Array.isArray(data.specifications)
+        ? data.specifications
+        : [];
     } else {
       await validateAttributes(data.attributes);
 
-      if (Array.isArray(data.variants)) data.variants = data.variants.map(({ image, ...v }) => v);
+      if (Array.isArray(data.variants)) {
+        data.variants = data.variants.map(({ image, ...v }) => v);
+      }
 
       data.variants = keepOnlySizeVariants(
         generateVariants({
@@ -652,17 +690,21 @@ export const createProduct = async (req, res) => {
       );
 
       data.productType = data.variants.length ? "variable" : "simple";
-      data.variants = (data.variants || []).map((v) => ({ ...v, patternNumber: s(v?.patternNumber) }));
+      data.variants = (data.variants || []).map((v) => ({
+        ...v,
+        patternNumber: s(v?.patternNumber),
+      }));
 
       if (!Array.isArray(data.colors)) data.colors = [];
       if (!Array.isArray(data.specifications)) data.specifications = [];
     }
 
-    // ✅ AUTO set isPatternReady based on variants (server-side)
-    // (schema hook will also do it, but controller keeps response stable)
+    // ✅ AUTO set isPatternReady based on variants
     data.isPatternReady =
       Array.isArray(data.variants) &&
-      data.variants.some((v) => v?.patternNumber && String(v.patternNumber).trim());
+      data.variants.some(
+        (v) => v?.patternNumber && String(v.patternNumber).trim()
+      );
 
     /* ---------------- cross-sell ---------------- */
     data.crossSellProducts = (
@@ -683,7 +725,9 @@ export const createProduct = async (req, res) => {
     data.thumbnail = thumbnail;
 
     if (!isBulk && (!data.images || !data.images.length)) {
-      return res.status(400).json({ message: "At least one product image is required" });
+      return res
+        .status(400)
+        .json({ message: "At least one product image is required" });
     }
 
     if (isBulk) {
@@ -691,7 +735,6 @@ export const createProduct = async (req, res) => {
       data.thumbnail = "";
       data.isDraft = true;
       data.isActive = false;
-      // bulk drafts should not be pattern-ready by default
       data.isPatternReady = false;
     }
 
@@ -712,19 +755,32 @@ export const createProduct = async (req, res) => {
       keyFeatures: Array.isArray(data.keyFeatures) ? data.keyFeatures : [],
       specifications: Array.isArray(data.specifications) ? data.specifications : [],
       isBestSeller: !!data.isBestSeller,
+      isTrending: !!data.isTrending,
       isPatternReady: !!data.isPatternReady,
       originalProductLink: data.originalProductLink || "",
     });
 
     if (Array.isArray(skuPayload.variants)) created.markModified("variants");
-    ["colors", "keyFeatures", "shortDescription", "howToStyle", "fabricDetails", "specifications"].forEach(
+
+    [
+      "colors",
+      "keyFeatures",
+      "shortDescription",
+      "howToStyle",
+      "fabricDetails",
+      "specifications",
+    ].forEach((k) => created.markModified(k));
+
+    ["isBestSeller", "isTrending", "isPatternReady", "originalProductLink"].forEach(
       (k) => created.markModified(k)
     );
-    ["isBestSeller", "isPatternReady", "originalProductLink"].forEach((k) => created.markModified(k));
 
     await created.save({ validateBeforeSave: true });
 
-    await Product.updateOne({ _id: created._id }, { $pull: { crossSellProducts: created._id } });
+    await Product.updateOne(
+      { _id: created._id },
+      { $pull: { crossSellProducts: created._id } }
+    );
 
     const full = await pop(Product.findById(created._id));
 
@@ -1033,7 +1089,14 @@ export const updateProduct = async (req, res) => {
 
         if (typeof row === "string") {
           const name = s(row);
-          if (name) out.push({ fabricName: name, fabricCode: "", fabricColor: "", role: "main" });
+          if (name) {
+            out.push({
+              fabricName: name,
+              fabricCode: "",
+              fabricColor: "",
+              role: "main",
+            });
+          }
           return;
         }
 
@@ -1065,7 +1128,9 @@ export const updateProduct = async (req, res) => {
         try {
           v = JSON.parse(t);
         } catch {
-          (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => push(String(p || "")));
+          (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) =>
+            push(String(p || ""))
+          );
           return out;
         }
       }
@@ -1075,9 +1140,12 @@ export const updateProduct = async (req, res) => {
       if (v && typeof v === "object") {
         const looksSingle =
           "fabricName" in v || "fabricCode" in v || "fabricColor" in v || "role" in v;
+
         if (looksSingle) return push(v), out;
 
-        Object.entries(v).forEach(([role, name]) => push({ role, fabricName: name }));
+        Object.entries(v).forEach(([role, name]) =>
+          push({ role, fabricName: name })
+        );
         return out;
       }
 
@@ -1122,11 +1190,13 @@ export const updateProduct = async (req, res) => {
       data.originalProductLink = s(data.productLink);
       delete data.productLink;
     }
+
     // allow manual set, but we will recompute if variants provided
     if (data.isPatternReady !== undefined) data.isPatternReady = toBool(data.isPatternReady);
 
     if (data.isSamplingDone !== undefined) data.isSamplingDone = toBool(data.isSamplingDone);
     if (data.isBestSeller !== undefined) data.isBestSeller = toBool(data.isBestSeller);
+    if (data.isTrending !== undefined) data.isTrending = toBool(data.isTrending);
     if (data.colors !== undefined) data.colors = normColors(data.colors);
 
     if (data.hsnCode !== undefined) {
@@ -1260,6 +1330,7 @@ export const updateProduct = async (req, res) => {
     const finalIsPatternReady =
       Array.isArray(finalVariants) &&
       finalVariants.some((v) => v?.patternNumber && String(v.patternNumber).trim());
+
     if (data.isPatternReady === undefined) data.isPatternReady = !!finalIsPatternReady;
 
     /* ---------------- apply + save ---------------- */
@@ -1274,6 +1345,7 @@ export const updateProduct = async (req, res) => {
       "colors",
       "isSamplingDone",
       "isBestSeller",
+      "isTrending",
       "isPatternReady",
       "originalProductLink",
       "keyFeatures",
@@ -2665,6 +2737,137 @@ export const zeroAllVariantStock = async (req, res) => {
     });
   } catch (e) {
     console.error("❌ zeroAllProductsInventory Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};
+
+
+// PATCH /api/products/:id/trending
+// Body optional:
+// - { isTrending: true/false } -> direct set
+// - empty body -> toggle current value
+export const toggleTrending = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const toBool = (v) => {
+      if (typeof v === "boolean") return v;
+      const s = String(v ?? "").trim().toLowerCase();
+      return s === "true" || s === "1" || s === "yes";
+    };
+
+    const exists = await Product.findById(id);
+    if (!exists) return res.status(404).json({ message: "Product not found" });
+
+    let nextVal;
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "isTrending")) {
+      nextVal = toBool(req.body.isTrending);
+    } else {
+      nextVal = !Boolean(exists.isTrending);
+    }
+
+    const updated = await pop(
+      Product.findByIdAndUpdate(
+        id,
+        { $set: { isTrending: nextVal } },
+        { new: true, runValidators: true }
+      )
+    );
+
+    return res.json({
+      message: `Trending ${nextVal ? "enabled" : "disabled"}`,
+      isTrending: nextVal,
+      product: applyStockFromVariants(updated),
+    });
+  } catch (e) {
+    console.error("❌ toggleTrending Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};
+
+
+
+
+// PATCH /api/products/bulk/trending/by-codes
+// Body:
+// {
+//   "codes": ["00229", "00230", "00311"]
+//   "isTrending": true
+// }
+//
+// also supports:
+// {
+//   "codes": "00229,00230,00311",
+//   "isTrending": false
+// }
+export const bulkMarkTrendingByCodes = async (req, res) => {
+  try {
+    const toBool = (v) => {
+      if (typeof v === "boolean") return v;
+      const s = String(v ?? "").trim().toLowerCase();
+      return s === "true" || s === "1" || s === "yes";
+    };
+
+    let { codes, isTrending } = req.body;
+
+    codes = Array.isArray(codes)
+      ? codes
+      : typeof codes === "string"
+        ? codes.split(",").map((x) => String(x).trim()).filter(Boolean)
+        : [];
+
+    codes = [...new Set(codes.map((c) => String(c).trim()).filter(Boolean))];
+
+    if (!codes.length) {
+      return res.status(400).json({ message: "codes is required" });
+    }
+
+    if (isTrending === undefined) {
+      return res.status(400).json({ message: "isTrending is required" });
+    }
+
+    const nextVal = toBool(isTrending);
+
+    const existing = await Product.find(
+      { productCode: { $in: codes } },
+      { _id: 1, productCode: 1, title: 1, isTrending: 1 }
+    ).lean();
+
+    const foundCodes = existing.map((p) => String(p.productCode));
+    const missingCodes = codes.filter((c) => !foundCodes.includes(String(c)));
+
+    const result = await Product.updateMany(
+      { productCode: { $in: codes } },
+      { $set: { isTrending: nextVal } }
+    );
+
+    const updatedProducts = await pop(
+      Product.find({ productCode: { $in: foundCodes } }).sort({ createdAt: -1 })
+    );
+
+    const orderMap = new Map(
+      updatedProducts.map((p) => [String(p.productCode), p])
+    );
+
+    const orderedProducts = foundCodes
+      .map((code) => orderMap.get(String(code)))
+      .filter(Boolean)
+      .map(applyStockFromVariants);
+
+    return res.json({
+      message: `Trending ${nextVal ? "enabled" : "disabled"} for selected product codes`,
+      isTrending: nextVal,
+      requestedCount: codes.length,
+      foundCount: foundCodes.length,
+      missingCount: missingCodes.length,
+      matchedCount: result.matchedCount || 0,
+      modifiedCount: result.modifiedCount || 0,
+      foundCodes,
+      missingCodes,
+      products: orderedProducts,
+    });
+  } catch (e) {
+    console.error("❌ bulkMarkTrendingByCodes Error:", e);
     return res.status(500).json({ message: e.message });
   }
 };
