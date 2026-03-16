@@ -21,10 +21,17 @@ import {
   splitOrderIntoShipments,
   duplicateExchangeOrder,
 
-  // ✅ NEW: lookup by email/phone (support)
+  // ✅ Support lookup by email/phone
   lookupOrdersByIdentity,
 } from "./orderController.js";
-import { getSalesReport } from "./orderAccountsController.js";
+
+/* ===========================
+   ✅ ACCOUNTS CONTROLLER
+=========================== */
+import {
+  getSalesReport,
+  getRevenueReport,
+} from "./orderAccountsController.js";
 
 /* ===========================
    ✅ CUSTOMER SUPPORT CONTROLLER
@@ -72,6 +79,21 @@ router.post("/", createOrder);
 // Admin: all orders (supports query filters)
 router.get("/", getAllOrders);
 
+/* ============================================================
+   ACCOUNTS
+   ✅ KEEP THESE ABOVE "/:id"
+============================================================ */
+
+// Existing sales report
+router.get("/accounts/sales-report", getSalesReport);
+
+// ✅ New revenue report
+router.get("/accounts/revenue-report", getRevenueReport);
+
+/* ============================================================
+   SUPPORT / ANALYTICS / LOOKUPS
+============================================================ */
+
 // ✅ Support lookup: find orders by email/phone
 // GET /api/orders/lookup?email=a@b.com OR ?phone=99999...
 router.get("/lookup", lookupOrdersByIdentity);
@@ -109,7 +131,8 @@ router.patch("/production/packed/mark-all-shipped", markAllPackedOrdersShipped);
 // Customer orders
 router.get("/customer/:customerId", getOrdersByCustomer);
 
-// Lookup by orderNumber (⚠️ keep above "/:id")
+// Lookup by orderNumber
+// ⚠️ keep above "/:id"
 router.get("/by-number/:orderNumber", getOrderByOrderNumber);
 
 /* ============================================================
@@ -137,7 +160,6 @@ router.post("/:id/confirm", confirmOrder);
 
 /* ============================================================
    SPLIT ORDER
-   ✅ Fix: remove extra "/orders" prefix (already under /api/orders)
 ============================================================ */
 
 router.post("/:id/split", splitOrderIntoShipments);
@@ -180,11 +202,5 @@ router.patch("/:id/tracking", updateTracking);
 
 // Address update
 router.patch("/:id/address", updateOrderAddress);
-
-/* ============================================================
-   ACCOUNTS
-============================================================ */
-
-router.get("/accounts/sales-report", getSalesReport);
 
 export default router;
