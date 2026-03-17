@@ -34,6 +34,11 @@ import {
 } from "./orderAccountsController.js";
 
 /* ===========================
+   ✅ PRODUCT SALES REPORT CONTROLLER
+=========================== */
+import { getProductSalesReport } from "./orderReportsController.js";
+
+/* ===========================
    ✅ CUSTOMER SUPPORT CONTROLLER
 =========================== */
 import {
@@ -86,6 +91,11 @@ router.get("/", getAllOrders);
 
 // Existing sales report
 router.get("/accounts/sales-report", getSalesReport);
+
+// ✅ New product-wise sales report
+// query params supported:
+// ?month=2026-03&page=1&limit=20&search=abc&sort=qty_desc
+router.get("/accounts/sales-report/products", getProductSalesReport);
 
 // ✅ New revenue report
 router.get("/accounts/revenue-report", getRevenueReport);
