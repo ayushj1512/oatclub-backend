@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import Product from "./Products.js";
-import { reconcileBackordersForVariant } from "../inventoryUtility/reconcileBackordersForVariant.js";
+import { reconcilePendingReservationsInternal } from "../InventoryReservation/InventoryReservationController.js";
 
 /* ============================================================
    SMALL HELPERS
@@ -588,13 +588,21 @@ export const getInventoryAdminProducts = async (req, res) => {
         hideFootwear: shouldHideFootwear,
         productType: s(productType),
         hasVariants:
-          hasVariants !== undefined && s(hasVariants) !== "" ? toBool(hasVariants) : undefined,
+          hasVariants !== undefined && s(hasVariants) !== ""
+            ? toBool(hasVariants)
+            : undefined,
         inStock:
-          inStock !== undefined && s(inStock) !== "" ? toBool(inStock) : undefined,
+          inStock !== undefined && s(inStock) !== ""
+            ? toBool(inStock)
+            : undefined,
         isActive:
-          isActive !== undefined && s(isActive) !== "" ? toBool(isActive) : undefined,
+          isActive !== undefined && s(isActive) !== ""
+            ? toBool(isActive)
+            : undefined,
         isDraft:
-          isDraft !== undefined && s(isDraft) !== "" ? toBool(isDraft) : undefined,
+          isDraft !== undefined && s(isDraft) !== ""
+            ? toBool(isDraft)
+            : undefined,
         isBestSeller:
           isBestSeller !== undefined && s(isBestSeller) !== ""
             ? toBool(isBestSeller)
@@ -689,20 +697,6 @@ export const getSingleInventoryAdminProduct = async (req, res) => {
 /* ============================================================
    ✅ UPDATE SINGLE INVENTORY PRODUCT
    PATCH /api/products/admin/inventory/:id
-   Body:
-   {
-     stock: 10
-   }
-   OR
-   {
-     size: "M",
-     stock: 10
-   }
-   OR
-   {
-     variantId: "...",
-     stock: 10
-   }
 ============================================================ */
 export const updateSingleInventoryAdminProduct = async (req, res) => {
   try {
@@ -751,9 +745,25 @@ export const updateSingleInventoryAdminProduct = async (req, res) => {
 
       product.stock = nextStock;
       product.markModified("stock");
+
       await product.save({ validateBeforeSave: true });
 
-      const updated = await Product.findById(product._id, getInventoryProjection()).lean();
+      let reconcileSummary = null;
+      try {
+        reconcileSummary = await reconcilePendingReservationsInternal({
+          productId: product._id,
+        });
+      } catch (reErr) {
+        console.error(
+          "⚠️ reconcilePendingReservationsInternal failed (simple):",
+          reErr?.message || reErr
+        );
+      }
+
+      const updated = await Product.findById(
+        product._id,
+        getInventoryProjection()
+      ).lean();
 
       return res.json({
         success: true,
@@ -763,6 +773,7 @@ export const updateSingleInventoryAdminProduct = async (req, res) => {
           productId: String(product._id),
           stock: nextStock,
         },
+        reconcile: reconcileSummary,
         product: applyInventoryStockFromVariants(updated),
       });
     }
@@ -801,18 +812,21 @@ export const updateSingleInventoryAdminProduct = async (req, res) => {
 
     let reconcileSummary = null;
     try {
-      reconcileSummary = await reconcileBackordersForVariant({
+      reconcileSummary = await reconcilePendingReservationsInternal({
         productId: product._id,
         variantId: targetVariant._id,
       });
     } catch (reErr) {
       console.error(
-        "⚠️ reconcileBackordersForVariant failed:",
+        "⚠️ reconcilePendingReservationsInternal failed (variant):",
         reErr?.message || reErr
       );
     }
 
-    const updated = await Product.findById(product._id, getInventoryProjection()).lean();
+    const updated = await Product.findById(
+      product._id,
+      getInventoryProjection()
+    ).lean();
 
     return res.json({
       success: true,

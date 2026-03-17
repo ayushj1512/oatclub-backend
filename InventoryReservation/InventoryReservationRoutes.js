@@ -1,4 +1,3 @@
-// InventoryReservation/InventoryReservationRoutes.js
 import express from "express";
 import {
   createReservation,
@@ -8,64 +7,43 @@ import {
   expireDueReservations,
   listReservations,
   getReservation,
+  addInventoryAndReconcile,
+  cancelReservationsByOrder,
+  restockFromRTO,
+  reconcileReservations,
 } from "./InventoryReservationController.js";
 
-// ✅ NEW: orderNumber webhook controller
-import {
-  reserveInventoryWebhookByOrderNumber,
-} from "./inventoryWebhook.js";
+import { reserveInventoryWebhookByOrderNumber } from "./inventoryWebhook.js";
 
 const router = express.Router();
 
-/**
- * Inventory Reservations
- * Base: /api/inventory-reservations
- */
-
-// ========================================
-// STANDARD RESERVATION ROUTES
-// ========================================
-
-// ✅ create reservation
+/* ---------------------------------------------------
+   reservation routes
+--------------------------------------------------- */
 router.post("/", createReservation);
-
-// ✅ list reservations (filters)
 router.get("/", listReservations);
-
-// ✅ expire due (cron/manual trigger)
 router.post("/expire-due", expireDueReservations);
 
-// ✅ get single reservation
+/* ---------------------------------------------------
+   inventory action routes
+--------------------------------------------------- */
+router.post("/reconcile", reconcileReservations);
+router.post("/add-stock", addInventoryAndReconcile);
+router.post("/rto-restock", restockFromRTO);
+router.post("/cancel-order/:orderId", cancelReservationsByOrder);
+
+/* ---------------------------------------------------
+   webhook routes
+--------------------------------------------------- */
+router.post("/webhook/reserve-order/:orderNumber", reserveInventoryWebhookByOrderNumber);
+router.post("/webhook/reserve-order", reserveInventoryWebhookByOrderNumber);
+
+/* ---------------------------------------------------
+   single reservation routes
+--------------------------------------------------- */
 router.get("/:id", getReservation);
-
-// ✅ release reservation (cancel/payment failed)
 router.post("/:id/release", releaseReservation);
-
-// ✅ consume reservation (issue/ship)
 router.post("/:id/consume", consumeReservation);
-
-// ✅ expire single reservation (manual)
 router.post("/:id/expire", expireReservation);
-
-
-// ========================================
-// 🔥 ORDER-BASED INVENTORY WEBHOOK
-// ========================================
-
-/**
- * POST /api/inventory-reservations/webhook/reserve-order/:orderNumber
- *
- * Example:
- * POST /api/inventory-reservations/webhook/reserve-order/MIRAY-000187
- *
- * Behavior:
- * - Looks up order by orderNumber
- * - Reserves inventory for available products only
- * - Skips insufficient ones
- */
-router.post(
-  "/webhook/reserve-order/:orderNumber",
-  reserveInventoryWebhookByOrderNumber
-);
 
 export default router;

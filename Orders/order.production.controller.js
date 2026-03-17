@@ -317,7 +317,13 @@ export const markOrderShippedFromProduction = async (req, res) => {
         throw new Error("Parent split order cannot be shipped");
       }
 
-      if (order.fulfillmentStatus === "shipped") {
+      const current = String(order.fulfillmentStatus || "").toLowerCase();
+
+      if (!["packed", "picked", "shipped"].includes(current)) {
+        throw new Error("Only packed/picked orders can be marked shipped from production");
+      }
+
+      if (current === "shipped") {
         updatedOrder = order;
         return;
       }

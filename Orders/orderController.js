@@ -18,8 +18,12 @@ import {
   triggerRmaEmails,
 } from "./order.emails.js";
 import Coupon from "../Coupon/Coupon.js"; 
-import { createReservationInternal } from "../InventoryReservation/InventoryReservationController.js";
-import { consumeReservationsInternalByOrder } from "../InventoryReservation/InventoryReservationController.js";
+import {
+  consumeReservationsInternalByOrder,
+  cancelReservationsInternalByOrder,
+  restockFromRTOInternal,
+} from "../InventoryReservation/InventoryReservationController.js";
+
 import { reserveInventoryForOrderNumberInternal } from "../InventoryReservation/inventoryWebhook.js";
 
 // ⚠️ path tumhare project ke hisaab se adjust kar lena
@@ -377,44 +381,57 @@ export const createOrder = async (req, res) => {
     return maybeColor.toLowerCase();
   };
 
-  // ✅ allocate from sellable (stock - reserved) but allow made-to-order
-  const computeAllocation = ({ stock, reservedStock, qty }) => {
-    const sellable = Math.max(0, num(stock) - num(reservedStock));
-    const allocatedQty = Math.min(num(qty), sellable);
-    const toProduceQty = Math.max(0, num(qty) - allocatedQty);
-    return { allocatedQty, toProduceQty };
-  };
-
   const normalizePriority = (v) => {
     const p = str(v).trim().toLowerCase();
     return p === "high" || p === "medium" || p === "normal" ? p : "normal";
   };
 
   const validateAndComputeCoupon = async ({ code, cartTotal, identity }) => {
-    if (!code) return { couponSnapshot: null, couponDiscount: 0, couponDoc: null };
+    if (!code) {
+      return {
+        couponSnapshot: null,
+        couponDiscount: 0,
+        couponDoc: null,
+      };
+    }
 
     const couponCode = str(code).trim().toUpperCase();
     const couponDoc = await Coupon.findOne({ code: couponCode }).session(session);
+
     if (!couponDoc) throw new Error("Invalid coupon code.");
     if (!couponDoc.isActive) throw new Error("Coupon is not active.");
-    if (couponDoc.validFrom && new Date() < new Date(couponDoc.validFrom))
+    if (couponDoc.validFrom && new Date() < new Date(couponDoc.validFrom)) {
       throw new Error("Coupon is not active yet.");
-    if (couponDoc.validTill && new Date() > new Date(couponDoc.validTill))
+    }
+    if (couponDoc.validTill && new Date() > new Date(couponDoc.validTill)) {
       throw new Error("Coupon has expired.");
+    }
 
-    if (num(cartTotal) < num(couponDoc.minPurchase || 0))
-      throw new Error(`Minimum purchase required is ₹${num(couponDoc.minPurchase || 0)}`);
+    if (num(cartTotal) < num(couponDoc.minPurchase || 0)) {
+      throw new Error(
+        `Minimum purchase required is ₹${num(couponDoc.minPurchase || 0)}`
+      );
+    }
 
-    if (num(couponDoc.usageLimit) > 0 && num(couponDoc.usedCount) >= num(couponDoc.usageLimit))
+    if (
+      num(couponDoc.usageLimit) > 0 &&
+      num(couponDoc.usedCount) >= num(couponDoc.usageLimit)
+    ) {
       throw new Error("Coupon usage limit has been reached.");
+    }
 
     const perUserLimit = num(couponDoc.usageLimitPerCustomer || 1);
     const usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
-    const usedTimes = identity ? usedBy.filter((x) => str(x) === identity).length : 0;
-    if (identity && usedTimes >= perUserLimit)
+    const usedTimes = identity
+      ? usedBy.filter((x) => str(x) === identity).length
+      : 0;
+
+    if (identity && usedTimes >= perUserLimit) {
       throw new Error("You have already used this coupon.");
+    }
 
     let discountAmount = 0;
+
     if (couponDoc.discountType === "percentage") {
       discountAmount = (num(cartTotal) * num(couponDoc.discountValue)) / 100;
       if (num(couponDoc.maxDiscount) > 0) {
@@ -428,7 +445,10 @@ export const createOrder = async (req, res) => {
     if (!discountAmount) throw new Error("Invalid discount calculation.");
 
     return {
-      couponSnapshot: { code: couponCode, discount: discountAmount },
+      couponSnapshot: {
+        code: couponCode,
+        discount: discountAmount,
+      },
       couponDiscount: discountAmount,
       couponDoc,
     };
@@ -455,22 +475,27 @@ export const createOrder = async (req, res) => {
     const finalPriority = normalizePriority(priority);
 
     /* ---------- basic validations ---------- */
-    if (!isObjectId(customerId))
+    if (!isObjectId(customerId)) {
       return res.status(400).json({ message: "Invalid customerId" });
+    }
 
-    if (!isObjectId(shippingAddressId))
+    if (!isObjectId(shippingAddressId)) {
       return res.status(400).json({ message: "Invalid shippingAddressId" });
+    }
 
-    if (billingAddressId && !isObjectId(billingAddressId))
+    if (billingAddressId && !isObjectId(billingAddressId)) {
       return res.status(400).json({ message: "Invalid billingAddressId" });
+    }
 
-    if (!Array.isArray(items) || !items.length)
+    if (!Array.isArray(items) || !items.length) {
       return res.status(400).json({ message: "Order items missing" });
+    }
 
-    if (!["cod", "razorpay"].includes(pm))
+    if (!["cod", "razorpay"].includes(pm)) {
       return res.status(400).json({
         message: "Invalid paymentMethod. Allowed: cod | razorpay",
       });
+    }
 
     let createdOrderId = null;
 
@@ -493,7 +518,9 @@ export const createOrder = async (req, res) => {
       });
 
       /* ---------- 3) Fetch products (lean) ---------- */
-      const productIds = [...new Set(items.map((i) => str(i?.productId)).filter(Boolean))];
+      const productIds = [
+        ...new Set(items.map((i) => str(i?.productId)).filter(Boolean)),
+      ];
       const bad = productIds.find((id) => !isObjectId(id));
       if (bad) throw new Error(`Invalid productId: ${bad}`);
 
@@ -503,7 +530,7 @@ export const createOrder = async (req, res) => {
 
       const productMap = new Map(products.map((p) => [str(p._id), p]));
 
-      /* ---------- 4) Normalize items + compute allocations ---------- */
+      /* ---------- 4) Normalize items ---------- */
       const normalizedItems = [];
       let subtotal = 0;
       let totalQty = 0;
@@ -513,7 +540,9 @@ export const createOrder = async (req, res) => {
         if (!pid) throw new Error("productId missing");
 
         const qty = num(item?.quantity);
-        if (!Number.isFinite(qty) || qty < 1) throw new Error("Invalid quantity");
+        if (!Number.isFinite(qty) || qty < 1) {
+          throw new Error("Invalid quantity");
+        }
 
         const product = productMap.get(pid);
         if (!product) throw new Error("Product not found");
@@ -525,16 +554,14 @@ export const createOrder = async (req, res) => {
         let variant = null;
 
         if (isVariable) {
-          if (!item.variantId) throw new Error(`${product.title} - variantId missing`);
+          if (!item.variantId) {
+            throw new Error(`${product.title} - variantId missing`);
+          }
           variant = findVariantById(product, item.variantId);
-          if (!variant) throw new Error(`${product.title} - variant not found`);
+          if (!variant) {
+            throw new Error(`${product.title} - variant not found`);
+          }
         }
-
-        const { allocatedQty, toProduceQty } = computeAllocation({
-          stock: variant ? variant.stock : product.stock,
-          reservedStock: variant ? variant.reservedStock : product.reservedStock,
-          qty,
-        });
 
         const unitPrice = num(product.price);
         const lineSubtotal = unitPrice * qty;
@@ -545,20 +572,31 @@ export const createOrder = async (req, res) => {
         const attrs = normalizeVariantAttributes(variant);
 
         const selectedSize =
-          pickAttr(attrs, ["size", "sizes", "shirt_size"]) || getSizeFromSku(variant?.sku);
+          pickAttr(attrs, ["size", "sizes", "shirt_size"]) ||
+          getSizeFromSku(variant?.sku);
 
         const selectedColorRaw =
           pickAttr(attrs, ["color", "colour", "color_name"]) ||
           getColorFromSku(variant?.sku, product.productCode);
 
-        const selectedColor = sanitizeSelectedColor(selectedColorRaw, product.productCode);
+        const selectedColor = sanitizeSelectedColor(
+          selectedColorRaw,
+          product.productCode
+        );
 
         normalizedItems.push({
           lineId: crypto.randomUUID(),
           productModel: "Product",
           productId: oid(product._id),
 
-          fulfillment: { allocatedQty, shippedQty: 0, toProduceQty },
+          // ✅ IMPORTANT:
+          // createOrder pe reservation nahi chahiye
+          // reservation confirm ke baad webhook se hoga
+          fulfillment: {
+            allocatedQty: 0,
+            shippedQty: 0,
+            toProduceQty: qty,
+          },
 
           productSnapshot: {
             productCode: product.productCode || "",
@@ -567,7 +605,8 @@ export const createOrder = async (req, res) => {
             thumbnail: product.thumbnail || "",
             images: Array.isArray(product.images) ? product.images : [],
             productType:
-              product.productType || (product?.variants?.length ? "variable" : "simple"),
+              product.productType ||
+              (product?.variants?.length ? "variable" : "simple"),
             sku: product.sku || "",
             tags: Array.isArray(product.tags) ? product.tags : [],
             hsnCode: str(product.hsnCode),
@@ -594,19 +633,28 @@ export const createOrder = async (req, res) => {
       /* ---------- 5) Discounts ---------- */
       const totalAmount = subtotal + num(shippingFee) + num(tax);
 
-      const couponCode = coupon && typeof coupon === "object" ? str(coupon.code) : "";
-      const { couponSnapshot, couponDiscount, couponDoc } = await validateAndComputeCoupon({
-        code: couponCode,
-        cartTotal: subtotal,
-        identity,
-      });
+      const couponCode =
+        coupon && typeof coupon === "object" ? str(coupon.code) : "";
 
-      const baseForRazorpayExtra = Math.max(0, subtotal - Math.min(num(couponDiscount), subtotal));
+      const { couponSnapshot, couponDiscount, couponDoc } =
+        await validateAndComputeCoupon({
+          code: couponCode,
+          cartTotal: subtotal,
+          identity,
+        });
+
+      const baseForRazorpayExtra = Math.max(
+        0,
+        subtotal - Math.min(num(couponDiscount), subtotal)
+      );
+
       const razorpayExtraDiscount =
         pm === "razorpay"
           ? Math.min(
               baseForRazorpayExtra,
-              Math.round((baseForRazorpayExtra * RAZORPAY_DISCOUNT_PERCENT) / 100)
+              Math.round(
+                (baseForRazorpayExtra * RAZORPAY_DISCOUNT_PERCENT) / 100
+              )
             )
           : 0;
 
@@ -621,7 +669,9 @@ export const createOrder = async (req, res) => {
         couponApplied: Boolean(couponSnapshot?.code),
         creditsUsed: false,
         categoryBreakdown: computeCategoryBreakdown(normalizedItems),
-        tagsUsed: uniqStrings(normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])),
+        tagsUsed: uniqStrings(
+          normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])
+        ),
         onlinePaymentDiscountApplied: pm === "razorpay",
         onlinePaymentDiscountPct: pm === "razorpay" ? RAZORPAY_DISCOUNT_PERCENT : 0,
         onlinePaymentDiscountAmount: razorpayExtraDiscount,
@@ -636,10 +686,7 @@ export const createOrder = async (req, res) => {
             shippingAddressSnapshot,
             billingAddressSnapshot,
             items: normalizedItems,
-
-            // ✅ NEW
             priority: finalPriority,
-
             customerSupportRemark: str(customerSupportRemark).trim(),
             subtotal,
             discount: finalDiscount,
@@ -674,40 +721,24 @@ export const createOrder = async (req, res) => {
 
     const finalOrder = await Order.findById(createdOrderId).lean();
 
-    // ✅ NON-BLOCKING: inventory auto-reserve webhook (order-number based)
-try {
-  const orderNumber = String(finalOrder?.orderNumber || "").trim();
-  if (orderNumber) {
-    setImmediate(async () => {
-      try {
-        await reserveInventoryForOrderNumberInternal({
-          orderNumber,
-          // keep it tight: only this order, only its items
-          allowedFulfillment: ["processing", "packed"],
-          confirmedOnly: true, // ✅ won’t reserve if not confirmed
-          debug: false,
-        });
-      } catch (err) {
-        console.error("⚠️ reserveInventory webhook failed:", err?.message || err);
-      }
-    });
-  }
-} catch (e) {
-  console.error("⚠️ reserveInventory webhook schedule failed:", e?.message || e);
-}
+    // ✅ createOrder pe reservation webhook nahi chalega
+    // reservation sirf confirm hone ke baad chalega
 
-
-    // non-blocking emails
     try {
       triggerOrderEmails(finalOrder);
     } catch (e) {
       console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
     }
 
-    return res.status(201).json({ message: "Order created successfully", order: finalOrder });
+    return res.status(201).json({
+      message: "Order created successfully",
+      order: finalOrder,
+    });
   } catch (error) {
     console.error("❌ Create Order Error:", error);
-    return res.status(400).json({ message: error.message || "Order creation failed" });
+    return res.status(400).json({
+      message: error.message || "Order creation failed",
+    });
   } finally {
     session.endSession();
   }
@@ -1138,11 +1169,13 @@ export const updateOrderStatus = async (req, res) => {
 
   const isAdminCancel = (reason) => lower(reason) === "cancelled_by_admin";
 
-  const defer = (fn) => (typeof setImmediate === "function" ? setImmediate(fn) : setTimeout(fn, 0));
+  const defer = (fn) =>
+    typeof setImmediate === "function" ? setImmediate(fn) : setTimeout(fn, 0);
 
   const triggerReserveNonBlocking = (orderNumber) => {
     const on = str(orderNumber).trim();
     if (!on) return;
+
     defer(async () => {
       try {
         await reserveInventoryForOrderNumberInternal({
@@ -1160,7 +1193,6 @@ export const updateOrderStatus = async (req, res) => {
   try {
     req.body = stripUndefinedDeep(req.body);
 
-    // sanitize incoming shipment partials
     if (req.body?.shipment) {
       if (req.body.shipment.xpressbees == null) delete req.body.shipment.xpressbees;
       if (req.body.shipment.shiprocket == null) delete req.body.shipment.shiprocket;
@@ -1171,7 +1203,9 @@ export const updateOrderStatus = async (req, res) => {
       return res.status(400).json({ message: "Invalid order id" });
     }
 
-    const fulfillmentStatus = req.body?.fulfillmentStatus ? lower(req.body.fulfillmentStatus) : "";
+    const fulfillmentStatus = req.body?.fulfillmentStatus
+      ? lower(req.body.fulfillmentStatus)
+      : "";
     const paymentStatus = req.body?.paymentStatus ? lower(req.body.paymentStatus) : "";
     const isConfirmedReq = req.body?.isConfirmed === true;
 
@@ -1182,7 +1216,6 @@ export const updateOrderStatus = async (req, res) => {
     let shouldTriggerReserve = false;
 
     await session.withTransaction(async () => {
-      // ✅ Cancel fast-path
       if (fulfillmentStatus === "cancelled") {
         await performOrderCancellation({ orderId, reason, session });
 
@@ -1209,10 +1242,10 @@ export const updateOrderStatus = async (req, res) => {
       const prevPaid = lower(order?.paymentStatus) === "paid";
       const prevConfirmed = Boolean(order?.isConfirmed);
 
-      // 1) payment status
-      if (paymentStatus) order.paymentStatus = paymentStatus;
+      if (paymentStatus) {
+        order.paymentStatus = paymentStatus;
+      }
 
-      // 2) confirm (manual)
       if (isConfirmedReq && !order.isConfirmed) {
         if (lower(order.paymentMethod) === "razorpay" && lower(order.paymentStatus) !== "paid") {
           throw new Error("Cannot confirm Razorpay order before payment is paid");
@@ -1221,8 +1254,11 @@ export const updateOrderStatus = async (req, res) => {
         order.confirmedAt = new Date();
       }
 
-      // 3) auto-confirm on razorpay paid
-      if (paymentStatus === "paid" && lower(order.paymentMethod) === "razorpay" && !order.isConfirmed) {
+      if (
+        paymentStatus === "paid" &&
+        lower(order.paymentMethod) === "razorpay" &&
+        !order.isConfirmed
+      ) {
         order.isConfirmed = true;
         order.confirmedAt = new Date();
       }
@@ -1230,13 +1266,18 @@ export const updateOrderStatus = async (req, res) => {
       const nowPaid = lower(order?.paymentStatus) === "paid";
       const nowConfirmed = Boolean(order?.isConfirmed);
 
-      // ✅ reserve trigger (only razorpay paid transition)
-      if (!prevPaid && nowPaid && lower(order.paymentMethod) === "razorpay") {
+      if (
+        (!prevPaid && nowPaid && lower(order.paymentMethod) === "razorpay") ||
+        (!prevConfirmed && nowConfirmed)
+      ) {
         shouldTriggerReserve = true;
       }
 
-      // 3.1) mark coupon used on razorpay paid (idempotent)
-      if (paymentStatus === "paid" && lower(order.paymentMethod) === "razorpay" && order?.coupon?.code) {
+      if (
+        paymentStatus === "paid" &&
+        lower(order.paymentMethod) === "razorpay" &&
+        order?.coupon?.code
+      ) {
         const couponCode = str(order.coupon.code).trim().toUpperCase();
         const identity =
           str(order?.coupon?.identity).trim() ||
@@ -1258,15 +1299,14 @@ export const updateOrderStatus = async (req, res) => {
         }
       }
 
-      // 4) fulfillment update
       if (fulfillmentStatus) {
         const shippingStages = ["packed", "picked", "shipped", "out_for_delivery", "delivered"];
         const curr = lower(order.fulfillmentStatus);
 
-        const isReversePickup = fulfillmentStatus === "pickup_initiated"; // ✅ NEW
+        const isReversePickup = fulfillmentStatus === "pickup_initiated";
         const becomingPacked = fulfillmentStatus === "packed" && curr !== "packed";
+        const becomingRTO = fulfillmentStatus === "rto" && curr !== "rto";
 
-        // ✅ shipping guards apply ONLY to forward stages
         if (!isReversePickup) {
           if (isParent && shippingStages.includes(fulfillmentStatus)) {
             throw new Error(
@@ -1278,7 +1318,6 @@ export const updateOrderStatus = async (req, res) => {
           }
         }
 
-        // refunded sync
         if (fulfillmentStatus === "refunded") {
           const allowedPrev = ["returned", "cancelled", "rto"];
           if (!allowedPrev.includes(curr)) {
@@ -1289,7 +1328,6 @@ export const updateOrderStatus = async (req, res) => {
 
         order.fulfillmentStatus = fulfillmentStatus;
 
-        // ✅ consume reservations only on PACKED (forward only)
         if (becomingPacked && !isParent) {
           await consumeReservationsInternalByOrder({
             orderId: order._id,
@@ -1298,7 +1336,21 @@ export const updateOrderStatus = async (req, res) => {
           });
         }
 
-        // delivered timestamps
+        if (becomingRTO && !isParent) {
+          for (const it of order.items || []) {
+            const qty = Number(it?.quantity || 0);
+            if (qty <= 0) continue;
+
+            await restockFromRTOInternal({
+              productId: it.productId,
+              variantId: it?.variant?.variantId || null,
+              qty,
+              reason: `RTO restock | orderNumber=${order.orderNumber || ""}`,
+              session,
+            });
+          }
+        }
+
         if (fulfillmentStatus === "delivered") {
           order.trackingDetails = order.trackingDetails || {};
           order.shipment = order.shipment || {};
@@ -1306,7 +1358,6 @@ export const updateOrderStatus = async (req, res) => {
           if (!order.shipment.deliveredAt) order.shipment.deliveredAt = new Date();
         }
 
-        // ✅ shiprocket booking only when packed + NOT reverse pickup
         if (becomingPacked && !isParent) {
           const alreadyBooked =
             order?.shipment?.shiprocket?.awb || order?.shipment?.shiprocket?.shipmentId;
@@ -1323,9 +1374,10 @@ export const updateOrderStatus = async (req, res) => {
       updatedOrder = order;
     });
 
-    const finalOrder = updatedOrder?._id ? await Order.findById(updatedOrder._id).lean() : null;
+    const finalOrder = updatedOrder?._id
+      ? await Order.findById(updatedOrder._id).lean()
+      : null;
 
-    // ✅ reserve AFTER txn
     if (finalOrder && shouldTriggerReserve) {
       try {
         triggerReserveNonBlocking(finalOrder?.orderNumber);
@@ -1334,7 +1386,6 @@ export const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // ✅ shiprocket AFTER packed
     if (finalOrder && shouldBookShiprocket) {
       try {
         const freshOrderDoc = await Order.findById(finalOrder._id);
@@ -1344,7 +1395,6 @@ export const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // cancellation emails
     if (fulfillmentStatus === "cancelled") {
       try {
         triggerOrderCancellationEmails(finalOrder, reason);
@@ -1354,7 +1404,10 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: fulfillmentStatus === "cancelled" ? "Order cancelled successfully" : "Order status updated",
+      message:
+        fulfillmentStatus === "cancelled"
+          ? "Order cancelled successfully"
+          : "Order status updated",
       order: finalOrder,
     });
   } catch (error) {
@@ -1994,7 +2047,6 @@ export const cancelOrder = async (req, res) => {
   const str = (v) => (v == null ? "" : String(v));
   const norm = (v) => str(v).trim().toLowerCase();
 
-  // ✅ remove undefined deeply (prevents cast errors)
   const stripUndefinedDeep = (obj) => {
     if (Array.isArray(obj)) return obj.map(stripUndefinedDeep);
     if (obj && typeof obj === "object") {
@@ -2012,58 +2064,20 @@ export const cancelOrder = async (req, res) => {
 
   const pickCancelReason = (req) => {
     const incoming = norm(req.body?.reason);
-    if (incoming === "cancelled_by_admin" || incoming === "admin") return "cancelled_by_admin";
-    if (incoming === "cancelled_by_customer" || incoming === "customer") return "cancelled_by_customer";
+    if (incoming === "cancelled_by_admin" || incoming === "admin") {
+      return "cancelled_by_admin";
+    }
+    if (incoming === "cancelled_by_customer" || incoming === "customer") {
+      return "cancelled_by_customer";
+    }
 
     const actor = norm(req.body?.cancelledBy);
     if (actor === "admin") return "cancelled_by_admin";
     if (actor === "customer") return "cancelled_by_customer";
 
-    if (req.user?.role === "admin") return "cancelled_by_admin";
-    return "cancelled_by_customer";
-  };
-
-  // ✅ release ALL "reserved" reservations for this order (restores reservedStock automatically)
-  const releaseReservationsForOrder = async ({ orderId, reason, session }) => {
-    const reservations = await InventoryReservation.find({
-      refType: "order",
-      refId: orderId,
-      status: "reserved",
-    }).session(session);
-
-    for (const r of reservations) {
-      // same logic as your controller: applyReservationTransition({r, nextStatus:"released"...})
-      // but we call it inline to keep cancelOrder self-contained.
-      const productId = r.productId;
-      const variantId = r.variantId;
-      const qty = Math.max(1, Number(r.qty || 0));
-
-      if (variantId) {
-        // reservedStock -qty on variant
-        const upd = await Product.updateOne(
-          { _id: productId },
-          { $inc: { "variants.$[v].reservedStock": -qty } },
-          { arrayFilters: [{ "v._id": variantId }], session }
-        );
-        if (upd.matchedCount === 0) throw new Error("Product not found while releasing reservation");
-        if (upd.modifiedCount === 0) throw new Error("Variant not found / release failed");
-      } else {
-        const upd = await Product.updateOne(
-          { _id: productId },
-          { $inc: { reservedStock: -qty } },
-          { session }
-        );
-        if (upd.matchedCount === 0) throw new Error("Product not found while releasing reservation");
-      }
-
-      r.status = "released";
-      r.notes =
-        (r.notes ? `${r.notes}\n` : "") +
-        `Released: ${reason || "order_cancelled"} | at=${new Date().toISOString()}`;
-      await r.save({ session });
-    }
-
-    return reservations.length;
+    return req.user?.role === "admin"
+      ? "cancelled_by_admin"
+      : "cancelled_by_customer";
   };
 
   try {
@@ -2085,25 +2099,18 @@ export const cancelOrder = async (req, res) => {
       const order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
-      const orderType = norm(order?.orderType);
-      const isParent = orderType === "parent";
-      const isShipment = orderType === "shipment" || orderType === "child";
+      const isParent = norm(order?.orderType) === "parent";
 
-      // ✅ guards
       const nonCancellableStatuses = ["picked", "shipped", "out_for_delivery", "delivered"];
       if (nonCancellableStatuses.includes(norm(order.fulfillmentStatus))) {
         throw new Error("Order cannot be cancelled after pickup / shipment");
       }
 
-      // ✅ idempotent
       if (norm(order.fulfillmentStatus) === "cancelled") {
         cancelledOrderId = order._id;
         return;
       }
 
-      /* ------------------------------------------------
-         1) Cancel Shiprocket (if booked) - skip parent
-      ------------------------------------------------ */
       if (!isParent) {
         const shipmentId = order?.shipment?.shiprocket?.shipmentId;
         if (shipmentId) {
@@ -2116,40 +2123,24 @@ export const cancelOrder = async (req, res) => {
         }
       }
 
-      /* ------------------------------------------------
-         2) ✅ NEW: Release inventory reservations (THIS is the main change)
-         - Your createOrder now creates InventoryReservation docs
-         - On cancel we must "release" them to reduce reservedStock
-         - Parent: usually no stock ops, but still safe to release if any exist
-      ------------------------------------------------ */
-      releasedCount = await releaseReservationsForOrder({
+      const cancelResult = await cancelReservationsInternalByOrder({
         orderId: order._id,
         reason,
+        nextStatus: "released",
         session,
       });
 
-      /* ------------------------------------------------
-         3) 🚫 Remove old "restore stock +qty" logic
-         Because you did NOT decrement stock at order creation.
-         Stock is decremented only when reservation is CONSUMED (packed/shipped flow).
-         So on cancel we only release reservations (reservedStock goes down).
-      ------------------------------------------------ */
-      // ✅ If you still have legacy orders that DID decrement stock at create,
-      // handle them separately (migration / flag). Don't mix in this flow.
+      releasedCount = Number(cancelResult?.count || 0);
 
-      /* ------------------------------------------------
-         4) Payment status
-      ------------------------------------------------ */
       if (norm(order.paymentMethod) === "razorpay" && norm(order.paymentStatus) === "paid") {
         order.paymentStatus = "refund_pending";
       }
 
-      /* ------------------------------------------------
-         5) Final state + remarks (safe shipment update)
-      ------------------------------------------------ */
       order.fulfillmentStatus = "cancelled";
 
-      if (!order.shipment || typeof order.shipment !== "object") order.shipment = {};
+      if (!order.shipment || typeof order.shipment !== "object") {
+        order.shipment = {};
+      }
       order.shipment.status = "cancelled";
 
       if (isAdminCancel(reason)) {
@@ -2163,10 +2154,15 @@ export const cancelOrder = async (req, res) => {
       await order.save({ session });
 
       cancelledOrderId = order._id;
-      console.log(`${TAG} ✅ Cancelled saved`, { orderId: cancelledOrderId, releasedCount });
+      console.log(`${TAG} ✅ Cancelled saved`, {
+        orderId: cancelledOrderId,
+        releasedCount,
+      });
     });
 
-    const finalOrder = cancelledOrderId ? await Order.findById(cancelledOrderId).lean() : null;
+    const finalOrder = cancelledOrderId
+      ? await Order.findById(cancelledOrderId).lean()
+      : null;
 
     return res.status(200).json({
       success: true,
@@ -2174,7 +2170,7 @@ export const cancelOrder = async (req, res) => {
         finalOrder?.fulfillmentStatus === "cancelled"
           ? "Order cancelled successfully"
           : "Order already cancelled",
-      releasedReservations: releasedCount, // ✅ helpful for debug
+      releasedReservations: releasedCount,
       order: finalOrder || null,
     });
   } catch (error) {
@@ -2194,22 +2190,17 @@ async function performOrderCancellation({ orderId, reason, session }) {
   const order = await Order.findById(orderId).session(session);
   if (!order) throw new Error("Order not found");
 
-  const orderType = String(order?.orderType || "").toLowerCase();
-  const isParent = orderType === "parent";
-  const isShipment = orderType === "shipment" || orderType === "child";
-
   const nonCancellableStatuses = ["picked", "shipped", "out_for_delivery", "delivered"];
-  if (nonCancellableStatuses.includes(order.fulfillmentStatus)) {
+  if (nonCancellableStatuses.includes(String(order.fulfillmentStatus || "").toLowerCase())) {
     throw new Error("Order cannot be cancelled after pickup / shipment");
   }
 
-  // ✅ Idempotent
-  if (order.fulfillmentStatus === "cancelled") return order;
+  if (String(order.fulfillmentStatus || "").toLowerCase() === "cancelled") {
+    return order;
+  }
 
-  /* ------------------------------------------------
-     1) Cancel Shiprocket (if booked)
-     ✅ Parent order never has shipment in partial model
-  ------------------------------------------------ */
+  const isParent = String(order?.orderType || "").toLowerCase() === "parent";
+
   if (!isParent) {
     const shipmentId = order?.shipment?.shiprocket?.shipmentId;
     if (shipmentId) {
@@ -2217,65 +2208,29 @@ async function performOrderCancellation({ orderId, reason, session }) {
         await cancelShiprocketShipment(shipmentId);
       } catch (err) {
         console.error("⚠️ Shiprocket cancel failed:", err?.response?.data || err);
-        // don't block cancellation
       }
     }
   }
 
-  /* ------------------------------------------------
-     2) Restore Stock (atomic)
-     ✅ Parent: DO NOT restore (children will restore)
-     ✅ Shipment/Child: restore normally
-     ✅ Fallback: if orderType missing, restore (safer)
-  ------------------------------------------------ */
-  const shouldRestoreStock = !isParent; // parent => false, shipment/child => true
+  await cancelReservationsInternalByOrder({
+    orderId: order._id,
+    reason,
+    nextStatus: "released",
+    session,
+  });
 
-  if (shouldRestoreStock) {
-    for (const it of order.items || []) {
-      const qty = Number(it.quantity || 0);
-      if (!qty) continue;
-
-      const variantId = it?.variant?.variantId;
-
-      if (variantId) {
-        await Product.updateOne(
-          { _id: it.productId, "variants._id": variantId },
-          { $inc: { "variants.$.stock": qty } }
-        ).session(session);
-      } else {
-        await Product.updateOne(
-          { _id: it.productId },
-          { $inc: { stock: qty } }
-        ).session(session);
-      }
-    }
-  }
-
-  /* ------------------------------------------------
-     3) Payment State
-  ------------------------------------------------ */
   if (order.paymentMethod === "razorpay" && order.paymentStatus === "paid") {
     order.paymentStatus = "refund_pending";
   }
 
-  /* ------------------------------------------------
-     4) Final State ✅ SAFE (no shipment overwrite)
-  ------------------------------------------------ */
   order.fulfillmentStatus = "cancelled";
-
-  // ✅ ensure shipment exists
   if (!order.shipment || typeof order.shipment !== "object") order.shipment = {};
-
-  // ✅ set only status (do NOT replace object)
   order.shipment.status = "cancelled";
-
-  // ✅ keep remarks (reason can be cancelled_by_admin / cancelled_by_customer)
   order.adminRemarks = reason;
 
   await order.save({ session });
   return order;
 }
-
 
 
 

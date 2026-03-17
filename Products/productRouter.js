@@ -38,6 +38,8 @@ import {
 import {
   getInventoryAdminProducts,
   getInventoryAdminCategories,
+  getSingleInventoryAdminProduct,
+  updateSingleInventoryAdminProduct,
 } from "./inventory.product.controller.js";
 
 /* ---------------- BULK CONTROLLER ---------------- */
@@ -63,6 +65,8 @@ const uploadSwatches = multer({ dest: "uploads/swatch" });
 // ✅ INVENTORY ADMIN ROUTES (must stay above /:id)
 router.get("/admin/inventory", getInventoryAdminProducts);
 router.get("/admin/inventory/categories", getInventoryAdminCategories);
+router.get("/admin/inventory/:id", getSingleInventoryAdminProduct);
+router.patch("/admin/inventory/:id", updateSingleInventoryAdminProduct);
 
 // Products by tag(s)
 router.get("/by-tag", getProductsByTag);

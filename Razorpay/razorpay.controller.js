@@ -3,8 +3,8 @@ import mongoose from "mongoose";
 import { razorpay } from "./razorpay.instance.js";
 import Order from "../Orders/Orders.js";
 
-import { checkServiceability, createShipment } from "../shiprocket/index.js";
-import { buildShiprocketPayload } from "../shiprocket/shiprocket.payload.js";
+
+import { reserveInventoryForOrderNumberInternal } from "../InventoryReservation/inventoryWebhook.js";
 
 /**
  * POST /api/razorpay/create-order
@@ -85,9 +85,13 @@ export const verifyRazorpayPayment = async (req, res, next) => {
     } = req.body;
 
     const order = await Order.findById(mongoOrderId);
-    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
 
-    if (order.paymentStatus === "paid") return res.json({ success: true });
+    if (order.paymentStatus === "paid") {
+      return res.json({ success: true });
+    }
 
     const body = `${razorpay_order_id}|${razorpay_payment_id}`;
     const expectedSignature = crypto
@@ -100,16 +104,29 @@ export const verifyRazorpayPayment = async (req, res, next) => {
     }
 
     order.paymentStatus = "paid";
-    order.paymentMethod = "razorpay"; // ✅ FIXED
+    order.paymentMethod = "razorpay";
     order.razorpay = order.razorpay || {};
     order.razorpay.paymentId = razorpay_payment_id;
     order.razorpay.signature = razorpay_signature;
     order.razorpay.paidAt = new Date();
 
-    await order.save();
+    await order.save(); // schema hook => auto confirm
 
-    // ✅ AUTO BOOK SHIPROCKET AFTER PAYMENT SUCCESS
-    await autoBookShiprocketForOrder(order);
+    const orderNumber = String(order.orderNumber || "").trim();
+    if (orderNumber) {
+      setImmediate(async () => {
+        try {
+          await reserveInventoryForOrderNumberInternal({
+            orderNumber,
+            allowedFulfillment: ["processing", "packed"],
+            confirmedOnly: true,
+            debug: false,
+          });
+        } catch (err) {
+          console.error("⚠️ reserve after razorpay verify failed:", err?.message || err);
+        }
+      });
+    }
 
     return res.json({ success: true });
   } catch (err) {
@@ -136,7 +153,9 @@ export const razorpayWebhook = async (req, res) => {
       .update(req.body)
       .digest("hex");
 
-    if (expectedSignature !== signature) return res.status(401).send("Invalid signature");
+    if (expectedSignature !== signature) {
+      return res.status(401).send("Invalid signature");
+    }
 
     const event = JSON.parse(req.body.toString("utf8"));
     const type = event.event;
@@ -151,9 +170,9 @@ export const razorpayWebhook = async (req, res) => {
     const order = await Order.findById(mongoOrderId);
     if (!order) return res.json({ received: true });
 
-    if (order.paymentStatus === "paid") return res.json({ received: true });
-
     if (type === "payment.captured" || type === "order.paid") {
+      const alreadyPaid = order.paymentStatus === "paid";
+
       order.paymentStatus = "paid";
       order.paymentMethod = "razorpay";
       order.razorpay = order.razorpay || {};
@@ -161,10 +180,25 @@ export const razorpayWebhook = async (req, res) => {
       order.razorpay.orderId = entity?.order_id || order.razorpay.orderId;
       order.razorpay.paidAt = new Date();
 
-      await order.save();
+      await order.save(); // schema hook => auto confirm
 
-      // ✅ AUTO BOOK SHIPROCKET AFTER WEBHOOK PAYMENT
-      await autoBookShiprocketForOrder(order);
+      if (!alreadyPaid) {
+        const orderNumber = String(order.orderNumber || "").trim();
+        if (orderNumber) {
+          setImmediate(async () => {
+            try {
+              await reserveInventoryForOrderNumberInternal({
+                orderNumber,
+                allowedFulfillment: ["processing", "packed"],
+                confirmedOnly: true,
+                debug: false,
+              });
+            } catch (err) {
+              console.error("⚠️ reserve after razorpay webhook failed:", err?.message || err);
+            }
+          });
+        }
+      }
     }
 
     if (type === "payment.failed") {
@@ -182,78 +216,4 @@ export const razorpayWebhook = async (req, res) => {
 // ✅ alias used by server.js
 export const webhook = razorpayWebhook;
 
-/* ============================================================
-   ✅ SHIPROCKET AUTOBOOK (Prepaid)
-============================================================ */
-async function autoBookShiprocketForOrder(order) {
-  try {
-    if (!order?.shippingAddressSnapshot?.pincode) return;
-    if (order.shipment?.shiprocket?.awb) return;
 
-    if (!process.env.SHIPROCKET_PICKUP_PINCODE) {
-      console.log("❌ SHIPROCKET_PICKUP_PINCODE missing");
-      return;
-    }
-
-    const totalWeight =
-      order.items.reduce((sum, it) => {
-        const w =
-          Number(it.variant?.weight) ||
-          Number(it.productSnapshot?.weight) ||
-          0.5;
-        return sum + w * Number(it.quantity || 1);
-      }, 0) || 0.5;
-
-    const couriers = await checkServiceability({
-      pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE,
-      deliveryPincode: order.shippingAddressSnapshot.pincode,
-      weight: totalWeight,
-      cod: false,
-    });
-
-    if (!Array.isArray(couriers) || couriers.length === 0) {
-      console.log("⚠️ Shiprocket booking skipped: No courier available");
-      return;
-    }
-
-    const payload = buildShiprocketPayload(order);
-    console.log("📦 Shiprocket Payload (Prepaid):", JSON.stringify(payload, null, 2));
-
-    const shipment = await createShipment(payload);
-    console.log("✅ Shiprocket Response (Prepaid):", JSON.stringify(shipment, null, 2));
-
-    const awb = shipment?.awb_code || "";
-    if (!awb) {
-      console.log("❌ Shiprocket booking failed: AWB not returned");
-      return;
-    }
-
-    order.shipment = {
-      provider: "shiprocket",
-      shiprocket: {
-        shipmentId: String(shipment.shipment_id || ""),
-        awb,
-        courierName: shipment?.courier_name || "",
-        trackingUrl: shipment?.tracking_url || "",
-        status: "shipped",
-        lastUpdatedAt: new Date(),
-      },
-      status: "shipped",
-      shippedAt: new Date(),
-    };
-
-    order.fulfillmentStatus = "shipped";
-
-    order.trackingDetails = {
-      ...(order.trackingDetails || {}),
-      trackingId: awb,
-      courierName: shipment?.courier_name || "",
-      shippedAt: new Date(),
-    };
-
-    await order.save();
-    console.log("✅ Shiprocket booked after Razorpay payment:", order.orderNumber);
-  } catch (err) {
-    console.error("❌ Shiprocket autobook error:", err?.response?.data || err.message);
-  }
-}
