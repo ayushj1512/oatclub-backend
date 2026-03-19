@@ -36,7 +36,8 @@ import {
 /* ===========================
    ✅ PRODUCT SALES REPORT CONTROLLER
 =========================== */
-import { getProductSalesReport } from "./orderReportsController.js";
+import {  getProductSalesReport,
+  getOrderBusinessOverview, } from "./orderReportsController.js";
 
 /* ===========================
    ✅ CUSTOMER SUPPORT CONTROLLER
@@ -65,6 +66,8 @@ import {
   getProductionSummary,
   markOrderShippedFromProduction,
   markAllPackedOrdersShipped,
+  getProductionJobList,
+  exportProductionJobListExcel,
 } from "./order.production.controller.js";
 
 /* ===========================
@@ -123,8 +126,21 @@ router.get("/analytics/summary", getOrderAnalytics);
    ✅ PRODUCTION ROUTES (CONFIRMED ONLY)
 ============================================================ */
 
+// Existing production summary + queue
 router.get("/production/summary", getProductionSummary);
 router.get("/production/queue", getProductionQueue);
+
+// ✅ Production job list from InventoryReservation
+// logic:
+// - reservation.status = pending
+// - reservation.refType = order
+// - joined order.isConfirmed = true
+// query params:
+// ?q=sku123&page=1&limit=50&sort=qty_desc&from=2026-03-01&to=2026-03-31
+router.get("/production/jobs", getProductionJobList);
+
+// ✅ Export production job list excel
+router.get("/production/jobs/export", exportProductionJobListExcel);
 
 // ✅ Single order -> shipped
 router.post("/production/:id/shipped", markOrderShippedFromProduction);
@@ -212,5 +228,7 @@ router.patch("/:id/tracking", updateTracking);
 
 // Address update
 router.patch("/:id/address", updateOrderAddress);
+
+router.get("/accounts/business-overview", getOrderBusinessOverview);
 
 export default router;

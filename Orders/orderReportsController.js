@@ -1,6 +1,6 @@
 // Orders/orderReportsController.js
 
-import Order from "./Orders.js"; // ✅ path adjust if needed
+import Order from "./Orders.js";
 
 const toInt = (v, d = 0) => {
   const n = parseInt(String(v ?? ""), 10);
@@ -23,6 +23,27 @@ const buildMonthRange = (month) => {
   return { start, end };
 };
 
+const buildConfirmedBusinessMatch = (month = "") => {
+  const monthRange = buildMonthRange(month);
+
+  const match = {
+    isConfirmed: true,
+    orderType: { $ne: "parent" },
+    paymentStatus: { $nin: ["failed"] },
+    fulfillmentStatus: { $nin: ["cancelled", "failed"] },
+    paymentMethod: { $ne: "exchange" },
+  };
+
+  if (monthRange) {
+    match.orderDate = {
+      $gte: monthRange.start,
+      $lt: monthRange.end,
+    };
+  }
+
+  return { match, monthRange };
+};
+
 export const getProductSalesReport = async (req, res) => {
   try {
     const page = Math.max(1, toInt(req.query.page, 1));
@@ -33,22 +54,7 @@ export const getProductSalesReport = async (req, res) => {
     const search = String(req.query.search || "").trim();
     const sort = String(req.query.sort || "qty_desc").trim();
 
-    const monthRange = buildMonthRange(month);
-
-    const match = {
-      isConfirmed: true,
-      orderType: { $ne: "parent" },
-      paymentStatus: { $nin: ["failed"] },
-      fulfillmentStatus: { $nin: ["cancelled", "failed"] },
-      paymentMethod: { $ne: "exchange" },
-    };
-
-    if (monthRange) {
-      match.orderDate = {
-        $gte: monthRange.start,
-        $lt: monthRange.end,
-      };
-    }
+    const { match, monthRange } = buildConfirmedBusinessMatch(month);
 
     const sortMap = {
       qty_desc: { qty: -1, productName: 1 },
@@ -66,7 +72,6 @@ export const getProductSalesReport = async (req, res) => {
     const pipeline = [
       { $match: match },
 
-      // ✅ total orders considered
       {
         $facet: {
           orderStats: [
@@ -319,6 +324,75 @@ export const getProductSalesReport = async (req, res) => {
   }
 };
 
+export const getOrderBusinessOverview = async (req, res) => {
+  try {
+    const month = String(req.query.month || "").trim();
+    const { match, monthRange } = buildConfirmedBusinessMatch(month);
+
+    const pipeline = [
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalOrdersReceived: { $sum: 1 },
+          totalRevenueGenerated: {
+            $sum: { $ifNull: ["$finalPayable", 0] },
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          totalOrdersReceived: { $ifNull: ["$totalOrdersReceived", 0] },
+          totalRevenueGenerated: {
+            $round: [{ $ifNull: ["$totalRevenueGenerated", 0] }, 2],
+          },
+          averageOrderValue: {
+            $round: [
+              {
+                $cond: [
+                  { $gt: [{ $ifNull: ["$totalOrdersReceived", 0] }, 0] },
+                  {
+                    $divide: [
+                      { $ifNull: ["$totalRevenueGenerated", 0] },
+                      { $ifNull: ["$totalOrdersReceived", 0] },
+                    ],
+                  },
+                  0,
+                ],
+              },
+              2,
+            ],
+          },
+        },
+      },
+    ];
+
+    const [result] = await Order.aggregate(pipeline).allowDiskUse(true);
+
+    const summary = {
+      totalOrdersReceived: Number(result?.totalOrdersReceived || 0),
+      totalRevenueGenerated: Number(result?.totalRevenueGenerated || 0),
+      averageOrderValue: Number(result?.averageOrderValue || 0),
+    };
+
+    return res.status(200).json({
+      success: true,
+      filters: {
+        month: monthRange ? month : "",
+      },
+      summary,
+    });
+  } catch (error) {
+    console.error("getOrderBusinessOverview error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to fetch order business overview",
+    });
+  }
+};
+
 export default {
   getProductSalesReport,
+  getOrderBusinessOverview,
 };

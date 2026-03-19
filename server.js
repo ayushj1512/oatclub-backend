@@ -43,6 +43,8 @@ import inventoryReservationRoutes from "./InventoryReservation/InventoryReservat
 import { startCrons } from "./cronjob/index.js";
 import homeCollectionsRoutes from "./HomeCollection/HomeCollectionsRoutes.js";
 import metaFeedRouter from "./routes/metaFeed.js";
+import metaAdsRoutes from "./MetaAds/MetaAdsRoutes.js";
+
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
 // --------------------------------------------------
@@ -282,6 +284,9 @@ app.use("/api/razorpay", razorpayRoutes);
 
 // Abandoned carts
 app.use("/api/abandoned-carts", abandonedCartRoutes);
+
+// Meta Ads
+app.use("/api/meta-ads", metaAdsRoutes);
 
 // Superadmin
 app.use("/superadmin", superadminRoutes);

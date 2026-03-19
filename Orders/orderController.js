@@ -731,7 +731,7 @@ export const createOrder = async (req, res) => {
     }
 
     return res.status(201).json({
-      message: "Order created successfully",
+    message: "Order created successfully",
       order: finalOrder,
     });
   } catch (error) {
@@ -1305,7 +1305,6 @@ export const updateOrderStatus = async (req, res) => {
 
         const isReversePickup = fulfillmentStatus === "pickup_initiated";
         const becomingPacked = fulfillmentStatus === "packed" && curr !== "packed";
-        const becomingRTO = fulfillmentStatus === "rto" && curr !== "rto";
 
         if (!isReversePickup) {
           if (isParent && shippingStages.includes(fulfillmentStatus)) {
@@ -1336,20 +1335,7 @@ export const updateOrderStatus = async (req, res) => {
           });
         }
 
-        if (becomingRTO && !isParent) {
-          for (const it of order.items || []) {
-            const qty = Number(it?.quantity || 0);
-            if (qty <= 0) continue;
-
-            await restockFromRTOInternal({
-              productId: it.productId,
-              variantId: it?.variant?.variantId || null,
-              qty,
-              reason: `RTO restock | orderNumber=${order.orderNumber || ""}`,
-              session,
-            });
-          }
-        }
+        // ✅ RTO pe ab stock restock / +1 nahi hoga
 
         if (fulfillmentStatus === "delivered") {
           order.trackingDetails = order.trackingDetails || {};
