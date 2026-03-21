@@ -26,6 +26,15 @@ import {
 } from "./orderController.js";
 
 /* ===========================
+   ✅ INVOICE CONTROLLER
+=========================== */
+import {
+  getInvoicesByOrderNumbers,
+  getInvoiceById,
+  getInvoiceByOrderNumber,
+} from "./order.invoice.controller.js";
+
+/* ===========================
    ✅ ACCOUNTS CONTROLLER
 =========================== */
 import {
@@ -36,8 +45,10 @@ import {
 /* ===========================
    ✅ PRODUCT SALES REPORT CONTROLLER
 =========================== */
-import {  getProductSalesReport,
-  getOrderBusinessOverview, } from "./orderReportsController.js";
+import {
+  getProductSalesReport,
+  getOrderBusinessOverview,
+} from "./orderReportsController.js";
 
 /* ===========================
    ✅ CUSTOMER SUPPORT CONTROLLER
@@ -103,6 +114,9 @@ router.get("/accounts/sales-report/products", getProductSalesReport);
 // ✅ New revenue report
 router.get("/accounts/revenue-report", getRevenueReport);
 
+// ✅ Business overview
+router.get("/accounts/business-overview", getOrderBusinessOverview);
+
 /* ============================================================
    SUPPORT / ANALYTICS / LOOKUPS
 ============================================================ */
@@ -121,6 +135,24 @@ router.get("/customer-support/:id", getCustomerSupportOrderDetail);
 
 // Analytics summary
 router.get("/analytics/summary", getOrderAnalytics);
+
+/* ============================================================
+   ✅ INVOICE ROUTES
+   ⚠️ KEEP ABOVE "/by-number/:orderNumber" and "/:id"
+============================================================ */
+
+// Bulk invoice fetch by order numbers
+// POST /api/orders/invoices
+// body: { "orderNumbers": ["MIRAY-001056", "MIRAY-001057"] }
+router.post("/invoices", getInvoicesByOrderNumbers);
+
+// Single invoice by order number
+// GET /api/orders/by-number/:orderNumber/invoice
+router.get("/by-number/:orderNumber/invoice", getInvoiceByOrderNumber);
+
+// Single invoice by order id
+// GET /api/orders/:id/invoice
+router.get("/:id/invoice", getInvoiceById);
 
 /* ============================================================
    ✅ PRODUCTION ROUTES (CONFIRMED ONLY)
@@ -228,7 +260,5 @@ router.patch("/:id/tracking", updateTracking);
 
 // Address update
 router.patch("/:id/address", updateOrderAddress);
-
-router.get("/accounts/business-overview", getOrderBusinessOverview);
 
 export default router;
