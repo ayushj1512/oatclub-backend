@@ -898,6 +898,8 @@ export async function listReservations(req, res) {
       productCode,
       orderNumber,
       reservationKey,
+      page = 1,
+      limit = 100,
     } = req.query || {};
 
     const filter = {};
@@ -943,11 +945,27 @@ export async function listReservations(req, res) {
     if (orderNumber) filter.orderNumber = s(orderNumber);
     if (reservationKey) filter.reservationKey = s(reservationKey);
 
-    const data = await InventoryReservation.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(500);
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeLimit = Math.min(1000, Math.max(1, Number(limit) || 100));
+    const skip = (safePage - 1) * safeLimit;
 
-    return res.json({ ok: true, count: data.length, data });
+    const [data, total] = await Promise.all([
+      InventoryReservation.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(safeLimit),
+      InventoryReservation.countDocuments(filter),
+    ]);
+
+    return res.json({
+      ok: true,
+      count: total,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      pages: Math.ceil(total / safeLimit),
+      data,
+    });
   } catch (e) {
     return sendErr(res, e, "Failed to list reservations");
   }
