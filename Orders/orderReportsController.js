@@ -1,5 +1,5 @@
 // Orders/orderReportsController.js
-
+import Product from "../Products/Products.js";
 import Order from "./Orders.js";
 import MarketingSpend from "../MarketingSpend/marketingSpend.js"; // path adjust if needed
 
@@ -433,20 +433,23 @@ export const getProductSalesReport = async (req, res) => {
     const { match, monthRange } = buildConfirmedBusinessMatch(month);
 
     const sortMap = {
-      qty_desc: { qty: -1, productName: 1 },
-      qty_asc: { qty: 1, productName: 1 },
-      name_asc: { productName: 1, qty: -1 },
-      name_desc: { productName: -1, qty: -1 },
-      price_desc: { sellingPrice: -1, qty: -1, productName: 1 },
-      price_asc: { sellingPrice: 1, qty: -1, productName: 1 },
-      code_asc: { productCode: 1, qty: -1 },
-      code_desc: { productCode: -1, qty: -1 },
+      qty_desc: { totalQtySold: -1, productName: 1 },
+      qty_asc: { totalQtySold: 1, productName: 1 },
+      name_asc: { productName: 1, totalQtySold: -1 },
+      name_desc: { productName: -1, totalQtySold: -1 },
+      revenue_desc: { totalRevenue: -1, totalQtySold: -1, productName: 1 },
+      revenue_asc: { totalRevenue: 1, totalQtySold: -1, productName: 1 },
+      price_desc: { avgSellingPrice: -1, totalQtySold: -1, productName: 1 },
+      price_asc: { avgSellingPrice: 1, totalQtySold: -1, productName: 1 },
+      code_asc: { productCode: 1, totalQtySold: -1 },
+      code_desc: { productCode: -1, totalQtySold: -1 },
     };
 
     const finalSort = sortMap[sort] || sortMap.qty_desc;
 
     const pipeline = [
       { $match: match },
+
       {
         $facet: {
           orderStats: [
@@ -457,18 +460,20 @@ export const getProductSalesReport = async (req, res) => {
               },
             },
           ],
-          productData: [
+
+          productRows: [
             {
               $project: {
-                _id: 0,
                 items: { $ifNull: ["$items", []] },
               },
             },
             { $unwind: "$items" },
+
             {
               $project: {
                 productId: "$items.productId",
                 variantId: "$items.variant.variantId",
+
                 productCode: {
                   $trim: {
                     input: {
@@ -478,6 +483,7 @@ export const getProductSalesReport = async (req, res) => {
                     },
                   },
                 },
+
                 productName: {
                   $trim: {
                     input: {
@@ -487,12 +493,11 @@ export const getProductSalesReport = async (req, res) => {
                     },
                   },
                 },
+
                 productImage: {
                   $let: {
                     vars: {
-                      thumb: {
-                        $ifNull: ["$items.productSnapshot.thumbnail", ""],
-                      },
+                      thumb: { $ifNull: ["$items.productSnapshot.thumbnail", ""] },
                       firstImage: {
                         $arrayElemAt: [
                           { $ifNull: ["$items.productSnapshot.images", []] },
@@ -509,12 +514,14 @@ export const getProductSalesReport = async (req, res) => {
                     },
                   },
                 },
-                qty: { $ifNull: ["$items.quantity", 0] },
+
+                quantity: { $ifNull: ["$items.quantity", 0] },
                 price: { $ifNull: ["$items.price", 0] },
+
                 subtotal: {
                   $cond: [
                     { $gt: [{ $ifNull: ["$items.subtotal", 0] }, 0] },
-                    "$items.subtotal",
+                    { $ifNull: ["$items.subtotal", 0] },
                     {
                       $multiply: [
                         { $ifNull: ["$items.price", 0] },
@@ -525,12 +532,14 @@ export const getProductSalesReport = async (req, res) => {
                 },
               },
             },
+
             {
               $match: {
-                qty: { $gt: 0 },
+                quantity: { $gt: 0 },
                 productCode: { $ne: "" },
               },
             },
+
             ...(search
               ? [
                   {
@@ -553,52 +562,66 @@ export const getProductSalesReport = async (req, res) => {
                   },
                 ]
               : []),
+
             {
               $group: {
                 _id: "$productCode",
+
                 productCode: { $first: "$productCode" },
+                productId: { $first: "$productId" },
+                variantId: { $first: "$variantId" },
+
                 productName: { $first: "$productName" },
                 productImage: { $first: "$productImage" },
-                productId: { $first: "$productId" },
-                qty: { $sum: "$qty" },
-                revenue: { $sum: "$subtotal" },
+
+                totalQtySold: { $sum: "$quantity" },
+                totalRevenue: { $sum: "$subtotal" },
+
                 priceQtyValue: {
                   $sum: {
-                    $multiply: ["$price", "$qty"],
+                    $multiply: ["$price", "$quantity"],
                   },
                 },
-                rawNames: { $addToSet: "$productName" },
-                rawImages: { $addToSet: "$productImage" },
+
+                names: { $addToSet: "$productName" },
+                images: { $addToSet: "$productImage" },
               },
             },
+
             {
               $project: {
                 _id: 0,
-                key: "$productCode",
-                productCode: 1,
                 productId: 1,
+                variantId: 1,
+                productCode: 1,
+
                 productName: {
                   $cond: [
                     { $ne: ["$productName", ""] },
                     "$productName",
-                    { $ifNull: [{ $arrayElemAt: ["$rawNames", 0] }, ""] },
+                    { $ifNull: [{ $arrayElemAt: ["$names", 0] }, ""] },
                   ],
                 },
+
                 productImage: {
                   $cond: [
                     { $ne: ["$productImage", ""] },
                     "$productImage",
-                    { $ifNull: [{ $arrayElemAt: ["$rawImages", 0] }, ""] },
+                    { $ifNull: [{ $arrayElemAt: ["$images", 0] }, ""] },
                   ],
                 },
-                qty: 1,
-                revenue: { $round: [{ $ifNull: ["$revenue", 0] }, 2] },
-                sellingPrice: {
+
+                totalQtySold: { $ifNull: ["$totalQtySold", 0] },
+                totalRevenue: {
+                  $round: [{ $ifNull: ["$totalRevenue", 0] }, 2],
+                },
+
+                avgSellingPrice: {
                   $round: [
                     {
                       $cond: [
-                        { $gt: ["$qty", 0] },
-                        { $divide: ["$priceQtyValue", "$qty"] },
+                        { $gt: ["$totalQtySold", 0] },
+                        { $divide: ["$priceQtyValue", "$totalQtySold"] },
                         0,
                       ],
                     },
@@ -610,38 +633,52 @@ export const getProductSalesReport = async (req, res) => {
           ],
         },
       },
+
       {
         $project: {
           totalOrders: {
             $ifNull: [{ $arrayElemAt: ["$orderStats.totalOrders", 0] }, 0],
           },
-          productData: 1,
+          productRows: 1,
         },
       },
+
       {
         $project: {
           totalOrders: 1,
+          totalProducts: { $size: "$productRows" },
+
+          totalQtySold: {
+            $sum: {
+              $map: {
+                input: "$productRows",
+                as: "row",
+                in: { $ifNull: ["$$row.totalQtySold", 0] },
+              },
+            },
+          },
+
+          totalRevenue: {
+            $sum: {
+              $map: {
+                input: "$productRows",
+                as: "row",
+                in: { $ifNull: ["$$row.totalRevenue", 0] },
+              },
+            },
+          },
+
           rows: {
             $slice: [
               {
                 $sortArray: {
-                  input: "$productData",
+                  input: "$productRows",
                   sortBy: finalSort,
                 },
               },
               skip,
               limit,
             ],
-          },
-          totalProducts: { $size: "$productData" },
-          totalQty: {
-            $sum: {
-              $map: {
-                input: "$productData",
-                as: "row",
-                in: { $ifNull: ["$$row.qty", 0] },
-              },
-            },
           },
         },
       },
@@ -651,7 +688,8 @@ export const getProductSalesReport = async (req, res) => {
 
     const rows = Array.isArray(result?.rows) ? result.rows : [];
     const total = Number(result?.totalProducts || 0);
-    const totalQty = Number(result?.totalQty || 0);
+    const totalQtySold = Number(result?.totalQtySold || 0);
+    const totalRevenue = Number(result?.totalRevenue || 0);
     const totalOrders = Number(result?.totalOrders || 0);
 
     return res.status(200).json({
@@ -665,7 +703,8 @@ export const getProductSalesReport = async (req, res) => {
       },
       summary: {
         totalProducts: total,
-        totalQty,
+        totalQtySold,
+        totalRevenue: Number(totalRevenue.toFixed(2)),
         totalOrders,
       },
       pagination: {
@@ -1276,9 +1315,111 @@ export const getOperationsStatusReport = async (req, res) => {
   }
 };
 
+
+export const getUnsoldProducts = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const skip = (page - 1) * limit;
+
+    const search = String(req.query.search || "").trim();
+
+    /* ---------------------------------------------------
+       STEP 1: Get all sold productCodes from orders
+    --------------------------------------------------- */
+    const soldCodesAgg = await Order.aggregate([
+      { $match: { "items.0": { $exists: true } } },
+      { $unwind: "$items" },
+      {
+        $project: {
+          productCode: {
+            $trim: {
+              input: {
+                $toString: {
+                  $ifNull: ["$items.productSnapshot.productCode", ""],
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        $match: {
+          productCode: { $ne: "" },
+        },
+      },
+      {
+        $group: {
+          _id: "$productCode",
+        },
+      },
+    ]);
+
+    const soldCodes = soldCodesAgg.map((x) => x._id);
+
+    /* ---------------------------------------------------
+       STEP 2: Find products NOT IN soldCodes
+    --------------------------------------------------- */
+    const match = {
+      productCode: { $nin: soldCodes },
+      isActive: true,
+    };
+
+    if (search) {
+      match.$or = [
+        { productCode: { $regex: search, $options: "i" } },
+        { title: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const [rows, total] = await Promise.all([
+      Product.find(match)
+        .select(
+          "productCode title thumbnail price stock isInStock createdAt"
+        )
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+
+      Product.countDocuments(match),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      filters: {
+        search,
+        page,
+        limit,
+      },
+      summary: {
+        totalUnsoldProducts: total,
+      },
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: total > 0 ? Math.ceil(total / limit) : 0,
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+      rows,
+    });
+  } catch (error) {
+    console.error("getUnsoldProducts error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to fetch unsold products",
+    });
+  }
+};
+
+
+
 export default {
   getProductSalesReport,
   getOrderBusinessOverview,
   getROASReport,
   getOperationsStatusReport,
+  getUnsoldProducts,
 };

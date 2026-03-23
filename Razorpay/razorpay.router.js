@@ -1,3 +1,5 @@
+// Razorpay/razorpay.router.js
+
 import express from "express";
 import {
   createRazorpayOrder,
@@ -5,7 +7,17 @@ import {
   razorpayWebhook,
 } from "./razorpay.controller.js";
 
+import {
+  getAllTransactions,
+  getTransactionsByReceipt,
+  getTransactionSummary,
+} from "./razorpayReports.controller.js";
+
 const router = express.Router();
+
+/* =========================================================
+   PAYMENT FLOW
+========================================================= */
 
 /**
  * 🔹 Create Razorpay order
@@ -29,5 +41,29 @@ router.post("/verify", verifyRazorpayPayment);
  *    in server.js / app.js
  */
 router.post("/webhook", razorpayWebhook);
+
+/* =========================================================
+   REPORTS / TRANSACTIONS
+========================================================= */
+
+/**
+ * 🔹 All Transactions (with filters)
+ * GET /api/razorpay/reports/transactions
+ * query:
+ * ?from=2026-03-01&to=2026-03-23&status=captured&page=1&limit=20
+ */
+router.get("/reports/transactions", getAllTransactions);
+
+/**
+ * 🔹 Get transactions by receipt (your order number)
+ * GET /api/razorpay/reports/receipt/:receipt
+ */
+router.get("/reports/receipt/:receipt", getTransactionsByReceipt);
+
+/**
+ * 🔹 Dashboard summary
+ * GET /api/razorpay/reports/summary
+ */
+router.get("/reports/summary", getTransactionSummary);
 
 export default router;
