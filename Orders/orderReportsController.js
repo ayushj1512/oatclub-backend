@@ -1,7 +1,7 @@
 // Orders/orderReportsController.js
 
 import Order from "./Orders.js";
-import MarketingSpend from "../MarketingSpend/MarketingSpend.js"; // path adjust if needed
+import MarketingSpend from "../MarketingSpend/marketingSpend.js"; // path adjust if needed
 
 const toInt = (v, d = 0) => {
   const n = parseInt(String(v ?? ""), 10);
