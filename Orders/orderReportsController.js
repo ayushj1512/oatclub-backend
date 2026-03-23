@@ -257,6 +257,165 @@ const buildSpendRangeMatch = ({ from = "", to = "", source = "" }) => {
   return and.length ? { $and: and } : {};
 };
 
+
+const startOfIstDayUtc = (date = new Date()) => {
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: IST_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+
+  return new Date(`${ymd}T00:00:00.000+05:30`);
+};
+
+const addDaysUtc = (date, days = 0) =>
+  new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+
+const buildOperationsRangeFromQuery = ({
+  range = "",
+  from = "",
+  to = "",
+} = {}) => {
+  const preset = String(range || "").trim().toLowerCase();
+  const customRange = buildDateRangeFromQuery({ from, to });
+
+  if (preset === "custom") {
+    return {
+      key: "custom",
+      from: customRange.from,
+      to: customRange.to,
+      startUtc: customRange.startUtc,
+      endUtc: customRange.endUtc,
+    };
+  }
+
+  const todayStartUtc = startOfIstDayUtc(new Date());
+
+  if (preset === "weekly") {
+    const jsDay = new Intl.DateTimeFormat("en-US", {
+      timeZone: IST_TZ,
+      weekday: "short",
+    }).format(new Date());
+
+    const dayMap = {
+      Sun: 0,
+      Mon: 1,
+      Tue: 2,
+      Wed: 3,
+      Thu: 4,
+      Fri: 5,
+      Sat: 6,
+    };
+
+    const dayIndex = dayMap[jsDay] ?? 1;
+    const diffToMonday = dayIndex === 0 ? 6 : dayIndex - 1;
+
+    const startUtc = addDaysUtc(todayStartUtc, -diffToMonday);
+    const endUtc = addDaysUtc(startUtc, 7);
+
+    return {
+      key: "weekly",
+      from: "",
+      to: "",
+      startUtc,
+      endUtc,
+    };
+  }
+
+  if (preset === "month" || preset === "monthly") {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: IST_TZ,
+      year: "numeric",
+      month: "2-digit",
+    }).formatToParts(new Date());
+
+    const year = Number(parts.find((p) => p.type === "year")?.value || 0);
+    const month = Number(parts.find((p) => p.type === "month")?.value || 0);
+
+    const startUtc = new Date(
+      `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01T00:00:00.000+05:30`
+    );
+
+    const endMonth = month === 12 ? 1 : month + 1;
+    const endYear = month === 12 ? year + 1 : year;
+
+    const endUtc = new Date(
+      `${String(endYear).padStart(4, "0")}-${String(endMonth).padStart(2, "0")}-01T00:00:00.000+05:30`
+    );
+
+    return {
+      key: "month",
+      from: "",
+      to: "",
+      startUtc,
+      endUtc,
+    };
+  }
+
+  const presetDaysMap = {
+    last7: 7,
+    "7d": 7,
+    last15: 15,
+    "15d": 15,
+    last30: 30,
+    "30d": 30,
+  };
+
+  const days = presetDaysMap[preset];
+
+  if (days) {
+    const startUtc = addDaysUtc(todayStartUtc, -(days - 1));
+    const endUtc = addDaysUtc(todayStartUtc, 1);
+
+    return {
+      key: preset,
+      from: "",
+      to: "",
+      startUtc,
+      endUtc,
+    };
+  }
+
+  return {
+    key: "",
+    from: customRange.from,
+    to: customRange.to,
+    startUtc: customRange.startUtc,
+    endUtc: customRange.endUtc,
+  };
+};
+
+const buildOperationsReportMatch = ({ range = "", from = "", to = "" }) => {
+  const normalized = buildOperationsRangeFromQuery({ range, from, to });
+  const dateExpr = buildOrderDateExpr();
+
+  const and = [
+    { orderType: { $ne: "parent" } },
+  ];
+
+  if (normalized.startUtc) {
+    and.push({
+      $expr: {
+        $gte: [dateExpr, normalized.startUtc],
+      },
+    });
+  }
+
+  if (normalized.endUtc) {
+    and.push({
+      $expr: {
+        $lt: [dateExpr, normalized.endUtc],
+      },
+    });
+  }
+
+  return {
+    normalized,
+    match: and.length ? { $and: and } : {},
+  };
+};
+
 /* =========================================================
    PRODUCT SALES REPORT
 ========================================================= */
@@ -956,8 +1115,170 @@ export const getROASReport = async (req, res) => {
   }
 };
 
+
+export const getOperationsStatusReport = async (req, res) => {
+  try {
+    const range = String(req.query.range || "").trim();
+    const from = String(req.query.from || "").trim();
+    const to = String(req.query.to || "").trim();
+
+    const { normalized, match } = buildOperationsReportMatch({
+      range,
+      from,
+      to,
+    });
+
+    const pipeline = [
+      ...(Object.keys(match).length ? [{ $match: match }] : []),
+      {
+        $facet: {
+          counts: [
+            {
+              $group: {
+                _id: null,
+                totalOrders: { $sum: 1 },
+
+                pendingProcessing: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          { $toLower: { $ifNull: ["$fulfillmentStatus", ""] } },
+                          "processing",
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+
+                dispatched: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $in: [
+                          { $toLower: { $ifNull: ["$fulfillmentStatus", ""] } },
+                          ["shipped", "out_for_delivery"],
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+
+                delivered: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          { $toLower: { $ifNull: ["$fulfillmentStatus", ""] } },
+                          "delivered",
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+
+                cancelled: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          { $toLower: { $ifNull: ["$fulfillmentStatus", ""] } },
+                          "cancelled",
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+
+                returnedRto: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          { $toLower: { $ifNull: ["$fulfillmentStatus", ""] } },
+                          "rto",
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+
+                refundsProcessed: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          { $toLower: { $ifNull: ["$paymentStatus", ""] } },
+                          "refunded",
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                totalOrders: { $ifNull: ["$totalOrders", 0] },
+                pendingProcessing: { $ifNull: ["$pendingProcessing", 0] },
+                dispatched: { $ifNull: ["$dispatched", 0] },
+                delivered: { $ifNull: ["$delivered", 0] },
+                cancelled: { $ifNull: ["$cancelled", 0] },
+                returnedRto: { $ifNull: ["$returnedRto", 0] },
+                refundsProcessed: { $ifNull: ["$refundsProcessed", 0] },
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    const [result] = await Order.aggregate(pipeline).allowDiskUse(true);
+
+    const summary = result?.counts?.[0] || {
+      totalOrders: 0,
+      pendingProcessing: 0,
+      dispatched: 0,
+      delivered: 0,
+      cancelled: 0,
+      returnedRto: 0,
+      refundsProcessed: 0,
+    };
+
+    return res.status(200).json({
+      success: true,
+      filters: {
+        range: normalized.key || "",
+        from: normalized.from || "",
+        to: normalized.to || "",
+      },
+      summary,
+    });
+  } catch (error) {
+    console.error("getOperationsStatusReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to fetch operations status report",
+    });
+  }
+};
+
 export default {
   getProductSalesReport,
   getOrderBusinessOverview,
   getROASReport,
+  getOperationsStatusReport,
 };

@@ -2,7 +2,7 @@
 import express from "express";
 
 /* ===========================
-   ORDER CONTROLLER (Orders)
+   ORDER CONTROLLER
 =========================== */
 import {
   createOrder,
@@ -47,10 +47,11 @@ import {
   getProductSalesReport,
   getOrderBusinessOverview,
   getROASReport,
+  getOperationsStatusReport,
 } from "./orderReportsController.js";
 
 /* ===========================
-   CUSTOMER SUPPORT CONTROLLER
+   CUSTOMER SUPPORT
 =========================== */
 import {
   getCustomerSupportOrders,
@@ -87,49 +88,41 @@ import { bookWithShiprocket } from "../shiprocket/shipping.controller.js";
 
 const router = express.Router();
 
-/* ============================================================
+/* ===========================
    ORDERS
-============================================================ */
-
+=========================== */
 router.post("/", createOrder);
 router.get("/", getAllOrders);
 
-/* ============================================================
+/* ===========================
    ACCOUNTS / REPORTS
-   keep above "/:id"
-============================================================ */
-
+=========================== */
 router.get("/accounts/sales-report", getSalesReport);
 router.get("/accounts/sales-report/products", getProductSalesReport);
 router.get("/accounts/revenue-report", getRevenueReport);
 router.get("/accounts/business-overview", getOrderBusinessOverview);
 
-// ROAS report
-// GET /api/orders/reports/roas?from=2026-03-01&to=2026-03-31&source=Meta
 router.get("/reports/roas", getROASReport);
+router.get("/reports/operations-status", getOperationsStatusReport);
 
-/* ============================================================
+/* ===========================
    SUPPORT / ANALYTICS / LOOKUPS
-============================================================ */
-
+=========================== */
 router.get("/lookup", lookupOrdersByIdentity);
 router.get("/customer-support", getCustomerSupportOrders);
 router.get("/customer-support/:id", getCustomerSupportOrderDetail);
 router.get("/analytics/summary", getOrderAnalytics);
 
-/* ============================================================
+/* ===========================
    INVOICES
-   keep above "/by-number/:orderNumber" and "/:id"
-============================================================ */
-
+=========================== */
 router.post("/invoices", getInvoicesByOrderNumbers);
 router.get("/by-number/:orderNumber/invoice", getInvoiceByOrderNumber);
 router.get("/:id/invoice", getInvoiceById);
 
-/* ============================================================
+/* ===========================
    PRODUCTION
-============================================================ */
-
+=========================== */
 router.get("/production/summary", getProductionSummary);
 router.get("/production/queue", getProductionQueue);
 router.get("/production/jobs", getProductionJobList);
@@ -137,49 +130,42 @@ router.get("/production/jobs/export", exportProductionJobListExcel);
 router.post("/production/:id/shipped", markOrderShippedFromProduction);
 router.patch("/production/packed/mark-all-shipped", markAllPackedOrdersShipped);
 
-/* ============================================================
+/* ===========================
    CUSTOMER / LOOKUPS
-============================================================ */
-
+=========================== */
 router.get("/customer/:customerId", getOrdersByCustomer);
 router.get("/by-number/:orderNumber", getOrderByOrderNumber);
 
-/* ============================================================
+/* ===========================
    SHIPROCKET ADMIN
-============================================================ */
-
+=========================== */
 router.post("/:id/shiprocket/book", adminBookShiprocketIfMissing);
 
-/* ============================================================
+/* ===========================
    ORDER ACTIONS
-============================================================ */
-
+=========================== */
 router.post("/:id/ship", bookWithShiprocket);
 router.post("/:id/cancel", cancelOrder);
 router.post("/:orderId/duplicate-exchange", duplicateExchangeOrder);
 router.post("/:id/confirm", confirmOrder);
 
-/* ============================================================
+/* ===========================
    SPLIT ORDER
-============================================================ */
-
+=========================== */
 router.post("/:id/split", splitOrderIntoShipments);
 
-/* ============================================================
+/* ===========================
    RMA
-============================================================ */
-
+=========================== */
 router.get("/rma", getAllRmasAdmin);
 router.post("/:id/rma", createRma);
 router.get("/:id/rma", getRmasByOrder);
 router.get("/:id/rma/:rmaNumber", getRmaByNumber);
 router.patch("/:id/rma/:rmaNumber", updateRma);
 
-/* ============================================================
+/* ===========================
    ORDER BY ID
-   keep at bottom
-============================================================ */
-
+=========================== */
 router.patch("/:id", updateOrder);
 router.put("/:id", updateOrder);
 router.get("/:id", getOrderById);
