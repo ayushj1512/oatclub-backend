@@ -6,7 +6,13 @@ import { razorpay } from "./razorpay.instance.js";
    HELPERS
 ========================================================= */
 
-const toUnix = (date) => Math.floor(new Date(date).getTime() / 1000);
+const toUnix = (date, endOfDay = false) => {
+  if (!date) return undefined;
+  const d = new Date(date);
+  if (endOfDay) d.setHours(23, 59, 59, 999);
+  else d.setHours(0, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000);
+};
 
 const formatPayment = (p, receiptMap = {}) => ({
   paymentId: p.id,
@@ -23,95 +29,95 @@ const formatPayment = (p, receiptMap = {}) => ({
   createdAt: new Date(p.created_at * 1000),
 });
 
+const fetchAllPayments = async ({ from, to } = {}) => {
+  const all = [];
+  let skip = 0;
+  const count = 100;
+
+  while (true) {
+    const res = await razorpay.payments.all({
+      count,
+      skip,
+      from: from ? toUnix(from, false) : undefined,
+      to: to ? toUnix(to, true) : undefined,
+    });
+
+    const items = res?.items || [];
+    all.push(...items);
+
+    if (items.length < count) break;
+    skip += count;
+  }
+
+  return all;
+};
+
+const applyStatusFilter = (payments = [], status = "") => {
+  if (!status) return payments;
+  return payments.filter(
+    (p) => String(p.status || "").toLowerCase() === String(status).toLowerCase()
+  );
+};
+
 /* =========================================================
    GET ALL TRANSACTIONS
-   (Payments + receipt mapping)
 ========================================================= */
 
 export const getAllTransactions = async (req, res) => {
   try {
-    const {
-      from,
-      to,
-      status,
-      page = 1,
-      limit = 20,
-    } = req.query;
+    const { from, to, status, page = 1, limit = 20 } = req.query;
 
-    const count = Number(limit);
-    const skip = (Number(page) - 1) * count;
+    const currentPage = Math.max(1, Number(page || 1));
+    const perPage = Math.max(1, Number(limit || 20));
 
-    /* -----------------------------
-       Step 1: Fetch payments
-    ----------------------------- */
-    const paymentsRes = await razorpay.payments.all({
-      count,
-      skip,
-      from: from ? toUnix(from) : undefined,
-      to: to ? toUnix(to) : undefined,
-    });
+    let payments = await fetchAllPayments({ from, to });
+    payments = applyStatusFilter(payments, status);
 
-    let payments = paymentsRes.items || [];
+    const total = payments.length;
+    const start = (currentPage - 1) * perPage;
+    const pagedPayments = payments.slice(start, start + perPage);
 
-    /* -----------------------------
-       Step 2: Get orderIds
-    ----------------------------- */
-    const orderIds = [
-      ...new Set(payments.map((p) => p.order_id).filter(Boolean)),
-    ];
-
-    /* -----------------------------
-       Step 3: Fetch orders for receipt mapping
-    ----------------------------- */
+    const orderIds = [...new Set(pagedPayments.map((p) => p.order_id).filter(Boolean))];
     const receiptMap = {};
 
     await Promise.all(
       orderIds.map(async (oid) => {
         try {
           const order = await razorpay.orders.fetch(oid);
-          receiptMap[oid] = order.receipt;
+          receiptMap[oid] = order?.receipt || null;
         } catch {
           receiptMap[oid] = null;
         }
       })
     );
 
-    /* -----------------------------
-       Step 4: Format data
-    ----------------------------- */
-    let data = payments.map((p) => formatPayment(p, receiptMap));
-
-    /* -----------------------------
-       Step 5: Filter (status)
-    ----------------------------- */
-    if (status) {
-      data = data.filter((d) => d.status === status);
-    }
+    const data = pagedPayments.map((p) => formatPayment(p, receiptMap));
 
     return res.json({
       ok: true,
-      page: Number(page),
-      limit: count,
-      count: data.length,
+      page: currentPage,
+      limit: perPage,
+      count: total,
+      pages: Math.ceil(total / perPage),
       data,
     });
   } catch (err) {
     console.error("❌ getAllTransactions error:", err);
-    res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "Failed to fetch transactions",
+    });
   }
 };
 
 /* =========================================================
-   GET TRANSACTION BY RECEIPT (ORDER NUMBER)
+   GET TRANSACTION BY RECEIPT
 ========================================================= */
 
 export const getTransactionsByReceipt = async (req, res) => {
   try {
     const { receipt } = req.params;
 
-    /* -----------------------------
-       Step 1: Find order by receipt
-    ----------------------------- */
     const ordersRes = await razorpay.orders.all({
       receipt,
       count: 1,
@@ -126,11 +132,7 @@ export const getTransactionsByReceipt = async (req, res) => {
       });
     }
 
-    /* -----------------------------
-       Step 2: Fetch payments
-    ----------------------------- */
     const paymentsRes = await razorpay.orders.fetchPayments(order.id);
-
     const payments = paymentsRes.items || [];
 
     const data = payments.map((p) => ({
@@ -153,19 +155,23 @@ export const getTransactionsByReceipt = async (req, res) => {
     });
   } catch (err) {
     console.error("❌ getTransactionsByReceipt error:", err);
-    res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "Failed to fetch receipt details",
+    });
   }
 };
 
 /* =========================================================
-   SUMMARY (DASHBOARD CARDS)
+   SUMMARY
 ========================================================= */
 
 export const getTransactionSummary = async (req, res) => {
   try {
-    const paymentsRes = await razorpay.payments.all({ count: 100 });
+    const { from, to, status } = req.query;
 
-    const payments = paymentsRes.items || [];
+    let payments = await fetchAllPayments({ from, to });
+    payments = applyStatusFilter(payments, status);
 
     let success = 0;
     let failed = 0;
@@ -173,13 +179,15 @@ export const getTransactionSummary = async (req, res) => {
     let totalAmount = 0;
 
     payments.forEach((p) => {
-      if (p.status === "captured") {
-        success++;
-        totalAmount += p.amount;
-      } else if (p.status === "failed") {
-        failed++;
+      const s = String(p.status || "").toLowerCase();
+
+      if (s === "captured") {
+        success += 1;
+        totalAmount += Number(p.amount || 0);
+      } else if (s === "failed") {
+        failed += 1;
       } else {
-        pending++;
+        pending += 1;
       }
     });
 
@@ -194,6 +202,9 @@ export const getTransactionSummary = async (req, res) => {
     });
   } catch (err) {
     console.error("❌ getTransactionSummary error:", err);
-    res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "Failed to fetch summary",
+    });
   }
 };

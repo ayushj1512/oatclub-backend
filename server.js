@@ -44,7 +44,7 @@ import { startCrons } from "./cronjob/index.js";
 import homeCollectionsRoutes from "./HomeCollection/HomeCollectionsRoutes.js";
 import metaFeedRouter from "./routes/metaFeed.js";
 import metaAdsRoutes from "./MetaAds/MetaAdsRoutes.js";
-
+import remittanceRoutes from "./Remittance/RemiitanceRouter.js";
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
 // --------------------------------------------------
@@ -260,6 +260,7 @@ app.use("/api/tickets", ticketRoutes);
 app.use("/api/homepage-settings", homepageSettingsRoutes);
 app.use("/api/newsletters", newsletterRouter);
 app.use("/api/bluedart", bluedartRoutes);
+app.use("/api/remittance", remittanceRoutes);
 // Media
 app.use("/api/media", mediaRoutes);
 app.use("/media-user", mediaAuthRoutes);
