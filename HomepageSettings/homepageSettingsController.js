@@ -4,24 +4,36 @@ import HomepageSettings from "./HomepageSettings.js";
    Helpers
 ========================================================= */
 
+const ALLOWED_NAVIGATION_TYPES = ["collection", "category", "custom"];
+
 // Validate category row items
 const validateCategoryRow = (items = []) => {
   if (!Array.isArray(items)) return "categoryRow must be an array";
 
   for (const item of items) {
-    if (!item.name) return "Each categoryRow item must have a name";
+    if (!item?.name?.trim())
+      return "Each categoryRow item must have a name";
 
-    if (!item.navigationType)
+    if (!item?.navigationType)
       return "Each categoryRow item must have navigationType";
 
-    if (!["collection", "category"].includes(item.navigationType))
-      return "navigationType must be either collection or category";
+    if (!ALLOWED_NAVIGATION_TYPES.includes(item.navigationType))
+      return "navigationType must be collection, category or custom";
 
-    if (!item.slug)
-      return "Each categoryRow item must have a slug";
+    if (
+      ["collection", "category"].includes(item.navigationType) &&
+      !item?.slug?.trim()
+    ) {
+      return "Each collection/category item must have a slug";
+    }
 
-    if (!item.image && !item.video)
+    if (item.navigationType === "custom" && !item?.customRoute?.trim()) {
+      return "Each custom item must have a customRoute";
+    }
+
+    if (!item?.image?.trim() && !item?.video?.trim()) {
       return "Each categoryRow item must have image or video";
+    }
   }
 
   return null;
@@ -32,11 +44,44 @@ const validateHeroBanners = (banners = []) => {
   if (!Array.isArray(banners)) return "heroBanners must be an array";
 
   for (const b of banners) {
-    if (!b.image) return "Each hero banner must have an image";
+    if (!b?.image?.trim()) return "Each hero banner must have an image";
   }
 
   return null;
 };
+
+// Normalize category row items
+const normalizeCategoryRow = (items = []) =>
+  items.map((item, index) => {
+    const navigationType = item?.navigationType || "category";
+
+    return {
+      name: item?.name?.trim() || "",
+      navigationType,
+      slug:
+        navigationType === "collection" || navigationType === "category"
+          ? item?.slug?.trim() || ""
+          : "",
+      customRoute:
+        navigationType === "custom" ? item?.customRoute?.trim() || "" : "",
+      tag: item?.tag?.trim() || "",
+      image: item?.image?.trim() || "",
+      video: item?.video?.trim() || "",
+      isActive: item?.isActive !== false,
+      sortOrder:
+        typeof item?.sortOrder === "number" ? item.sortOrder : index,
+    };
+  });
+
+// Normalize hero banners
+const normalizeHeroBanners = (banners = []) =>
+  banners.map((b, index) => ({
+    image: b?.image?.trim() || "",
+    link: b?.link?.trim() || "",
+    title: b?.title?.trim() || "",
+    isActive: b?.isActive !== false,
+    sortOrder: typeof b?.sortOrder === "number" ? b.sortOrder : index,
+  }));
 
 // Get or create default settings
 const getOrCreateDefaultSettings = async () => {
@@ -74,7 +119,7 @@ export const getHomepageSettings = async (req, res) => {
       categoryRow,
     });
   } catch (err) {
-    console.error(err);
+    console.error("getHomepageSettings error:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -89,11 +134,13 @@ export const updateHomepageSettings = async (req, res) => {
     if (updates.categoryRow) {
       const err = validateCategoryRow(updates.categoryRow);
       if (err) return res.status(400).json({ message: err });
+      updates.categoryRow = normalizeCategoryRow(updates.categoryRow);
     }
 
     if (updates.heroBanners) {
       const err = validateHeroBanners(updates.heroBanners);
       if (err) return res.status(400).json({ message: err });
+      updates.heroBanners = normalizeHeroBanners(updates.heroBanners);
     }
 
     await getOrCreateDefaultSettings();
@@ -106,7 +153,7 @@ export const updateHomepageSettings = async (req, res) => {
 
     res.json(updated);
   } catch (err) {
-    console.error(err);
+    console.error("updateHomepageSettings error:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -125,13 +172,13 @@ export const updateHeroBanners = async (req, res) => {
 
     const updated = await HomepageSettings.findOneAndUpdate(
       { key: "default" },
-      { heroBanners },
+      { heroBanners: normalizeHeroBanners(heroBanners) },
       { new: true, runValidators: true }
     );
 
     res.json(updated);
   } catch (err) {
-    console.error(err);
+    console.error("updateHeroBanners error:", err);
     res.status(500).json({ message: err.message });
   }
 };
@@ -150,13 +197,13 @@ export const updateCategoryRow = async (req, res) => {
 
     const updated = await HomepageSettings.findOneAndUpdate(
       { key: "default" },
-      { categoryRow },
+      { categoryRow: normalizeCategoryRow(categoryRow) },
       { new: true, runValidators: true }
     );
 
     res.json(updated);
   } catch (err) {
-    console.error(err);
+    console.error("updateCategoryRow error:", err);
     res.status(500).json({ message: err.message });
   }
 };
