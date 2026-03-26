@@ -3091,3 +3091,97 @@ export const lookupOrdersByIdentity = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
+
+export const getProductOrderCount = async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+
+    if (!q) {
+      return res.status(400).json({
+        success: false,
+        message: "q is required",
+      });
+    }
+
+    const escapeRegex = (s = "") =>
+      String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const rx = new RegExp(escapeRegex(q), "i");
+
+    const match = {
+      isConfirmed: true, // recommended
+      $or: [
+        { "items.productSnapshot.title": rx },
+        { "items.productSnapshot.productCode": rx },
+      ],
+    };
+
+    const totalOrders = await Order.countDocuments(match);
+
+    return res.status(200).json({
+      success: true,
+      query: q,
+      totalOrders,
+    });
+  } catch (error) {
+    console.error("❌ getProductOrderCount Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+export const searchProductOrderNumbers = async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+
+    if (!q) {
+      return res.status(400).json({
+        success: false,
+        message: "q is required",
+      });
+    }
+
+    // ✅ safe regex
+    const escapeRegex = (s = "") =>
+      String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const rx = new RegExp(escapeRegex(q), "i");
+
+    // ✅ find matching orders
+    const orders = await Order.find({
+      isConfirmed: true, // IMPORTANT
+      $or: [
+        { "items.productSnapshot.title": rx },
+        { "items.productSnapshot.productCode": rx },
+      ],
+    })
+      .select("orderNumber")
+      .lean();
+
+    // ✅ unique order numbers
+    const orderNumbers = [
+      ...new Set(
+        orders
+          .map((o) => o.orderNumber)
+          .filter(Boolean)
+      ),
+    ];
+
+    return res.status(200).json({
+      success: true,
+      query: q,
+      totalOrders: orderNumbers.length,
+      orderNumbers,
+    });
+  } catch (error) {
+    console.error("❌ searchProductOrderNumbers error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
