@@ -38,6 +38,7 @@ import {
   getOrderBusinessOverview,
   getROASReport,
   getOperationsStatusReport,
+  getFinalPayableByStatus,
 } from "./orderReportsController.js";
 
 import {
@@ -86,6 +87,7 @@ router.get("/accounts/revenue-report", getRevenueReport);
 router.get("/accounts/business-overview", getOrderBusinessOverview);
 router.get("/reports/roas", getROASReport);
 router.get("/reports/operations-status", getOperationsStatusReport);
+router.get("/reports/final-payable-by-status", getFinalPayableByStatus);
 
 /* Invoices */
 router.post("/invoices", getInvoicesByOrderNumbers);

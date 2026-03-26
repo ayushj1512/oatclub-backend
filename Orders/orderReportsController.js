@@ -416,6 +416,13 @@ const buildOperationsReportMatch = ({ range = "", from = "", to = "" }) => {
   };
 };
 
+
+const parseList = (value = "") =>
+  String(value)
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
 /* =========================================================
    PRODUCT SALES REPORT
 ========================================================= */
@@ -1415,6 +1422,158 @@ export const getUnsoldProducts = async (req, res) => {
 };
 
 
+export const getFinalPayableByStatus = async (req, res) => {
+  try {
+    const from = String(req.query.from || "").trim();
+    const to = String(req.query.to || "").trim();
+    const fulfillmentStatus = String(req.query.fulfillmentStatus || "").trim();
+
+    const dateMatch = buildOrderRangeMatch({ from, to });
+    const statuses = parseList(fulfillmentStatus).map((s) => s.toLowerCase());
+
+    const match = {
+      orderType: { $ne: "parent" },
+      ...(Object.keys(dateMatch).length ? dateMatch : {}),
+    };
+
+    if (statuses.length === 1) {
+      match.fulfillmentStatus = statuses[0];
+    } else if (statuses.length > 1) {
+      match.fulfillmentStatus = { $in: statuses };
+    }
+
+    const normalizedRange = buildDateRangeFromQuery({ from, to });
+
+    const pipeline = [
+      { $match: match },
+      {
+        $project: {
+          fulfillmentStatus: {
+            $toLower: { $ifNull: ["$fulfillmentStatus", "unknown"] },
+          },
+          finalPayable: {
+            $ifNull: [
+              "$finalPayable",
+              {
+                $ifNull: [
+                  "$pricing.finalPayable",
+                  {
+                    $ifNull: [
+                      "$coupon.finalTotal",
+                      {
+                        $ifNull: [
+                          "$amountPaid",
+                          {
+                            $ifNull: [
+                              "$payableAmount",
+                              {
+                                $ifNull: [
+                                  "$netAmount",
+                                  {
+                                    $ifNull: [
+                                      "$pricing.payable",
+                                      {
+                                        $ifNull: [
+                                          "$pricing.grandTotal",
+                                          {
+                                            $ifNull: ["$grandTotal", "$total"],
+                                          },
+                                        ],
+                                      },
+                                    ],
+                                  },
+                                ],
+                              },
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      {
+        $facet: {
+          breakdown: [
+            {
+              $group: {
+                _id: "$fulfillmentStatus",
+                totalOrders: { $sum: 1 },
+                totalFinalPayable: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                avgFinalPayable: { $avg: { $ifNull: ["$finalPayable", 0] } },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                fulfillmentStatus: "$_id",
+                totalOrders: 1,
+                totalFinalPayable: {
+                  $round: [{ $ifNull: ["$totalFinalPayable", 0] }, 2],
+                },
+                avgFinalPayable: {
+                  $round: [{ $ifNull: ["$avgFinalPayable", 0] }, 2],
+                },
+              },
+            },
+            { $sort: { fulfillmentStatus: 1 } },
+          ],
+          overall: [
+            {
+              $group: {
+                _id: null,
+                totalOrders: { $sum: 1 },
+                totalFinalPayable: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                avgFinalPayable: { $avg: { $ifNull: ["$finalPayable", 0] } },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                totalOrders: { $ifNull: ["$totalOrders", 0] },
+                totalFinalPayable: {
+                  $round: [{ $ifNull: ["$totalFinalPayable", 0] }, 2],
+                },
+                avgFinalPayable: {
+                  $round: [{ $ifNull: ["$avgFinalPayable", 0] }, 2],
+                },
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    const [result] = await Order.aggregate(pipeline).allowDiskUse(true);
+
+    return res.status(200).json({
+      success: true,
+      filters: {
+        from: normalizedRange.from,
+        to: normalizedRange.to,
+        fulfillmentStatus: statuses,
+      },
+      overall: result?.overall?.[0] || {
+        totalOrders: 0,
+        totalFinalPayable: 0,
+        avgFinalPayable: 0,
+      },
+      breakdown: Array.isArray(result?.breakdown) ? result.breakdown : [],
+    });
+  } catch (error) {
+    console.error("getFinalPayableByStatus error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to fetch final payable by status",
+    });
+  }
+};
+
+
 
 export default {
   getProductSalesReport,
@@ -1422,4 +1581,5 @@ export default {
   getROASReport,
   getOperationsStatusReport,
   getUnsoldProducts,
+  getFinalPayableByStatus
 };
