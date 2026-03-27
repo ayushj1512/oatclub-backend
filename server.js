@@ -86,6 +86,7 @@ import homepageSettingsRoutes from "./HomepageSettings/homepageSettingsRoutes.js
 import adminUserRoutes from "./AdminUsers/adminUserRoutes.js";
 import mediaAuthRoutes from "./MediaUser/mediaAuthRoutes.js";
 import commingSoonRoutes from "./ComingSoonModel/comingSoon.routes.js"
+import fabriclogRoutes from "./FabricLog/FabricLogRouter.js";
 // --------------------------------------------------
 // ✅ ENV DEBUG (VERY IMPORTANT)
 // --------------------------------------------------
@@ -241,6 +242,7 @@ app.use("/api/queries", queryRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/fabrics", fabricRoutes);
+app.use("/api/fabric-logs", fabriclogRoutes);
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/admin-users", adminUserRoutes);
 app.use("/api/proxy-image", proxyImageRoute);
