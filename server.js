@@ -45,6 +45,10 @@ import homeCollectionsRoutes from "./HomeCollection/HomeCollectionsRoutes.js";
 import metaFeedRouter from "./routes/metaFeed.js";
 import metaAdsRoutes from "./MetaAds/MetaAdsRoutes.js";
 import remittanceRoutes from "./Remittance/RemiitanceRouter.js";
+import commerceManagerRoutes from "./CommerceManager/CommerceManagerRoutes.js";
+import commerceFeed from "./routes/commerceManagerFeed.js";
+
+
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
 // --------------------------------------------------
@@ -190,6 +194,7 @@ app.use((req, res, next) => {
 // --------------------------------------------------
 app.use(morgan("dev"));
 
+
 /**
  * ✅ Razorpay webhook MUST be BEFORE JSON parser
  */
@@ -255,6 +260,8 @@ app.use("/api/admin/footwear", adminFootwearRoutes);
 app.use("/api/inventory-reservations", inventoryReservationRoutes);
 app.use("/api/coming-soon", commingSoonRoutes);
 app.use("/api/marketing", marketingSpendRoutes);
+app.use("/api/commerce-manager", commerceManagerRoutes);
+app.use("/api/commerce-feed", commerceFeed);
 
 // Admin
 app.use("/api/inventory", inventoryRoutes);
@@ -290,6 +297,8 @@ app.use("/api/abandoned-carts", abandonedCartRoutes);
 
 // Meta Ads
 app.use("/api/meta-ads", metaAdsRoutes);
+
+// commerce feed
 
 // Superadmin
 app.use("/superadmin", superadminRoutes);
