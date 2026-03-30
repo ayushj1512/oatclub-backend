@@ -1574,6 +1574,117 @@ export const getFinalPayableByStatus = async (req, res) => {
 };
 
 
+export const getLowSellingProducts = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 20);
+    const skip = (page - 1) * limit;
+
+    const pipeline = [
+      {
+        $match: {
+          isConfirmed: true,
+          orderType: { $ne: "parent" },
+          paymentStatus: { $nin: ["failed"] },
+          fulfillmentStatus: { $nin: ["cancelled", "failed"] },
+        },
+      },
+
+      { $project: { items: { $ifNull: ["$items", []] } } },
+      { $unwind: "$items" },
+
+      {
+        $project: {
+          productCode: {
+            $trim: {
+              input: {
+                $toString: {
+                  $ifNull: ["$items.productSnapshot.productCode", ""],
+                },
+              },
+            },
+          },
+          productName: {
+            $trim: {
+              input: {
+                $toString: {
+                  $ifNull: ["$items.productSnapshot.title", ""],
+                },
+              },
+            },
+          },
+          productImage: {
+            $ifNull: ["$items.productSnapshot.thumbnail", ""],
+          },
+          quantity: { $ifNull: ["$items.quantity", 0] },
+        },
+      },
+
+      {
+        $match: {
+          productCode: { $ne: "" },
+          quantity: { $gt: 0 },
+        },
+      },
+
+      {
+        $group: {
+          _id: "$productCode",
+          productCode: { $first: "$productCode" },
+          productName: { $first: "$productName" },
+          productImage: { $first: "$productImage" },
+          totalQtySold: { $sum: "$quantity" },
+        },
+      },
+
+      // ✅ UPDATED
+      {
+        $match: {
+          totalQtySold: { $gt: 0, $lte: 20 },
+        },
+      },
+
+      { $sort: { totalQtySold: 1 } },
+
+      {
+        $facet: {
+          rows: [{ $skip: skip }, { $limit: limit }],
+          totalCount: [{ $count: "count" }],
+        },
+      },
+
+      {
+        $project: {
+          rows: 1,
+          total: {
+            $ifNull: [{ $arrayElemAt: ["$totalCount.count", 0] }, 0],
+          },
+        },
+      },
+    ];
+
+    const [result] = await Order.aggregate(pipeline);
+
+    return res.status(200).json({
+      success: true,
+      pagination: {
+        page,
+        limit,
+        total: result?.total || 0,
+        totalPages: Math.ceil((result?.total || 0) / limit),
+      },
+      rows: result?.rows || [],
+    });
+  } catch (error) {
+    console.error("getLowSellingProducts error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch low selling products",
+    });
+  }
+};
+
+
 
 export default {
   getProductSalesReport,
@@ -1581,5 +1692,6 @@ export default {
   getROASReport,
   getOperationsStatusReport,
   getUnsoldProducts,
-  getFinalPayableByStatus
+  getFinalPayableByStatus,
+  getLowSellingProducts
 };

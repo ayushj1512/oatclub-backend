@@ -34,6 +34,7 @@ import {
 
 import {
   getProductSalesReport,
+  getLowSellingProducts,
   getUnsoldProducts,
   getOrderBusinessOverview,
   getROASReport,
@@ -82,6 +83,7 @@ router.get("/analytics/summary", getOrderAnalytics);
 /* Accounts / Reports */
 router.get("/accounts/sales-report", getSalesReport);
 router.get("/accounts/sales-report/products", getProductSalesReport);
+router.get("/accounts/sales-report/products/low-selling", getLowSellingProducts);
 router.get("/accounts/sales-report/products/unsold", getUnsoldProducts);
 router.get("/accounts/revenue-report", getRevenueReport);
 router.get("/accounts/business-overview", getOrderBusinessOverview);
