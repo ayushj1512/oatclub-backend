@@ -32,6 +32,7 @@ import {
   bulkMarkTrendingByCodes,
   markPatternReady,
   zeroAllVariantStock,
+  updatePrimaryProductStatus,
 } from "./productController.js";
 
 /* ---------------- INVENTORY PRODUCT CONTROLLER ---------------- */
@@ -50,79 +51,50 @@ import {
 
 /* ---------------- SETUP ---------------- */
 const router = express.Router();
-
-// CSV uploads (bulk)
 const upload = multer({ dest: "uploads/csv" });
-
-// Swatch uploads (colors admin)
 const uploadSwatches = multer({ dest: "uploads/swatch" });
 
 /* ===========================================================
    🔓 PUBLIC + SHARED ROUTES
-   (keep specific routes above generic ones)
 =========================================================== */
 
-// ✅ INVENTORY ADMIN ROUTES (must stay above /:id)
 router.get("/admin/inventory", getInventoryAdminProducts);
 router.get("/admin/inventory/categories", getInventoryAdminCategories);
 router.get("/admin/inventory/:id", getSingleInventoryAdminProduct);
 router.patch("/admin/inventory/:id", updateSingleInventoryAdminProduct);
 
-// Products by tag(s)
 router.get("/by-tag", getProductsByTag);
-
-// Products by category (slug OR id OR name)
 router.get("/by-category/:category", getProductsByCategory);
-
-// Products by collection (slug OR id)
 router.get("/by-collection/:collection", getProductsByCollection);
 
-// Alternative fetch-by-category (param + query supported)
 router.get("/fetch-by-category/:category", fetchProductsByCategory);
 router.get("/fetch-by-category", fetchProductsByCategory);
 
-// Products by multiple IDs
 router.post("/by-ids", getProductsByIds);
-
-// Products by multiple productCodes
 router.get("/by-codes", getProductsByCodes);
 router.post("/by-codes", getProductsByCodes);
 
-// Fetch by SKU (product or variant)
 router.get("/sku/:sku", getProductBySKU);
-
-// Fetch by productCode (IMPORTANT: must be above /:id fallback)
 router.get("/code/:code", getProductByCode);
-
-// Product details by slug OR id
 router.get("/details/:id", getProductByIdOrSlug);
 
-// Get all products (filters, pagination, search)
 router.get("/", getAllProducts);
 
 /* ===========================================================
    🔐 ADMIN ROUTES (BULK)
 =========================================================== */
 
-// CSV PREVIEW (NO DB WRITE)
 router.post("/bulk/preview", upload.single("file"), bulkPreviewProducts);
-
-// CREATE DRAFT PRODUCTS (NO IMAGES)
 router.post("/bulk/create-draft", bulkCreateDraftProducts);
 
-// Existing bulk operations
 router.post("/bulk/delete", bulkDeleteProducts);
 router.post("/bulk/import", bulkImportProducts);
 router.patch("/bulk/pricing", bulkUpdatePricing);
-
-// Zero all variant stock
 router.patch("/bulk/variant-stock/zero-all", zeroAllVariantStock);
-
-// Bulk sync collection ↔ products
 router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
-
-// ✅ Bulk mark trending by product codes
 router.patch("/bulk/trending/by-codes", bulkMarkTrendingByCodes);
+
+// ✅ NEW: bulk primary/secondary update
 
 /* ===========================================================
    🔐 ADMIN ROUTES (SINGLE PRODUCT OPS)
@@ -131,46 +103,31 @@ router.patch("/bulk/trending/by-codes", bulkMarkTrendingByCodes);
 router.post("/:id/update-ratings", updateProductRatings);
 router.patch("/:id/analytics", incrementProductAnalytics);
 
-// Inventory endpoints
-router.patch("/:id/stock", updateProductStock); // SIMPLE only
-router.patch("/:id/variant-stock", updateVariantStock); // VARIABLE only
-
-// Update fabrics + consumption (dedicated)
+router.patch("/:id/stock", updateProductStock);
+router.patch("/:id/variant-stock", updateVariantStock);
 router.patch("/:id/fabrics", updateProductFabrics);
 
-// Mark Pattern Ready (manual)
 router.patch("/:id/mark-pattern-ready", markPatternReady);
-
-// Toggle / Set Best Seller
 router.patch("/:id/best-seller", toggleBestSeller);
-
-// ✅ Toggle / Set Trending
 router.patch("/:id/trending", toggleTrending);
 
-// Update product colors + swatch images (multipart)
-// - colorsJson: JSON string of [{ name, hex, image }]
-// - swatchImages: files[] (same order as colorsJson)
+// ✅ NEW: primary / secondary toggle
+router.patch("/:id/primary-status", updatePrimaryProductStatus);
+
 router.patch(
   "/:id/colors",
   uploadSwatches.fields([{ name: "swatchImages", maxCount: 50 }]),
   updateProductColors
 );
 
-// Create product
 router.post("/", createProduct);
-
-// Update product
 router.patch("/:id", updateProduct);
 router.put("/:id", updateProduct);
-
-// Variant pattern number update
 router.patch("/:id/variant-pattern", updateVariantPatternNumber);
-
-// Delete product
 router.delete("/:id", deleteProduct);
 
 /* ===========================================================
-   FALLBACK (Slug OR ID) — MUST ALWAYS BE LAST
+   FALLBACK (Slug OR ID) — KEEP LAST
 =========================================================== */
 
 router.get("/:id", getProductByIdOrSlug);

@@ -188,8 +188,14 @@ const productSchema = new mongoose.Schema(
     reviews: [{ type: mongoose.Schema.Types.ObjectId, ref: "Review" }],
 
     /* OFFERS */
-    offer: { type: mongoose.Schema.Types.ObjectId, ref: "Offer", default: null },
-    couponsApplicable: [{ type: mongoose.Schema.Types.ObjectId, ref: "Coupon" }],
+    offer: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Offer",
+      default: null,
+    },
+    couponsApplicable: [
+      { type: mongoose.Schema.Types.ObjectId, ref: "Coupon" },
+    ],
 
     /* ANALYTICS */
     analytics: {
@@ -238,8 +244,15 @@ const productSchema = new mongoose.Schema(
     originalProductLink: { type: String, trim: true, default: "" },
 
     wordpressId: { type: Number, default: null },
+
+    // logic for primary vs secondary products (for discount offers etc)
+    isPrimaryProduct: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 /* ------------------------------------------------------------------
