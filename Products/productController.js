@@ -820,11 +820,15 @@ export const getAllProducts = async (req, res) => {
       minPrice,
       maxPrice,
       isActive,
+      isDraft,
+      isBestSeller,
+      isTrending,
+      isPrimaryProduct,
       search,
       sort,
       sku,
 
-      // ✅ optional aliases
+      // optional aliases
       q,
       title,
       productCode,
@@ -832,8 +836,9 @@ export const getAllProducts = async (req, res) => {
     } = req.query;
 
     const filters = {};
+    const toBool = (v) => String(v).trim().toLowerCase() === "true";
 
-    /* ---------------- categories (STRING ARRAY) ---------------- */
+    /* ---------------- categories ---------------- */
     if (category) {
       const cats = Array.isArray(category)
         ? category
@@ -842,25 +847,66 @@ export const getAllProducts = async (req, res) => {
             .map((c) => c.trim())
             .filter(Boolean);
 
-      if (cats.length) filters.categories = { $in: cats };
+      if (cats.length) {
+        filters.categories = { $in: cats };
+      }
     }
 
     /* ---------------- collections ---------------- */
-    if (collection) filters.collections = collection;
+    if (collection) {
+      const collections = Array.isArray(collection)
+        ? collection
+        : String(collection)
+            .split(",")
+            .map((c) => c.trim())
+            .filter(Boolean);
+
+      if (collections.length === 1) {
+        filters.collections = collections[0];
+      } else if (collections.length > 1) {
+        filters.collections = { $in: collections };
+      }
+    }
 
     /* ---------------- tags ---------------- */
     const t = tagsNorm(tags);
-    if (t.length) filters.tags = { $in: t };
+    if (t.length) {
+      filters.tags = { $in: t };
+    }
 
-    /* ---------------- active ---------------- */
-    if (isActive !== undefined) filters.isActive = isActive === "true";
+    /* ---------------- booleans ---------------- */
+    if (isActive !== undefined && String(isActive).trim() !== "") {
+      filters.isActive = toBool(isActive);
+    }
+
+    if (isDraft !== undefined && String(isDraft).trim() !== "") {
+      filters.isDraft = toBool(isDraft);
+    }
+
+    if (isBestSeller !== undefined && String(isBestSeller).trim() !== "") {
+      filters.isBestSeller = toBool(isBestSeller);
+    }
+
+    if (isTrending !== undefined && String(isTrending).trim() !== "") {
+      filters.isTrending = toBool(isTrending);
+    }
+
+    if (
+      isPrimaryProduct !== undefined &&
+      String(isPrimaryProduct).trim() !== ""
+    ) {
+      filters.isPrimaryProduct = toBool(isPrimaryProduct);
+    }
 
     /* ---------------- SKU exact ---------------- */
     if (sku) {
-      filters.$or = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
+      filters.$or = [
+        { sku: String(sku) },
+        { "variants.sku": String(sku) },
+      ];
     }
 
-    /* ---------------- ✅ productCode search (supports search/q/title too) ---------------- */
+    /* ---------------- productCode search ---------------- */
     applyProductCodeFilter(filters, { q, title, productCode, code, search });
 
     /* ---------------- price ---------------- */
@@ -870,14 +916,13 @@ export const getAllProducts = async (req, res) => {
       if (maxPrice) filters.price.$lte = Number(maxPrice);
     }
 
-    /* ---------------- ✅ $text search (ONLY when query is NOT numeric) ---------------- */
+    /* ---------------- text search ---------------- */
     const qStr = String(q ?? "").trim();
     const titleStr = String(title ?? "").trim();
     const searchStr = String(search ?? "").trim();
     const pcStr = String(productCode ?? "").trim();
     const codeStr = String(code ?? "").trim();
 
-    // if any param is numeric => it's a code-search, skip $text
     const isCodeQuery =
       isDigitsOnly(qStr) ||
       isDigitsOnly(titleStr) ||
@@ -887,11 +932,12 @@ export const getAllProducts = async (req, res) => {
 
     let searchText = "";
     if (!isCodeQuery) {
-      // prefer explicit "search", else fallback to q/title
       searchText = searchStr || qStr || titleStr;
     }
 
-    if (searchText) filters.$text = { $search: searchText };
+    if (searchText) {
+      filters.$text = { $search: searchText };
+    }
 
     /* ---------------- sorting ---------------- */
     const sortMap = {
@@ -902,8 +948,8 @@ export const getAllProducts = async (req, res) => {
       popularity: { "analytics.views": -1 },
     };
 
-const safeLimit = Math.min(5000, Math.max(1, Number(limit) || 20));
-    const safePage = Math.max(1, Number(page));
+    const safeLimit = Math.min(200, Math.max(1, Number(limit) || 20));
+    const safePage = Math.max(1, Number(page) || 1);
     const skip = (safePage - 1) * safeLimit;
     const sortObj = sortMap[sort] || { createdAt: -1 };
 
