@@ -1,6 +1,7 @@
 // Orders/orderAccountsController.js
 
 import Order from "./Orders.js";
+import { getStateCodeFromName } from "./stateCodeMap.js";
 
 const IST = "Asia/Kolkata";
 const MAX_LIMIT = 250;
@@ -260,6 +261,8 @@ const getResolvedCustomerNameExpr = () => ({
         $first: {
           $filter: {
             input: [
+              "$shippingAddressSnapshot.fullName",
+              "$billingAddressSnapshot.fullName",
               "$shippingAddress.fullName",
               "$shippingAddress.name",
               "$customer.name",
@@ -268,9 +271,9 @@ const getResolvedCustomerNameExpr = () => ({
                 $trim: {
                   input: {
                     $concat: [
-                      { $ifNull: ["$shippingAddress.firstName", ""] },
+                      { $ifNull: ["$shippingAddressSnapshot.firstName", ""] },
                       " ",
-                      { $ifNull: ["$shippingAddress.lastName", ""] },
+                      { $ifNull: ["$shippingAddressSnapshot.lastName", ""] },
                     ],
                   },
                 },
@@ -289,13 +292,22 @@ const getResolvedCustomerNameExpr = () => ({
             ],
             as: "name",
             cond: {
-              $gt: [{ $strLenCP: { $trim: { input: { $ifNull: ["$$name", ""] } } } }, 0],
+              $gt: [
+                {
+                  $strLenCP: {
+                    $trim: {
+                      input: { $ifNull: ["$$name", ""] },
+                    },
+                  },
+                },
+                0,
+              ],
             },
           },
         },
       },
     },
-    in: "$$firstNonEmpty",
+    in: { $ifNull: ["$$firstNonEmpty", ""] },
   },
 });
 
@@ -306,6 +318,8 @@ const getResolvedStateExpr = () => ({
         $first: {
           $filter: {
             input: [
+              "$shippingAddressSnapshot.state",
+              "$billingAddressSnapshot.state",
               "$shippingAddress.state",
               "$address.state",
               "$billingAddress.state",
@@ -313,7 +327,13 @@ const getResolvedStateExpr = () => ({
             as: "state",
             cond: {
               $gt: [
-                { $strLenCP: { $trim: { input: { $ifNull: ["$$state", ""] } } } },
+                {
+                  $strLenCP: {
+                    $trim: {
+                      input: { $ifNull: ["$$state", ""] },
+                    },
+                  },
+                },
                 0,
               ],
             },
@@ -321,7 +341,7 @@ const getResolvedStateExpr = () => ({
         },
       },
     },
-    in: "$$firstNonEmpty",
+    in: { $ifNull: ["$$firstNonEmpty", ""] },
   },
 });
 
@@ -645,6 +665,46 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
   return pipeline;
 };
 
+
+
+const getLedgerCourierExpr = () => ({
+  $let: {
+    vars: {
+      firstNonEmpty: {
+        $first: {
+          $filter: {
+            input: [
+              "$shipment.shiprocket.courierName",
+              "$shipment.xpressbees.courierName",
+              "$trackingDetails.courierName",
+              "$shipment.courierName",
+              "$shipment.awbData.courier_name",
+              "$shipment.shiprocket.courier_name",
+              "$courierName",
+            ],
+            as: "courier",
+            cond: {
+              $gt: [
+                {
+                  $strLenCP: {
+                    $trim: {
+                      input: { $ifNull: ["$$courier", ""] },
+                    },
+                  },
+                },
+                0,
+              ],
+            },
+          },
+        },
+      },
+    },
+    in: { $ifNull: ["$$firstNonEmpty", ""] },
+  },
+});
+
+
+
 const buildSalesResponse = async ({
   month,
   search,
@@ -769,6 +829,538 @@ const buildSalesResponse = async ({
   };
 };
 
+
+
+/* =========================================================
+   SALES LEDGER REPORT
+   GET /api/orders/accounts/sales-ledger
+========================================================= */
+
+const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => {
+  const pipeline = [
+    {
+      $addFields: {
+        deliveredAtResolved: {
+          $ifNull: [
+            "$shipment.deliveredAt",
+            {
+              $ifNull: [
+                "$trackingDetails.deliveredAt",
+                {
+                  $ifNull: [
+                    "$shipment.shiprocket.deliveredAt",
+                    {
+                      $ifNull: [
+                        "$shipment.shiprocket.delivered_date",
+                        {
+                          $ifNull: ["$statusTimestamps.deliveredAt", "$deliveredAt"],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        orderDateResolved: {
+          $ifNull: ["$orderDate", { $ifNull: ["$createdAt", "$updatedAt"] }],
+        },
+      },
+    },
+    {
+      $match: {
+        paymentMethod: { $ne: "exchange" },
+        paymentStatus: { $nin: ["failed", "refunded", "refund_pending"] },
+        fulfillmentStatus: "delivered",
+        deliveredAtResolved: { $ne: null },
+      },
+    },
+  ];
+
+  if (month) {
+    const range = getMonthRangeUTCFromISTMonth(month);
+    if (range) {
+      pipeline.push({
+        $match: {
+          deliveredAtResolved: { $gte: range.startUTC, $lt: range.endUTC },
+        },
+      });
+    }
+  }
+
+  if (startDate || endDate) {
+    const deliveredDateMatch = {};
+    if (startDate) deliveredDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
+    if (endDate) deliveredDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
+
+    pipeline.push({
+      $match: { deliveredAtResolved: deliveredDateMatch },
+    });
+  }
+
+  pipeline.push(
+    {
+      $addFields: {
+        customerNameResolved: getResolvedCustomerNameExpr(),
+        customerStateResolved: getResolvedStateExpr(),
+        courierNameResolved: getLedgerCourierExpr(),
+        orderDiscountResolved: { $toDouble: { $ifNull: ["$discount", 0] } },
+        orderShippingResolved: { $toDouble: { $ifNull: ["$shippingFee", 0] } },
+        orderSubtotalResolved: {
+          $let: {
+            vars: {
+              itemsArray: {
+                $cond: [{ $isArray: "$items" }, "$items", []],
+              },
+            },
+            in: {
+              $ifNull: [
+                "$subtotal",
+                {
+                  $sum: {
+                    $map: {
+                      input: "$$itemsArray",
+                      as: "it",
+                      in: {
+                        $multiply: [
+                          {
+                            $toDouble: {
+                              $ifNull: [
+                                "$$it.finalPrice",
+                                {
+                                  $ifNull: [
+                                    "$$it.price",
+                                    {
+                                      $ifNull: [
+                                        "$$it.sellingPrice",
+                                        {
+                                          $ifNull: ["$$it.unitPrice", "$$it.mrp"],
+                                        },
+                                      ],
+                                    },
+                                  ],
+                                },
+                              ],
+                            },
+                          },
+                          {
+                            $max: [1, { $toDouble: { $ifNull: ["$$it.quantity", 1] } }],
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+    {
+      $unwind: {
+        path: "$items",
+        preserveNullAndEmptyArrays: false,
+      },
+    },
+    {
+      $addFields: {
+        itemQty: {
+          $max: [1, { $toDouble: { $ifNull: ["$items.quantity", 1] } }],
+        },
+        itemSize: {
+          $ifNull: [
+            "$items.selectedSize",
+            {
+              $ifNull: ["$items.size", "$items.variant.size"],
+            },
+          ],
+        },
+        itemHsn: {
+          $ifNull: [
+            "$items.productSnapshot.hsnCode",
+            {
+              $ifNull: [
+                "$items.hsnCode",
+                {
+                  $ifNull: [
+                    "$items.hsn",
+                    {
+                      $ifNull: ["$items.taxInfo.hsnCode", DEFAULT_HSN],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        itemProductType: {
+          $ifNull: [
+            "$items.productSnapshot.productType",
+            {
+              $ifNull: ["$items.productModel", "Product"],
+            },
+          ],
+        },
+        itemPriceIncl: {
+          $toDouble: {
+            $ifNull: [
+              "$items.finalPrice",
+              {
+                $ifNull: [
+                  "$items.price",
+                  {
+                    $ifNull: [
+                      "$items.sellingPrice",
+                      {
+                        $ifNull: ["$items.unitPrice", "$items.mrp"],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    },
+    {
+      $addFields: {
+        itemGrossIncl: {
+          $multiply: ["$itemQty", { $ifNull: ["$itemPriceIncl", 0] }],
+        },
+      },
+    },
+    {
+      $addFields: {
+        totalDiscount: {
+          $cond: [
+            { $gt: ["$orderSubtotalResolved", 0] },
+            {
+              $multiply: [
+                { $divide: ["$itemGrossIncl", "$orderSubtotalResolved"] },
+                "$orderDiscountResolved",
+              ],
+            },
+            0,
+          ],
+        },
+        shippingCharges: {
+          $cond: [
+            { $gt: ["$orderSubtotalResolved", 0] },
+            {
+              $multiply: [
+                { $divide: ["$itemGrossIncl", "$orderSubtotalResolved"] },
+                "$orderShippingResolved",
+              ],
+            },
+            0,
+          ],
+        },
+      },
+    },
+    {
+      $addFields: {
+        netInclusive: {
+          $max: [
+            0,
+            {
+              $subtract: [
+                { $add: ["$itemGrossIncl", "$shippingCharges"] },
+                "$totalDiscount",
+              ],
+            },
+          ],
+        },
+      },
+    },
+    {
+      $addFields: {
+        taxable: {
+          $divide: ["$netInclusive", 1 + SALES_TAX_RATE],
+        },
+        taxAmount: {
+          $subtract: [
+            "$netInclusive",
+            {
+              $divide: ["$netInclusive", 1 + SALES_TAX_RATE],
+            },
+          ],
+        },
+        taxRate: { $literal: "5%" },
+        paymentType: {
+          $cond: [{ $eq: ["$paymentMethod", "cod"] }, "COD", "Prepaid"],
+        },
+      },
+    }
+  );
+
+  if (search) {
+    const rx = escapeRegex(search);
+    pipeline.push({
+      $match: {
+        $or: [
+          { orderNumber: { $regex: rx, $options: "i" } },
+          { customerNameResolved: { $regex: rx, $options: "i" } },
+          { customerStateResolved: { $regex: rx, $options: "i" } },
+          { courierNameResolved: { $regex: rx, $options: "i" } },
+          { itemProductType: { $regex: rx, $options: "i" } },
+          { itemHsn: { $regex: rx, $options: "i" } },
+          { itemSize: { $regex: rx, $options: "i" } },
+          { paymentMethod: { $regex: rx, $options: "i" } },
+        ],
+      },
+    });
+  }
+
+  return pipeline;
+};
+
+const buildSalesLedgerResponse = async ({
+  month,
+  search,
+  startDate,
+  endDate,
+  page,
+  limit,
+}) => {
+  const skip = (page - 1) * limit;
+  const pipeline = buildSalesLedgerBasePipeline({
+    month,
+    search,
+    startDate,
+    endDate,
+  });
+
+  const [countAgg, rowsAgg, totalsAgg] = await Promise.all([
+    Order.aggregate([...pipeline, { $count: "total" }]),
+
+    Order.aggregate([
+      ...pipeline,
+      { $sort: { deliveredAtResolved: -1, orderDateResolved: -1, _id: -1 } },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $project: {
+          _id: 0,
+          orderId: "$orderNumber",
+          orderDate: "$orderDateResolved",
+          deliveredDate: "$deliveredAtResolved",
+          customerName: { $ifNull: ["$customerNameResolved", ""] },
+          state: { $ifNull: ["$customerStateResolved", ""] },
+          paymentType: { $ifNull: ["$paymentType", ""] },
+          courier: { $ifNull: ["$courierNameResolved", ""] },
+          productType: { $ifNull: ["$itemProductType", "Product"] },
+          hsnCode: { $ifNull: ["$itemHsn", DEFAULT_HSN] },
+          size: { $ifNull: ["$itemSize", ""] },
+          qty: { $ifNull: ["$itemQty", 1] },
+          unitInclusiveTax: { $ifNull: ["$itemPriceIncl", 0] },
+          totalDiscount: { $ifNull: ["$totalDiscount", 0] },
+          netInclusive: { $ifNull: ["$netInclusive", 0] },
+          taxable: { $ifNull: ["$taxable", 0] },
+          shippingCharges: { $ifNull: ["$shippingCharges", 0] },
+          taxAmount: { $ifNull: ["$taxAmount", 0] },
+          taxRate: { $ifNull: ["$taxRate", "5%"] },
+        },
+      },
+    ]),
+
+    Order.aggregate([
+      ...pipeline,
+      {
+        $group: {
+          _id: null,
+          rows: { $sum: 1 },
+          ordersSet: { $addToSet: "$_id" },
+          totalDiscount: { $sum: { $ifNull: ["$totalDiscount", 0] } },
+          netInclusive: { $sum: { $ifNull: ["$netInclusive", 0] } },
+          taxable: { $sum: { $ifNull: ["$taxable", 0] } },
+          shippingCharges: { $sum: { $ifNull: ["$shippingCharges", 0] } },
+          taxAmount: { $sum: { $ifNull: ["$taxAmount", 0] } },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          rows: 1,
+          orders: { $size: { $ifNull: ["$ordersSet", []] } },
+          totalDiscount: 1,
+          netInclusive: 1,
+          taxable: 1,
+          shippingCharges: 1,
+          taxAmount: 1,
+        },
+      },
+    ]),
+  ]);
+
+  const totalRows = toNum(countAgg?.[0]?.total, 0);
+  const totalPages = Math.max(1, Math.ceil(totalRows / limit));
+  const totalsDoc = totalsAgg?.[0] || {};
+
+  const rows = Array.isArray(rowsAgg)
+    ? rowsAgg.map((row) => ({
+        ...row,
+        qty: toNum(row?.qty, 0),
+        unitInclusiveTax: money(row?.unitInclusiveTax),
+        totalDiscount: money(row?.totalDiscount),
+        netInclusive: money(row?.netInclusive),
+        taxable: money(row?.taxable),
+        shippingCharges: money(row?.shippingCharges),
+        taxAmount: money(row?.taxAmount),
+      }))
+    : [];
+
+  return {
+    success: true,
+    rows,
+    totals: {
+      rows: toNum(totalsDoc.rows, 0),
+      orders: toNum(totalsDoc.orders, 0),
+      totalDiscount: money(totalsDoc.totalDiscount),
+      netInclusive: money(totalsDoc.netInclusive),
+      taxable: money(totalsDoc.taxable),
+      shippingCharges: money(totalsDoc.shippingCharges),
+      taxAmount: money(totalsDoc.taxAmount),
+    },
+    meta: {
+      page,
+      limit,
+      totalRows,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1,
+      month,
+      search,
+      startDate,
+      endDate,
+    },
+  };
+};
+
+export const getSalesLedgerReport = async (req, res) => {
+  try {
+    const month = String(req.query.month || "").trim();
+    const search = String(req.query.search || "").trim();
+    const startDate = String(req.query.startDate || "").trim();
+    const endDate = String(req.query.endDate || "").trim();
+
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
+    const limit = Math.min(
+      MAX_LIMIT,
+      Math.max(1, parseInt(String(req.query.limit || "100"), 10) || 100)
+    );
+
+    const data = await buildSalesLedgerResponse({
+      month,
+      search,
+      startDate,
+      endDate,
+      page,
+      limit,
+    });
+
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error("getSalesLedgerReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch sales ledger report",
+      error: error?.message || "Server error",
+    });
+  }
+};
+
+export const downloadSalesLedgerCsv = async (req, res) => {
+  try {
+    const month = String(req.query.month || "").trim();
+    const search = String(req.query.search || "").trim();
+    const startDate = String(req.query.startDate || "").trim();
+    const endDate = String(req.query.endDate || "").trim();
+
+    const data = await buildSalesLedgerResponse({
+      month,
+      search,
+      startDate,
+      endDate,
+      page: 1,
+      limit: MAX_LIMIT,
+    });
+
+    const rows = Array.isArray(data?.rows) ? data.rows : [];
+
+    const header = [
+      "Order ID",
+      "Order Date",
+      "Delivered Date",
+      "Customer Name",
+      "State",
+      "Payment Type",
+      "Courier",
+      "Product Type",
+      "HSN Code",
+      "Size",
+      "Qty",
+      "Unit (Inclusive Tax)",
+      "T. Discount",
+      "Net (Inclusive)",
+      "Taxable",
+      "Shipping Charges",
+      "Tax Amount",
+      "Tax Rate",
+    ];
+
+    const escapeCsv = (value) => {
+      const str = String(value ?? "");
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    const csv = [
+      header.join(","),
+      ...rows.map((row) =>
+        [
+          row.orderId,
+          row.orderDate,
+          row.deliveredDate,
+          row.customerName,
+          row.state,
+          row.paymentType,
+          row.courier,
+          row.productType,
+          row.hsnCode,
+          row.size,
+          row.qty,
+          row.unitInclusiveTax,
+          row.totalDiscount,
+          row.netInclusive,
+          row.taxable,
+          row.shippingCharges,
+          row.taxAmount,
+          row.taxRate,
+        ]
+          .map(escapeCsv)
+          .join(",")
+      ),
+    ].join("\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=sales-ledger-${month || "all"}.csv`
+    );
+
+    return res.status(200).send(csv);
+  } catch (error) {
+    console.error("downloadSalesLedgerCsv error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to download sales ledger csv",
+      error: error?.message || "Server error",
+    });
+  }
+};
+
 /* =========================================================
    REVENUE REPORT
    GET /api/orders/accounts/revenue-report
@@ -842,3 +1434,152 @@ export const getSalesReport = async (req, res) => {
     });
   }
 };
+
+
+
+/* =========================================================
+   GST REPORT (UPDATED - GROUP BY STATE CODE)
+========================================================= */
+
+export const getGSTReport = async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(250, Math.max(1, Number(req.query.limit || 50)));
+    const skip = (page - 1) * limit;
+
+    const { month, search, startDate, endDate } = req.query;
+
+    const base = buildSalesBasePipeline({
+      month,
+      search,
+      startDate,
+      endDate,
+    });
+
+    const pipeline = [
+      ...base,
+
+      /* -----------------------------
+         NORMALIZE STATE
+      ------------------------------ */
+      {
+        $addFields: {
+          stateNormalized: {
+            $toUpper: {
+              $trim: {
+                input: { $ifNull: ["$customerStateResolved", "UNKNOWN"] },
+              },
+            },
+          },
+        },
+      },
+
+      /* -----------------------------
+         GROUP TEMP (by state name first)
+      ------------------------------ */
+      {
+        $group: {
+          _id: "$stateNormalized",
+          taxableValue: { $sum: { $ifNull: ["$taxableValue", 0] } },
+          taxAmount: { $sum: { $ifNull: ["$taxAmount", 0] } },
+          orders: { $addToSet: "$orderNumber" },
+        },
+      },
+
+      {
+        $project: {
+          _id: 0,
+          stateName: "$_id",
+          taxableValue: { $round: ["$taxableValue", 2] },
+          taxAmount: { $round: ["$taxAmount", 2] },
+          totalOrders: { $size: "$orders" },
+        },
+      },
+    ];
+
+    /* -----------------------------
+       RUN AGG
+    ------------------------------ */
+    const rawRows = await Order.aggregate(pipeline);
+
+    /* -----------------------------
+       FINAL MERGE BY STATE CODE
+    ------------------------------ */
+    const map = {};
+
+    rawRows.forEach((row) => {
+      const code = getStateCodeFromName(row.stateName) || "NA";
+
+      if (!map[code]) {
+        map[code] = {
+          stateCode: code,
+          stateName: row.stateName,
+          taxableValue: 0,
+          taxAmount: 0,
+          totalOrders: 0,
+          taxRate: "5%",
+        };
+      }
+
+      map[code].taxableValue += Number(row.taxableValue || 0);
+      map[code].taxAmount += Number(row.taxAmount || 0);
+      map[code].totalOrders += Number(row.totalOrders || 0);
+    });
+
+    const rowsAll = Object.values(map).map((r) => ({
+      ...r,
+      taxableValue: Number(r.taxableValue.toFixed(2)),
+      taxAmount: Number(r.taxAmount.toFixed(2)),
+    }));
+
+    /* -----------------------------
+       PAGINATION
+    ------------------------------ */
+    const total = rowsAll.length;
+    const paginated = rowsAll.slice(skip, skip + limit);
+
+    /* -----------------------------
+       SUMMARY
+    ------------------------------ */
+    const summary = rowsAll.reduce(
+      (acc, row) => {
+        acc.taxableValue += row.taxableValue;
+        acc.taxAmount += row.taxAmount;
+        acc.totalOrders += row.totalOrders;
+        return acc;
+      },
+      {
+        taxableValue: 0,
+        taxAmount: 0,
+        totalOrders: 0,
+        totalStates: rowsAll.length,
+        taxRate: "5%",
+      }
+    );
+
+    return res.json({
+      success: true,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+        hasPrevPage: page > 1,
+      },
+      summary: {
+        ...summary,
+        taxableValue: Number(summary.taxableValue.toFixed(2)),
+        taxAmount: Number(summary.taxAmount.toFixed(2)),
+      },
+      rows: paginated,
+    });
+  } catch (err) {
+    console.error("GST REPORT ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch GST report",
+    });
+  }
+};
+

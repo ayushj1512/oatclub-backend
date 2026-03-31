@@ -19,6 +19,7 @@ import {
   lookupOrdersByIdentity,
   getProductOrderCount,
   searchProductOrderNumbers,
+  findOrdersByStateAndPincode ,
 } from "./orderController.js";
 
 import {
@@ -30,6 +31,9 @@ import {
 import {
   getSalesReport,
   getRevenueReport,
+  getSalesLedgerReport,
+  downloadSalesLedgerCsv,
+  getGSTReport,
 } from "./orderAccountsController.js";
 
 import {
@@ -82,6 +86,9 @@ router.get("/analytics/summary", getOrderAnalytics);
 
 /* Accounts / Reports */
 router.get("/accounts/sales-report", getSalesReport);
+router.get("/accounts/gst-report", getGSTReport);
+router.get("/accounts/sales-ledger", getSalesLedgerReport);
+router.get("/accounts/sales-ledger/csv", downloadSalesLedgerCsv);
 router.get("/accounts/sales-report/products", getProductSalesReport);
 router.get("/accounts/sales-report/products/low-selling", getLowSellingProducts);
 router.get("/accounts/sales-report/products/unsold", getUnsoldProducts);
@@ -130,5 +137,8 @@ router.patch("/:id/address", updateOrderAddress);
 router.patch("/:id", updateOrder);
 router.put("/:id", updateOrder);
 router.get("/:id", getOrderById);
+
+//location based search
+router.get("/location/search", findOrdersByStateAndPincode);
 
 export default router;

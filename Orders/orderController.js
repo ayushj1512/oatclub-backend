@@ -3185,3 +3185,170 @@ export const searchProductOrderNumbers = async (req, res) => {
     });
   }
 };
+
+
+
+/* ------------------------------------------------------------------
+   GET /api/orders/location/search?state=Delhi&pincode=110019&page=1&limit=50
+   - state only
+   - pincode only
+   - dono saath
+   - shipping + billing dono me match karega
+------------------------------------------------------------------- */
+
+
+const safe = (v) => String(v ?? "").trim();
+
+const parseIntSafe = (v, d) => {
+  const n = parseInt(String(v ?? ""), 10);
+  return Number.isFinite(n) && n > 0 ? n : d;
+};
+
+const escapeRegex = (s = "") =>
+  String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const rx = (v) => new RegExp(`^${escapeRegex(safe(v))}$`, "i");
+
+
+export const findOrdersByStateAndPincode = async (req, res) => {
+  try {
+    const {
+      state = "",
+      pincode = "",
+      page = 1,
+      limit = 50,
+      fulfillmentStatus = "",
+      paymentMethod = "",
+      isConfirmed,
+      search = "",
+    } = req.query;
+
+    const pageNum = parseIntSafe(page, 1);
+    const limitNum = Math.min(parseIntSafe(limit, 50), 500);
+    const skip = (pageNum - 1) * limitNum;
+
+    const filters = {};
+
+    /* ---------------- state / pincode filters ---------------- */
+    const locationAnd = [];
+
+    if (safe(state)) {
+      locationAnd.push({
+        $or: [
+          { "shippingAddressSnapshot.state": rx(state) },
+          { "billingAddressSnapshot.state": rx(state) },
+        ],
+      });
+    }
+
+    if (safe(pincode)) {
+      locationAnd.push({
+        $or: [
+          { "shippingAddressSnapshot.pincode": safe(pincode) },
+          { "billingAddressSnapshot.pincode": safe(pincode) },
+        ],
+      });
+    }
+
+    if (locationAnd.length) {
+      filters.$and = locationAnd;
+    }
+
+    /* ---------------- optional extra filters ---------------- */
+    if (safe(fulfillmentStatus)) {
+      filters.fulfillmentStatus = safe(fulfillmentStatus).toLowerCase();
+    }
+
+    if (safe(paymentMethod)) {
+      filters.paymentMethod = safe(paymentMethod).toLowerCase();
+    }
+
+    if (isConfirmed !== undefined && String(isConfirmed).trim() !== "") {
+      const val = String(isConfirmed).trim().toLowerCase();
+      filters.isConfirmed = ["true", "1", "yes"].includes(val);
+    }
+
+    /* ---------------- optional text search ---------------- */
+    if (safe(search)) {
+      const searchRegex = new RegExp(escapeRegex(search), "i");
+
+      filters.$and = [
+        ...(filters.$and || []),
+        {
+          $or: [
+            { orderNumber: searchRegex },
+            { "shippingAddressSnapshot.fullName": searchRegex },
+            { "shippingAddressSnapshot.phone": searchRegex },
+            { "shippingAddressSnapshot.email": searchRegex },
+            { "shippingAddressSnapshot.city": searchRegex },
+            { "shippingAddressSnapshot.state": searchRegex },
+            { "shippingAddressSnapshot.pincode": searchRegex },
+            { "billingAddressSnapshot.fullName": searchRegex },
+            { "billingAddressSnapshot.phone": searchRegex },
+            { "billingAddressSnapshot.email": searchRegex },
+            { "billingAddressSnapshot.city": searchRegex },
+            { "billingAddressSnapshot.state": searchRegex },
+            { "billingAddressSnapshot.pincode": searchRegex },
+          ],
+        },
+      ];
+    }
+
+    const [orders, total] = await Promise.all([
+      Order.find(filters)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .select({
+          orderNumber: 1,
+          createdAt: 1,
+          customerId: 1,
+          shippingAddressSnapshot: 1,
+          billingAddressSnapshot: 1,
+          paymentMethod: 1,
+          paymentStatus: 1,
+          fulfillmentStatus: 1,
+          isConfirmed: 1,
+          finalPayable: 1,
+          totalAmount: 1,
+          items: 1,
+        })
+        .populate("customerId", "name email phone")
+        .lean(),
+
+      Order.countDocuments(filters),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: "Orders fetched successfully",
+      filters: {
+        state: safe(state),
+        pincode: safe(pincode),
+        fulfillmentStatus: safe(fulfillmentStatus),
+        paymentMethod: safe(paymentMethod),
+        isConfirmed:
+          isConfirmed !== undefined && String(isConfirmed).trim() !== ""
+            ? filters.isConfirmed
+            : undefined,
+        search: safe(search),
+      },
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limitNum)),
+        hasNextPage: skip + orders.length < total,
+        hasPrevPage: pageNum > 1,
+      },
+      orders,
+    });
+  } catch (error) {
+    console.error("findOrdersByStateAndPincode error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch orders by state/pincode",
+      error: error.message,
+    });
+  }
+};
