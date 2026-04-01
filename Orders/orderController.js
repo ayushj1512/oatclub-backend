@@ -26,6 +26,11 @@ import {
 
 import { reserveInventoryForOrderNumberInternal } from "../InventoryReservation/inventoryWebhook.js";
 
+import {
+  detectDuplicateOrders,
+  markDuplicateOrderAlerts,
+} from "./order.duplicate.utils.js";
+
 // ⚠️ path tumhare project ke hisaab se adjust kar lena
 
 const isParentOrder = (order) => String(order?.orderType || "").toLowerCase() === "parent";
@@ -3348,6 +3353,45 @@ export const findOrdersByStateAndPincode = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch orders by state/pincode",
+      error: error.message,
+    });
+  }
+};
+
+
+export const getDuplicateOrderAlerts = async (req, res) => {
+  try {
+    const result = await detectDuplicateOrders();
+
+    return res.status(200).json({
+      ok: true,
+      message: "Duplicate order scan completed",
+      ...result,
+    });
+  } catch (error) {
+    console.error("getDuplicateOrderAlerts error:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to detect duplicate orders",
+      error: error.message,
+    });
+  }
+};
+
+export const markDuplicateOrderAlertsController = async (req, res) => {
+  try {
+    const result = await markDuplicateOrderAlerts();
+
+    return res.status(200).json({
+      ok: true,
+      message: "Duplicate alerts marked successfully",
+      ...result,
+    });
+  } catch (error) {
+    console.error("markDuplicateOrderAlertsController error:", error);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to mark duplicate order alerts",
       error: error.message,
     });
   }

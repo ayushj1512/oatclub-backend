@@ -19,7 +19,9 @@ import {
   lookupOrdersByIdentity,
   getProductOrderCount,
   searchProductOrderNumbers,
-  findOrdersByStateAndPincode ,
+  findOrdersByStateAndPincode,
+  getDuplicateOrderAlerts,
+  markDuplicateOrderAlertsController,
 } from "./orderController.js";
 
 import {
@@ -83,6 +85,9 @@ router.get("/product-order-search", searchProductOrderNumbers);
 router.get("/customer-support", getCustomerSupportOrders);
 router.get("/customer-support/:id", getCustomerSupportOrderDetail);
 router.get("/analytics/summary", getOrderAnalytics);
+router.get("/duplicate-alerts", getDuplicateOrderAlerts);
+router.post("/duplicate-alerts/mark", markDuplicateOrderAlertsController);
+router.get("/location/search", findOrdersByStateAndPincode);
 
 /* Accounts / Reports */
 router.get("/accounts/sales-report", getSalesReport);
@@ -137,8 +142,5 @@ router.patch("/:id/address", updateOrderAddress);
 router.patch("/:id", updateOrder);
 router.put("/:id", updateOrder);
 router.get("/:id", getOrderById);
-
-//location based search
-router.get("/location/search", findOrdersByStateAndPincode);
 
 export default router;

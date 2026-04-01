@@ -47,6 +47,7 @@ import metaAdsRoutes from "./MetaAds/MetaAdsRoutes.js";
 import remittanceRoutes from "./Remittance/RemiitanceRouter.js";
 import commerceManagerRoutes from "./CommerceManager/CommerceManagerRoutes.js";
 import commerceFeed from "./routes/commerceManagerFeed.js";
+import influencerProgramRoutes from "./InfluencerProgram/InfluencerProgramRoutes.js";
 
 
 // --------------------------------------------------
@@ -298,7 +299,8 @@ app.use("/api/abandoned-carts", abandonedCartRoutes);
 // Meta Ads
 app.use("/api/meta-ads", metaAdsRoutes);
 
-// commerce feed
+// influencer program
+app.use("/api/influencer-program", influencerProgramRoutes);
 
 // Superadmin
 app.use("/superadmin", superadminRoutes);
