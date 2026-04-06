@@ -606,3 +606,67 @@ export async function syncShiprocketTrackingFlex(req, res) {
     });
   }
 }
+
+
+
+/**
+ * GET /api/shiprocket/serviceability
+ * Check courier serviceability between pincodes
+ */
+export async function checkShiprocketServiceabilityApi(req, res) {
+  try {
+    const {
+      pickupPincode,
+      deliveryPincode,
+      weight = 0.5,
+      cod = false,
+    } = req.query;
+
+    /* ------------------------------------------------
+       1️⃣ VALIDATIONS
+    ------------------------------------------------ */
+    if (!pickupPincode || !deliveryPincode) {
+      return res.status(400).json({
+        success: false,
+        message: "pickupPincode and deliveryPincode are required",
+      });
+    }
+
+    /* ------------------------------------------------
+       2️⃣ CALL SERVICE
+    ------------------------------------------------ */
+    const couriers = await checkServiceability({
+      pickupPincode,
+      deliveryPincode,
+      weight,
+      cod,
+    });
+
+    /* ------------------------------------------------
+       3️⃣ RESPONSE CLEANUP (VERY IMPORTANT)
+       keep only useful fields for frontend/admin
+    ------------------------------------------------ */
+    const cleaned = (couriers || []).map((c) => ({
+      courier_name: c.courier_name,
+      courier_company_id: c.courier_company_id,
+      freight_charge: c.freight_charge,
+      cod_charges: c.cod_charges,
+      etd: c.etd,
+      rating: c.rating,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      total: cleaned.length,
+      couriers: cleaned,
+    });
+  } catch (err) {
+    console.error("❌ Serviceability API Error:", err?.response?.data || err.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to check serviceability",
+      error: err?.response?.data || err.message,
+    });
+  }
+}
