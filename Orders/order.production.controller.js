@@ -1109,3 +1109,371 @@ export const getProductionSummary = async (req, res) => {
     });
   }
 };
+
+
+/* ============================================================
+   ✅ PROCESSING ORDER PRODUCT LIST
+   logic:
+   - order.fulfillmentStatus = processing
+   - orderType != parent
+   - paymentStatus != failed
+   - grouped product-code wise
+============================================================ */
+export const getProcessingOrderProductList = async (req, res) => {
+  try {
+    const {
+      q = "",
+      from,
+      to,
+      page = 1,
+      limit = 50,
+      sort = "qty_desc",
+      all,
+    } = req.query;
+
+    const search = String(q || "").trim();
+    const wantsAll = parseBool(all) || String(limit) === "0";
+
+    const pageNum = parseIntSafe(page, 1);
+    const limitNum = Math.min(parseIntSafe(limit, 50), 5000);
+    const skip = (pageNum - 1) * limitNum;
+
+    const dateRange = buildDateRangeIST(from, to);
+
+    const baseMatch = {
+      fulfillmentStatus: "processing",
+      paymentStatus: { $ne: "failed" },
+      orderType: { $ne: "parent" },
+    };
+
+    if (dateRange) {
+      baseMatch.orderDate = dateRange;
+    }
+
+    const searchStages = search
+      ? [
+          {
+            $match: {
+              $or: [
+                { orderNumber: new RegExp(escapeRegex(search), "i") },
+                { "items.productSnapshot.productCode": new RegExp(escapeRegex(search), "i") },
+                { "items.productSnapshot.title": new RegExp(escapeRegex(search), "i") },
+                { "items.variant.sku": new RegExp(escapeRegex(search), "i") },
+                { "items.selectedSize": new RegExp(escapeRegex(search), "i") },
+                { "items.selectedColor": new RegExp(escapeRegex(search), "i") },
+              ],
+            },
+          },
+        ]
+      : [];
+
+    const sortStage = (() => {
+      switch (String(sort || "").trim()) {
+        case "qty_asc":
+          return { totalQty: 1, productCode: 1 };
+        case "sku_asc":
+          return { sku: 1 };
+        case "sku_desc":
+          return { sku: -1 };
+        case "title_asc":
+          return { productTitle: 1, sku: 1 };
+        case "title_desc":
+          return { productTitle: -1, sku: 1 };
+        case "orders_desc":
+          return { ordersCount: -1, totalQty: -1, productCode: 1 };
+        case "orders_asc":
+          return { ordersCount: 1, totalQty: 1, productCode: 1 };
+        case "qty_desc":
+        default:
+          return { totalQty: -1, productCode: 1 };
+      }
+    })();
+
+    const pipeline = [
+      { $match: baseMatch },
+      ...searchStages,
+
+      {
+        $lookup: {
+          from: "inventoryreservations",
+          let: { orderId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$refType", "order"] },
+                    { $eq: ["$refId", "$$orderId"] },
+                    { $eq: ["$status", "reserved"] },
+                  ],
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                qty: 1,
+                productId: 1,
+                variantId: 1,
+                productCode: 1,
+                variantSku: 1,
+                selectedSize: 1,
+                selectedColor: 1,
+              },
+            },
+          ],
+          as: "reservedReservations",
+        },
+      },
+
+      { $unwind: "$items" },
+
+      {
+        $addFields: {
+          productCode: { $ifNull: ["$items.productSnapshot.productCode", ""] },
+          productTitle: { $ifNull: ["$items.productSnapshot.title", ""] },
+          productImage: { $ifNull: ["$items.productSnapshot.thumbnail", ""] },
+          sku: {
+            $cond: [
+              {
+                $gt: [
+                  { $strLenCP: { $ifNull: ["$items.variant.sku", ""] } },
+                  0,
+                ],
+              },
+              "$items.variant.sku",
+              "$items.productSnapshot.productCode",
+            ],
+          },
+          selectedSize: { $ifNull: ["$items.selectedSize", ""] },
+          selectedColor: { $ifNull: ["$items.selectedColor", ""] },
+          orderedQty: { $ifNull: ["$items.quantity", 0] },
+          productModel: "$items.productModel",
+          productId: "$items.productId",
+
+          matchedReservedReservations: {
+            $filter: {
+              input: "$reservedReservations",
+              as: "res",
+              cond: {
+                $and: [
+                  {
+                    $eq: [
+                      { $ifNull: ["$$res.productCode", ""] },
+                      { $ifNull: ["$items.productSnapshot.productCode", ""] },
+                    ],
+                  },
+                  {
+                    $eq: [
+                      { $ifNull: ["$$res.variantSku", ""] },
+                      { $ifNull: ["$items.variant.sku", ""] },
+                    ],
+                  },
+                  {
+                    $eq: [
+                      { $ifNull: ["$$res.selectedSize", ""] },
+                      { $ifNull: ["$items.selectedSize", ""] },
+                    ],
+                  },
+                  {
+                    $eq: [
+                      { $ifNull: ["$$res.selectedColor", ""] },
+                      { $ifNull: ["$items.selectedColor", ""] },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+
+      {
+        $addFields: {
+          reservedQty: {
+            $sum: {
+              $map: {
+                input: "$matchedReservedReservations",
+                as: "r",
+                in: { $ifNull: ["$$r.qty", 0] },
+              },
+            },
+          },
+        },
+      },
+
+      {
+        $addFields: {
+          qty: {
+            $max: [
+              {
+                $subtract: ["$orderedQty", "$reservedQty"],
+              },
+              0,
+            ],
+          },
+        },
+      },
+
+      {
+        $match: {
+          qty: { $gt: 0 },
+        },
+      },
+
+      {
+        $group: {
+          _id: {
+            productCode: "$productCode",
+          },
+          sku: { $first: "$sku" },
+          productCode: { $first: "$productCode" },
+          productTitle: { $first: "$productTitle" },
+          productImage: { $first: "$productImage" },
+          productModel: { $first: "$productModel" },
+          productId: { $first: "$productId" },
+
+          totalOrderedQty: { $sum: "$orderedQty" },
+          totalReservedQty: { $sum: "$reservedQty" },
+          totalQty: { $sum: "$qty" },
+
+          orderIds: { $addToSet: "$_id" },
+          orderNumbers: { $addToSet: "$orderNumber" },
+
+          sizes: {
+            $push: {
+              size: "$selectedSize",
+              qty: "$qty",
+            },
+          },
+          colors: {
+            $push: {
+              color: "$selectedColor",
+              qty: "$qty",
+            },
+          },
+
+          rawOrders: {
+            $push: {
+              orderId: "$_id",
+              orderNumber: "$orderNumber",
+              orderedQty: "$orderedQty",
+              reservedQty: "$reservedQty",
+              qty: "$qty",
+              selectedSize: "$selectedSize",
+              selectedColor: "$selectedColor",
+              sku: "$sku",
+              productCode: "$productCode",
+              productTitle: "$productTitle",
+              productImage: "$productImage",
+              orderDate: "$orderDate",
+              createdAt: "$createdAt",
+            },
+          },
+
+          latestOrderDate: { $max: "$orderDate" },
+          latestCreatedAt: { $max: "$createdAt" },
+        },
+      },
+
+      {
+        $addFields: {
+          ordersCount: { $size: "$orderIds" },
+        },
+      },
+
+      {
+        $project: {
+          _id: 0,
+          sku: 1,
+          productCode: 1,
+          productTitle: 1,
+          productImage: 1,
+          productModel: 1,
+          productId: 1,
+          totalOrderedQty: 1,
+          totalReservedQty: 1,
+          totalQty: 1,
+          ordersCount: 1,
+          orderIds: 1,
+          sizes: 1,
+          colors: 1,
+          orderNumbers: 1,
+          rawOrders: 1,
+          latestOrderDate: 1,
+          latestCreatedAt: 1,
+        },
+      },
+    ];
+
+    const [rows, totalAgg, summaryAgg] = await Promise.all([
+      Order.aggregate([
+        ...pipeline,
+        { $sort: sortStage },
+        ...(wantsAll ? [] : [{ $skip: skip }, { $limit: limitNum }]),
+      ]),
+      Order.aggregate([
+        ...pipeline,
+        { $count: "total" },
+      ]),
+      Order.aggregate([
+        ...pipeline,
+        {
+          $group: {
+            _id: null,
+            totalSkus: { $sum: 1 },
+            totalOrderedQty: { $sum: "$totalOrderedQty" },
+            totalReservedQty: { $sum: "$totalReservedQty" },
+            totalQtyToProduce: { $sum: "$totalQty" },
+            allOrderIds: { $push: "$orderIds" },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            totalSkus: 1,
+            totalOrderedQty: 1,
+            totalReservedQty: 1,
+            totalQtyToProduce: 1,
+            totalOrdersCovered: {
+              $size: {
+                $reduce: {
+                  input: "$allOrderIds",
+                  initialValue: [],
+                  in: { $setUnion: ["$$value", "$$this"] },
+                },
+              },
+            },
+          },
+        },
+      ]),
+    ]);
+
+    const total = Number(totalAgg?.[0]?.total || 0);
+    const pages = wantsAll ? 1 : Math.max(1, Math.ceil(total / limitNum));
+
+    return res.status(200).json({
+      message: "Processing order product list fetched successfully",
+      rows,
+      summary: {
+        totalSkus: Number(summaryAgg?.[0]?.totalSkus || 0),
+        totalOrderedQty: Number(summaryAgg?.[0]?.totalOrderedQty || 0),
+        totalReservedQty: Number(summaryAgg?.[0]?.totalReservedQty || 0),
+        totalQtyToProduce: Number(summaryAgg?.[0]?.totalQtyToProduce || 0),
+        totalOrdersCovered: Number(summaryAgg?.[0]?.totalOrdersCovered || 0),
+      },
+      pagination: {
+        total,
+        page: wantsAll ? 1 : pageNum,
+        limit: wantsAll ? total || limitNum : limitNum,
+        pages,
+        hasMore: wantsAll ? false : pageNum < pages,
+      },
+    });
+  } catch (error) {
+    console.error("getProcessingOrderProductList error:", error);
+    return res.status(500).json({
+      message: error.message || "Failed to fetch processing order product list",
+    });
+  }
+};

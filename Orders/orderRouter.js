@@ -68,15 +68,27 @@ import {
   markAllPackedOrdersShipped,
   getProductionJobList,
   exportProductionJobListExcel,
+  getProcessingOrderProductList,
 } from "./order.production.controller.js";
 
 import { bookWithShiprocket } from "../shiprocket/shipping.controller.js";
+
+import {
+  verifyWhatsappWebhook,
+  whatsappConfirmOrderWebhook,
+  whatsappCancelOrderWebhook,
+} from "./order.whatsapp.webhook.js";
 
 const router = express.Router();
 
 /* Orders */
 router.post("/", createOrder);
 router.get("/", getAllOrders);
+
+/* WhatsApp Webhooks */
+router.get("/whatsapp/webhook", verifyWhatsappWebhook);
+router.post("/whatsapp/webhook/order-confirm", whatsappConfirmOrderWebhook);
+router.post("/whatsapp/webhook/order-cancel", whatsappCancelOrderWebhook);
 
 /* Search / Lookup / Analytics */
 router.get("/lookup", lookupOrdersByIdentity);
@@ -113,6 +125,7 @@ router.get("/production/summary", getProductionSummary);
 router.get("/production/queue", getProductionQueue);
 router.get("/production/jobs", getProductionJobList);
 router.get("/production/jobs/export", exportProductionJobListExcel);
+router.get("/production/processing-products", getProcessingOrderProductList);
 router.post("/production/:id/shipped", markOrderShippedFromProduction);
 router.patch("/production/packed/mark-all-shipped", markAllPackedOrdersShipped);
 
