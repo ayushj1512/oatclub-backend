@@ -1,7 +1,7 @@
 import express from "express";
 import multer from "multer";
 
-/* ---------------- PRODUCT CONTROLLER ---------------- */
+/* ---------------- PRODUCT CONTROLLERS ---------------- */
 import {
   createProduct,
   getAllProducts,
@@ -36,7 +36,9 @@ import {
   updatePrimaryProductStatus,
 } from "./productController.js";
 
-/* ---------------- INVENTORY PRODUCT CONTROLLER ---------------- */
+import { searchProductsForCard } from "./product.search.controller.js";
+
+/* ---------------- INVENTORY CONTROLLERS ---------------- */
 import {
   getInventoryAdminProducts,
   getInventoryAdminCategories,
@@ -44,7 +46,7 @@ import {
   updateSingleInventoryAdminProduct,
 } from "./inventory.product.controller.js";
 
-/* ---------------- BULK CONTROLLER ---------------- */
+/* ---------------- BULK CONTROLLERS ---------------- */
 import {
   bulkPreviewProducts,
   bulkCreateDraftProducts,
@@ -52,19 +54,22 @@ import {
 
 /* ---------------- SETUP ---------------- */
 const router = express.Router();
-const upload = multer({ dest: "uploads/csv" });
+const uploadCsv = multer({ dest: "uploads/csv" });
 const uploadSwatches = multer({ dest: "uploads/swatch" });
 
-/* ===========================================================
-   🔓 PUBLIC + SHARED ROUTES
-=========================================================== */
+/* =========================================================
+   PUBLIC + SHARED ROUTES
+========================================================= */
 
+// inventory admin
 router.get("/admin/inventory", getInventoryAdminProducts);
 router.get("/admin/inventory/categories", getInventoryAdminCategories);
 router.get("/admin/inventory/:id", getSingleInventoryAdminProduct);
 router.patch("/admin/inventory/:id", updateSingleInventoryAdminProduct);
 
+// product listing / search
 router.get("/cards", getProductCards);
+router.get("/card-search", searchProductsForCard);
 
 router.get("/by-tag", getProductsByTag);
 router.get("/by-category/:category", getProductsByCategory);
@@ -83,25 +88,23 @@ router.get("/details/:id", getProductByIdOrSlug);
 
 router.get("/", getAllProducts);
 
-/* ===========================================================
-   🔐 ADMIN ROUTES (BULK)
-=========================================================== */
+/* =========================================================
+   BULK ROUTES
+========================================================= */
 
-router.post("/bulk/preview", upload.single("file"), bulkPreviewProducts);
+router.post("/bulk/preview", uploadCsv.single("file"), bulkPreviewProducts);
 router.post("/bulk/create-draft", bulkCreateDraftProducts);
-
 router.post("/bulk/delete", bulkDeleteProducts);
 router.post("/bulk/import", bulkImportProducts);
+
 router.patch("/bulk/pricing", bulkUpdatePricing);
 router.patch("/bulk/variant-stock/zero-all", zeroAllVariantStock);
 router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 router.patch("/bulk/trending/by-codes", bulkMarkTrendingByCodes);
 
-// ✅ NEW: bulk primary/secondary update
-
-/* ===========================================================
-   🔐 ADMIN ROUTES (SINGLE PRODUCT OPS)
-=========================================================== */
+/* =========================================================
+   SINGLE PRODUCT ROUTES
+========================================================= */
 
 router.post("/:id/update-ratings", updateProductRatings);
 router.patch("/:id/analytics", incrementProductAnalytics);
@@ -109,12 +112,11 @@ router.patch("/:id/analytics", incrementProductAnalytics);
 router.patch("/:id/stock", updateProductStock);
 router.patch("/:id/variant-stock", updateVariantStock);
 router.patch("/:id/fabrics", updateProductFabrics);
+router.patch("/:id/variant-pattern", updateVariantPatternNumber);
 
 router.patch("/:id/mark-pattern-ready", markPatternReady);
 router.patch("/:id/best-seller", toggleBestSeller);
 router.patch("/:id/trending", toggleTrending);
-
-// ✅ NEW: primary / secondary toggle
 router.patch("/:id/primary-status", updatePrimaryProductStatus);
 
 router.patch(
@@ -126,12 +128,11 @@ router.patch(
 router.post("/", createProduct);
 router.patch("/:id", updateProduct);
 router.put("/:id", updateProduct);
-router.patch("/:id/variant-pattern", updateVariantPatternNumber);
 router.delete("/:id", deleteProduct);
 
-/* ===========================================================
-   FALLBACK (Slug OR ID) — KEEP LAST
-=========================================================== */
+/* =========================================================
+   FALLBACK — KEEP LAST
+========================================================= */
 
 router.get("/:id", getProductByIdOrSlug);
 
