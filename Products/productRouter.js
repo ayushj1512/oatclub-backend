@@ -5,6 +5,7 @@ import multer from "multer";
 import {
   createProduct,
   getAllProducts,
+  getProductCards,
   getProductsByTag,
   getProductsByCategory,
   fetchProductsByCategory,
@@ -62,6 +63,8 @@ router.get("/admin/inventory", getInventoryAdminProducts);
 router.get("/admin/inventory/categories", getInventoryAdminCategories);
 router.get("/admin/inventory/:id", getSingleInventoryAdminProduct);
 router.patch("/admin/inventory/:id", updateSingleInventoryAdminProduct);
+
+router.get("/cards", getProductCards);
 
 router.get("/by-tag", getProductsByTag);
 router.get("/by-category/:category", getProductsByCategory);

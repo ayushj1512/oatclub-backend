@@ -264,6 +264,111 @@ const buildCodeCandidates = (raw) => {
   return Array.from(set).filter(Boolean);
 };
 
+const toNum = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const slugifySafe = (s = "") =>
+  String(s)
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const getCardCategorySlug = (categories = []) => {
+  const list = Array.isArray(categories) ? categories : [];
+  const preferred =
+    list.find((c) => c && !SYSTEM_CATEGORIES.has(String(c).toLowerCase())) ||
+    list[0] ||
+    "products";
+
+  return slugifySafe(preferred);
+};
+
+
+const resolveCollectionFilter = async (collection) => {
+  const rawCollections = Array.isArray(collection)
+    ? collection
+    : String(collection || "")
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean);
+
+  if (!rawCollections.length) return null;
+
+  const objectIds = rawCollections.filter((c) =>
+    mongoose.Types.ObjectId.isValid(c)
+  );
+
+  const nonIds = rawCollections.filter(
+    (c) => !mongoose.Types.ObjectId.isValid(c)
+  );
+
+  let matchedIds = [...objectIds];
+
+  if (nonIds.length) {
+    const escaped = nonIds.map((s) =>
+      String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    );
+
+    const docs = await Collection.find({
+      $or: [
+        { slug: { $in: nonIds.map((s) => String(s).toLowerCase()) } },
+        { name: { $in: nonIds } },
+        { name: { $in: escaped.map((s) => new RegExp(`^${s}$`, "i")) } },
+      ],
+    })
+      .select("_id slug name")
+      .lean();
+
+    matchedIds.push(...docs.map((d) => String(d._id)));
+  }
+
+  matchedIds = Array.from(new Set(matchedIds.map(String))).filter(Boolean);
+
+  if (!matchedIds.length) return { $in: [] };
+  if (matchedIds.length === 1) return matchedIds[0];
+  return { $in: matchedIds };
+};
+
+const mapProductCard = (p) => {
+  const image = p?.thumbnail || p?.images?.[0] || "";
+  const hoverImage = p?.images?.[1] || null;
+
+  const price = toNum(p?.price);
+  const compareAtPrice = toNum(p?.compareAtPrice);
+
+  const categorySlug = getCardCategorySlug(p?.categories);
+  const safeSlug = slugifySafe(p?.slug || p?.title || "product");
+  const productCode = String(p?.productCode || "").trim();
+
+  return {
+    _id: p._id,
+    title: String(p?.title || "").trim(),
+    slug: safeSlug,
+    productCode,
+    categories: Array.isArray(p?.categories) ? p.categories : [],
+    thumbnail: image,
+    image,
+    hoverImage,
+    price,
+    compareAtPrice,
+    isBestSeller: !!p?.isBestSeller,
+    isTrending: !p?.isBestSeller && !!p?.isTrending,
+    isPrimaryProduct: !!p?.isPrimaryProduct,
+    categorySlug,
+    productLink: `/category/${categorySlug}/${safeSlug}/${encodeURIComponent(productCode)}`,
+    discount:
+      compareAtPrice > price && price > 0
+        ? Math.round(((compareAtPrice - price) / compareAtPrice) * 100)
+        : 0,
+  };
+};
+
+
+
 /**
  * Adds code-search filter to `filters` when query has:
  * productCode / code / q / title (digits)
@@ -2976,6 +3081,319 @@ export const updatePrimaryProductStatus = async (req, res) => {
     });
   } catch (e) {
     console.error("❌ Update Primary Product Status Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};
+
+
+/* ============================================================
+   ✅ GET PRODUCT CARDS (LIGHTWEIGHT)
+   GET /api/products/cards
+   GET /api/products/cards?ids=id1,id2,00218,218
+============================================================ */
+export const getProductCards = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      ids,
+      category,
+      collection,
+      tags,
+      minPrice,
+      maxPrice,
+      isActive = "true",
+      isDraft = "false",
+      isBestSeller,
+      isTrending,
+      isPrimaryProduct,
+      search,
+      sort,
+      sku,
+
+      // optional aliases
+      q,
+      title,
+      productCode,
+      code,
+    } = req.query;
+
+    const filters = {};
+    const toBool = (v) => String(v).trim().toLowerCase() === "true";
+
+    /* ---------------- ids / product codes ---------------- */
+    const idList = Array.isArray(ids)
+      ? ids
+      : typeof ids === "string"
+        ? ids.split(",").map((x) => x.trim()).filter(Boolean)
+        : [];
+
+    if (idList.length) {
+      const objectIds = [];
+      const codeCandidatesSet = new Set();
+
+      for (const item of idList) {
+        const raw = String(item || "").trim();
+        if (!raw) continue;
+
+        if (mongoose.Types.ObjectId.isValid(raw)) {
+          objectIds.push(raw);
+        }
+
+        buildCodeCandidates(raw).forEach((c) => codeCandidatesSet.add(c));
+      }
+
+      const idOr = [];
+      if (objectIds.length) idOr.push({ _id: { $in: objectIds } });
+
+      const codeCandidates = Array.from(codeCandidatesSet);
+      if (codeCandidates.length) {
+        idOr.push({ productCode: { $in: codeCandidates } });
+      }
+
+      if (idOr.length) {
+        filters.$or = idOr;
+      }
+    }
+
+    /* ---------------- categories ---------------- */
+    if (category) {
+      const cats = Array.isArray(category)
+        ? category
+        : String(category)
+            .split(",")
+            .map((c) => c.trim())
+            .filter(Boolean);
+
+      if (cats.length) filters.categories = { $in: cats };
+    }
+
+    /* ---------------- collections (slug OR id OR name) ---------------- */
+    if (collection) {
+      const rawCollections = Array.isArray(collection)
+        ? collection
+        : String(collection)
+            .split(",")
+            .map((c) => c.trim())
+            .filter(Boolean);
+
+      if (rawCollections.length) {
+        const objectIds = rawCollections.filter((c) =>
+          mongoose.Types.ObjectId.isValid(c)
+        );
+
+        const nonIds = rawCollections.filter(
+          (c) => !mongoose.Types.ObjectId.isValid(c)
+        );
+
+        let matchedCollectionIds = [...objectIds];
+
+        if (nonIds.length) {
+          const escaped = nonIds.map((s) =>
+            String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          );
+
+          const matchedCollections = await Collection.find({
+            $or: [
+              { slug: { $in: nonIds.map((s) => String(s).toLowerCase()) } },
+              { name: { $in: nonIds } },
+              { name: { $in: escaped.map((s) => new RegExp(`^${s}$`, "i")) } },
+            ],
+          })
+            .select("_id slug name")
+            .lean();
+
+          matchedCollectionIds.push(
+            ...matchedCollections.map((c) => String(c._id))
+          );
+        }
+
+        matchedCollectionIds = Array.from(
+          new Set(matchedCollectionIds.map((x) => String(x)))
+        ).filter(Boolean);
+
+        if (!matchedCollectionIds.length) {
+          return res.json({
+            total: 0,
+            page: Math.max(1, Number(page) || 1),
+            pages: 0,
+            products: [],
+          });
+        }
+
+        if (matchedCollectionIds.length === 1) {
+          filters.collections = matchedCollectionIds[0];
+        } else {
+          filters.collections = { $in: matchedCollectionIds };
+        }
+      }
+    }
+
+    /* ---------------- tags ---------------- */
+    const t = tagsNorm(tags);
+    if (t.length) filters.tags = { $in: t };
+
+    /* ---------------- booleans ---------------- */
+    if (isActive !== undefined && String(isActive).trim() !== "") {
+      filters.isActive = toBool(isActive);
+    }
+
+    if (isDraft !== undefined && String(isDraft).trim() !== "") {
+      filters.isDraft = toBool(isDraft);
+    }
+
+    if (isBestSeller !== undefined && String(isBestSeller).trim() !== "") {
+      filters.isBestSeller = toBool(isBestSeller);
+    }
+
+    if (isTrending !== undefined && String(isTrending).trim() !== "") {
+      filters.isTrending = toBool(isTrending);
+    }
+
+    if (
+      isPrimaryProduct !== undefined &&
+      String(isPrimaryProduct).trim() !== ""
+    ) {
+      filters.isPrimaryProduct = toBool(isPrimaryProduct);
+    }
+
+    /* ---------------- SKU exact ---------------- */
+    if (sku) {
+      const skuOr = [
+        { sku: String(sku) },
+        { "variants.sku": String(sku) },
+      ];
+
+      if (Array.isArray(filters.$or) && filters.$or.length) {
+        filters.$and = [{ $or: filters.$or }, { $or: skuOr }];
+        delete filters.$or;
+      } else {
+        filters.$or = skuOr;
+      }
+    }
+
+    /* ---------------- productCode search ---------------- */
+    if (!idList.length) {
+      applyProductCodeFilter(filters, { q, title, productCode, code, search });
+    }
+
+    /* ---------------- price ---------------- */
+    if (minPrice || maxPrice) {
+      filters.price = {};
+      if (minPrice) filters.price.$gte = Number(minPrice);
+      if (maxPrice) filters.price.$lte = Number(maxPrice);
+    }
+
+    /* ---------------- text search ---------------- */
+    const qStr = String(q ?? "").trim();
+    const titleStr = String(title ?? "").trim();
+    const searchStr = String(search ?? "").trim();
+    const pcStr = String(productCode ?? "").trim();
+    const codeStr = String(code ?? "").trim();
+
+    const isCodeQuery =
+      isDigitsOnly(qStr) ||
+      isDigitsOnly(titleStr) ||
+      isDigitsOnly(searchStr) ||
+      isDigitsOnly(pcStr) ||
+      isDigitsOnly(codeStr);
+
+    let searchText = "";
+    if (!idList.length && !isCodeQuery) {
+      searchText = searchStr || qStr || titleStr;
+    }
+
+    if (searchText) {
+      filters.$text = { $search: searchText };
+    }
+
+    /* ---------------- sorting ---------------- */
+    const sortMap = {
+      price_asc: { price: 1, _id: -1 },
+      price_desc: { price: -1, _id: -1 },
+      newest: { createdAt: -1, _id: -1 },
+      rating: { averageRating: -1, _id: -1 },
+      popularity: { "analytics.views": -1, _id: -1 },
+    };
+
+    const safeLimit = Math.min(200, Math.max(1, Number(limit) || 20));
+    const safePage = Math.max(1, Number(page) || 1);
+    const skip = (safePage - 1) * safeLimit;
+    const sortObj = sortMap[sort] || { createdAt: -1, _id: -1 };
+
+    const [docs, total] = await Promise.all([
+      Product.find(filters)
+        .select(
+          [
+            "title",
+            "slug",
+            "productCode",
+            "categories",
+            "price",
+            "compareAtPrice",
+            "thumbnail",
+            "images",
+            "isBestSeller",
+            "isTrending",
+            "isPrimaryProduct",
+            "createdAt",
+          ].join(" ")
+        )
+        .sort(sortObj)
+        .skip(skip)
+        .limit(safeLimit)
+        .lean(),
+      Product.countDocuments(filters),
+    ]);
+
+    let products = (docs || [])
+      .map(mapProductCard)
+      .filter((p) => p.image && p.price > 0 && p.productCode);
+
+    /* ---------------- keep same order when ids are passed ---------------- */
+    if (idList.length) {
+      const orderMap = new Map();
+
+      idList.forEach((item, index) => {
+        const raw = String(item || "").trim();
+        if (!raw) return;
+
+        orderMap.set(raw, index);
+        buildCodeCandidates(raw).forEach((c) => {
+          if (!orderMap.has(c)) orderMap.set(c, index);
+        });
+      });
+
+      products = products.sort((a, b) => {
+        const aKey1 = String(a?._id || "");
+        const aKey2 = String(a?.productCode || "");
+        const bKey1 = String(b?._id || "");
+        const bKey2 = String(b?.productCode || "");
+
+        const aIdx = orderMap.has(aKey1)
+          ? orderMap.get(aKey1)
+          : orderMap.has(aKey2)
+            ? orderMap.get(aKey2)
+            : Number.MAX_SAFE_INTEGER;
+
+        const bIdx = orderMap.has(bKey1)
+          ? orderMap.get(bKey1)
+          : orderMap.has(bKey2)
+            ? orderMap.get(bKey2)
+            : Number.MAX_SAFE_INTEGER;
+
+        return aIdx - bIdx;
+      });
+    }
+
+    return res.json({
+      total: idList.length ? products.length : total,
+      page: safePage,
+      pages: idList.length ? 1 : Math.ceil(total / safeLimit),
+      products,
+    });
+  } catch (e) {
+    console.error("❌ Get Product Cards Error:", e);
     return res.status(500).json({ message: e.message });
   }
 };
