@@ -13,8 +13,7 @@ const toNum = (v, d = 0) => {
   return Number.isFinite(n) ? n : d;
 };
 
-const money = (n) =>
-  Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
+const money = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
 
 const escapeRegex = (s = "") =>
   String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -33,6 +32,107 @@ const getMonthRangeUTCFromISTMonth = (month) => {
   };
 };
 
+const getDeliveredAtExpr = () => ({
+  $ifNull: [
+    "$shipment.deliveredAt",
+    {
+      $ifNull: [
+        "$trackingDetails.deliveredAt",
+        {
+          $ifNull: [
+            "$shipment.shiprocket.deliveredAt",
+            {
+              $ifNull: [
+                "$shipment.shiprocket.delivered_date",
+                {
+                  $ifNull: ["$statusTimestamps.deliveredAt", "$deliveredAt"],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+});
+
+const getSalesStatusDateExpr = () => ({
+  $switch: {
+    branches: [
+      {
+        case: { $eq: ["$fulfillmentStatus", "delivered"] },
+        then: {
+          $ifNull: [
+            "$shipment.deliveredAt",
+            {
+              $ifNull: [
+                "$trackingDetails.deliveredAt",
+                {
+                  $ifNull: [
+                    "$shipment.shiprocket.deliveredAt",
+                    {
+                      $ifNull: [
+                        "$shipment.shiprocket.delivered_date",
+                        {
+                          $ifNull: [
+                            "$statusTimestamps.deliveredAt",
+                            "$deliveredAt",
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        case: { $eq: ["$fulfillmentStatus", "exchange_requested"] },
+        then: {
+          $ifNull: [
+            "$statusTimestamps.exchangeRequestedAt",
+            { $ifNull: ["$exchangeRequestedAt", "$updatedAt"] },
+          ],
+        },
+      },
+      {
+        case: { $eq: ["$fulfillmentStatus", "exchanged"] },
+        then: {
+          $ifNull: [
+            "$statusTimestamps.exchangedAt",
+            { $ifNull: ["$exchangedAt", "$updatedAt"] },
+          ],
+        },
+      },
+    ],
+    default: {
+      $ifNull: [
+        "$shipment.deliveredAt",
+        {
+          $ifNull: [
+            "$trackingDetails.deliveredAt",
+            {
+              $ifNull: [
+                "$shipment.shiprocket.deliveredAt",
+                {
+                  $ifNull: [
+                    "$shipment.shiprocket.delivered_date",
+                    {
+                      $ifNull: ["$statusTimestamps.deliveredAt", "$updatedAt"],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  },
+});
+
 const ACTIVE_REVENUE_STATUSES = [
   "processing",
   "packed",
@@ -41,6 +141,8 @@ const ACTIVE_REVENUE_STATUSES = [
   "out_for_delivery",
   "delivered",
 ];
+
+const SALES_BOOKED_STATUSES = ["delivered", "exchange_requested", "exchanged"];
 
 /* =========================================================
    SHARED / REVENUE BASE
@@ -62,7 +164,10 @@ const basePipeline = ({ month, search, startDate, endDate }) => {
                       $ifNull: [
                         "$shipment.shiprocket.delivered_date",
                         {
-                          $ifNull: ["$statusTimestamps.deliveredAt", "$deliveredAt"],
+                          $ifNull: [
+                            "$statusTimestamps.deliveredAt",
+                            "$deliveredAt",
+                          ],
                         },
                       ],
                     },
@@ -99,7 +204,8 @@ const basePipeline = ({ month, search, startDate, endDate }) => {
 
   if (startDate || endDate) {
     const revenueDateMatch = {};
-    if (startDate) revenueDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
+    if (startDate)
+      revenueDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
     if (endDate) revenueDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
 
     pipeline.push({
@@ -237,7 +343,7 @@ const buildRevenueResponse = async ({
     summary: {
       totalOrders: toNum(summaryDoc.totalOrders, 0),
       grossRevenue: money(
-        toNum(summaryDoc.netRevenue, 0) + toNum(summaryDoc.totalDiscount, 0)
+        toNum(summaryDoc.netRevenue, 0) + toNum(summaryDoc.totalDiscount, 0),
       ),
       netRevenue: money(summaryDoc.netRevenue),
       totalDiscount: money(summaryDoc.totalDiscount),
@@ -351,15 +457,15 @@ const getResolvedCouponExpr = () => ({
       firstNonEmpty: {
         $first: {
           $filter: {
-            input: [
-              "$couponCode",
-              "$coupon.code",
-              "$appliedCoupon.code",
-            ],
+            input: ["$couponCode", "$coupon.code", "$appliedCoupon.code"],
             as: "coupon",
             cond: {
               $gt: [
-                { $strLenCP: { $trim: { input: { $ifNull: ["$$coupon", ""] } } } },
+                {
+                  $strLenCP: {
+                    $trim: { input: { $ifNull: ["$$coupon", ""] } },
+                  },
+                },
                 0,
               ],
             },
@@ -375,37 +481,16 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
   const pipeline = [
     {
       $addFields: {
-        deliveredAtResolved: {
-          $ifNull: [
-            "$shipment.deliveredAt",
-            {
-              $ifNull: [
-                "$trackingDetails.deliveredAt",
-                {
-                  $ifNull: [
-                    "$shipment.shiprocket.deliveredAt",
-                    {
-                      $ifNull: [
-                        "$shipment.shiprocket.delivered_date",
-                        {
-                          $ifNull: ["$statusTimestamps.deliveredAt", "$deliveredAt"],
-                        },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
+        deliveredAtResolved: getDeliveredAtExpr(),
+        salesStatusDateResolved: getSalesStatusDateExpr(),
       },
     },
     {
       $match: {
         paymentMethod: { $ne: "exchange" },
         paymentStatus: { $nin: ["failed", "refunded", "refund_pending"] },
-        fulfillmentStatus: "delivered",
-        deliveredAtResolved: { $ne: null },
+        fulfillmentStatus: { $in: SALES_BOOKED_STATUSES },
+        salesStatusDateResolved: { $ne: null },
       },
     },
   ];
@@ -415,19 +500,19 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
     if (range) {
       pipeline.push({
         $match: {
-          deliveredAtResolved: { $gte: range.startUTC, $lt: range.endUTC },
+          salesStatusDateResolved: { $gte: range.startUTC, $lt: range.endUTC },
         },
       });
     }
   }
 
   if (startDate || endDate) {
-    const deliveredDateMatch = {};
-    if (startDate) deliveredDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
-    if (endDate) deliveredDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
+    const salesDateMatch = {};
+    if (startDate) salesDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
+    if (endDate) salesDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
 
     pipeline.push({
-      $match: { deliveredAtResolved: deliveredDateMatch },
+      $match: { salesStatusDateResolved: salesDateMatch },
     });
   }
 
@@ -446,25 +531,19 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
                 {
                   $ifNull: [
                     "$shipment.shiprocket.courier_name",
-                    {
-                      $ifNull: ["$courierName", ""],
-                    },
+                    { $ifNull: ["$courierName", ""] },
                   ],
                 },
               ],
             },
           ],
         },
-
         orderDiscountResolved: { $ifNull: ["$discount", 0] },
         orderTotalResolved: { $ifNull: ["$finalPayable", 0] },
-
         orderSubtotalResolved: {
           $let: {
             vars: {
-              itemsArray: {
-                $cond: [{ $isArray: "$items" }, "$items", []],
-              },
+              itemsArray: { $cond: [{ $isArray: "$items" }, "$items", []] },
             },
             in: {
               $ifNull: [
@@ -493,7 +572,10 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
                                               $ifNull: [
                                                 "$$it.sellingPrice",
                                                 {
-                                                  $ifNull: ["$$it.unitPrice", "$$it.mrp"],
+                                                  $ifNull: [
+                                                    "$$it.unitPrice",
+                                                    "$$it.mrp",
+                                                  ],
                                                 },
                                               ],
                                             },
@@ -541,9 +623,7 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
         itemSize: {
           $ifNull: [
             "$items.selectedSize",
-            {
-              $ifNull: ["$items.size", "$items.variant.size"],
-            },
+            { $ifNull: ["$items.size", "$items.variant.size"] },
           ],
         },
         itemHsn: {
@@ -552,9 +632,7 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
             {
               $ifNull: [
                 "$items.hsn",
-                {
-                  $ifNull: ["$items.taxInfo.hsnCode", DEFAULT_HSN],
-                },
+                { $ifNull: ["$items.taxInfo.hsnCode", DEFAULT_HSN] },
               ],
             },
           ],
@@ -562,9 +640,7 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
         itemProductType: {
           $ifNull: [
             "$items.productModel",
-            {
-              $ifNull: ["$items.productType", "Product"],
-            },
+            { $ifNull: ["$items.productType", "Product"] },
           ],
         },
         itemPriceIncl: {
@@ -577,9 +653,7 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
                   {
                     $ifNull: [
                       "$items.sellingPrice",
-                      {
-                        $ifNull: ["$items.unitPrice", "$items.mrp"],
-                      },
+                      { $ifNull: ["$items.unitPrice", "$items.mrp"] },
                     ],
                   },
                 ],
@@ -621,26 +695,22 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
     },
     {
       $addFields: {
-        taxableValue: {
-          $divide: ["$netLine", 1 + SALES_TAX_RATE],
-        },
+        taxableValue: { $divide: ["$netLine", 1 + SALES_TAX_RATE] },
         taxAmount: {
           $subtract: [
             "$netLine",
-            {
-              $divide: ["$netLine", 1 + SALES_TAX_RATE],
-            },
+            { $divide: ["$netLine", 1 + SALES_TAX_RATE] },
           ],
         },
         deliveredMonth: {
           $dateToString: {
             format: "%Y-%m",
-            date: "$deliveredAtResolved",
+            date: "$salesStatusDateResolved",
             timezone: IST,
           },
         },
       },
-    }
+    },
   );
 
   if (search) {
@@ -657,6 +727,7 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
           { itemProductType: { $regex: rx, $options: "i" } },
           { paymentMethod: { $regex: rx, $options: "i" } },
           { courierNameResolved: { $regex: rx, $options: "i" } },
+          { fulfillmentStatus: { $regex: rx, $options: "i" } },
         ],
       },
     });
@@ -664,8 +735,6 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
 
   return pipeline;
 };
-
-
 
 const getLedgerCourierExpr = () => ({
   $let: {
@@ -703,8 +772,6 @@ const getLedgerCourierExpr = () => ({
   },
 });
 
-
-
 const buildSalesResponse = async ({
   month,
   search,
@@ -714,14 +781,19 @@ const buildSalesResponse = async ({
   limit,
 }) => {
   const skip = (page - 1) * limit;
-  const pipeline = buildSalesBasePipeline({ month, search, startDate, endDate });
+  const pipeline = buildSalesBasePipeline({
+    month,
+    search,
+    startDate,
+    endDate,
+  });
 
   const [countAgg, rowsAgg, totalsAgg] = await Promise.all([
     Order.aggregate([...pipeline, { $count: "total" }]),
 
     Order.aggregate([
       ...pipeline,
-      { $sort: { deliveredAtResolved: -1, _id: -1 } },
+      { $sort: { salesStatusDateResolved: -1, _id: -1 } },
       { $skip: skip },
       { $limit: limit },
       {
@@ -749,7 +821,8 @@ const buildSalesResponse = async ({
           orderTotalAmount: { $ifNull: ["$orderTotalResolved", 0] },
           orderDiscount: { $ifNull: ["$orderDiscountResolved", 0] },
           couponCode: { $ifNull: ["$couponCodeResolved", ""] },
-          deliveredAt: "$deliveredAtResolved",
+          deliveredAt: "$salesStatusDateResolved",
+          fulfillmentStatus: 1,
         },
       },
     ]),
@@ -829,40 +902,22 @@ const buildSalesResponse = async ({
   };
 };
 
-
-
 /* =========================================================
    SALES LEDGER REPORT
    GET /api/orders/accounts/sales-ledger
 ========================================================= */
 
-const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => {
+const buildSalesLedgerBasePipeline = ({
+  month,
+  search,
+  startDate,
+  endDate,
+}) => {
   const pipeline = [
     {
       $addFields: {
-        deliveredAtResolved: {
-          $ifNull: [
-            "$shipment.deliveredAt",
-            {
-              $ifNull: [
-                "$trackingDetails.deliveredAt",
-                {
-                  $ifNull: [
-                    "$shipment.shiprocket.deliveredAt",
-                    {
-                      $ifNull: [
-                        "$shipment.shiprocket.delivered_date",
-                        {
-                          $ifNull: ["$statusTimestamps.deliveredAt", "$deliveredAt"],
-                        },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
+        deliveredAtResolved: getDeliveredAtExpr(),
+        salesStatusDateResolved: getSalesStatusDateExpr(),
         orderDateResolved: {
           $ifNull: ["$orderDate", { $ifNull: ["$createdAt", "$updatedAt"] }],
         },
@@ -872,8 +927,8 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
       $match: {
         paymentMethod: { $ne: "exchange" },
         paymentStatus: { $nin: ["failed", "refunded", "refund_pending"] },
-        fulfillmentStatus: "delivered",
-        deliveredAtResolved: { $ne: null },
+        fulfillmentStatus: { $in: SALES_BOOKED_STATUSES },
+        salesStatusDateResolved: { $ne: null },
       },
     },
   ];
@@ -883,19 +938,19 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
     if (range) {
       pipeline.push({
         $match: {
-          deliveredAtResolved: { $gte: range.startUTC, $lt: range.endUTC },
+          salesStatusDateResolved: { $gte: range.startUTC, $lt: range.endUTC },
         },
       });
     }
   }
 
   if (startDate || endDate) {
-    const deliveredDateMatch = {};
-    if (startDate) deliveredDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
-    if (endDate) deliveredDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
+    const salesDateMatch = {};
+    if (startDate) salesDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
+    if (endDate) salesDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
 
     pipeline.push({
-      $match: { deliveredAtResolved: deliveredDateMatch },
+      $match: { salesStatusDateResolved: salesDateMatch },
     });
   }
 
@@ -935,7 +990,10 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
                                       $ifNull: [
                                         "$$it.sellingPrice",
                                         {
-                                          $ifNull: ["$$it.unitPrice", "$$it.mrp"],
+                                          $ifNull: [
+                                            "$$it.unitPrice",
+                                            "$$it.mrp",
+                                          ],
                                         },
                                       ],
                                     },
@@ -945,7 +1003,10 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
                             },
                           },
                           {
-                            $max: [1, { $toDouble: { $ifNull: ["$$it.quantity", 1] } }],
+                            $max: [
+                              1,
+                              { $toDouble: { $ifNull: ["$$it.quantity", 1] } },
+                            ],
                           },
                         ],
                       },
@@ -972,9 +1033,7 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
         itemSize: {
           $ifNull: [
             "$items.selectedSize",
-            {
-              $ifNull: ["$items.size", "$items.variant.size"],
-            },
+            { $ifNull: ["$items.size", "$items.variant.size"] },
           ],
         },
         itemHsn: {
@@ -986,9 +1045,7 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
                 {
                   $ifNull: [
                     "$items.hsn",
-                    {
-                      $ifNull: ["$items.taxInfo.hsnCode", DEFAULT_HSN],
-                    },
+                    { $ifNull: ["$items.taxInfo.hsnCode", DEFAULT_HSN] },
                   ],
                 },
               ],
@@ -998,9 +1055,7 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
         itemProductType: {
           $ifNull: [
             "$items.productSnapshot.productType",
-            {
-              $ifNull: ["$items.productModel", "Product"],
-            },
+            { $ifNull: ["$items.productModel", "Product"] },
           ],
         },
         itemPriceIncl: {
@@ -1013,9 +1068,7 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
                   {
                     $ifNull: [
                       "$items.sellingPrice",
-                      {
-                        $ifNull: ["$items.unitPrice", "$items.mrp"],
-                      },
+                      { $ifNull: ["$items.unitPrice", "$items.mrp"] },
                     ],
                   },
                 ],
@@ -1077,15 +1130,11 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
     },
     {
       $addFields: {
-        taxable: {
-          $divide: ["$netInclusive", 1 + SALES_TAX_RATE],
-        },
+        taxable: { $divide: ["$netInclusive", 1 + SALES_TAX_RATE] },
         taxAmount: {
           $subtract: [
             "$netInclusive",
-            {
-              $divide: ["$netInclusive", 1 + SALES_TAX_RATE],
-            },
+            { $divide: ["$netInclusive", 1 + SALES_TAX_RATE] },
           ],
         },
         taxRate: { $literal: "5%" },
@@ -1093,7 +1142,7 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
           $cond: [{ $eq: ["$paymentMethod", "cod"] }, "COD", "Prepaid"],
         },
       },
-    }
+    },
   );
 
   if (search) {
@@ -1109,6 +1158,7 @@ const buildSalesLedgerBasePipeline = ({ month, search, startDate, endDate }) => 
           { itemHsn: { $regex: rx, $options: "i" } },
           { itemSize: { $regex: rx, $options: "i" } },
           { paymentMethod: { $regex: rx, $options: "i" } },
+          { fulfillmentStatus: { $regex: rx, $options: "i" } },
         ],
       },
     });
@@ -1138,7 +1188,9 @@ const buildSalesLedgerResponse = async ({
 
     Order.aggregate([
       ...pipeline,
-      { $sort: { deliveredAtResolved: -1, orderDateResolved: -1, _id: -1 } },
+      {
+        $sort: { salesStatusDateResolved: -1, orderDateResolved: -1, _id: -1 },
+      },
       { $skip: skip },
       { $limit: limit },
       {
@@ -1146,7 +1198,8 @@ const buildSalesLedgerResponse = async ({
           _id: 0,
           orderId: "$orderNumber",
           orderDate: "$orderDateResolved",
-          deliveredDate: "$deliveredAtResolved",
+          deliveredDate: "$salesStatusDateResolved",
+          fulfillmentStatus: 1,
           customerName: { $ifNull: ["$customerNameResolved", ""] },
           state: { $ifNull: ["$customerStateResolved", ""] },
           paymentType: { $ifNull: ["$paymentType", ""] },
@@ -1249,7 +1302,7 @@ export const getSalesLedgerReport = async (req, res) => {
     const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
     const limit = Math.min(
       MAX_LIMIT,
-      Math.max(1, parseInt(String(req.query.limit || "100"), 10) || 100)
+      Math.max(1, parseInt(String(req.query.limit || "100"), 10) || 100),
     );
 
     const data = await buildSalesLedgerResponse({
@@ -1340,14 +1393,14 @@ export const downloadSalesLedgerCsv = async (req, res) => {
           row.taxRate,
         ]
           .map(escapeCsv)
-          .join(",")
+          .join(","),
       ),
     ].join("\n");
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=sales-ledger-${month || "all"}.csv`
+      `attachment; filename=sales-ledger-${month || "all"}.csv`,
     );
 
     return res.status(200).send(csv);
@@ -1375,7 +1428,7 @@ export const getRevenueReport = async (req, res) => {
     const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
     const limit = Math.min(
       MAX_LIMIT,
-      Math.max(1, parseInt(String(req.query.limit || "50"), 10) || 50)
+      Math.max(1, parseInt(String(req.query.limit || "50"), 10) || 50),
     );
 
     const data = await buildRevenueResponse({
@@ -1412,7 +1465,7 @@ export const getSalesReport = async (req, res) => {
     const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
     const limit = Math.min(
       MAX_LIMIT,
-      Math.max(1, parseInt(String(req.query.limit || "50"), 10) || 50)
+      Math.max(1, parseInt(String(req.query.limit || "50"), 10) || 50),
     );
 
     const data = await buildSalesResponse({
@@ -1434,8 +1487,6 @@ export const getSalesReport = async (req, res) => {
     });
   }
 };
-
-
 
 /* =========================================================
    GST REPORT (UPDATED - GROUP BY STATE CODE)
@@ -1554,7 +1605,7 @@ export const getGSTReport = async (req, res) => {
         totalOrders: 0,
         totalStates: rowsAll.length,
         taxRate: "5%",
-      }
+      },
     );
 
     return res.json({
@@ -1582,4 +1633,3 @@ export const getGSTReport = async (req, res) => {
     });
   }
 };
-
