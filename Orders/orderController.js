@@ -2192,9 +2192,11 @@ export const cancelOrder = async (req, res) => {
 
   const pickCancelReason = (req) => {
     const incoming = norm(req.body?.reason);
+
     if (incoming === "cancelled_by_admin" || incoming === "admin") {
       return "cancelled_by_admin";
     }
+
     if (incoming === "cancelled_by_customer" || incoming === "customer") {
       return "cancelled_by_customer";
     }
@@ -2214,7 +2216,9 @@ export const cancelOrder = async (req, res) => {
     const orderId = req.params.id;
     if (!mongoose.Types.ObjectId.isValid(orderId)) {
       console.log(`${TAG} Invalid orderId`);
-      return res.status(400).json({ success: false, message: "Invalid order id" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order id" });
     }
 
     const reason = pickCancelReason(req);
@@ -2224,12 +2228,18 @@ export const cancelOrder = async (req, res) => {
     let releasedCount = 0;
 
     await session.withTransaction(async () => {
-      const order = await Order.findById(orderId).session(session);
+      let order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
       const isParent = norm(order?.orderType) === "parent";
 
-      const nonCancellableStatuses = ["picked", "shipped", "out_for_delivery", "delivered"];
+      const nonCancellableStatuses = [
+        "picked",
+        "shipped",
+        "out_for_delivery",
+        "delivered",
+      ];
+
       if (nonCancellableStatuses.includes(norm(order.fulfillmentStatus))) {
         throw new Error("Order cannot be cancelled after pickup / shipment");
       }
@@ -2241,12 +2251,18 @@ export const cancelOrder = async (req, res) => {
 
       if (!isParent) {
         const shipmentId = order?.shipment?.shiprocket?.shipmentId;
+
         if (shipmentId) {
           try {
             await cancelShiprocketShipment(shipmentId);
-            console.log(`${TAG} ✅ Shiprocket cancellation successful`, { shipmentId });
+            console.log(`${TAG} ✅ Shiprocket cancellation successful`, {
+              shipmentId,
+            });
           } catch (err) {
-            console.error(`${TAG} ⚠️ Shiprocket cancel failed`, err?.response?.data || err);
+            console.error(
+              `${TAG} ⚠️ Shiprocket cancel failed`,
+              err?.response?.data || err
+            );
           }
         }
       }
@@ -2260,7 +2276,14 @@ export const cancelOrder = async (req, res) => {
 
       releasedCount = Number(cancelResult?.count || 0);
 
-      if (norm(order.paymentMethod) === "razorpay" && norm(order.paymentStatus) === "paid") {
+      // ✅ refetch fresh order because reservation cancellation may update same order internally
+      order = await Order.findById(orderId).session(session);
+      if (!order) throw new Error("Order not found after reservation cancellation");
+
+      if (
+        norm(order.paymentMethod) === "razorpay" &&
+        norm(order.paymentStatus) === "paid"
+      ) {
         order.paymentStatus = "refund_pending";
       }
 
@@ -2282,6 +2305,7 @@ export const cancelOrder = async (req, res) => {
       await order.save({ session });
 
       cancelledOrderId = order._id;
+
       console.log(`${TAG} ✅ Cancelled saved`, {
         orderId: cancelledOrderId,
         releasedCount,
@@ -2303,7 +2327,9 @@ export const cancelOrder = async (req, res) => {
     });
   } catch (error) {
     console.error(`${TAG} ❌ Cancel Order Error`, error);
-    return res.status(400).json({ success: false, message: error.message });
+    return res
+      .status(400)
+      .json({ success: false, message: error.message });
   } finally {
     console.log(`${TAG} Session ended`);
     session.endSession();
