@@ -914,26 +914,81 @@ export const createProduct = async (req, res) => {
 /* ============================================================
    ✅ GET ALL (supports category/subcategory = slug OR id)
 ============================================================ */
+/* ============================================================
+   ✅ GET ALL
+   - backward compatible
+   - server-side filtering + pagination
+   - supports old params + extra model filters
+============================================================ */
 export const getAllProducts = async (req, res) => {
   try {
     const {
       page = 1,
       limit = 20,
+
       category,
       collection,
       tags,
       minPrice,
       maxPrice,
+
       isActive,
       isDraft,
       isBestSeller,
       isTrending,
       isPrimaryProduct,
-      search,
-      sort,
-      sku,
+      isFeatured,
+      isPatternReady,
+      isSamplingDone,
+      isInStock,
 
-      // optional aliases
+      productType,
+      currency,
+      taxClass,
+      color,
+      colors,
+      fabricName,
+      fabricCode,
+      fabricColor,
+      role,
+      hsnCode,
+      sku,
+      slug,
+      titleExact,
+      externalURL,
+      originalProductLink,
+      wordpressId,
+
+      minRating,
+      maxRating,
+      minViews,
+      maxViews,
+      minPurchases,
+      maxPurchases,
+      minCartAdds,
+      maxCartAdds,
+      minWishlistCount,
+      maxWishlistCount,
+      minSearchAppearances,
+      maxSearchAppearances,
+
+      minStock,
+      maxStock,
+      minReservedStock,
+      maxReservedStock,
+
+      createdFrom,
+      createdTo,
+      updatedFrom,
+      updatedTo,
+      publishFrom,
+      publishTo,
+
+      sort,
+      sortKey,
+      sortDir,
+
+      search,
       q,
       title,
       productCode,
@@ -941,92 +996,163 @@ export const getAllProducts = async (req, res) => {
     } = req.query;
 
     const filters = {};
+    const andFilters = [];
+
+    const toStr = (v) => String(v ?? "").trim();
+    const toNum = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
     const toBool = (v) => String(v).trim().toLowerCase() === "true";
+    const hasVal = (v) => v !== undefined && v !== null && String(v).trim() !== "";
+
+    const toArray = (v) => {
+      if (Array.isArray(v)) {
+        return v.map((x) => String(x).trim()).filter(Boolean);
+      }
+      return String(v ?? "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+    };
+
+    const escapeRegex = (value = "") =>
+      String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const addRange = (field, min, max) => {
+      const minNum = toNum(min);
+      const maxNum = toNum(max);
+      if (minNum === null && maxNum === null) return;
+
+      filters[field] = {};
+      if (minNum !== null) filters[field].$gte = minNum;
+      if (maxNum !== null) filters[field].$lte = maxNum;
+    };
+
+    const addDateRange = (field, from, to) => {
+      const range = {};
+      const fromDate = hasVal(from) ? new Date(from) : null;
+      const toDate = hasVal(to) ? new Date(to) : null;
+
+      if (fromDate && !Number.isNaN(fromDate.getTime())) {
+        range.$gte = fromDate;
+      }
+
+      if (toDate && !Number.isNaN(toDate.getTime())) {
+        range.$lte = toDate;
+      }
+
+      if (Object.keys(range).length) {
+        filters[field] = range;
+      }
+    };
 
     /* ---------------- categories ---------------- */
-    if (category) {
-      const cats = Array.isArray(category)
-        ? category
-        : String(category)
-            .split(",")
-            .map((c) => c.trim())
-            .filter(Boolean);
-
-      if (cats.length) {
-        filters.categories = { $in: cats };
-      }
+    if (hasVal(category)) {
+      const cats = toArray(category);
+      if (cats.length) filters.categories = { $in: cats };
     }
 
     /* ---------------- collections ---------------- */
-    if (collection) {
-      const collections = Array.isArray(collection)
-        ? collection
-        : String(collection)
-            .split(",")
-            .map((c) => c.trim())
-            .filter(Boolean);
-
-      if (collections.length === 1) {
-        filters.collections = collections[0];
-      } else if (collections.length > 1) {
-        filters.collections = { $in: collections };
-      }
+    if (hasVal(collection)) {
+      const collections = toArray(collection);
+      if (collections.length === 1) filters.collections = collections[0];
+      else if (collections.length > 1) filters.collections = { $in: collections };
     }
 
     /* ---------------- tags ---------------- */
-    const t = tagsNorm(tags);
-    if (t.length) {
-      filters.tags = { $in: t };
+    const normalizedTags = tagsNorm(tags);
+    if (normalizedTags.length) {
+      filters.tags = { $in: normalizedTags };
     }
 
     /* ---------------- booleans ---------------- */
-    if (isActive !== undefined && String(isActive).trim() !== "") {
-      filters.isActive = toBool(isActive);
+    if (hasVal(isActive)) filters.isActive = toBool(isActive);
+    if (hasVal(isDraft)) filters.isDraft = toBool(isDraft);
+    if (hasVal(isBestSeller)) filters.isBestSeller = toBool(isBestSeller);
+    if (hasVal(isTrending)) filters.isTrending = toBool(isTrending);
+    if (hasVal(isPrimaryProduct)) filters.isPrimaryProduct = toBool(isPrimaryProduct);
+    if (hasVal(isFeatured)) filters.isFeatured = toBool(isFeatured);
+    if (hasVal(isPatternReady)) filters.isPatternReady = toBool(isPatternReady);
+    if (hasVal(isSamplingDone)) filters.isSamplingDone = toBool(isSamplingDone);
+    if (hasVal(isInStock)) filters.isInStock = toBool(isInStock);
+
+    /* ---------------- exact/simple filters ---------------- */
+    if (hasVal(productType)) filters.productType = toStr(productType);
+    if (hasVal(currency)) filters.currency = toStr(currency).toUpperCase();
+    if (hasVal(taxClass)) filters.taxClass = toStr(taxClass);
+    if (hasVal(slug)) filters.slug = toStr(slug).toLowerCase();
+    if (hasVal(hsnCode)) filters.hsnCode = toStr(hsnCode).replace(/[^\d]/g, "");
+    if (hasVal(externalURL)) filters.externalURL = toStr(externalURL);
+    if (hasVal(originalProductLink)) filters.originalProductLink = toStr(originalProductLink);
+    if (hasVal(wordpressId) && toNum(wordpressId) !== null) {
+      filters.wordpressId = toNum(wordpressId);
     }
 
-    if (isDraft !== undefined && String(isDraft).trim() !== "") {
-      filters.isDraft = toBool(isDraft);
+    /* ---------------- arrays / nested string filters ---------------- */
+    const colorList = [...toArray(colors), ...toArray(color)].map((x) => x.toLowerCase());
+    if (colorList.length) filters.colors = { $in: [...new Set(colorList)] };
+
+    if (hasVal(fabricName)) {
+      filters["fabrics.fabricName"] = { $regex: escapeRegex(toStr(fabricName)), $options: "i" };
     }
 
-    if (isBestSeller !== undefined && String(isBestSeller).trim() !== "") {
-      filters.isBestSeller = toBool(isBestSeller);
+    if (hasVal(fabricCode)) {
+      filters["fabrics.fabricCode"] = { $regex: escapeRegex(toStr(fabricCode)), $options: "i" };
     }
 
-    if (isTrending !== undefined && String(isTrending).trim() !== "") {
-      filters.isTrending = toBool(isTrending);
+    if (hasVal(fabricColor)) {
+      filters["fabrics.fabricColor"] = { $regex: escapeRegex(toStr(fabricColor)), $options: "i" };
     }
 
-    if (
-      isPrimaryProduct !== undefined &&
-      String(isPrimaryProduct).trim() !== ""
-    ) {
-      filters.isPrimaryProduct = toBool(isPrimaryProduct);
+    if (hasVal(role)) {
+      filters["fabrics.role"] = toStr(role).toLowerCase();
     }
 
-    /* ---------------- SKU exact ---------------- */
-    if (sku) {
-      filters.$or = [
-        { sku: String(sku) },
-        { "variants.sku": String(sku) },
-      ];
+    /* ---------------- SKU exact / partial ---------------- */
+    if (hasVal(sku)) {
+      const skuVal = toStr(sku);
+      andFilters.push({
+        $or: [
+          { sku: skuVal },
+          { "variants.sku": skuVal },
+          { sku: { $regex: escapeRegex(skuVal), $options: "i" } },
+          { "variants.sku": { $regex: escapeRegex(skuVal), $options: "i" } },
+        ],
+      });
     }
 
-    /* ---------------- productCode search ---------------- */
+    /* ---------------- productCode helper (existing safe) ---------------- */
     applyProductCodeFilter(filters, { q, title, productCode, code, search });
 
-    /* ---------------- price ---------------- */
-    if (minPrice || maxPrice) {
-      filters.price = {};
-      if (minPrice) filters.price.$gte = Number(minPrice);
-      if (maxPrice) filters.price.$lte = Number(maxPrice);
+    /* ---------------- exact title ---------------- */
+    if (hasVal(titleExact)) {
+      filters.title = { $regex: `^${escapeRegex(toStr(titleExact))}$`, $options: "i" };
     }
 
-    /* ---------------- text search ---------------- */
-    const qStr = String(q ?? "").trim();
-    const titleStr = String(title ?? "").trim();
-    const searchStr = String(search ?? "").trim();
-    const pcStr = String(productCode ?? "").trim();
-    const codeStr = String(code ?? "").trim();
+    /* ---------------- price / stock / analytics ranges ---------------- */
+    addRange("price", minPrice, maxPrice);
+    addRange("stock", minStock, maxStock);
+    addRange("reservedStock", minReservedStock, maxReservedStock);
+    addRange("averageRating", minRating, maxRating);
+
+    addRange("analytics.views", minViews, maxViews);
+    addRange("analytics.purchases", minPurchases, maxPurchases);
+    addRange("analytics.cartAdds", minCartAdds, maxCartAdds);
+    addRange("analytics.wishlistCount", minWishlistCount, maxWishlistCount);
+    addRange("analytics.searchAppearances", minSearchAppearances, maxSearchAppearances);
+
+    /* ---------------- date ranges ---------------- */
+    addDateRange("createdAt", createdFrom, createdTo);
+    addDateRange("updatedAt", updatedFrom, updatedTo);
+    addDateRange("publishAt", publishFrom, publishTo);
+
+    /* ---------------- generic text search ---------------- */
+    const qStr = toStr(q);
+    const titleStr = toStr(title);
+    const searchStr = toStr(search);
+    const pcStr = toStr(productCode);
+    const codeStr = toStr(code);
 
     const isCodeQuery =
       isDigitsOnly(qStr) ||
@@ -1035,13 +1161,44 @@ export const getAllProducts = async (req, res) => {
       isDigitsOnly(pcStr) ||
       isDigitsOnly(codeStr);
 
-    let searchText = "";
-    if (!isCodeQuery) {
-      searchText = searchStr || qStr || titleStr;
-    }
+    const searchText = !isCodeQuery ? searchStr || qStr || titleStr : "";
 
     if (searchText) {
-      filters.$text = { $search: searchText };
+      const rx = { $regex: escapeRegex(searchText), $options: "i" };
+
+      andFilters.push({
+        $or: [
+          { title: rx },
+          { slug: rx },
+          { shortDescription: rx },
+          { howToStyle: rx },
+          { fabricDetails: rx },
+          { sku: rx },
+          { productCode: rx },
+          { hsnCode: rx },
+          { tags: rx },
+          { colors: rx },
+          { keyFeatures: rx },
+          { "variants.sku": rx },
+          { "variants.barcode": rx },
+          { "variants.patternNumber": rx },
+          { "fabrics.fabricName": rx },
+          { "fabrics.fabricCode": rx },
+          { "fabrics.fabricColor": rx },
+          { "specifications.key": rx },
+          { "specifications.value": rx },
+        ],
+      });
+    }
+
+    /* ---------------- final query ---------------- */
+    let finalFilters = { ...filters };
+
+    if (andFilters.length) {
+      finalFilters = {
+        ...filters,
+        $and: andFilters,
+      };
     }
 
     /* ---------------- sorting ---------------- */
@@ -1049,21 +1206,64 @@ export const getAllProducts = async (req, res) => {
       price_asc: { price: 1 },
       price_desc: { price: -1 },
       newest: { createdAt: -1 },
+      oldest: { createdAt: 1 },
+      updated_desc: { updatedAt: -1 },
+      updated_asc: { updatedAt: 1 },
       rating: { averageRating: -1 },
       popularity: { "analytics.views": -1 },
+      views_desc: { "analytics.views": -1 },
+      views_asc: { "analytics.views": 1 },
+      purchases_desc: { "analytics.purchases": -1 },
+      purchases_asc: { "analytics.purchases": 1 },
+      title_asc: { title: 1 },
+      title_desc: { title: -1 },
+      stock_asc: { stock: 1 },
+      stock_desc: { stock: -1 },
     };
+
+    let sortObj = sortMap[sort] || { createdAt: -1 };
+
+    if (hasVal(sortKey)) {
+      const dir = String(sortDir).toLowerCase() === "asc" ? 1 : -1;
+
+      const allowedSortKeys = new Set([
+        "title",
+        "slug",
+        "price",
+        "compareAtPrice",
+        "stock",
+        "reservedStock",
+        "averageRating",
+        "totalReviews",
+        "createdAt",
+        "updatedAt",
+        "publishAt",
+        "productCode",
+        "sku",
+        "wordpressId",
+        "analytics.views",
+        "analytics.purchases",
+        "analytics.cartAdds",
+        "analytics.wishlistCount",
+        "analytics.searchAppearances",
+      ]);
+
+      if (allowedSortKeys.has(sortKey)) {
+        sortObj = { [sortKey]: dir };
+      }
+    }
 
     const safeLimit = Math.min(200, Math.max(1, Number(limit) || 20));
     const safePage = Math.max(1, Number(page) || 1);
     const skip = (safePage - 1) * safeLimit;
-    const sortObj = sortMap[sort] || { createdAt: -1 };
 
-    const docs = await pop(Product.find(filters))
+    const query = Product.find(finalFilters)
       .sort(sortObj)
       .skip(skip)
       .limit(safeLimit);
 
-    const total = await Product.countDocuments(filters);
+    const docs = await pop(query);
+    const total = await Product.countDocuments(finalFilters);
 
     return res.json({
       total,
@@ -2621,6 +2821,79 @@ export const getProductByCode = async (req, res) => {
   } catch (e) {
     console.error("❌ Get Product By Code Error:", e);
     return res.status(500).json({ message: e.message });
+  }
+};
+
+
+
+export const getProductsBySelectedCodes = async (req, res) => {
+  try {
+    const normalizeCode = (value) => {
+      const raw = String(value ?? "").trim().toUpperCase().replace(/\s+/g, "");
+      if (!raw) return "";
+      if (/^\d+$/.test(raw)) return raw.padStart(5, "0");
+      return raw;
+    };
+
+    let codes =
+      req.body?.selectedProductCodes ??
+      req.body?.productCodes ??
+      req.body?.codes ??
+      req.query?.selectedProductCodes ??
+      req.query?.productCodes ??
+      req.query?.codes;
+
+    codes = Array.isArray(codes)
+      ? codes
+      : typeof codes === "string"
+        ? codes.split(",")
+        : [];
+
+    const normalizedCodes = [
+      ...new Set(codes.map(normalizeCode).filter(Boolean)),
+    ];
+
+    if (!normalizedCodes.length) {
+      return res.status(400).json({
+        success: false,
+        message: "selectedProductCodes is required",
+      });
+    }
+
+    const docs = await pop(
+      Product.find({
+        productCode: { $in: normalizedCodes },
+      })
+    ).lean();
+
+    const productMap = new Map();
+    docs.forEach((product) => {
+      const code = normalizeCode(product?.productCode);
+      if (code && !productMap.has(code)) {
+        productMap.set(code, applyStockFromVariants(product));
+      }
+    });
+
+    const products = normalizedCodes
+      .map((code) => productMap.get(code))
+      .filter(Boolean);
+
+    const missingCodes = normalizedCodes.filter((code) => !productMap.has(code));
+
+    return res.json({
+      success: true,
+      requestedCount: normalizedCodes.length,
+      foundCount: products.length,
+      missingCount: missingCodes.length,
+      missingCodes,
+      products,
+    });
+  } catch (e) {
+    console.error("❌ getProductsBySelectedCodes error:", e);
+    return res.status(500).json({
+      success: false,
+      message: e.message || "Failed to fetch selected products",
+    });
   }
 };
 

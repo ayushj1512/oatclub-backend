@@ -12,6 +12,7 @@ import {
   getProductsByCollection,
   getProductsByIds,
   getProductsByCodes,
+  getProductsBySelectedCodes,
   getProductBySKU,
   getProductByCode,
   getProductByIdOrSlug,
@@ -81,6 +82,10 @@ router.get("/fetch-by-category", fetchProductsByCategory);
 router.post("/by-ids", getProductsByIds);
 router.get("/by-codes", getProductsByCodes);
 router.post("/by-codes", getProductsByCodes);
+
+// new dedicated route for commerce manager selected codes
+router.get("/selected-codes", getProductsBySelectedCodes);
+router.post("/selected-codes", getProductsBySelectedCodes);
 
 router.get("/sku/:sku", getProductBySKU);
 router.get("/code/:code", getProductByCode);
