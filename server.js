@@ -48,8 +48,8 @@ import remittanceRoutes from "./Remittance/RemiitanceRouter.js";
 import commerceManagerRoutes from "./CommerceManager/CommerceManagerRoutes.js";
 import commerceFeed from "./routes/commerceManagerFeed.js";
 import influencerProgramRoutes from "./InfluencerProgram/InfluencerProgramRoutes.js";
-
-
+import whatsappConfirmationMessageRoutes from "./whatsappConfirmationMessage/whatsappConfirmationMessageRoutes.js";
+import tailorroutes from "./tailor/tailor.routes.js";
 // --------------------------------------------------
 // ROUTES (ADMIN / SUPERADMIN)
 // --------------------------------------------------
@@ -205,6 +205,11 @@ app.post(
   razorpayWebhook
 );
 
+app.use(
+  "/api/whatsapp-confirmation-message",
+  whatsappConfirmationMessageRoutes
+);
+
 // Body parsers
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -274,6 +279,9 @@ app.use("/api/remittance", remittanceRoutes);
 // Media
 app.use("/api/media", mediaRoutes);
 app.use("/media-user", mediaAuthRoutes);
+
+// Tailor
+app.use("/api/tailors", tailorroutes);
 
 // Shipping
 app.use("/api", shiprocketRoutes);

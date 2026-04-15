@@ -1,0 +1,135 @@
+[33m0545fd1[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m removed heavy file
+[33macee68c[m feat: Add Tailor management and WhatsApp confirmation message functionality
+[33m99833cd[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m added new controller code for selective products
+[33m4e6f27b[m order cancelled update error removed
+[33mf532d13[m feat: enhance sales status handling with new expressions for delivery and exchange statuses
+[33mfc668bf[m refactor: update product router and add search functionality for product cards
+[33m887f17a[m product card contoller and routes added in order to enhance the speed everywhere lets go
+[33m3440ee4[m feat: add WhatsApp webhooks for order confirmation and cancellation
+[33m28f9f76[m shiprokcet servicibility check update
+[33mf648863[m commerce manager updated
+[33mf7a9069[m influencer program, duplicate utlity, order routes , done
+[33mb6edfc2[m added gst report, accounting and added search by location ( pincode and state )
+[33m6173511[m low sales report controller endpoint added
+[33m35d0e23[m updated getallproducts for primary and secondary
+[33mde24ee8[m primary secondary product logic added
+[33mb1c4029[m commerce manager routes and xml file ready and added
+[33m98d599b[m updated order model hook for automark payment as failed
+[33m656d386[m updated existing Fabrics and added a new Fabric Logs
+[33mb38a50b[m added revenue by status
+[33m1e03a79[m added two controllers to search order by product name and routes
+[33m78b8e6d[m update homepage setting
+[33m221e428[m razorpay new routes and controller for remittance over the dashboard
+[33m9c6cc52[m added remittance controllerand icnreased the limit of razorpay reports now gets all the data
+[33m3feca36[m razorpay remittence, order reports controller, order routes
+[33m53d6bf5[m added order report statuses and all
+[33mb7d4453[m name type error
+[33m0045c8a[m added aov, day wise report, and reporting etc,
+[33mfa0a2a8[m nothing
+[33mc242494[m added order invoice controller and order router updated
+[33m8319c1f[m Add pagination to listReservations endpoint for improved data handling
+[33m38eae47[m Refactor code structure for improved readability and maintainability
+[33m85d8934[m Add product-wise sales report endpoint and controller
+[33m1656640[m Refactor inventory management and reservation logic
+[33m4d4706a[m  added revenue controller
+[33m9739d32[m  added istrending
+[33ma12b3f5[m  bluedart
+[33md32c3eb[m Bluedart thing 1st update going live
+[33mef8a54f[m Update production order controller and router
+[33mbd087cd[m update CORS to allow product.mirayfashions.com
+[33m5d86994[m add sales report endpoint to order accounts controller
+[33mbc40f9b[m added zero inventory controller
+[33m2782c40[m increase safeLimit for product retrieval to a maximum of 5000
+[33me6f16dd[m add customer support routes and controller for order management
+[33m3769e21[m updated order controller get all orders and repair order amd added meta feed
+[33mc1deebf[m updated getallorder controller
+[33m81472b9[m updated ,env
+[33m0f42fd6[m updated email template
+[33m10e9b95[m added failed patch
+[33m00122e9[m updated marketing controller update getallroders update indexes in orders model update limit in production controllers
+[33m31929c5[m enhance order schema to auto-mark orders as failed if payment fails
+[33m1eda39e[m marquee setup
+[33m68c55de[m enhance Shiprocket tracking sync with improved error handling and fallback mechanisms
+[33m786c989[m enhance Shiprocket status sync with detailed tracking metadata and dry-run tester
+[33mb164617[m enhance production order filters and summary metrics
+[33me38934e[m stock update reservartion listing fix
+[33m0991ed2[m added banking details
+[33m7b7fc60[m name mis match error
+[33m302ce21[m marketing spend added
+[33m0f50638[m update order controller
+[33mbdc9b4d[m added find order my number or email also added missing routes to customer tickets
+[33m4e98fb0[m updated .env
+[33m4602012[m added isPatternReady and product link
+[33m7175c7a[m added fabric to product and update customer ticket controller for bulk operation and routes
+[33m96e4a40[m review controller product controller best seller and something something
+[33m68da12a[m customet ticket detector added order field
+[33mbee75e6[m customer ticket support
+[33mf635c61[m auto set priority to medium for paid orders
+[33mc489c1e[m order shipping and routes controller added
+[33m0f0f958[m homepage settings , product filters and product codes scripts etc
+[33m5bd2887[m added duplicate order controller and route
+[33mceaef8f[m admin template update for timing
+[33me1371c1[m coming soon and orders recovery model
+[33ma8f8eac[m bestseller controller and routes update
+[33m012bcea[m updated product schema , product controller and collection default position
+[33me17d820[m Add infinite inventory to Meta product feed
+[33mcb4edc8[m webhook url inventory reservation webhook.js
+[33m632181a[m added new jsnon2csv model and also update order model for delivered date
+[33mc339e77[m added colors controller and route to make work easy
+[33m91440a1[m rma creation possible now
+[33mc30f6d7[m added refunded
+[33md77f7bc[m xml file deployed
+[33m59bf57b[m some sync and abandond cart cotnroler query formation
+[33m135c6e0[m home collection went right
+[33mc59fe02[m home collection routes and server.js
+[33me95ace6[m added filters to get all orders
+[33me9007e1[m order and shiprocket update
+[33mc55ad85[m removed cron
+[33m88cd37f[m cron job correct
+[33m06d98de[m cron job added and 15 mins added too
+[33mbc89f96[m added size to add to cart and shiprocket sync and status map and some change in creating order
+[33mf7f6449[m updated
+[33m86aff98[m inventory reservation or order sync for inventory
+[33m8609150[m stock update working correctly now
+[33m4b6a8bf[m shiprocket, footwear , product , order , inventory reservation , very much risk but its time to do so
+[33m9b57b32[m added query to product controller for easy searching
+[33mf1f37d6[m webhook update routes
+[33m3ad1839[m review and shiprocket webhook update
+[33mea579fc[m coupon controller updated with email and mobile number for private coupons
+[33m26c29bd[m customer duplicacy is correct now also media users is wroking also cors panel is fine
+[33mc56633d[m backend order cancellation fixed
+[33m66d81a9[m discount fixed
+[33md20d3ff[m xpressbees half done + razorpay discount to 10% lets go
+[33mc2e65c5[m shiprocket weight 500grams only
+[33m86f63a9[m allgined
+[33m87015be[m new route added for variants and pattern number
+[33mc3b74ed[m file name correction
+[33mba20baf[m bestseller update and product mei color and product update
+[33mac4493d[m tackling
+[33mc6dc0cb[m product collection update and collection controller update and product sync update
+[33m2580ca0[m party wear to system categories
+[33md8b9537[m script
+[33m7662738[m shiprocket fixed
+[33mb738f26[m featured category as system category
+[33m0dd03c0[m customer cart add ons
+[33m5fe34ea[m product hsn code and price thing is fixed now
+[33mc977512[m getproductbycollection
+[33mf64b452[m update product fabric controller and function
+[33m2273a47[m handled cancel by customer and mailing thing
+[33mc6d43e6[m order and product fixed. sku fixed
+[33mceed33f[m address routes and product controlelr update
+[33m68c1198[m order and product update
+[33m8a64f0b[m address update controller and route
+[33m31d9822[m wishlist update
+[33m0c6c44e[m added new controller function for collection sync to products
+[33m9dd4a1f[m route fix under collaboration
+[33m4f809a3[m shiprocket fix for razorpay
+[33m2c95022[m collaboration added
+[33m1b776f0[m enter
+[33ma3cc8a9[m update products contoller update
+[33mdb11338[m mail host change
+[33m504c9ef[m shiprocket fixed!! shioprocket courier booking, mailing and all others things are done
+[33ma80e46c[m coupon added to razorpay an all other stuff also handled razorpay at backend
+[33mf498599[m razorpay discount update
+[33m0a26869[m added fabric and consumption
+[33m859952c[m shiproc
