@@ -716,9 +716,10 @@ export const getProductionQueue = async (req, res) => {
       from,
       to,
       page = 1,
-      limit = 50,
+      limit = 25,
       sort,
       all,
+      packability = "all", // all | packable | unpackable | true | false
     } = req.query;
 
     const filters = { isConfirmed: true };
@@ -761,57 +762,38 @@ export const getProductionQueue = async (req, res) => {
         { "billingAddressSnapshot.fullName": rx },
         { "billingAddressSnapshot.phone": rx },
         { "billingAddressSnapshot.email": rx },
+        { "items.productSnapshot.title": rx },
+        { "items.productSnapshot.productCode": rx },
+        { "items.variant.sku": rx },
+        { "items.selectedSize": rx },
+        { "items.selectedColor": rx },
       ];
+    }
+
+    const safePackability = String(packability || "all").trim().toLowerCase();
+
+    if (["packable", "true", "1", "yes", "y"].includes(safePackability)) {
+      filters.isPackable = true;
+    } else if (["unpackable", "false", "0", "no", "n"].includes(safePackability)) {
+      filters.isPackable = false;
     }
 
     const sortObj = buildSort(sort);
     const wantsAll = parseBool(all) || String(limit) === "0";
-    const MAX_LIMIT = 5000;
+    const MAX_LIMIT = 200;
 
-    if (wantsAll) {
-      const [orders, total] = await Promise.all([
-        Order.find(filters)
-          .populate("customerId", "name email phone")
-          .populate("items.productId")
-          .sort(sortObj)
-          .lean(),
-        Order.countDocuments(filters),
-      ]);
-
-      return res.status(200).json({
-        success: true,
-        count: orders.length,
-        total,
-        page: 1,
-        limit: orders.length,
-        all: true,
-        filtersApplied: {
-          fulfillmentStatus: statuses,
-          priority: priorities,
-          orderType: orderTypes,
-          provider: providers,
-          q: search || "",
-          from: from || "",
-          to: to || "",
-          sort: sortObj,
-        },
-        orders,
-      });
-    }
-
-    const pageNum = parseIntSafe(page, 1);
-    const limitNumRaw = parseIntSafe(limit, 50);
+    const pageNum = Math.max(1, parseIntSafe(page, 1));
+    const limitNumRaw = parseIntSafe(limit, 25);
     const limitNum = Math.min(limitNumRaw, MAX_LIMIT);
     const skip = (pageNum - 1) * limitNum;
 
+    const query = Order.find(filters)
+      .populate("customerId", "name email phone")
+      .sort(sortObj)
+      .lean();
+
     const [orders, total] = await Promise.all([
-      Order.find(filters)
-        .populate("customerId", "name email phone")
-        .populate("items.productId")
-        .sort(sortObj)
-        .skip(skip)
-        .limit(limitNum)
-        .lean(),
+      wantsAll ? query : query.skip(skip).limit(limitNum),
       Order.countDocuments(filters),
     ]);
 
@@ -819,9 +801,10 @@ export const getProductionQueue = async (req, res) => {
       success: true,
       count: orders.length,
       total,
-      page: pageNum,
-      limit: limitNum,
-      all: false,
+      page: wantsAll ? 1 : pageNum,
+      limit: wantsAll ? orders.length : limitNum,
+      pages: wantsAll ? 1 : Math.ceil(total / limitNum) || 1,
+      all: wantsAll,
       filtersApplied: {
         fulfillmentStatus: statuses,
         priority: priorities,
@@ -831,6 +814,13 @@ export const getProductionQueue = async (req, res) => {
         from: from || "",
         to: to || "",
         sort: sortObj,
+        packability: safePackability,
+        isPackable:
+          ["packable", "true", "1", "yes", "y"].includes(safePackability)
+            ? true
+            : ["unpackable", "false", "0", "no", "n"].includes(safePackability)
+            ? false
+            : "all",
       },
       orders,
     });

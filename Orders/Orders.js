@@ -424,6 +424,11 @@ customerSupportRemark: {
     isGiftOrder: { type: Boolean, default: false },
 // ✅ order confirmation (separate from fulfillment)
 isConfirmed: { type: Boolean, default: false, index: true },
+isPackable: {
+  type: Boolean,
+  default: false,
+  index: true,
+},
 confirmedAt: { type: Date, default: null },
 confirmedBy: {
   type: mongoose.Schema.Types.ObjectId,
@@ -784,6 +789,27 @@ orderSchema.pre("validate", function (next) {
         this.trackingDetails.deliveredAt = new Date();
       }
     }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
+
+// ========================================================================================
+// ✅ AUTO-CALC isPackable (based on fulfillment)
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    if (!this.isConfirmed || !Array.isArray(this.items)) {
+      this.isPackable = false;
+      return next();
+    }
+
+    this.isPackable = this.items.every(
+      (item) => Number(item?.fulfillment?.toProduceQty || 0) === 0
+    );
 
     next();
   } catch (e) {

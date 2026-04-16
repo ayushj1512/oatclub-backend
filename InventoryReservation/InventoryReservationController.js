@@ -895,14 +895,28 @@ export async function listReservations(req, res) {
       status,
       refType,
       refId,
+      refIds,
       productCode,
       orderNumber,
       reservationKey,
       page = 1,
       limit = 100,
+      all = false,
     } = req.query || {};
 
     const filter = {};
+
+    const toArray = (v) => {
+      if (v == null) return [];
+      if (Array.isArray(v)) return v.flatMap(toArray);
+      if (typeof v === "string") {
+        return v
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean);
+      }
+      return [String(v).trim()].filter(Boolean);
+    };
 
     if (productId) {
       if (!isObjectId(productId)) {
@@ -925,6 +939,16 @@ export async function listReservations(req, res) {
       filter.refId = oid(refId);
     }
 
+    if (refIds) {
+      const parsedRefIds = toArray(refIds).filter((id) => isObjectId(id));
+
+      if (!parsedRefIds.length) {
+        return res.status(400).json({ ok: false, message: "Invalid refIds" });
+      }
+
+      filter.refId = { $in: parsedRefIds.map((id) => oid(id)) };
+    }
+
     if (status) {
       const st = s(status);
       if (!allowedStatuses.has(st)) {
@@ -945,25 +969,31 @@ export async function listReservations(req, res) {
     if (orderNumber) filter.orderNumber = s(orderNumber);
     if (reservationKey) filter.reservationKey = s(reservationKey);
 
+    const wantsAll =
+      String(all).trim().toLowerCase() === "true" ||
+      String(limit).trim() === "0";
+
     const safePage = Math.max(1, Number(page) || 1);
     const safeLimit = Math.min(1000, Math.max(1, Number(limit) || 100));
     const skip = (safePage - 1) * safeLimit;
 
+    const query = InventoryReservation.find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .lean();
+
     const [data, total] = await Promise.all([
-      InventoryReservation.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(safeLimit),
+      wantsAll ? query : query.skip(skip).limit(safeLimit),
       InventoryReservation.countDocuments(filter),
     ]);
 
     return res.json({
       ok: true,
-      count: total,
+      count: wantsAll ? data.length : total,
       total,
-      page: safePage,
-      limit: safeLimit,
-      pages: Math.ceil(total / safeLimit),
+      page: wantsAll ? 1 : safePage,
+      limit: wantsAll ? data.length : safeLimit,
+      pages: wantsAll ? 1 : Math.ceil(total / safeLimit),
+      all: wantsAll,
       data,
     });
   } catch (e) {
