@@ -488,9 +488,7 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
     {
       $match: {
         paymentMethod: { $ne: "exchange" },
-        paymentStatus: { $nin: ["failed", "refunded", "refund_pending"] },
-        fulfillmentStatus: { $in: SALES_BOOKED_STATUSES },
-        salesStatusDateResolved: { $ne: null },
+        deliveredAtResolved: { $type: "date" },
       },
     },
   ];
@@ -500,19 +498,21 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
     if (range) {
       pipeline.push({
         $match: {
-          salesStatusDateResolved: { $gte: range.startUTC, $lt: range.endUTC },
+          deliveredAtResolved: { $gte: range.startUTC, $lt: range.endUTC },
         },
       });
     }
   }
 
   if (startDate || endDate) {
-    const salesDateMatch = {};
-    if (startDate) salesDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
-    if (endDate) salesDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
+    const deliveredDateMatch = {};
+    if (startDate)
+      deliveredDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
+    if (endDate)
+      deliveredDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
 
     pipeline.push({
-      $match: { salesStatusDateResolved: salesDateMatch },
+      $match: { deliveredAtResolved: deliveredDateMatch },
     });
   }
 
@@ -705,7 +705,7 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
         deliveredMonth: {
           $dateToString: {
             format: "%Y-%m",
-            date: "$salesStatusDateResolved",
+            date: "$deliveredAtResolved",
             timezone: IST,
           },
         },
@@ -926,9 +926,7 @@ const buildSalesLedgerBasePipeline = ({
     {
       $match: {
         paymentMethod: { $ne: "exchange" },
-        paymentStatus: { $nin: ["failed", "refunded", "refund_pending"] },
-        fulfillmentStatus: { $in: SALES_BOOKED_STATUSES },
-        salesStatusDateResolved: { $ne: null },
+        deliveredAtResolved: { $type: "date" },
       },
     },
   ];
@@ -938,19 +936,21 @@ const buildSalesLedgerBasePipeline = ({
     if (range) {
       pipeline.push({
         $match: {
-          salesStatusDateResolved: { $gte: range.startUTC, $lt: range.endUTC },
+          deliveredAtResolved: { $gte: range.startUTC, $lt: range.endUTC },
         },
       });
     }
   }
 
   if (startDate || endDate) {
-    const salesDateMatch = {};
-    if (startDate) salesDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
-    if (endDate) salesDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
+    const deliveredDateMatch = {};
+    if (startDate)
+      deliveredDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
+    if (endDate)
+      deliveredDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
 
     pipeline.push({
-      $match: { salesStatusDateResolved: salesDateMatch },
+      $match: { deliveredAtResolved: deliveredDateMatch },
     });
   }
 
