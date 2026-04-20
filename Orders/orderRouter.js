@@ -24,6 +24,8 @@ import {
   markDuplicateOrderAlertsController,
 } from "./orderController.js";
 
+import { getRefundPendingCandidates } from "./orderRefunds.controller.js";
+
 import {
   getInvoicesByOrderNumbers,
   getInvoiceById,
@@ -100,6 +102,9 @@ router.get("/analytics/summary", getOrderAnalytics);
 router.get("/duplicate-alerts", getDuplicateOrderAlerts);
 router.post("/duplicate-alerts/mark", markDuplicateOrderAlertsController);
 router.get("/location/search", findOrdersByStateAndPincode);
+
+/* Refund / Escalation */
+router.get("/refund-pending-candidates", getRefundPendingCandidates);
 
 /* Accounts / Reports */
 router.get("/accounts/sales-report", getSalesReport);

@@ -60,13 +60,14 @@ const uploadSwatches = multer({ dest: "uploads/swatch" });
 
 /* =========================================================
    PUBLIC + SHARED ROUTES
+   (static/specific routes always before dynamic ones)
 ========================================================= */
 
 // inventory admin
-router.get("/admin/inventory", getInventoryAdminProducts);
 router.get("/admin/inventory/categories", getInventoryAdminCategories);
 router.get("/admin/inventory/:id", getSingleInventoryAdminProduct);
 router.patch("/admin/inventory/:id", updateSingleInventoryAdminProduct);
+router.get("/admin/inventory", getInventoryAdminProducts);
 
 // product listing / search
 router.get("/cards", getProductCards);
@@ -80,17 +81,20 @@ router.get("/fetch-by-category/:category", fetchProductsByCategory);
 router.get("/fetch-by-category", fetchProductsByCategory);
 
 router.post("/by-ids", getProductsByIds);
+
 router.get("/by-codes", getProductsByCodes);
 router.post("/by-codes", getProductsByCodes);
 
-// new dedicated route for commerce manager selected codes
+// commerce manager selected codes
 router.get("/selected-codes", getProductsBySelectedCodes);
 router.post("/selected-codes", getProductsBySelectedCodes);
 
+// lookup routes
 router.get("/sku/:sku", getProductBySKU);
 router.get("/code/:code", getProductByCode);
 router.get("/details/:id", getProductByIdOrSlug);
 
+// all products
 router.get("/", getAllProducts);
 
 /* =========================================================
@@ -107,8 +111,18 @@ router.patch("/bulk/variant-stock/zero-all", zeroAllVariantStock);
 router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 router.patch("/bulk/trending/by-codes", bulkMarkTrendingByCodes);
 
+// ✅ important: frontend is calling /api/products/primary-status
+router.patch("/primary-status", updatePrimaryProductStatus);
+
 /* =========================================================
-   SINGLE PRODUCT ROUTES
+   CREATE ROUTE
+========================================================= */
+
+router.post("/", createProduct);
+
+/* =========================================================
+   SINGLE PRODUCT ACTION ROUTES
+   (keep before generic /:id routes)
 ========================================================= */
 
 router.post("/:id/update-ratings", updateProductRatings);
@@ -130,13 +144,17 @@ router.patch(
   updateProductColors
 );
 
-router.post("/", createProduct);
+/* =========================================================
+   GENERIC SINGLE PRODUCT CRUD
+========================================================= */
+
 router.patch("/:id", updateProduct);
 router.put("/:id", updateProduct);
 router.delete("/:id", deleteProduct);
 
 /* =========================================================
    FALLBACK — KEEP LAST
+   this catches id OR slug
 ========================================================= */
 
 router.get("/:id", getProductByIdOrSlug);
