@@ -63,6 +63,8 @@ import {
   getAllRmasAdmin,
 } from "./orderRmaController.js";
 
+import { getRmaReasonsGroupedByProductCode } from "./order.rma.controller.js";
+
 import {
   getProductionQueue,
   getProductionSummary,
@@ -138,6 +140,14 @@ router.patch("/production/packed/mark-all-shipped", markAllPackedOrdersShipped);
 router.get("/customer/:customerId", getOrdersByCustomer);
 router.get("/by-number/:orderNumber", getOrderByOrderNumber);
 
+/* RMA */
+router.get("/rma", getAllRmasAdmin);
+router.get("/rma/grouped-by-product-code", getRmaReasonsGroupedByProductCode);
+router.post("/:id/rma", createRma);
+router.get("/:id/rma", getRmasByOrder);
+router.get("/:id/rma/:rmaNumber", getRmaByNumber);
+router.patch("/:id/rma/:rmaNumber", updateRma);
+
 /* Actions */
 router.post("/:id/shiprocket/book", adminBookShiprocketIfMissing);
 router.post("/:id/ship", bookWithShiprocket);
@@ -145,13 +155,6 @@ router.post("/:id/cancel", cancelOrder);
 router.post("/:orderId/duplicate-exchange", duplicateExchangeOrder);
 router.post("/:id/confirm", confirmOrder);
 router.post("/:id/split", splitOrderIntoShipments);
-
-/* RMA */
-router.get("/rma", getAllRmasAdmin);
-router.post("/:id/rma", createRma);
-router.get("/:id/rma", getRmasByOrder);
-router.get("/:id/rma/:rmaNumber", getRmaByNumber);
-router.patch("/:id/rma/:rmaNumber", updateRma);
 
 /* Order by ID */
 router.patch("/:id/status", updateOrderStatus);
