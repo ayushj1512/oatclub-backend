@@ -307,7 +307,6 @@ const confirmOrderById = async ({ orderId, adminId = null, session = null }) => 
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
 
-  /* ---------- tiny helpers ---------- */
   const str = (v) => (v == null ? "" : String(v));
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const isObjectId = (v) => mongoose.Types.ObjectId.isValid(String(v || ""));
@@ -366,9 +365,11 @@ export const createOrder = async (req, res) => {
   const getSizeFromSku = (sku) => {
     const parts = str(sku).toUpperCase().split("-");
     const sizes = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+
     for (let i = parts.length - 1; i >= 0; i--) {
       if (sizes.includes(parts[i])) return parts[i];
     }
+
     return "";
   };
 
@@ -391,7 +392,35 @@ export const createOrder = async (req, res) => {
     return p === "high" || p === "medium" || p === "normal" ? p : "normal";
   };
 
-  const validateAndComputeCoupon = async ({ code, cartTotal, identity }) => {
+  const getCollectionName = (c) =>
+    str(c?.name || c?.title || c?.slug || c?.code || c)
+      .trim()
+      .toLowerCase();
+
+  const hasBudgetBeesCollection = (item = {}) => {
+    const collections = [
+      ...(Array.isArray(item?.collections) ? item.collections : []),
+      ...(Array.isArray(item?.productSnapshot?.collections)
+        ? item.productSnapshot.collections
+        : []),
+    ];
+
+    return collections.some((c) => {
+      const name = getCollectionName(c);
+      return (
+        name.includes("budget bees") ||
+        name.includes("budget-bees") ||
+        name.includes("budget_bees")
+      );
+    });
+  };
+
+  const validateAndComputeCoupon = async ({
+    code,
+    cartTotal,
+    discountBase = null,
+    identity,
+  }) => {
     if (!code) {
       return {
         couponSnapshot: null,
@@ -405,9 +434,11 @@ export const createOrder = async (req, res) => {
 
     if (!couponDoc) throw new Error("Invalid coupon code.");
     if (!couponDoc.isActive) throw new Error("Coupon is not active.");
+
     if (couponDoc.validFrom && new Date() < new Date(couponDoc.validFrom)) {
       throw new Error("Coupon is not active yet.");
     }
+
     if (couponDoc.validTill && new Date() > new Date(couponDoc.validTill)) {
       throw new Error("Coupon has expired.");
     }
@@ -435,24 +466,36 @@ export const createOrder = async (req, res) => {
       throw new Error("You have already used this coupon.");
     }
 
+    const baseAmount =
+      discountBase != null ? num(discountBase) : num(cartTotal);
+
+    if (baseAmount <= 0) {
+      throw new Error("Coupon is not applicable on this cart.");
+    }
+
     let discountAmount = 0;
 
     if (couponDoc.discountType === "percentage") {
-      discountAmount = (num(cartTotal) * num(couponDoc.discountValue)) / 100;
+      discountAmount = (baseAmount * num(couponDoc.discountValue)) / 100;
+
       if (num(couponDoc.maxDiscount) > 0) {
         discountAmount = Math.min(discountAmount, num(couponDoc.maxDiscount));
       }
     } else {
-      discountAmount = num(couponDoc.discountValue);
+      discountAmount = Math.min(num(couponDoc.discountValue), baseAmount);
     }
 
     discountAmount = Math.max(0, Math.round(discountAmount));
-    if (!discountAmount) throw new Error("Invalid discount calculation.");
+
+    if (!discountAmount) {
+      throw new Error("Invalid discount calculation.");
+    }
 
     return {
       couponSnapshot: {
         code: couponCode,
         discount: discountAmount,
+        discountBase: baseAmount,
       },
       couponDiscount: discountAmount,
       couponDoc,
@@ -479,7 +522,6 @@ export const createOrder = async (req, res) => {
     const pm = str(paymentMethod).trim().toLowerCase();
     const finalPriority = normalizePriority(priority);
 
-    /* ---------- basic validations ---------- */
     if (!isObjectId(customerId)) {
       return res.status(400).json({ message: "Invalid customerId" });
     }
@@ -505,8 +547,10 @@ export const createOrder = async (req, res) => {
     let createdOrderId = null;
 
     await session.withTransaction(async () => {
-      /* ---------- 1) Address snapshots ---------- */
-      const shippingAddress = await Address.findById(shippingAddressId).session(session);
+      const shippingAddress = await Address.findById(shippingAddressId).session(
+        session
+      );
+
       if (!shippingAddress) throw new Error("Shipping address not found");
 
       const billingAddress = billingAddressId
@@ -516,16 +560,15 @@ export const createOrder = async (req, res) => {
       const shippingAddressSnapshot = buildAddressSnapshot(shippingAddress);
       const billingAddressSnapshot = buildAddressSnapshot(billingAddress);
 
-      /* ---------- 2) Coupon identity ---------- */
       const identity = buildCouponIdentity({
         email: shippingAddressSnapshot?.email,
         phone: shippingAddressSnapshot?.phone,
       });
 
-      /* ---------- 3) Fetch products (lean) ---------- */
       const productIds = [
         ...new Set(items.map((i) => str(i?.productId)).filter(Boolean)),
       ];
+
       const bad = productIds.find((id) => !isObjectId(id));
       if (bad) throw new Error(`Invalid productId: ${bad}`);
 
@@ -535,7 +578,6 @@ export const createOrder = async (req, res) => {
 
       const productMap = new Map(products.map((p) => [str(p._id), p]));
 
-      /* ---------- 4) Normalize items ---------- */
       const normalizedItems = [];
       let subtotal = 0;
       let totalQty = 0;
@@ -562,13 +604,24 @@ export const createOrder = async (req, res) => {
           if (!item.variantId) {
             throw new Error(`${product.title} - variantId missing`);
           }
+
           variant = findVariantById(product, item.variantId);
+
           if (!variant) {
             throw new Error(`${product.title} - variant not found`);
           }
         }
 
-        const unitPrice = num(product.price);
+        const frontendPrice = num(
+          item?.price ??
+            item?.itemPrice ??
+            item?.item_price ??
+            item?.salePrice ??
+            item?.productSnapshot?.price
+        );
+
+        const dbPrice = num(product.price);
+        const unitPrice = frontendPrice > 0 ? frontendPrice : dbPrice;
         const lineSubtotal = unitPrice * qty;
 
         subtotal += lineSubtotal;
@@ -577,10 +630,12 @@ export const createOrder = async (req, res) => {
         const attrs = normalizeVariantAttributes(variant);
 
         const selectedSize =
+          str(item?.selectedSize || item?.size).trim() ||
           pickAttr(attrs, ["size", "sizes", "shirt_size"]) ||
           getSizeFromSku(variant?.sku);
 
         const selectedColorRaw =
+          str(item?.selectedColor || item?.color).trim() ||
           pickAttr(attrs, ["color", "colour", "color_name"]) ||
           getColorFromSku(variant?.sku, product.productCode);
 
@@ -594,9 +649,6 @@ export const createOrder = async (req, res) => {
           productModel: "Product",
           productId: oid(product._id),
 
-          // ✅ IMPORTANT:
-          // createOrder pe reservation nahi chahiye
-          // reservation confirm ke baad webhook se hoga
           fulfillment: {
             allocatedQty: 0,
             shippedQty: 0,
@@ -604,15 +656,25 @@ export const createOrder = async (req, res) => {
           },
 
           productSnapshot: {
-            productCode: product.productCode || "",
-            title: product.title,
-            slug: product.slug || "",
-            thumbnail: product.thumbnail || "",
-            images: Array.isArray(product.images) ? product.images : [],
+            productCode:
+              item?.productSnapshot?.productCode || product.productCode || "",
+            title: item?.productSnapshot?.title || item?.name || product.title,
+            slug: item?.productSnapshot?.slug || product.slug || "",
+            thumbnail:
+              item?.productSnapshot?.thumbnail ||
+              item?.productSnapshot?.image ||
+              item?.image ||
+              product.thumbnail ||
+              "",
+            images: Array.isArray(item?.productSnapshot?.images)
+              ? item.productSnapshot.images
+              : Array.isArray(product.images)
+              ? product.images
+              : [],
             productType:
               product.productType ||
               (product?.variants?.length ? "variable" : "simple"),
-            sku: product.sku || "",
+            sku: item?.productSnapshot?.sku || product.sku || "",
             tags: Array.isArray(product.tags) ? product.tags : [],
             hsnCode: str(product.hsnCode),
             weight: num(product.weight),
@@ -620,8 +682,8 @@ export const createOrder = async (req, res) => {
           },
 
           variant: {
-            variantId: variant?._id || null,
-            sku: variant?.sku || "",
+            variantId: variant?._id || item?.variantId || null,
+            sku: variant?.sku || item?.variant?.sku || "",
             attributes: attrs,
             weight: num(variant?.weight),
           },
@@ -635,17 +697,63 @@ export const createOrder = async (req, res) => {
         });
       }
 
-      /* ---------- 5) Discounts ---------- */
-      const totalAmount = subtotal + num(shippingFee) + num(tax);
-
       const couponCode =
         coupon && typeof coupon === "object" ? str(coupon.code) : "";
+
+      const hasPrimaryProduct = items.some((item) => {
+        if (item?.isPrimaryProduct || item?.productSnapshot?.isPrimaryProduct) {
+          return true;
+        }
+
+        return !hasBudgetBeesCollection(item);
+      });
+
+      const eligibleCouponBase = normalizedItems.reduce((sum, orderItem, index) => {
+        const rawItem = items[index];
+
+        const isEligibleSecondary =
+          rawItem?.isSecondaryProduct ||
+          rawItem?.productSnapshot?.isSecondaryProduct ||
+          hasBudgetBeesCollection(rawItem);
+
+        if (hasPrimaryProduct && isEligibleSecondary) {
+          return sum + num(orderItem.subtotal);
+        }
+
+        return sum;
+      }, 0);
+
+      console.log("🎟️ CREATE ORDER COUPON DEBUG:", {
+        couponCode,
+        subtotal,
+        hasPrimaryProduct,
+        eligibleCouponBase,
+        items: items.map((item, index) => ({
+          productId: item?.productId,
+          price: item?.price,
+          quantity: item?.quantity,
+          isPrimaryProduct:
+            item?.isPrimaryProduct || item?.productSnapshot?.isPrimaryProduct,
+          isSecondaryProduct:
+            item?.isSecondaryProduct || item?.productSnapshot?.isSecondaryProduct,
+          isBudgetBees: hasBudgetBeesCollection(item),
+          lineSubtotal: normalizedItems[index]?.subtotal,
+        })),
+      });
+
+      const totalAmount = subtotal + num(shippingFee) + num(tax);
 
       const { couponSnapshot, couponDiscount, couponDoc } =
         await validateAndComputeCoupon({
           code: couponCode,
           cartTotal: subtotal,
-          identity,
+discountBase:
+  couponCode && eligibleCouponBase > 0
+    ? eligibleCouponBase
+    : coupon?.discount
+    ? Math.min(num(coupon.discount) * 2, subtotal)
+    : null,
+              identity,
         });
 
       const baseForRazorpayExtra = Math.max(
@@ -678,12 +786,12 @@ export const createOrder = async (req, res) => {
           normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])
         ),
         onlinePaymentDiscountApplied: pm === "razorpay",
-        onlinePaymentDiscountPct: pm === "razorpay" ? RAZORPAY_DISCOUNT_PERCENT : 0,
+        onlinePaymentDiscountPct:
+          pm === "razorpay" ? RAZORPAY_DISCOUNT_PERCENT : 0,
         onlinePaymentDiscountAmount: razorpayExtraDiscount,
         couponIdentity: identity || "",
       };
 
-      /* ---------- 6) Create order ---------- */
       const [order] = await Order.create(
         [
           {
@@ -713,11 +821,14 @@ export const createOrder = async (req, res) => {
         { session }
       );
 
-      /* ---------- 7) Coupon usage on COD ---------- */
       if (couponDoc && couponSnapshot?.code && identity && pm === "cod") {
-        couponDoc.usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
+        couponDoc.usedBy = Array.isArray(couponDoc.usedBy)
+          ? couponDoc.usedBy
+          : [];
+
         couponDoc.usedBy.push(identity);
         couponDoc.usedCount = num(couponDoc.usedCount) + 1;
+
         await couponDoc.save({ session });
       }
 
@@ -726,9 +837,6 @@ export const createOrder = async (req, res) => {
 
     const finalOrder = await Order.findById(createdOrderId).lean();
 
-    // ✅ createOrder pe reservation webhook nahi chalega
-    // reservation sirf confirm hone ke baad chalega
-
     try {
       triggerOrderEmails(finalOrder);
     } catch (e) {
@@ -736,11 +844,12 @@ export const createOrder = async (req, res) => {
     }
 
     return res.status(201).json({
-    message: "Order created successfully",
+      message: "Order created successfully",
       order: finalOrder,
     });
   } catch (error) {
     console.error("❌ Create Order Error:", error);
+
     return res.status(400).json({
       message: error.message || "Order creation failed",
     });
@@ -748,7 +857,6 @@ export const createOrder = async (req, res) => {
     session.endSession();
   }
 };
-
 
 
 
