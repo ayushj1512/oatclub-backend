@@ -1,29 +1,44 @@
-  import express from "express";
-  import {
-    createCoupon,
-    getAllCoupons,
-    getCouponByIdOrCode,
-    updateCoupon,
-    deleteCoupon,
-    applyCoupon,
-    redeemCoupon, // ✅ NEW
-  } from "../Coupon/couponController.js";
+import express from "express";
+import {
+  createCoupon,
+  getAllCoupons,
+  getCouponByIdOrCode,
+  updateCoupon,
+  deleteCoupon,
+  applyCoupon,
+  autoApplyCoupon,
+  redeemCoupon,
+} from "../Coupon/couponController.js";
 
-  const router = express.Router();
+const router = express.Router();
 
-  // Admin
-  router.post("/", createCoupon);
-  router.get("/", getAllCoupons);
+/* ------------------------------------------------------------------
+ADMIN COUPONS
+------------------------------------------------------------------- */
 
-  // ✅ IMPORTANT: keep these BEFORE "/:idOrCode"
-  router.post("/apply", applyCoupon);
-  router.post("/redeem", redeemCoupon);
+router.post("/", createCoupon);
+router.get("/", getAllCoupons);
 
-  // Public
-  router.get("/:idOrCode", getCouponByIdOrCode);
+/* ------------------------------------------------------------------
+COUPON ACTIONS
+Keep these BEFORE "/:idOrCode"
+------------------------------------------------------------------- */
 
-  // Admin
-  router.put("/:id", updateCoupon);
-  router.delete("/:id", deleteCoupon);
+router.post("/apply", applyCoupon);
+router.post("/auto-apply", autoApplyCoupon);
+router.post("/redeem", redeemCoupon);
 
-  export default router;
+/* ------------------------------------------------------------------
+PUBLIC COUPON LOOKUP
+------------------------------------------------------------------- */
+
+router.get("/:idOrCode", getCouponByIdOrCode);
+
+/* ------------------------------------------------------------------
+ADMIN SINGLE COUPON
+------------------------------------------------------------------- */
+
+router.put("/:id", updateCoupon);
+router.delete("/:id", deleteCoupon);
+
+export default router;
