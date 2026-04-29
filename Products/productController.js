@@ -2591,201 +2591,189 @@ export const updateProductFabrics = async (req, res) => {
 
 
 /* ============================================================
-   ✅ GET PRODUCTS BY COLLECTION (slug OR id)
+   ✅ GET PRODUCTS BY COLLECTION - OPTIMIZED FOR PRODUCT CARD
    GET /api/products/by-collection/:collection
    Example:
-   /api/products/by-collection/summer-sale
+   /api/products/by-collection/budget-bees?page=1&limit=100&sort=newest
 ============================================================ */
 export const getProductsByCollection = async (req, res) => {
   try {
+    const { collection } = req.params;
+
     const {
       page = 1,
-      limit = 20,
+      limit = 100,
+
+      // filters
       category,
       tags,
       minPrice,
       maxPrice,
-      isActive,
+      isActive = "true",
+      isDraft = "false",
+      isBestSeller,
+      isTrending,
+      isPrimaryProduct,
+      isInStock,
       search,
-      sort,
-      sku,
+      q,
+      productCode,
+      code,
+
+      // sorting
+      sort = "newest",
     } = req.query;
 
-    const collectionParam = req.params.collection;
-    if (!collectionParam) {
+    const raw = String(collection || "").trim();
+
+    if (!raw) {
       return res.status(400).json({ message: "Collection is required" });
     }
 
-    /* ---------------------------------------------------------
-       ✅ Resolve collection by ID OR slug
-    --------------------------------------------------------- */
-    let collectionDoc = null;
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeLimit = Math.min(100, Math.max(1, Number(limit) || 100));
+    const skip = (safePage - 1) * safeLimit;
 
-    if (mongoose.Types.ObjectId.isValid(collectionParam)) {
-      collectionDoc = await Collection.findById(collectionParam);
-    }
+    const toStr = (v) => String(v ?? "").trim();
+    const hasVal = (v) =>
+      v !== undefined && v !== null && String(v).trim() !== "";
 
-    if (!collectionDoc) {
-      collectionDoc = await Collection.findOne({
-        slug: String(collectionParam).toLowerCase(),
-      });
-    }
+    const toBool = (v) => String(v).trim().toLowerCase() === "true";
+
+    const toArray = (v) => {
+      if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+
+      return String(v ?? "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+    };
+
+    /* ---------------- resolve collection ---------------- */
+    const collectionDoc = await Collection.findOne({
+      $or: [
+        mongoose.Types.ObjectId.isValid(raw) ? { _id: raw } : null,
+        { slug: raw.toLowerCase() },
+        { name: { $regex: `^${escapeRegex(raw)}$`, $options: "i" } },
+      ].filter(Boolean),
+    })
+      .select("_id name slug description bannerImage thumbnailImage isActive")
+      .lean();
 
     if (!collectionDoc) {
       return res.status(404).json({ message: "Collection not found" });
     }
 
-    /* ---------------- optional filters ---------------- */
-    const filters = {};
+    /* ---------------- filters ---------------- */
+    const filters = {
+      collections: collectionDoc._id,
+    };
 
-    if (category) {
-      const cats = String(category)
-        .split(",")
-        .map((c) => c.trim())
-        .filter(Boolean);
+    if (hasVal(isActive)) filters.isActive = toBool(isActive);
+    if (hasVal(isDraft)) filters.isDraft = toBool(isDraft);
+    if (hasVal(isBestSeller)) filters.isBestSeller = toBool(isBestSeller);
+    if (hasVal(isTrending)) filters.isTrending = toBool(isTrending);
+    if (hasVal(isPrimaryProduct)) {
+      filters.isPrimaryProduct = toBool(isPrimaryProduct);
+    }
+    if (hasVal(isInStock)) filters.isInStock = toBool(isInStock);
+
+    if (hasVal(category)) {
+      const cats = toArray(category);
       if (cats.length) filters.categories = { $in: cats };
     }
 
-    const t = tagsNorm(tags);
-    if (t.length) filters.tags = { $in: t };
-
-    if (isActive !== undefined) {
-      filters.isActive = isActive === "true";
+    const normalizedTags = tagsNorm(tags);
+    if (normalizedTags.length) {
+      filters.tags = { $in: normalizedTags };
     }
 
-    if (sku) {
-      filters.$or = [{ sku }, { "variants.sku": sku }];
-    }
-
-    if (minPrice || maxPrice) {
+    if (hasVal(minPrice) || hasVal(maxPrice)) {
       filters.price = {};
-      if (minPrice) filters.price.$gte = Number(minPrice);
-      if (maxPrice) filters.price.$lte = Number(maxPrice);
+
+      if (hasVal(minPrice)) filters.price.$gte = Number(minPrice);
+      if (hasVal(maxPrice)) filters.price.$lte = Number(maxPrice);
     }
 
-    if (search) filters.$text = { $search: search };
+    /* ---------------- product code filter ---------------- */
+    applyProductCodeFilter(filters, {
+      q,
+      search,
+      productCode,
+      code,
+    });
 
+    /* ---------------- text search ---------------- */
+    const searchText = toStr(search || q);
+
+    if (searchText && !isDigitsOnly(searchText)) {
+      const rx = {
+        $regex: escapeRegex(searchText),
+        $options: "i",
+      };
+
+      filters.$or = [
+        ...(Array.isArray(filters.$or) ? filters.$or : []),
+        { title: rx },
+        { slug: rx },
+        { productCode: rx },
+        { tags: rx },
+        { categories: rx },
+      ];
+    }
+
+    /* ---------------- sorting ---------------- */
     const sortMap = {
+      newest: { createdAt: -1 },
+      oldest: { createdAt: 1 },
       price_asc: { price: 1 },
       price_desc: { price: -1 },
-      newest: { createdAt: -1 },
-      rating: { averageRating: -1 },
       popularity: { "analytics.views": -1 },
+      rating: { averageRating: -1 },
+      title_asc: { title: 1 },
+      title_desc: { title: -1 },
     };
 
-    const safeLimit = Math.min(200, Math.max(1, Number(limit)));
-    const safePage = Math.max(1, Number(page));
-    const skip = (safePage - 1) * safeLimit;
+    const sortObj = sortMap[sort] || sortMap.newest;
 
-    // ✅ treat empty string / missing sort as "default"
-    const sortKey = String(sort ?? "").trim();
-    const hasExplicitSort = Boolean(sortKey) && Boolean(sortMap[sortKey]);
+    /* ---------------- only ProductCard required fields ---------------- */
+    const cardFields = [
+      "title",
+      "slug",
+      "productCode",
+      "price",
+      "compareAtPrice",
+      "thumbnail",
+      "images",
+      "categories",
+      "isBestSeller",
+      "isTrending",
+      "isPrimaryProduct",
+      "isActive",
+      "isDraft",
+      "isInStock",
+      "createdAt",
+    ].join(" ");
 
-    /* ---------------------------------------------------------
-       ✅ Manual order (DEFAULT): use collectionDoc.products order
-       - Works with pagination
-       - Still applies filters
-    --------------------------------------------------------- */
-    const extractIdsFromCollection = (col) => {
-      const arr = Array.isArray(col?.products) ? col.products : [];
-      const ids = arr
-        .map((it) => {
-          if (!it) return null;
-          if (typeof it === "string") return it;
-          if (typeof it === "object") {
-            const pr = it.product ?? it._id ?? it.id;
-            if (!pr) return null;
-            return typeof pr === "object" ? (pr._id ?? pr.id) : pr;
-          }
-          return null;
-        })
-        .filter(Boolean)
-        .map(String);
-
-      // uniq while preserving order
-      const seen = new Set();
-      const out = [];
-      for (const id of ids) {
-        if (!seen.has(id)) {
-          seen.add(id);
-          out.push(id);
-        }
-      }
-      return out;
-    };
-
-    const orderedIdStrings = extractIdsFromCollection(collectionDoc);
-    const orderedIds = orderedIdStrings
-      .filter((x) => mongoose.Types.ObjectId.isValid(x))
-      .map((x) => new mongoose.Types.ObjectId(x));
-
-    // fallback: if collection has no ordered ids, use old behavior via collections field
-    const shouldUseManualOrder = !hasExplicitSort && orderedIds.length > 0;
-
-    let docs = [];
-    let total = 0;
-
-    if (shouldUseManualOrder) {
-      // Manual order pipeline:
-      // match: _id in orderedIds + filters
-      // addFields: _sortIndex = indexOfArray(orderedIds, _id)
-      // sort by _sortIndex asc
-      // paginate with skip/limit
-      const matchStage = { _id: { $in: orderedIds }, ...filters };
-
-      const pipeline = [
-        { $match: matchStage },
-        {
-          $addFields: {
-            _sortIndex: { $indexOfArray: [orderedIds, "$_id"] },
-          },
-        },
-        { $sort: { _sortIndex: 1 } },
-        { $skip: skip },
-        { $limit: safeLimit },
-      ];
-
-      // If you have a "pop" helper for populate, aggregation can't use it.
-      // So we fetch ids first then do a populated find in the same order.
-
-      const pageRows = await Product.aggregate(pipeline);
-      const pageIds = pageRows.map((r) => r._id);
-
-      // total count (filtered, within this collection order list)
-      total = await Product.countDocuments(matchStage);
-
-      // fetch populated docs
-      let found = await pop(Product.find({ _id: { $in: pageIds } }));
-      // re-order exactly by pageIds
-      const m = new Map(found.map((p) => [String(p._id), p]));
-      docs = pageIds.map((id) => m.get(String(id))).filter(Boolean);
-    } else {
-      // Old behavior (explicit sort OR no manual list)
-      // Ensure membership by collections field
-      const findFilters = { ...filters, collections: collectionDoc._id };
-
-      const sortObj = sortMap[sortKey] || { createdAt: -1 };
-
-      docs = await pop(Product.find(findFilters))
+    const [docs, total] = await Promise.all([
+      Product.find(filters)
+        .select(cardFields)
         .sort(sortObj)
         .skip(skip)
-        .limit(safeLimit);
+        .limit(safeLimit)
+        .lean(),
 
-      total = await Product.countDocuments(findFilters);
-    }
+      Product.countDocuments(filters),
+    ]);
 
     return res.json({
-      collection: {
-        _id: collectionDoc._id,
-        name: collectionDoc.name,
-        slug: collectionDoc.slug,
-        // ✅ send ordered ids too (helps frontend)
-        products: orderedIdStrings,
-      },
+      collection: collectionDoc,
       total,
       page: safePage,
+      limit: safeLimit,
       pages: Math.ceil(total / safeLimit),
-      products: (docs || []).map(applyStockFromVariants),
+      hasMore: safePage * safeLimit < total,
+      products: docs.map(mapProductCard),
     });
   } catch (e) {
     console.error("❌ Get Products By Collection Error:", e);
