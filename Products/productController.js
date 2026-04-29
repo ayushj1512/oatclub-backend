@@ -2107,89 +2107,85 @@ export const getProductsByCategory = async (req, res) => {
       search,
       sort,
       sku,
-
-      // ✅ NEW (optional)
       q,
       title,
       productCode,
       code,
+      card,
     } = req.query;
 
-    const categoryParam = req.params.category;
+    const categoryParam = String(req.params.category || "").trim();
 
     if (!categoryParam) {
       return res.status(400).json({ message: "Category is required" });
     }
 
-    /* ---------------------------------------------------------
-       ✅ Find category by slug OR _id OR name
-    --------------------------------------------------------- */
+    /* ---------------- category: slug / id / name ---------------- */
     let catDoc = null;
 
     if (mongoose.Types.ObjectId.isValid(categoryParam)) {
-      catDoc = await Category.findById(categoryParam);
+      catDoc = await Category.findById(categoryParam).lean();
     }
 
     if (!catDoc) {
       catDoc = await Category.findOne({
-        $or: [{ slug: String(categoryParam).toLowerCase() }, { name: categoryParam }],
-      });
+        $or: [
+          { slug: categoryParam.toLowerCase() },
+          { name: { $regex: `^${escapeRegex(categoryParam)}$`, $options: "i" } },
+        ],
+      }).lean();
     }
 
-    /* ---------------------------------------------------------
-       ✅ If category exists → match both slug + name
-       ✅ else fallback → match raw param as string in Product.categories
-    --------------------------------------------------------- */
-    const categoryMatch = catDoc ? [catDoc.slug, catDoc.name] : [categoryParam];
+    const categoryMatch = catDoc
+      ? [catDoc.slug, catDoc.name].filter(Boolean)
+      : [categoryParam];
 
     const filters = {
       categories: { $in: categoryMatch },
     };
 
     /* ---------------- collections ---------------- */
-    if (collection) filters.collections = collection;
+    if (collection) {
+      filters.collections = await resolveCollectionFilter(collection);
+    }
 
     /* ---------------- tags ---------------- */
-    const t = tagsNorm(tags);
-    if (t.length) filters.tags = { $in: t };
+    const normalizedTags = tagsNorm(tags);
+    if (normalizedTags.length) {
+      filters.tags = { $in: normalizedTags };
+    }
 
     /* ---------------- active ---------------- */
-    if (isActive !== undefined) filters.isActive = isActive === "true";
+    if (isActive !== undefined) {
+      filters.isActive = String(isActive).toLowerCase() === "true";
+    }
 
-    /* ---------------- SKU (exact) ---------------- */
+    /* ---------------- sku ---------------- */
     if (sku) {
       filters.$or = [
-        { sku: String(sku) },
-        { "variants.sku": String(sku) },
+        { sku: String(sku).trim() },
+        { "variants.sku": String(sku).trim() },
       ];
     }
 
-    /* ---------------- ✅ PRODUCT CODE SEARCH (NEW) ----------------
-       Works with: ?productCode=00336  OR ?q=336  OR ?code=00336
-       Matches:
-       - productCode exact
-       - sku / variants.sku contains code (CAT-00336-XS)
-    --------------------------------------------------------------- */
-    // If your helper merges $or internally, this is enough:
-    applyProductCodeFilter(filters, { q, title, productCode, code });
-
-    // ⚠️ If your helper DOES NOT merge $or (it overwrites),
-    // then replace the line above with a "safe merge" approach inside helper.
+    /* ---------------- product code search ---------------- */
+    applyProductCodeFilter(filters, { q, title, productCode, code, search });
 
     /* ---------------- price ---------------- */
     if (minPrice || maxPrice) {
       filters.price = {};
+
       if (minPrice) filters.price.$gte = Number(minPrice);
       if (maxPrice) filters.price.$lte = Number(maxPrice);
     }
 
-    /* ---------------- search ($text) ---------------- */
-    // keep explicit search
-    // + allow fallback search from q/title when they are NOT numeric
+    /* ---------------- text search ---------------- */
     const qStr = String(q ?? "").trim();
     const titleStr = String(title ?? "").trim();
+    const searchStr = String(search ?? "").trim();
+
     const searchText =
-      String(search ?? "").trim() ||
+      searchStr ||
       (/^\d+$/.test(qStr) ? "" : qStr) ||
       (/^\d+$/.test(titleStr) ? "" : titleStr);
 
@@ -2206,11 +2202,11 @@ export const getProductsByCategory = async (req, res) => {
       popularity: { "analytics.views": -1 },
     };
 
-    const safeLimit = Math.min(200, Math.max(1, Number(limit)));
-    const skip = (Number(page) - 1) * safeLimit;
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeLimit = Math.min(200, Math.max(1, Number(limit) || 20));
+    const skip = (safePage - 1) * safeLimit;
     const sortObj = sortMap[sort] || { createdAt: -1 };
 
-    /* ---------------- query ---------------- */
     const docs = await pop(Product.find(filters))
       .sort(sortObj)
       .skip(skip)
@@ -2218,15 +2214,25 @@ export const getProductsByCategory = async (req, res) => {
 
     const total = await Product.countDocuments(filters);
 
+    const useCard = ["1", "true", "yes"].includes(
+      String(card || "").toLowerCase()
+    );
+
+    const products = useCard
+      ? (docs || []).map((doc) =>
+          mapProductCard(doc?.toObject ? doc.toObject() : doc)
+        )
+      : (docs || []).map(applyStockFromVariants);
+
     return res.json({
       category: catDoc
         ? { _id: catDoc._id, name: catDoc.name, slug: catDoc.slug }
         : { raw: categoryParam },
 
       total,
-      page: Number(page),
+      page: safePage,
       pages: Math.ceil(total / safeLimit),
-      products: (docs || []).map(applyStockFromVariants),
+      products,
     });
   } catch (e) {
     console.error("❌ Get Products By Category Error:", e);
