@@ -1,11 +1,14 @@
-// Razorpay/razorpay.router.js
-
 import express from "express";
 import {
   createRazorpayOrder,
   verifyRazorpayPayment,
   razorpayWebhook,
 } from "./razorpay.controller.js";
+
+import {
+  processRazorpayRefund,
+  fetchRazorpayRefundStatus,
+} from "./razorpayRefund.controller.js";
 
 import {
   getAllTransactions,
@@ -33,6 +36,13 @@ router.post("/verify", verifyRazorpayPayment);
 router.post("/webhook", razorpayWebhook);
 
 /* =========================================================
+   ADMIN REFUNDS
+========================================================= */
+
+router.post("/admin/refunds/:refundId/process", processRazorpayRefund);
+router.get("/admin/refunds/:refundId/status", fetchRazorpayRefundStatus);
+
+/* =========================================================
    REPORTS / TRANSACTIONS
 ========================================================= */
 
@@ -44,9 +54,10 @@ router.get("/reports/summary", getTransactionSummary);
    REPORTS / SETTLEMENTS / REMITTANCE
 ========================================================= */
 
-router.get("/reports/settlements", getAllSettlements);
-router.get("/reports/settlements/:id", getSettlementById);
+// keep specific routes before dynamic :id
 router.get("/reports/settlements/recon", getSettlementRecon);
 router.get("/reports/remittance", getRemittanceReport);
+router.get("/reports/settlements", getAllSettlements);
+router.get("/reports/settlements/:id", getSettlementById);
 
 export default router;
