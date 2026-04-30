@@ -1419,30 +1419,46 @@ export const updateOrderStatus = async (req, res) => {
 
     await session.withTransaction(async () => {
       /* ---------------- cancel flow ---------------- */
-      if (fulfillmentStatus === "cancelled") {
-        await performOrderCancellation({
-          orderId,
-          reason: cancelReason,
-          session,
-        });
+     /* ---------------- cancel flow ---------------- */
+if (fulfillmentStatus === "cancelled") {
+  const order = await Order.findById(orderId).session(session);
+  if (!order) throw new Error("Order not found");
 
-        const $set = {};
-        const $unset = {};
+  const allowed = ["processing", "packed"];
 
-        if (isAdminCancel(cancelReason)) {
-          $set.adminRemarks =
-            str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
-          $unset.customerMessage = 1;
-        } else {
-          $set.customerMessage =
-            str(req.body?.customerMessage).trim() || "cancelled_by_customer";
-          $unset.adminRemarks = 1;
+  if (!allowed.includes(lower(order.fulfillmentStatus))) {
+    throw new Error("Cancel allowed only in processing or packed stage");
+  }
+
+  await performOrderCancellation({
+    orderId,
+    reason: cancelReason,
+    session,
+  });
+
+  await Order.updateOne(
+    { _id: orderId },
+    isAdminCancel(cancelReason)
+      ? {
+          $set: {
+            adminRemarks:
+              str(req.body?.adminRemarks).trim() || "cancelled_by_admin",
+          },
+          $unset: { customerMessage: 1 },
         }
+      : {
+          $set: {
+            customerMessage:
+              str(req.body?.customerMessage).trim() ||
+              "cancelled_by_customer",
+          },
+          $unset: { adminRemarks: 1 },
+        }
+  ).session(session);
 
-        await Order.updateOne({ _id: orderId }, { $set, $unset }).session(session);
-        updatedOrder = await Order.findById(orderId).session(session);
-        return;
-      }
+  updatedOrder = await Order.findById(orderId).session(session);
+  return;
+}
 
       /* ---------------- load order ---------------- */
       let order = await Order.findById(orderId).session(session);

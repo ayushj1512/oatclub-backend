@@ -258,14 +258,14 @@ const orderSchema = new mongoose.Schema(
     discount: { type: Number, default: 0 },
 
     coupon: {
-  code: String,
-  discount: Number,
-  finalTotal: Number,
-  identity: { type: String, default: "" }, // ✅ email/phone identity store
-},
-orderType: { type: String, enum: ["parent", "shipment"], default: "shipment", index: true },
-parentOrderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", default: null, index: true },
-splitSuffix: { type: String, default: "", index: true }, // "A","B"
+      code: String,
+      discount: Number,
+      finalTotal: Number,
+      identity: { type: String, default: "" }, // ✅ email/phone identity store
+    },
+    orderType: { type: String, enum: ["parent", "shipment"], default: "shipment", index: true },
+    parentOrderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", default: null, index: true },
+    splitSuffix: { type: String, default: "", index: true }, // "A","B"
 
 
     shippingFee: { type: Number, default: 0 },
@@ -286,124 +286,124 @@ splitSuffix: { type: String, default: "", index: true }, // "A","B"
     },
 
     paymentMethod: {
-  type: String,
-  enum: ["cod", "razorpay", "exchange"],
-  default: "cod",
-  index: true,
-},
+      type: String,
+      enum: ["cod", "razorpay", "exchange"],
+      default: "cod",
+      index: true,
+    },
 
 
     // ✅ FIX: added refund_pending to prevent crashes
     paymentStatus: {
       type: String,
-      enum: ["pending", "paid", "failed", "refunded",  "refund_pending","not_applicable",],
+      enum: ["pending", "paid", "failed", "refunded", "refund_pending", "not_applicable",],
       default: "pending",
       index: true,
     },
-// ✅ order confirmation (separate from fulfillment)
-fulfillmentStatus: {
-  type: String,
-  enum: [
-    "processing",
-    "packed",
+    // ✅ order confirmation (separate from fulfillment)
+    fulfillmentStatus: {
+      type: String,
+      enum: [
+        "processing",
+        "packed",
 
-    // forward delivery
-    "picked",
-    "shipped",
-    "out_for_delivery",
-    "delivered",
+        // forward delivery
+        "picked",
+        "shipped",
+        "out_for_delivery",
+        "delivered",
 
-    // reverse pickup (return/exchange)
-    "pickup_initiated",
+        // reverse pickup (return/exchange)
+        "pickup_initiated",
 
-    "return_requested",
-    "exchange_requested",
-    "returned",
-    "refunded",
+        "return_requested",
+        "exchange_requested",
+        "returned",
+        "refunded",
 
-    "exchanged",
+        "exchanged",
 
-    "cancelled",
-    "rto",
+        "cancelled",
+        "rto",
 
-    // ✅ NEW
-    "failed",
-  ],
-  default: "processing",
-  index: true,
-},
+        // ✅ NEW
+        "failed",
+      ],
+      default: "processing",
+      index: true,
+    },
 
-fulfillmentDates: {
-  processingAt: { type: Date, default: Date.now },
-  packedAt: { type: Date, default: null },
-  pickedAt: { type: Date, default: null },
-  shippedAt: { type: Date, default: null },
-  outForDeliveryAt: { type: Date, default: null },
-  deliveredAt: { type: Date, default: null },
-  pickupInitiatedAt: { type: Date, default: null },
-  returnRequestedAt: { type: Date, default: null },
-  exchangeRequestedAt: { type: Date, default: null },
-  returnedAt: { type: Date, default: null },
-  refundedAt: { type: Date, default: null },
-  exchangedAt: { type: Date, default: null },
-  rtoAt: { type: Date, default: null },
-  failedAt: { type: Date, default: null },
-  cancelledAt: { type: Date, default: null },
-},
+    fulfillmentDates: {
+      processingAt: { type: Date, default: Date.now },
+      packedAt: { type: Date, default: null },
+      pickedAt: { type: Date, default: null },
+      shippedAt: { type: Date, default: null },
+      outForDeliveryAt: { type: Date, default: null },
+      deliveredAt: { type: Date, default: null },
+      pickupInitiatedAt: { type: Date, default: null },
+      returnRequestedAt: { type: Date, default: null },
+      exchangeRequestedAt: { type: Date, default: null },
+      returnedAt: { type: Date, default: null },
+      refundedAt: { type: Date, default: null },
+      exchangedAt: { type: Date, default: null },
+      rtoAt: { type: Date, default: null },
+      failedAt: { type: Date, default: null },
+      cancelledAt: { type: Date, default: null },
+    },
 
 
-   shipment: {
-  provider: {
-    type: String,
-    enum: ["shiprocket", "manual", "xpressbees", "ekart"],
-    default: "shiprocket",
-  },
+    shipment: {
+      provider: {
+        type: String,
+        enum: ["shiprocket", "manual", "xpressbees", "ekart"],
+        default: "shiprocket",
+      },
 
-  shiprocket: {
-    orderId: { type: String, default: "" },
-    shipmentId: { type: String, default: "" },
-    awb: { type: String, default: "", index: true },
-    courierName: { type: String, default: "" },
-    trackingUrl: { type: String, default: "" },
-  },
+      shiprocket: {
+        orderId: { type: String, default: "" },
+        shipmentId: { type: String, default: "" },
+        awb: { type: String, default: "", index: true },
+        courierName: { type: String, default: "" },
+        trackingUrl: { type: String, default: "" },
+      },
 
-  // ✅ XpressBees (added; does not affect Shiprocket)
-  xpressbees: {
-    shipmentId: { type: String, default: "", index: true }, // ✅ index true
-    awb: { type: String, default: "", index: true },        // ✅ index true
-    labelUrl: { type: String, default: "" },
-    courierName: { type: String, default: "XpressBees" },
-    trackingUrl: { type: String, default: "" },
+      // ✅ XpressBees (added; does not affect Shiprocket)
+      xpressbees: {
+        shipmentId: { type: String, default: "", index: true }, // ✅ index true
+        awb: { type: String, default: "", index: true },        // ✅ index true
+        labelUrl: { type: String, default: "" },
+        courierName: { type: String, default: "XpressBees" },
+        trackingUrl: { type: String, default: "" },
 
-lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
-lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
-  },
+        lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
+        lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
+      },
 
-  status: {
-    type: String,
-    enum: [
-      "pending",
-      "processing",
-      "packed",
-      "shipped",
-      "out_for_delivery",
-      "delivered",
-      "rto",
-      "cancelled",
-    ],
-    default: "pending",
-    index: true,
-  },
+      status: {
+        type: String,
+        enum: [
+          "pending",
+          "processing",
+          "packed",
+          "shipped",
+          "out_for_delivery",
+          "delivered",
+          "rto",
+          "cancelled",
+        ],
+        default: "pending",
+        index: true,
+      },
 
-  shippedAt: Date,
-  deliveredAt: Date,
-},
+      shippedAt: Date,
+      deliveredAt: Date,
+    },
 
 
     trackingDetails: {
       trackingId: { type: String, default: "" },
       courierName: { type: String, default: "" },
-        trackingUrl: { type: String, default: "" },  // ✅ ADD THIS
+      trackingUrl: { type: String, default: "" },  // ✅ ADD THIS
       shippedAt: Date,
       deliveredAt: Date,
       expectedDelivery: Date,
@@ -411,10 +411,10 @@ lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
 
     customerMessage: { type: String, default: "" },
     adminRemarks: { type: String, default: "" },
-customerSupportRemark: {
-  type: String,
-  default: "",
-},
+    customerSupportRemark: {
+      type: String,
+      default: "",
+    },
     queryRef: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Query",
@@ -431,26 +431,26 @@ customerSupportRemark: {
     },
 
     priority: {
-  type: String,
-  enum: ["normal", "medium", "high"],
-  default: "normal",
-  index: true,
-},
+      type: String,
+      enum: ["normal", "medium", "high"],
+      default: "normal",
+      index: true,
+    },
 
     isGiftOrder: { type: Boolean, default: false },
-// ✅ order confirmation (separate from fulfillment)
-isConfirmed: { type: Boolean, default: false, index: true },
-isPackable: {
-  type: Boolean,
-  default: false,
-  index: true,
-},
-confirmedAt: { type: Date, default: null },
-confirmedBy: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "Admin",
-  default: null,
-},
+    // ✅ order confirmation (separate from fulfillment)
+    isConfirmed: { type: Boolean, default: false, index: true },
+    isPackable: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    confirmedAt: { type: Date, default: null },
+    confirmedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      default: null,
+    },
 
     analytics: {
       categoryBreakdown: [
@@ -470,9 +470,9 @@ confirmedBy: {
       totalItems: { type: Number, default: 0 },
       paymentSuccessRate: { type: Number, default: 0 },
       onlinePaymentDiscountApplied: { type: Boolean, default: false },
-onlinePaymentDiscountPct: { type: Number, default: 0 },
-onlinePaymentDiscountAmount: { type: Number, default: 0 },
-couponIdentity: { type: String, default: "" },
+      onlinePaymentDiscountPct: { type: Number, default: 0 },
+      onlinePaymentDiscountAmount: { type: Number, default: 0 },
+      couponIdentity: { type: String, default: "" },
 
     },
   },
@@ -538,13 +538,13 @@ orderSchema.pre("validate", async function (next) {
 
   try {
     const counter = await Counter.findOneAndUpdate(
-  { name: "order" },
-  { $inc: { seq: 1 } },
-  { new: true, upsert: true }
-);
+      { name: "order" },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
 
 
-const padded = String(counter.seq).padStart(6, "0");
+    const padded = String(counter.seq).padStart(6, "0");
 
     this.orderNumber = `MIRAY-${padded}`;
     next();
@@ -620,12 +620,12 @@ orderSchema.pre("validate", async function (next) {
       if (this.rmas[i]?.rmaNumber) continue;
 
       const counter = await Counter.findOneAndUpdate(
-  { name: "rma" },
-  { $inc: { seq: 1 } },
-  { new: true, upsert: true }
-);
+        { name: "rma" },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+      );
 
-const padded = String(counter.seq).padStart(6, "0");
+      const padded = String(counter.seq).padStart(6, "0");
 
       this.rmas[i].rmaNumber = `RMA-${padded}`;
 
@@ -670,10 +670,10 @@ orderSchema.pre("validate", function (next) {
 
       // ✅ store flat (clean)
       if (!String(it.selectedSize || "").trim() && size)
-  it.selectedSize = String(size);
+        it.selectedSize = String(size);
 
-if (!String(it.selectedColor || "").trim() && color)
-  it.selectedColor = String(color);
+      if (!String(it.selectedColor || "").trim() && color)
+        it.selectedColor = String(color);
 
 
       return it;
@@ -738,7 +738,7 @@ orderSchema.statics.confirmOrder = async function (orderId, adminId = null) {
 
   if (adminId) update.confirmedBy = adminId;
 
-return this.findByIdAndUpdate(orderId, update, { new: true, runValidators: true });
+  return this.findByIdAndUpdate(orderId, update, { new: true, runValidators: true });
 };
 
 
