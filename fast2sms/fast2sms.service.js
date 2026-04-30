@@ -1,4 +1,5 @@
 import { FAST2SMS_CONFIG } from "./fast2sms.config.js";
+import { assertFast2SMSReady } from "./fast2sms.utils.js";
 
 export const fast2smsRequest = async ({
   method = "GET",
@@ -7,9 +8,12 @@ export const fast2smsRequest = async ({
   params = {},
 }) => {
   try {
+    assertFast2SMSReady();
+
+    const upperMethod = method.toUpperCase();
     let fullUrl = `${FAST2SMS_CONFIG.BASE_URL}${url}`;
 
-    if (method === "GET") {
+    if (upperMethod === "GET") {
       const query = new URLSearchParams({
         ...params,
         authorization: FAST2SMS_CONFIG.API_KEY,
@@ -19,15 +23,15 @@ export const fast2smsRequest = async ({
     }
 
     const res = await fetch(fullUrl, {
-      method,
+      method: upperMethod,
       headers: {
         authorization: FAST2SMS_CONFIG.API_KEY,
         "Content-Type": "application/json",
       },
-      body: method === "POST" ? JSON.stringify(data) : undefined,
+      body: upperMethod === "POST" ? JSON.stringify(data) : undefined,
     });
 
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
 
     return {
       success: res.ok,

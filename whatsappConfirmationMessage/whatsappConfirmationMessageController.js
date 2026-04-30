@@ -1,10 +1,10 @@
 import WhatsappConfirmationMessage from "./whatsappConfirmationMessage.js";
+import { sendWhatsappTemplateMessage } from "../fast2sms/index.js";
 
 /* =========================================================
    HELPERS
 ========================================================= */
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-
 const nowIST = () => new Date(Date.now() + IST_OFFSET_MS);
 
 const cleanPhone = (value = "") => String(value).replace(/\D/g, "");
@@ -12,27 +12,39 @@ const cleanPhone = (value = "") => String(value).replace(/\D/g, "");
 const normalizeStatus = (value = "") => {
   const status = String(value).trim().toLowerCase();
 
-  if (!status) return "";
   if (["pending", "queued", "sent", "delivered", "read", "replied", "failed"].includes(status)) {
     return status;
   }
 
   if (["success", "submitted", "processed"].includes(status)) return "sent";
-  if (["reply", "replied", "response", "incoming"].includes(status)) return "replied";
-  if (["error", "fail", "failed", "undelivered"].includes(status)) return "failed";
+  if (["reply", "response", "incoming"].includes(status)) return "replied";
+  if (["error", "fail", "undelivered"].includes(status)) return "failed";
 
   return "";
 };
 
-const applyStatusTimestamps = (doc, status) => {
-  const time = nowIST();
+const getFailureReason = (data = {}) =>
+  data?.error?.message ||
+  data?.message ||
+  data?.error ||
+  "Failed to send whatsapp message";
 
-  if (status === "sent" && !doc.sentAt) doc.sentAt = time;
-  if (status === "delivered" && !doc.deliveredAt) doc.deliveredAt = time;
-  if (status === "read" && !doc.readAt) doc.readAt = time;
-  if (status === "replied" && !doc.repliedAt) doc.repliedAt = time;
-  if (status === "failed" && !doc.failedAt) doc.failedAt = time;
-};
+const pickResponseIds = (payload = {}) => ({
+  requestId:
+    payload?.request_id ||
+    payload?.requestId ||
+    payload?.data?.request_id ||
+    payload?.data?.requestId ||
+    "",
+  messageId:
+    payload?.messages?.[0]?.id ||
+    payload?.message_id ||
+    payload?.messageId ||
+    payload?.data?.messages?.[0]?.id ||
+    payload?.data?.message_id ||
+    payload?.data?.messageId ||
+    "",
+});
 
 const pickWebhookIds = (payload = {}) => ({
   requestId:
@@ -48,10 +60,22 @@ const pickWebhookIds = (payload = {}) => ({
     payload.message_id ||
     payload.msgId ||
     payload.msg_id ||
+    payload.entry?.[0]?.changes?.[0]?.value?.statuses?.[0]?.id ||
+    payload.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id ||
     payload.data?.messageId ||
     payload.data?.message_id ||
     "",
 });
+
+const applyStatusTimestamps = (doc, status) => {
+  const time = nowIST();
+
+  if (status === "sent" && !doc.sentAt) doc.sentAt = time;
+  if (status === "delivered" && !doc.deliveredAt) doc.deliveredAt = time;
+  if (status === "read" && !doc.readAt) doc.readAt = time;
+  if (status === "replied" && !doc.repliedAt) doc.repliedAt = time;
+  if (status === "failed" && !doc.failedAt) doc.failedAt = time;
+};
 
 const buildListQuery = (query) => {
   const mongoQuery = {};
@@ -59,6 +83,7 @@ const buildListQuery = (query) => {
   if (query.status) mongoQuery.status = normalizeStatus(query.status) || query.status;
   if (query.orderId) mongoQuery.orderId = query.orderId;
   if (query.customerId) mongoQuery.customerId = query.customerId;
+  if (query.direction) mongoQuery.direction = query.direction;
 
   if (query.phone) {
     const phone = cleanPhone(query.phone);
@@ -69,10 +94,6 @@ const buildListQuery = (query) => {
     mongoQuery.templateName = { $regex: query.templateName, $options: "i" };
   }
 
-  if (query.direction) {
-    mongoQuery.direction = query.direction;
-  }
-
   if (query.fromDate || query.toDate) {
     mongoQuery.createdAt = {};
     if (query.fromDate) mongoQuery.createdAt.$gte = new Date(query.fromDate);
@@ -80,53 +101,6 @@ const buildListQuery = (query) => {
   }
 
   return mongoQuery;
-};
-
-const sendFast2SMSWhatsapp = async ({
-  phone,
-  templateName,
-  variables = [],
-  messageBody = "",
-}) => {
-  const apiKey = process.env.FAST2SMS_API_KEY || process.env.FAST2SMS_AUTHORIZATION || "";
-  const endpoint =
-    process.env.FAST2SMS_WHATSAPP_API_URL ||
-    "https://www.fast2sms.com/dev/whatsapp";
-
-  if (!apiKey) {
-    return {
-      skipped: true,
-      success: false,
-      message: "FAST2SMS api key missing",
-      data: null,
-    };
-  }
-
-  const payload = {
-    phone,
-    template_name: templateName,
-    variables,
-    message: messageBody,
-  };
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      authorization: apiKey,
-      "Content-Type": "application/json",
-      accept: "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const data = await response.json().catch(() => ({}));
-
-  return {
-    skipped: false,
-    success: response.ok,
-    statusCode: response.status,
-    data,
-  };
 };
 
 /* =========================================================
@@ -141,9 +115,18 @@ export const sendWhatsappConfirmationMessage = async (req, res) => {
       phone,
       countryCode = "91",
       messageType = "template",
-      templateName = "",
-      templateLanguage = "en",
+      templateName = process.env.FAST2SMS_ORDER_CONFIRM_TEMPLATE_NAME || "order_confirmation_action",
+      templateLanguage = process.env.FAST2SMS_ORDER_CONFIRM_TEMPLATE_LANGUAGE || "en",
+
+      // for current template:
+      // headerVariables: [orderNumber]
+      // bodyVariables: [customerName, orderNumber, actionLink]
+      headerVariables = [],
+      bodyVariables = [],
+
+      // fallback if old payload sends variables only
       variables = [],
+
       messageBody = "",
       notes = "",
     } = req.body || {};
@@ -157,6 +140,9 @@ export const sendWhatsappConfirmationMessage = async (req, res) => {
       });
     }
 
+    const finalBodyVariables = bodyVariables.length ? bodyVariables : variables;
+    const allVariables = [...headerVariables, ...finalBodyVariables].map(String);
+
     const doc = await WhatsappConfirmationMessage.create({
       orderId,
       customerId,
@@ -166,48 +152,42 @@ export const sendWhatsappConfirmationMessage = async (req, res) => {
       messageType,
       templateName,
       templateLanguage,
-      variables: Array.isArray(variables) ? variables.map(String) : [],
+      variables: allVariables,
       messageBody,
       direction: "outgoing",
       status: "pending",
       notes,
     });
 
-    const sendResult = await sendFast2SMSWhatsapp({
-      phone: `${countryCode}${normalizedPhone}`,
+    const sendResult = await sendWhatsappTemplateMessage({
+      phone: normalizedPhone,
       templateName,
-      variables,
-      messageBody,
+      language: templateLanguage,
+      headerVariables,
+      bodyVariables: finalBodyVariables,
     });
 
-    doc.rawSendResponse = sendResult?.data || sendResult;
+    doc.rawSendResponse = sendResult;
 
-    const responseIds = pickWebhookIds(sendResult?.data || {});
-    if (responseIds.requestId) doc.fast2smsRequestId = responseIds.requestId;
-    if (responseIds.messageId) doc.fast2smsMessageId = responseIds.messageId;
+    const ids = pickResponseIds(sendResult?.data || {});
+    if (ids.requestId) doc.fast2smsRequestId = ids.requestId;
+    if (ids.messageId) doc.fast2smsMessageId = ids.messageId;
 
     if (sendResult?.success) {
       doc.status = "sent";
       doc.sentAt = nowIST();
-    } else if (sendResult?.skipped) {
-      doc.status = "pending";
     } else {
       doc.status = "failed";
       doc.failedAt = nowIST();
-      doc.failureReason =
-        sendResult?.data?.message ||
-        sendResult?.data?.error ||
-        "Failed to send whatsapp message";
+      doc.failureReason = getFailureReason(sendResult?.data || sendResult);
     }
 
     await doc.save();
 
     return res.status(201).json({
-      success: true,
+      success: sendResult?.success,
       message: sendResult?.success
         ? "Whatsapp confirmation message sent"
-        : sendResult?.skipped
-        ? "Message saved, Fast2SMS skipped because config missing"
         : "Message saved, but sending failed",
       data: doc,
     });
@@ -227,11 +207,16 @@ export const sendWhatsappConfirmationMessage = async (req, res) => {
 export const receiveWhatsappConfirmationWebhook = async (req, res) => {
   try {
     const payload = req.body || {};
+    const value = payload.entry?.[0]?.changes?.[0]?.value || {};
+    const statusObj = value.statuses?.[0] || {};
+    const messageObj = value.messages?.[0] || {};
+
     const { requestId, messageId } = pickWebhookIds(payload);
 
     const incomingStatus =
       normalizeStatus(
-        payload.status ||
+        statusObj.status ||
+          payload.status ||
           payload.event ||
           payload.eventType ||
           payload.type ||
@@ -239,10 +224,18 @@ export const receiveWhatsappConfirmationWebhook = async (req, res) => {
       ) || "";
 
     const incomingPhone = cleanPhone(
-      payload.phone || payload.mobile || payload.to || payload.from || payload.customerPhone || ""
+      messageObj.from ||
+        statusObj.recipient_id ||
+        payload.phone ||
+        payload.mobile ||
+        payload.to ||
+        payload.from ||
+        payload.customerPhone ||
+        ""
     );
 
     const incomingReplyText =
+      messageObj.text?.body ||
       payload.customerReplyText ||
       payload.replyText ||
       payload.reply ||
@@ -254,25 +247,21 @@ export const receiveWhatsappConfirmationWebhook = async (req, res) => {
     let doc = null;
 
     if (messageId) {
-      doc = await WhatsappConfirmationMessage.findOne({
-        fast2smsMessageId: messageId,
-      });
+      doc = await WhatsappConfirmationMessage.findOne({ fast2smsMessageId: messageId });
     }
 
     if (!doc && requestId) {
-      doc = await WhatsappConfirmationMessage.findOne({
-        fast2smsRequestId: requestId,
-      });
+      doc = await WhatsappConfirmationMessage.findOne({ fast2smsRequestId: requestId });
     }
 
     if (!doc && incomingPhone) {
-      doc = await WhatsappConfirmationMessage.findOne({
-        phone: incomingPhone,
-      }).sort({ createdAt: -1 });
+      doc = await WhatsappConfirmationMessage.findOne({ phone: incomingPhone }).sort({
+        createdAt: -1,
+      });
     }
 
     if (!doc) {
-      doc = await WhatsappConfirmationMessage.create({
+      await WhatsappConfirmationMessage.create({
         phone: incomingPhone || "unknown",
         direction: incomingReplyText ? "incoming" : "outgoing",
         status: incomingReplyText ? "replied" : incomingStatus || "pending",
@@ -305,6 +294,7 @@ export const receiveWhatsappConfirmationWebhook = async (req, res) => {
 
       if (incomingStatus === "failed") {
         doc.failureReason =
+          statusObj.errors?.[0]?.message ||
           payload.failureReason ||
           payload.reason ||
           payload.error ||
@@ -342,7 +332,7 @@ export const getWhatsappConfirmationMessages = async (req, res) => {
 
     const [items, total] = await Promise.all([
       WhatsappConfirmationMessage.find(mongoQuery)
-        .populate("orderId", "orderNumber customerName customerPhone")
+        .populate("orderId", "orderNumber customerName customerPhone finalPayable paymentMethod")
         .populate("customerId", "name phone email customerCode")
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -376,10 +366,10 @@ export const getWhatsappConfirmationMessages = async (req, res) => {
 ========================================================= */
 export const getWhatsappConfirmationMessagesByOrder = async (req, res) => {
   try {
-    const { orderId } = req.params;
-
-    const items = await WhatsappConfirmationMessage.find({ orderId })
-      .populate("orderId", "orderNumber customerName customerPhone")
+    const items = await WhatsappConfirmationMessage.find({
+      orderId: req.params.orderId,
+    })
+      .populate("orderId", "orderNumber customerName customerPhone finalPayable paymentMethod")
       .populate("customerId", "name phone email customerCode")
       .sort({ createdAt: -1 });
 
@@ -404,7 +394,7 @@ export const getWhatsappConfirmationMessagesByOrder = async (req, res) => {
 export const getWhatsappConfirmationMessageById = async (req, res) => {
   try {
     const item = await WhatsappConfirmationMessage.findById(req.params.id)
-      .populate("orderId", "orderNumber customerName customerPhone")
+      .populate("orderId", "orderNumber customerName customerPhone finalPayable paymentMethod")
       .populate("customerId", "name phone email customerCode");
 
     if (!item) {
@@ -457,11 +447,13 @@ export const updateWhatsappConfirmationMessageStatus = async (req, res) => {
     applyStatusTimestamps(item, normalizedStatus);
 
     if (failureReason) item.failureReason = failureReason;
+
     if (customerReplyText) {
       item.customerReplyText = customerReplyText;
       item.direction = "incoming";
       if (!item.repliedAt) item.repliedAt = nowIST();
     }
+
     if (typeof notes === "string") item.notes = notes;
 
     await item.save();

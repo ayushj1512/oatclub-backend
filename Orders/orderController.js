@@ -33,6 +33,8 @@ import {
 
 import { updateOrderFulfillmentStatus } from "./order.utils.js";
 
+import { sendCodOrderConfirmationWhatsapp } from "../whatsappConfirmationMessage/whatsappConfirmationMessage.service.js";
+
 // ⚠️ path tumhare project ke hisaab se adjust kar lena
 
 const isParentOrder = (order) => String(order?.orderType || "").toLowerCase() === "parent";
@@ -848,13 +850,29 @@ export const createOrder = async (req, res) => {
       createdOrderId = order._id;
     });
 
-    const finalOrder = await Order.findById(createdOrderId).lean();
+   const finalOrder = await Order.findById(createdOrderId)
+  .populate("customerId", "name email phone")
+  .lean();
 
-    try {
-      triggerOrderEmails(finalOrder);
-    } catch (e) {
-      console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
-    }
+/* ------------------------------------------------------------
+   ✅ Auto WhatsApp confirmation for COD unconfirmed orders
+   - Non-blocking
+   - Order creation will not fail if WhatsApp fails
+------------------------------------------------------------ */
+if (
+  String(finalOrder?.paymentMethod || "").toLowerCase() === "cod" &&
+  finalOrder?.isConfirmed !== true
+) {
+  sendCodOrderConfirmationWhatsapp(finalOrder).catch((e) => {
+    console.error("⚠️ COD WhatsApp confirmation failed:", e?.message || e);
+  });
+}
+
+try {
+  triggerOrderEmails(finalOrder);
+} catch (e) {
+  console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
+}
 
     return res.status(201).json({
       message: "Order created successfully",
