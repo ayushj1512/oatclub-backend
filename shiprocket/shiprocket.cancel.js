@@ -1,19 +1,23 @@
-import axios from "axios";
-import { getShiprocketToken } from "./shiprocket.auth.js";
-import { SHIPROCKET_BASE_URL } from "./shiprocket.config.js";
+import { shiprocketApi } from "./shiprocket.client.js";
 
 export async function cancelShiprocketShipment(shipmentId) {
-  const token = await getShiprocketToken();
-
-  const res = await axios.post(
-    `${SHIPROCKET_BASE_URL}/orders/cancel/shipment`,
-    { shipment_id: shipmentId },
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
+  try {
+    const data = await shiprocketApi({
+      method: "POST",
+      url: "/orders/cancel/shipment",
+      data: {
+        shipment_id: shipmentId,
       },
-    }
-  );
+    });
 
-  return res.data;
+    return data;
+  } catch (err) {
+    console.error("❌ Shiprocket Cancel Shipment Error:", {
+      shipmentId,
+      status: err?.response?.status,
+      data: err?.response?.data || err.message,
+    });
+
+    throw err;
+  }
 }

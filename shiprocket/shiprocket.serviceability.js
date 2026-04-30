@@ -1,6 +1,22 @@
-import axios from "axios";
-import { getShiprocketToken } from "./shiprocket.auth.js";
-import { SHIPROCKET_BASE_URL } from "./shiprocket.config.js";
+import { shiprocketApi } from "./shiprocket.client.js";
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isRetryableError = (err) => {
+  const status = err?.response?.status;
+  const msg = JSON.stringify(err?.response?.data || err?.message || "").toLowerCase();
+
+  return (
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    msg.includes("upstream") ||
+    msg.includes("connection") ||
+    msg.includes("timeout") ||
+    msg.includes("econnreset") ||
+    msg.includes("etimedout")
+  );
+};
 
 export async function checkServiceability({
   pickupPincode,
@@ -8,68 +24,28 @@ export async function checkServiceability({
   weight,
   cod,
 }) {
-  const url = `${SHIPROCKET_BASE_URL}/courier/serviceability/`;
-
   const params = {
     pickup_postcode: String(pickupPincode || "").trim(),
     delivery_postcode: String(deliveryPincode || "").trim(),
     weight: Number(weight || 0.5),
-    cod:
-      cod === true || cod === "true" || cod === "1" || cod === 1 ? 1 : 0,
-  };
-
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-  const isRetryable = (err) => {
-    const status = err?.response?.status;
-    const msg = String(err?.response?.data || err?.message || "").toLowerCase();
-
-    return (
-      status === 502 ||
-      status === 503 ||
-      status === 504 ||
-      msg.includes("upstream") ||
-      msg.includes("connection") ||
-      msg.includes("timeout") ||
-      msg.includes("econnreset") ||
-      msg.includes("etimedout")
-    );
-  };
-
-  const isAuthError = (err) => {
-    const status = err?.response?.status;
-    const msg = String(err?.response?.data || err?.message || "").toLowerCase();
-
-    return (
-      status === 401 ||
-      status === 403 ||
-      msg.includes("token") ||
-      msg.includes("unauthorized")
-    );
+    cod: cod === true || cod === "true" || cod === "1" || cod === 1 ? 1 : 0,
   };
 
   let lastError;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const token = await getShiprocketToken(); // 🔥 fresh each attempt
-
       console.log("🚚 Shiprocket Serviceability:", {
-        url,
         params,
         attempt,
-        tokenLength: token?.length || 0,
       });
 
-      const res = await axios.get(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const data = await shiprocketApi({
+        method: "GET",
+        url: "/courier/serviceability/",
         params,
         timeout: 30000,
       });
-
-      const data = res.data;
 
       return (
         data?.data?.available_courier_companies ||
@@ -80,22 +56,14 @@ export async function checkServiceability({
       lastError = err;
 
       console.error("❌ Shiprocket Serviceability Error:", {
-        url,
         params,
         attempt,
         status: err?.response?.status,
         data: err?.response?.data || err.message,
       });
 
-      // 🔥 AUTH FIX (token expired)
-      if (isAuthError(err) && attempt < 3) {
-        console.log("🔄 Token issue detected, retrying with fresh token...");
-        continue;
-      }
-
-      // 🔥 RETRYABLE ERRORS
-      if (isRetryable(err) && attempt < 3) {
-        await sleep(attempt * 2000); // 2s → 4s → 6s
+      if (isRetryableError(err) && attempt < 3) {
+        await sleep(attempt * 2000);
         continue;
       }
 
@@ -103,5 +71,5 @@ export async function checkServiceability({
     }
   }
 
-  throw lastError; // important for controller
+  throw lastError;
 }

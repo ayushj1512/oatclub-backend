@@ -1,22 +1,23 @@
-import axios from "axios";
-import { getShiprocketToken } from "./shiprocket.auth.js";
-import { SHIPROCKET_BASE_URL } from "./shiprocket.config.js";
+import { shiprocketApi } from "./shiprocket.client.js";
 
 export async function assignAwb(shipmentId) {
-  const token = await getShiprocketToken();
-
-  const url = `${SHIPROCKET_BASE_URL}/courier/assign/awb`;
-
-  const res = await axios.post(
-    url,
-    { shipment_id: Number(shipmentId) },
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+  try {
+    const data = await shiprocketApi({
+      method: "POST",
+      url: "/courier/assign/awb",
+      data: {
+        shipment_id: Number(shipmentId),
       },
-    }
-  );
+    });
 
-  return res.data;
+    return data;
+  } catch (err) {
+    console.error("❌ Shiprocket Assign AWB Error:", {
+      shipmentId,
+      status: err?.response?.status,
+      data: err?.response?.data || err.message,
+    });
+
+    throw err;
+  }
 }

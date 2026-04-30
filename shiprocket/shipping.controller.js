@@ -3,16 +3,12 @@ import { checkServiceability, createShipment } from "./index.js";
 import { buildShiprocketPayload } from "./shiprocket.payload.js";
 import { buildReverseShiprocketPayload } from "./shiprocket.reverse.payload.js";
 import { getShiprocketToken } from "./shiprocket.auth.js";
-import axios from "axios";
-
-const SHIPROCKET_BASE = "https://apiv2.shiprocket.in/v1/external";
+import { shiprocketApi } from "./shiprocket.client.js";
 
 const s = (v) => (v == null ? "" : String(v)).trim();
-const isNonEmpty = (v) => s(v).length > 0;
 
-const getShiprocketError = (err) => {
-  return err?.response?.data || err?.message || "Unknown Shiprocket error";
-};
+const getShiprocketError = (err) =>
+  err?.response?.data || err?.message || "Unknown Shiprocket error";
 
 const stringifyError = (err) => {
   const raw = getShiprocketError(err);
@@ -29,13 +25,8 @@ const isShiprocketTemporaryError = (err) => {
     status === 502 ||
     status === 503 ||
     status === 504 ||
-    msg.includes("no healthy upstream") ||
-    msg.includes("upstream connect error") ||
-    msg.includes("disconnect/reset before headers") ||
-    msg.includes("remote connection failure") ||
-    msg.includes("delayed connect error") ||
-    msg.includes("connection failure") ||
-    msg.includes("bad gateway") ||
+    msg.includes("upstream") ||
+    msg.includes("connection") ||
     msg.includes("gateway") ||
     msg.includes("timeout") ||
     msg.includes("econnreset") ||
@@ -65,7 +56,7 @@ const sendShiprocketError = (res, err, fallbackMessage) => {
     return res.status(401).json({
       success: false,
       code: "SHIPROCKET_AUTH_FAILED",
-      message: "Shiprocket authentication failed. Please refresh token and try again.",
+      message: "Shiprocket authentication failed. Please try again.",
       retryable: true,
       error,
     });
@@ -75,8 +66,7 @@ const sendShiprocketError = (res, err, fallbackMessage) => {
     return res.status(503).json({
       success: false,
       code: "SHIPROCKET_TEMPORARY_DOWN",
-      message:
-        "Shiprocket service is temporarily unavailable. Please try again after some time.",
+      message: "Shiprocket service is temporarily unavailable. Please try again later.",
       retryable: true,
       retryAfterSec: 120,
       error,
@@ -90,10 +80,6 @@ const sendShiprocketError = (res, err, fallbackMessage) => {
   });
 };
 
-/**
- * POST /api/orders/:id/ship
- * Book forward shipment with Shiprocket
- */
 export async function bookWithShiprocket(req, res) {
   try {
     const orderId = req.params.id;
@@ -115,10 +101,7 @@ export async function bookWithShiprocket(req, res) {
     const order = await Order.findById(orderId);
 
     if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     if (order.shipment?.shiprocket?.awb) {
@@ -163,20 +146,12 @@ export async function bookWithShiprocket(req, res) {
           Number(item.productSnapshot?.weight) ||
           0.5;
 
-        const qty = Number(item.quantity || 1);
-        return sum + itemWeight * qty;
+        return sum + itemWeight * Number(item.quantity || 1);
       }, 0) || 0.5;
 
     const deliveryPincode = s(order.shippingAddressSnapshot.pincode);
     const pickupPincode = s(process.env.SHIPROCKET_PICKUP_PINCODE);
     const isCod = order.paymentMethod === "cod";
-
-    console.log("🚚 Shiprocket Serviceability Params:", {
-      pickupPincode,
-      deliveryPincode,
-      totalWeight,
-      isCod,
-    });
 
     const couriers = await checkServiceability({
       pickupPincode,
@@ -193,12 +168,7 @@ export async function bookWithShiprocket(req, res) {
     }
 
     const payload = buildShiprocketPayload(order);
-
-    console.log("📦 Shiprocket Forward Payload:", JSON.stringify(payload, null, 2));
-
     const shipment = await createShipment(payload);
-
-    console.log("✅ Shiprocket Forward Response:", JSON.stringify(shipment, null, 2));
 
     const awb = s(shipment?.awb_code);
     const courierName = s(shipment?.courier_name);
@@ -256,21 +226,13 @@ export async function bookWithShiprocket(req, res) {
   }
 }
 
-/**
- * POST /api/shiprocket/reverse/:orderId/:rmaNumber
- * Schedule reverse pickup
- */
 export async function createReversePickup(req, res) {
   try {
     const { orderId, rmaNumber } = req.params;
-
     const order = await Order.findById(orderId);
 
     if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     const rma = order.rmas?.find(
@@ -278,10 +240,7 @@ export async function createReversePickup(req, res) {
     );
 
     if (!rma) {
-      return res.status(404).json({
-        success: false,
-        message: "RMA not found",
-      });
+      return res.status(404).json({ success: false, message: "RMA not found" });
     }
 
     if (rma.status !== "approved") {
@@ -299,12 +258,7 @@ export async function createReversePickup(req, res) {
     }
 
     const payload = buildReverseShiprocketPayload({ order, rma });
-
-    console.log("📦 Shiprocket Reverse Payload:", JSON.stringify(payload, null, 2));
-
     const shipment = await createShipment(payload);
-
-    console.log("✅ Shiprocket Reverse Response:", JSON.stringify(shipment, null, 2));
 
     const reverseAwb = s(shipment?.awb_code);
 
@@ -329,7 +283,6 @@ export async function createReversePickup(req, res) {
     };
 
     rma.status = "pickup_scheduled";
-
     await order.save();
 
     return res.status(200).json({
@@ -343,20 +296,9 @@ export async function createReversePickup(req, res) {
   }
 }
 
-/**
- * GET /api/shiprocket/token
- * Returns valid Shiprocket auth token
- */
 export async function getShiprocketTokenApi(req, res) {
   try {
     const token = await getShiprocketToken();
-
-    if (!token) {
-      return res.status(500).json({
-        success: false,
-        message: "Failed to generate Shiprocket token",
-      });
-    }
 
     return res.status(200).json({
       success: true,
@@ -364,19 +306,10 @@ export async function getShiprocketTokenApi(req, res) {
     });
   } catch (err) {
     console.error("❌ Shiprocket Token API Error:", getShiprocketError(err));
-
-    return sendShiprocketError(
-      res,
-      err,
-      "Shiprocket authentication failed"
-    );
+    return sendShiprocketError(res, err, "Shiprocket authentication failed");
   }
 }
 
-/**
- * POST /api/shiprocket/sync-tracking/:id
- * Sync tracking by local order id or orderNumber query
- */
 export async function syncShiprocketTrackingFlex(req, res) {
   try {
     const id = req.params?.id;
@@ -384,11 +317,9 @@ export async function syncShiprocketTrackingFlex(req, res) {
 
     let order = null;
 
-    if (id) {
-      order = await Order.findById(id);
-    } else if (orderNumber) {
-      order = await Order.findOne({ orderNumber });
-    } else {
+    if (id) order = await Order.findById(id);
+    else if (orderNumber) order = await Order.findOne({ orderNumber });
+    else {
       return res.status(400).json({
         success: false,
         message: "Provide order id or orderNumber",
@@ -396,10 +327,7 @@ export async function syncShiprocketTrackingFlex(req, res) {
     }
 
     if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     const shipmentId = s(order?.shipment?.shiprocket?.shipmentId);
@@ -408,8 +336,7 @@ export async function syncShiprocketTrackingFlex(req, res) {
     if (!shipmentId && !shiprocketOrderId) {
       return res.status(400).json({
         success: false,
-        message:
-          "Shiprocket shipmentId/orderId missing in order. Cannot sync tracking.",
+        message: "Shiprocket shipmentId/orderId missing in order. Cannot sync tracking.",
         orderId: String(order._id),
         orderNumber: order.orderNumber,
       });
@@ -418,30 +345,14 @@ export async function syncShiprocketTrackingFlex(req, res) {
     const existingAwb = s(
       order?.shipment?.shiprocket?.awb || order?.trackingDetails?.trackingId
     );
-
     const existingCourier = s(
       order?.shipment?.shiprocket?.courierName ||
         order?.trackingDetails?.courierName
     );
-
     const existingUrl = s(
       order?.shipment?.shiprocket?.trackingUrl ||
         order?.trackingDetails?.trackingUrl
     );
-
-    const token = await getShiprocketToken();
-
-    if (!token) {
-      return res.status(500).json({
-        success: false,
-        message: "Shiprocket token not available",
-      });
-    }
-
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    };
 
     let nextAwb = existingAwb;
     let nextCourier = existingCourier;
@@ -455,14 +366,11 @@ export async function syncShiprocketTrackingFlex(req, res) {
 
     if (shipmentId) {
       try {
-        const trackRes = await axios.get(
-          `${SHIPROCKET_BASE}/courier/track/shipment/${encodeURIComponent(
-            shipmentId
-          )}`,
-          { headers, timeout: 20000 }
-        );
-
-        rawTrack = trackRes.data || {};
+        rawTrack = await shiprocketApi({
+          method: "GET",
+          url: `/courier/track/shipment/${encodeURIComponent(shipmentId)}`,
+          timeout: 20000,
+        });
 
         const td = rawTrack?.tracking_data || {};
         const st = Array.isArray(td?.shipment_track)
@@ -491,14 +399,11 @@ export async function syncShiprocketTrackingFlex(req, res) {
 
     if ((trackFailed || needMore) && shiprocketOrderId) {
       try {
-        const showRes = await axios.get(
-          `${SHIPROCKET_BASE}/orders/show/${encodeURIComponent(
-            shiprocketOrderId
-          )}`,
-          { headers, timeout: 20000 }
-        );
-
-        rawShow = showRes.data || {};
+        rawShow = await shiprocketApi({
+          method: "GET",
+          url: `/orders/show/${encodeURIComponent(shiprocketOrderId)}`,
+          timeout: 20000,
+        });
 
         const awbFromShow = s(
           rawShow?.awb_code ||
@@ -527,11 +432,7 @@ export async function syncShiprocketTrackingFlex(req, res) {
         console.error("⚠️ Shiprocket orders/show fallback failed:", getShiprocketError(err));
 
         if (!nextAwb && !nextCourier && !nextUrl && isShiprocketTemporaryError(err)) {
-          return sendShiprocketError(
-            res,
-            err,
-            "Shiprocket tracking sync failed"
-          );
+          return sendShiprocketError(res, err, "Shiprocket tracking sync failed");
         }
       }
     }
@@ -539,18 +440,13 @@ export async function syncShiprocketTrackingFlex(req, res) {
     const gotAny = Boolean(nextAwb || nextCourier || nextUrl);
 
     if (!gotAny && trackFailed && trackError && isShiprocketTemporaryError(trackError)) {
-      return sendShiprocketError(
-        res,
-        trackError,
-        "Shiprocket tracking sync failed"
-      );
+      return sendShiprocketError(res, trackError, "Shiprocket tracking sync failed");
     }
 
     if (!gotAny) {
       return res.status(200).json({
         success: true,
-        message:
-          "Tracking not available yet. AWB/carrier may not be generated by Shiprocket.",
+        message: "Tracking not available yet. AWB/carrier may not be generated by Shiprocket.",
         source: source || "none",
         orderId: String(order._id),
         orderNumber: order.orderNumber,
@@ -600,19 +496,10 @@ export async function syncShiprocketTrackingFlex(req, res) {
     });
   } catch (err) {
     console.error("❌ Shiprocket Tracking Sync Error:", getShiprocketError(err));
-
-    return sendShiprocketError(
-      res,
-      err,
-      "Shiprocket tracking sync failed"
-    );
+    return sendShiprocketError(res, err, "Shiprocket tracking sync failed");
   }
 }
 
-/**
- * GET /api/shiprocket/serviceability
- * Check courier serviceability between pincodes
- */
 export async function checkShiprocketServiceabilityApi(req, res) {
   try {
     const {
@@ -652,11 +539,6 @@ export async function checkShiprocketServiceabilityApi(req, res) {
     });
   } catch (err) {
     console.error("❌ Serviceability API Error:", getShiprocketError(err));
-
-    return sendShiprocketError(
-      res,
-      err,
-      "Failed to check serviceability"
-    );
+    return sendShiprocketError(res, err, "Failed to check serviceability");
   }
 }

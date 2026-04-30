@@ -6,6 +6,7 @@ import mongoose from "mongoose";
 import axios from "axios";
 
 import Order from "../../Orders/Orders.js";
+import { getShiprocketToken } from "../../shiprocket/shiprocket.auth.js";
 import {
   mapShiprocketToLocal,
   extractShiprocketStatus,
@@ -14,10 +15,10 @@ import {
   BLOCKED_FROM_CRON,
 } from "./shiprocketStatusMap.js";
 
-const { MONGO_URI, SHIPROCKET_TOKEN } = process.env;
+const { MONGO_URI } = process.env;
 
 /* =============================
-   DNS FIX (same as server.js)
+   DNS FIX
 ============================= */
 dns.setServers(["1.1.1.1", "8.8.8.8"]);
 
@@ -26,49 +27,29 @@ dns.setServers(["1.1.1.1", "8.8.8.8"]);
 ============================= */
 const DEBUG_PRINT_RAW_PAYLOAD = false;
 const RAW_PAYLOAD_PRINT_LIMIT = 2;
-
-// ✅ Print status line for every order
-const DEBUG_PRINT_EACH_ORDER = true;
-
-// ✅ Print skip reason lines (limited)
+const DEBUG_PRINT_EACH_ORDER = false;
 const DEBUG_SKIP_LIMIT = 500;
 
-// ✅ Dry run: do NOT write to DB
-// push se pehle prod ke liye false kar dena
+// ✅ Dry run enabled for testing
 const DRY_RUN = false;
 
-// Optional: limit orders processed
-const MAX_ORDERS = 0; // 0 = no limit
-
-// Axios timeout
+const MAX_ORDERS = 0;
 const TRACK_TIMEOUT_MS = 20000;
 
-/**
- * ✅ Only allow these status updates from this cron.
- */
 const ALLOWED_LOCAL_UPDATES = new Set(["out_for_delivery", "delivered"]);
 
-/**
- * ✅ Throttle + retry config
- * Business rules untouched.
- */
 const REQUEST_GAP_MS = 500;
 const MAX_RETRIES_ON_429 = 3;
-const RETRY_BASE_DELAY_MS = 60000; // 1 minute
+const RETRY_BASE_DELAY_MS = 60000;
 
 /* =============================
-   Generic helpers
+   Helpers
 ============================= */
 const norm = (v) => String(v || "").trim();
 const lower = (v) => String(v || "").toLowerCase();
 
-function nowMs() {
-  return Date.now();
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const nowMs = () => Date.now();
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function safeJson(obj) {
   try {
@@ -86,6 +67,19 @@ function isShippedLike(status) {
 
 function isRateLimitError(err) {
   return Number(err?.response?.status) === 429;
+}
+
+function isAuthError(err) {
+  const status = Number(err?.response?.status);
+  const msg = lower(JSON.stringify(err?.response?.data || err?.message || ""));
+
+  return (
+    status === 401 ||
+    status === 403 ||
+    msg.includes("token") ||
+    msg.includes("unauthorized") ||
+    msg.includes("unauthenticated")
+  );
 }
 
 function getRetryDelayMs(attemptNumber) {
@@ -122,13 +116,18 @@ function buildCandidateQuery() {
 /* =============================
    Shiprocket helpers
 ============================= */
-async function trackByShipmentId(shipmentId) {
+async function trackByShipmentId(shipmentId, { forceToken = false } = {}) {
+  const token = await getShiprocketToken({ force: forceToken });
+
   const url = `https://apiv2.shiprocket.in/v1/external/courier/track/shipment/${encodeURIComponent(
     shipmentId
   )}`;
 
   const res = await axios.get(url, {
-    headers: { Authorization: `Bearer ${SHIPROCKET_TOKEN}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     timeout: TRACK_TIMEOUT_MS,
   });
 
@@ -143,6 +142,11 @@ async function trackByShipmentIdWithRetry(shipmentId) {
       return await trackByShipmentId(shipmentId);
     } catch (err) {
       lastError = err;
+
+      if (isAuthError(err)) {
+        console.warn(`🔐 Auth error for shipmentId=${shipmentId}. Retrying once with fresh token...`);
+        return await trackByShipmentId(shipmentId, { forceToken: true });
+      }
 
       if (!isRateLimitError(err) || attempt > MAX_RETRIES_ON_429) {
         throw err;
@@ -178,27 +182,25 @@ function debugOrderLine({
 }) {
   if (!DEBUG_PRINT_EACH_ORDER) return;
 
-  const parts = [
-    `📦 ${orderNumber}`,
-    `shipmentId=${shipmentId || ""}`,
-    `cur=${currentFulfillment}/${currentShipmentStatus}`,
-    `sr="${srStatusRaw}"`,
-    `map=${nextStatus}`,
-    `=> ${decision}${reason ? ` (${reason})` : ""}`,
-  ];
-
-  console.log(parts.join(" | "));
+  console.log(
+    [
+      `📦 ${orderNumber}`,
+      `shipmentId=${shipmentId || ""}`,
+      `cur=${currentFulfillment}/${currentShipmentStatus}`,
+      `sr="${srStatusRaw}"`,
+      `map=${nextStatus}`,
+      `=> ${decision}${reason ? ` (${reason})` : ""}`,
+    ].join(" | ")
+  );
 }
 
 function debugSkip(order, reason, extra = {}) {
   if (skipDebugPrinted >= DEBUG_SKIP_LIMIT) return;
   skipDebugPrinted++;
 
-  const shipmentId = order?.shipment?.shiprocket?.shipmentId;
-
   debugOrderLine({
     orderNumber: order?.orderNumber,
-    shipmentId,
+    shipmentId: order?.shipment?.shiprocket?.shipmentId,
     currentFulfillment: norm(order?.fulfillmentStatus || "processing"),
     currentShipmentStatus: norm(order?.shipment?.status || "processing"),
     srStatusRaw: extra?.srStatusRaw ?? "",
@@ -237,7 +239,6 @@ async function disconnectDB() {
 ============================= */
 async function processOrder(order, context) {
   const { counters } = context;
-
   const shipmentId = order?.shipment?.shiprocket?.shipmentId;
 
   if (!shipmentId) {
@@ -249,7 +250,6 @@ async function processOrder(order, context) {
   const currentFulfillment = norm(order?.fulfillmentStatus || "processing");
   const currentShipmentStatus = norm(order?.shipment?.status || "processing");
 
-  // ✅ HARD GATE 0: never touch blocked statuses
   if (BLOCKED_FROM_CRON.has(currentFulfillment)) {
     counters.skipped++;
     debugSkip(order, "BLOCKED_FROM_CRON_CURRENT_STATUS");
@@ -257,9 +257,7 @@ async function processOrder(order, context) {
   }
 
   try {
-    if (REQUEST_GAP_MS > 0) {
-      await sleep(REQUEST_GAP_MS);
-    }
+    if (REQUEST_GAP_MS > 0) await sleep(REQUEST_GAP_MS);
 
     const apiT0 = nowMs();
     const payload = await trackByShipmentIdWithRetry(shipmentId);
@@ -272,9 +270,7 @@ async function processOrder(order, context) {
       DEBUG_PRINT_RAW_PAYLOAD &&
       counters.rawPrinted < RAW_PAYLOAD_PRINT_LIMIT
     ) {
-      console.log(
-        `📡 RAW PAYLOAD for ${order.orderNumber} (shipmentId=${shipmentId}):`
-      );
+      console.log(`📡 RAW PAYLOAD for ${order.orderNumber} (${shipmentId}):`);
       console.log(safeJson(payload));
       counters.rawPrinted++;
     }
@@ -282,7 +278,6 @@ async function processOrder(order, context) {
     const srStatusRaw = extractShiprocketStatus(payload);
     const nextStatus = norm(mapShiprocketToLocal(srStatusRaw));
 
-    // ✅ HARD GATE 1: only OFD/Delivered can be written
     if (!ALLOWED_LOCAL_UPDATES.has(nextStatus)) {
       counters.skipped++;
       debugOrderLine({
@@ -298,7 +293,6 @@ async function processOrder(order, context) {
       return;
     }
 
-    // ✅ HARD GATE 2: allowed progression only
     const isEligibleProgression =
       (BEFORE_OFD.has(currentFulfillment) &&
         (nextStatus === "out_for_delivery" || nextStatus === "delivered")) ||
@@ -315,14 +309,11 @@ async function processOrder(order, context) {
         srStatusRaw,
         nextStatus,
         decision: "SKIP",
-        reason: `NOT_ELIGIBLE_PROGRESSION (BEFORE_OFD=${BEFORE_OFD.has(
-          currentFulfillment
-        )})`,
+        reason: `NOT_ELIGIBLE_PROGRESSION`,
       });
       return;
     }
 
-    // ✅ No downgrades
     if (!shouldUpdateStatus(currentFulfillment, nextStatus)) {
       counters.skipped++;
       debugOrderLine({
@@ -338,7 +329,6 @@ async function processOrder(order, context) {
       return;
     }
 
-    // ✅ no change
     if (
       currentFulfillment === nextStatus &&
       currentShipmentStatus === nextStatus
@@ -386,6 +376,7 @@ async function processOrder(order, context) {
       if (!order?.shipment?.deliveredAt) {
         $set["shipment.deliveredAt"] = now;
       }
+
       if (!order?.trackingDetails?.deliveredAt) {
         $set["trackingDetails.deliveredAt"] = now;
       }
@@ -412,7 +403,6 @@ async function processOrder(order, context) {
     const message = String(data?.message || err?.message || "");
     const msgLower = lower(message);
 
-    // Shiprocket cancelled handling untouched
     if (msgLower.includes("cancelled")) {
       counters.skipped++;
 
@@ -450,7 +440,7 @@ async function processOrder(order, context) {
     counters.failed++;
 
     const msg = data ? safeJson(data) : err?.message || String(err);
-    console.error(`❌ ${order.orderNumber} (shipmentId=${shipmentId}) failed:\n${msg}`);
+    console.error(`❌ ${order.orderNumber} (${shipmentId}) failed:\n${msg}`);
   }
 }
 
@@ -459,11 +449,17 @@ async function processOrder(order, context) {
 ============================= */
 async function run() {
   if (!MONGO_URI) throw new Error("Missing MONGO_URI in env");
-  if (!SHIPROCKET_TOKEN) throw new Error("Missing SHIPROCKET_TOKEN in env");
+
+  if (!process.env.SHIPROCKET_EMAIL || !process.env.SHIPROCKET_PASSWORD) {
+    throw new Error("Missing SHIPROCKET_EMAIL / SHIPROCKET_PASSWORD in env");
+  }
 
   console.log("🔧 ENV CHECK:", {
     MONGO_URI: "✅ set",
-    SHIPROCKET_TOKEN: "✅ set",
+    SHIPROCKET_EMAIL: process.env.SHIPROCKET_EMAIL ? "✅ set" : "❌ missing",
+    SHIPROCKET_PASSWORD: process.env.SHIPROCKET_PASSWORD
+      ? "✅ set"
+      : "❌ missing",
     DRY_RUN,
     DEBUG_PRINT_EACH_ORDER,
     MAX_ORDERS: MAX_ORDERS || "no limit",
@@ -487,8 +483,9 @@ async function run() {
       MAX_ORDERS && MAX_ORDERS > 0 ? ordersAll.slice(0, MAX_ORDERS) : ordersAll;
 
     console.log(`📦 Shiprocket Sync: found ${ordersAll.length} candidate orders`);
+
     if (orders.length !== ordersAll.length) {
-      console.log(`🧪 Limiting to ${orders.length} orders (MAX_ORDERS) for dry-run/timing`);
+      console.log(`🧪 Limiting to ${orders.length} orders`);
     }
 
     const counters = {
