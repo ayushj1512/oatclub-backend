@@ -864,10 +864,8 @@ orderSchema.pre("validate", function (next) {
     if (dateField) {
       this.fulfillmentDates = this.fulfillmentDates || {};
 
-      // ✅ first time date lock, don't overwrite old date
-      if (!this.fulfillmentDates[dateField]) {
-        this.fulfillmentDates[dateField] = new Date();
-      }
+      // ✅ always update latest date for this status
+      this.fulfillmentDates[dateField] = new Date();
     }
 
     next();
@@ -875,7 +873,6 @@ orderSchema.pre("validate", function (next) {
     next(e);
   }
 });
-
 
 
 
