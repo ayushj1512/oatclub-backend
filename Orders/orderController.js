@@ -1267,7 +1267,6 @@ export const updateOrder = async (req, res) => {
 export const updateOrderStatus = async (req, res) => {
   const session = await mongoose.startSession();
 
-  /* ---------------- helpers ---------------- */
   const str = (v) => (v == null ? "" : String(v));
   const lower = (v) => str(v).trim().toLowerCase();
   const normEmail = (v) => str(v).trim().toLowerCase();
@@ -1298,30 +1297,16 @@ export const updateOrderStatus = async (req, res) => {
     return "";
   };
 
-  const pickCancelReason = () => {
-    const incoming = lower(req.body?.reason);
-    if (["cancelled_by_admin", "admin"].includes(incoming)) {
-      return "cancelled_by_admin";
-    }
-    if (["cancelled_by_customer", "customer"].includes(incoming)) {
-      return "cancelled_by_customer";
-    }
-
+  const pickCancelActor = () => {
     const actor = lower(req.body?.cancelledBy);
-    if (actor === "admin") return "cancelled_by_admin";
-    if (actor === "customer") return "cancelled_by_customer";
+    if (["admin", "customer", "system"].includes(actor)) return actor;
 
-    const adminRemarks = lower(req.body?.adminRemarks);
-    if (["cancelled_by_admin", "admin"].includes(adminRemarks)) {
-      return "cancelled_by_admin";
-    }
+    const reason = lower(req.body?.reason);
+    if (["cancelled_by_admin", "admin"].includes(reason)) return "admin";
+    if (["cancelled_by_customer", "customer"].includes(reason)) return "customer";
 
-    return req.user?.role === "admin"
-      ? "cancelled_by_admin"
-      : "cancelled_by_customer";
+    return req.user?.role === "admin" ? "admin" : "customer";
   };
-
-  const isAdminCancel = (reason) => lower(reason) === "cancelled_by_admin";
 
   const getCustomerMailData = (order) => {
     const to =
@@ -1395,7 +1380,6 @@ export const updateOrderStatus = async (req, res) => {
   try {
     req.body = stripUndefinedDeep(req.body);
 
-    // clean shipment payload
     if (req.body?.shipment) {
       if (req.body.shipment.xpressbees == null) delete req.body.shipment.xpressbees;
       if (req.body.shipment.shiprocket == null) delete req.body.shipment.shiprocket;
@@ -1409,7 +1393,9 @@ export const updateOrderStatus = async (req, res) => {
     const fulfillmentStatus = lower(req.body?.fulfillmentStatus);
     const paymentStatus = lower(req.body?.paymentStatus);
     const isConfirmedReq = req.body?.isConfirmed === true;
-    const cancelReason = pickCancelReason();
+
+    const cancelActor = pickCancelActor();
+    const cancelReason = str(req.body?.reason).trim();
 
     let updatedOrder = null;
     let shouldTriggerReserve = false;
@@ -1418,49 +1404,6 @@ export const updateOrderStatus = async (req, res) => {
     let shouldSendDeliveredEmail = false;
 
     await session.withTransaction(async () => {
-      /* ---------------- cancel flow ---------------- */
-     /* ---------------- cancel flow ---------------- */
-if (fulfillmentStatus === "cancelled") {
-  const order = await Order.findById(orderId).session(session);
-  if (!order) throw new Error("Order not found");
-
-  const allowed = ["processing", "packed"];
-
-  if (!allowed.includes(lower(order.fulfillmentStatus))) {
-    throw new Error("Cancel allowed only in processing or packed stage");
-  }
-
-  await performOrderCancellation({
-    orderId,
-    reason: cancelReason,
-    session,
-  });
-
-  await Order.updateOne(
-    { _id: orderId },
-    isAdminCancel(cancelReason)
-      ? {
-          $set: {
-            adminRemarks:
-              str(req.body?.adminRemarks).trim() || "cancelled_by_admin",
-          },
-          $unset: { customerMessage: 1 },
-        }
-      : {
-          $set: {
-            customerMessage:
-              str(req.body?.customerMessage).trim() ||
-              "cancelled_by_customer",
-          },
-          $unset: { adminRemarks: 1 },
-        }
-  ).session(session);
-
-  updatedOrder = await Order.findById(orderId).session(session);
-  return;
-}
-
-      /* ---------------- load order ---------------- */
       let order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
@@ -1469,12 +1412,48 @@ if (fulfillmentStatus === "cancelled") {
       const prevConfirmed = Boolean(order?.isConfirmed);
       const prevFulfillmentStatus = lower(order?.fulfillmentStatus);
 
-      /* ---------------- payment update ---------------- */
+      if (fulfillmentStatus === "cancelled") {
+        const allowed = ["processing", "packed"];
+
+        if (!allowed.includes(lower(order.fulfillmentStatus))) {
+          throw new Error("Cancel allowed only in processing or packed stage");
+        }
+
+        order.fulfillmentStatus = "cancelled";
+
+        order.cancellation = {
+          ...(order.cancellation?.toObject?.() || order.cancellation || {}),
+          isCancelled: true,
+          cancelledAt: order.cancellation?.cancelledAt || new Date(),
+          cancelledBy: cancelActor,
+          reason: cancelReason || order.cancellation?.reason || "",
+        };
+
+        if (cancelActor === "admin") {
+          order.adminRemarks =
+            str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
+          order.customerMessage = undefined;
+        } else {
+          order.customerMessage =
+            str(req.body?.customerMessage).trim() || "cancelled_by_customer";
+          order.adminRemarks = undefined;
+        }
+
+        await cancelReservationsInternalByOrder({
+          orderId: order._id,
+          reason: `Order cancelled | orderNumber=${order.orderNumber || ""}`,
+          session,
+        });
+
+        await order.save({ session });
+        updatedOrder = order;
+        return;
+      }
+
       if (paymentStatus) {
         order.paymentStatus = paymentStatus;
       }
 
-      /* ---------------- manual confirm ---------------- */
       if (isConfirmedReq && !order.isConfirmed) {
         if (
           lower(order.paymentMethod) === "razorpay" &&
@@ -1487,7 +1466,6 @@ if (fulfillmentStatus === "cancelled") {
         order.confirmedAt = new Date();
       }
 
-      /* ---------------- auto confirm on razorpay paid ---------------- */
       if (
         paymentStatus === "paid" &&
         lower(order.paymentMethod) === "razorpay" &&
@@ -1507,7 +1485,6 @@ if (fulfillmentStatus === "cancelled") {
         shouldTriggerReserve = true;
       }
 
-      /* ---------------- coupon usage mark on paid ---------------- */
       if (
         paymentStatus === "paid" &&
         lower(order.paymentMethod) === "razorpay" &&
@@ -1525,7 +1502,9 @@ if (fulfillmentStatus === "cancelled") {
           const couponDoc = await Coupon.findOne({ code: couponCode }).session(session);
 
           if (couponDoc) {
-            couponDoc.usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
+            couponDoc.usedBy = Array.isArray(couponDoc.usedBy)
+              ? couponDoc.usedBy
+              : [];
 
             if (!couponDoc.usedBy.includes(identity)) {
               couponDoc.usedBy.push(identity);
@@ -1536,7 +1515,6 @@ if (fulfillmentStatus === "cancelled") {
         }
       }
 
-      /* ---------------- fulfillment update ---------------- */
       if (fulfillmentStatus) {
         const shippingStages = [
           "packed",
@@ -1556,7 +1534,6 @@ if (fulfillmentStatus === "cancelled") {
           fulfillmentStatus === "delivered" &&
           prevFulfillmentStatus !== "delivered";
 
-        // shipping stage rules
         if (!isReversePickup) {
           if (isParent && shippingStages.includes(fulfillmentStatus)) {
             throw new Error(
@@ -1569,7 +1546,6 @@ if (fulfillmentStatus === "cancelled") {
           }
         }
 
-        // refund rule
         if (fulfillmentStatus === "refunded") {
           const allowedPrev = ["returned", "cancelled", "rto"];
           if (!allowedPrev.includes(currentStatus)) {
@@ -1578,7 +1554,6 @@ if (fulfillmentStatus === "cancelled") {
           order.paymentStatus = "refunded";
         }
 
-        // packed => consume reservations
         if (becomingPacked && !isParent) {
           if (
             lower(order.paymentMethod) === "razorpay" &&
@@ -1593,14 +1568,12 @@ if (fulfillmentStatus === "cancelled") {
             session,
           });
 
-          // fresh read after reservation consume
           order = await Order.findById(orderId).session(session);
           if (!order) throw new Error("Order not found after reservation consume");
         }
 
         order.fulfillmentStatus = fulfillmentStatus;
 
-        // shipped timestamps
         if (fulfillmentStatus === "shipped") {
           order.trackingDetails = order.trackingDetails || {};
           order.shipment = order.shipment || {};
@@ -1613,7 +1586,6 @@ if (fulfillmentStatus === "cancelled") {
           }
         }
 
-        // delivered timestamps
         if (fulfillmentStatus === "delivered") {
           order.trackingDetails = order.trackingDetails || {};
           order.shipment = order.shipment || {};
@@ -1626,15 +1598,12 @@ if (fulfillmentStatus === "cancelled") {
           }
         }
 
-        // packed => shiprocket booking
         if (becomingPacked && !isParent) {
           const alreadyBooked =
             order?.shipment?.shiprocket?.awb ||
             order?.shipment?.shiprocket?.shipmentId;
 
-          if (!alreadyBooked) {
-            shouldBookShiprocket = true;
-          }
+          if (!alreadyBooked) shouldBookShiprocket = true;
         }
 
         if (becomingShipped) shouldSendShippedEmail = true;
@@ -1645,12 +1614,10 @@ if (fulfillmentStatus === "cancelled") {
       updatedOrder = order;
     });
 
-    /* ---------------- fresh final order ---------------- */
     const finalOrder = updatedOrder?._id
       ? await Order.findById(updatedOrder._id).lean()
       : null;
 
-    /* ---------------- post-commit tasks ---------------- */
     if (finalOrder && shouldTriggerReserve) {
       triggerReserveNonBlocking(finalOrder.orderNumber);
     }

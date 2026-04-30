@@ -350,7 +350,23 @@ const orderSchema = new mongoose.Schema(
       failedAt: { type: Date, default: null },
       cancelledAt: { type: Date, default: null },
     },
+cancellation: {
+  isCancelled: { type: Boolean, default: false },
 
+  cancelledAt: { type: Date },
+
+  cancelledBy: {
+    type: String,
+    enum: ["customer", "admin", "system"],
+    default: undefined,
+  },
+
+  reason: {
+    type: String,
+    trim: true,
+    default: "",
+  },
+},
 
     shipment: {
       provider: {
@@ -856,25 +872,36 @@ const FULFILLMENT_DATE_FIELD = {
 
 orderSchema.pre("validate", function (next) {
   try {
-    if (!this.isModified("fulfillmentStatus")) return next();
+    if (!this.fulfillmentDates) this.fulfillmentDates = {};
 
-    const status = this.fulfillmentStatus;
-    const dateField = FULFILLMENT_DATE_FIELD[status];
+    if (this.isModified("fulfillmentStatus")) {
+      const field = FULFILLMENT_DATE_FIELD[this.fulfillmentStatus];
+      if (field) this.fulfillmentDates[field] = new Date();
 
-    if (dateField) {
-      this.fulfillmentDates = this.fulfillmentDates || {};
+      if (!this.cancellation) this.cancellation = {};
 
-      // ✅ always update latest date for this status
-      this.fulfillmentDates[dateField] = new Date();
+      if (this.fulfillmentStatus === "cancelled") {
+        this.cancellation.isCancelled = true;
+        this.cancellation.cancelledAt =
+          this.fulfillmentDates?.cancelledAt || new Date();
+      } else {
+        // ✅ status changed from cancelled to anything else
+        // clear cancellation completely
+        this.cancellation.isCancelled = false;
+        this.cancellation.cancelledAt = undefined;
+        this.cancellation.cancelledBy = undefined;
+        this.cancellation.reason = "";
+
+        // ✅ remove timeline cancelled date too
+        this.fulfillmentDates.cancelledAt = null;
+      }
     }
 
     next();
-  } catch (e) {
-    next(e);
+  } catch (err) {
+    next(err);
   }
 });
-
-
 
 // Core list performance
 orderSchema.index({ createdAt: -1 });
