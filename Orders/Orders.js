@@ -333,7 +333,23 @@ fulfillmentStatus: {
   index: true,
 },
 
-
+fulfillmentDates: {
+  processingAt: { type: Date, default: Date.now },
+  packedAt: { type: Date, default: null },
+  pickedAt: { type: Date, default: null },
+  shippedAt: { type: Date, default: null },
+  outForDeliveryAt: { type: Date, default: null },
+  deliveredAt: { type: Date, default: null },
+  pickupInitiatedAt: { type: Date, default: null },
+  returnRequestedAt: { type: Date, default: null },
+  exchangeRequestedAt: { type: Date, default: null },
+  returnedAt: { type: Date, default: null },
+  refundedAt: { type: Date, default: null },
+  exchangedAt: { type: Date, default: null },
+  rtoAt: { type: Date, default: null },
+  failedAt: { type: Date, default: null },
+  cancelledAt: { type: Date, default: null },
+},
 
 
    shipment: {
@@ -816,6 +832,51 @@ orderSchema.pre("validate", function (next) {
     next(e);
   }
 });
+
+const FULFILLMENT_DATE_FIELD = {
+  processing: "processingAt",
+  packed: "packedAt",
+  picked: "pickedAt",
+  shipped: "shippedAt",
+  out_for_delivery: "outForDeliveryAt",
+  delivered: "deliveredAt",
+
+  pickup_initiated: "pickupInitiatedAt",
+  return_requested: "returnRequestedAt",
+  exchange_requested: "exchangeRequestedAt",
+  returned: "returnedAt",
+  refunded: "refundedAt",
+  exchanged: "exchangedAt",
+
+  cancelled: "cancelledAt",
+  rto: "rtoAt",
+  failed: "failedAt",
+};
+
+
+orderSchema.pre("validate", function (next) {
+  try {
+    if (!this.isModified("fulfillmentStatus")) return next();
+
+    const status = this.fulfillmentStatus;
+    const dateField = FULFILLMENT_DATE_FIELD[status];
+
+    if (dateField) {
+      this.fulfillmentDates = this.fulfillmentDates || {};
+
+      // ✅ first time date lock, don't overwrite old date
+      if (!this.fulfillmentDates[dateField]) {
+        this.fulfillmentDates[dateField] = new Date();
+      }
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
+
 
 
 // Core list performance

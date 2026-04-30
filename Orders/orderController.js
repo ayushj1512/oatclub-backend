@@ -31,6 +31,8 @@ import {
   markDuplicateOrderAlerts,
 } from "./order.duplicate.utils.js";
 
+import { updateOrderFulfillmentStatus } from "./order.utils.js";
+
 // ⚠️ path tumhare project ke hisaab se adjust kar lena
 
 const isParentOrder = (order) => String(order?.orderType || "").toLowerCase() === "parent";
@@ -1198,12 +1200,19 @@ export const updateOrder = async (req, res) => {
   try {
     const body = { ...req.body };
 
+    // ✅ keep status separate so date hook runs via .save()
+    const nextFulfillmentStatus = body.fulfillmentStatus
+      ? String(body.fulfillmentStatus).trim().toLowerCase()
+      : "";
+
+    delete body.fulfillmentStatus;
+
     // ✅ trim remark
     if (body.customerSupportRemark != null) {
       body.customerSupportRemark = String(body.customerSupportRemark).trim();
     }
 
-    // ✅ sanitize priority (normal | medium | high)
+    // ✅ sanitize priority
     if (body.priority != null) {
       const p = String(body.priority).trim().toLowerCase();
       body.priority = ["normal", "medium", "high"].includes(p) ? p : "normal";
@@ -1212,21 +1221,39 @@ export const updateOrder = async (req, res) => {
     // ✅ If coupon object updated manually, sync discount too
     if (body.coupon && typeof body.coupon === "object" && body.coupon.code) {
       body.discount = Number(body.coupon.discount || 0);
-      if (body.coupon.identity != null) body.coupon.identity = String(body.coupon.identity).trim();
-      if (body.coupon.code != null) body.coupon.code = String(body.coupon.code).trim().toUpperCase();
+
+      if (body.coupon.identity != null) {
+        body.coupon.identity = String(body.coupon.identity).trim();
+      }
+
+      if (body.coupon.code != null) {
+        body.coupon.code = String(body.coupon.code).trim().toUpperCase();
+      }
     }
 
-    const updatedOrder = await Order.findByIdAndUpdate(req.params.id, body, {
-      new: true,
-      runValidators: true,
+    let order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    // ✅ normal fields update
+    Object.assign(order, body);
+
+    // ✅ status update through document save => pre-validate runs
+    if (nextFulfillmentStatus) {
+      order.fulfillmentStatus = nextFulfillmentStatus;
+    }
+
+    const updatedOrder = await order.save();
+
+    return res.status(200).json({
+      message: "Order updated",
+      order: updatedOrder,
     });
-
-    if (!updatedOrder) return res.status(404).json({ message: "Order not found" });
-
-    return res.status(200).json({ message: "Order updated", order: updatedOrder });
   } catch (error) {
     console.error("❌ Update Order Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 
