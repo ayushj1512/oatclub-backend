@@ -20,10 +20,14 @@ router.post("/orders/:id/ship", bookWithShiprocket);
 router.get("/shiprocket/serviceability", checkShiprocketServiceabilityApi);
 
 /* ============================================================
-   WEBHOOK (keep both)
+   SHIPROCKET WEBHOOK
+   Docs suggest avoiding obvious words in webhook URL,
+   so keep secret route as primary + old route as fallback.
 ============================================================ */
-router.post("/shiprocket/webhook", shiprocketWebhook);
 router.post("/1bfc4cf60e6c2cc8/1bfc4cf60e6c2cc8", shiprocketWebhook);
+
+// optional fallback for local/manual testing
+router.post("/shiprocket/webhook", shiprocketWebhook);
 
 /* ============================================================
    REVERSE PICKUP (RMA)
