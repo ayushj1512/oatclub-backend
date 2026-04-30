@@ -355,9 +355,9 @@ export const createOrder = async (req, res) => {
     }
 
     if (raw && typeof raw === "object") {
-      return Object.entries(raw).map(([k, v]) => ({
-        key: str(k),
-        value: str(v),
+      return Object.entries(raw).map(([key, value]) => ({
+        key: str(key),
+        value: str(value),
       }));
     }
 
@@ -391,30 +391,41 @@ export const createOrder = async (req, res) => {
 
   const normalizePriority = (v) => {
     const p = str(v).trim().toLowerCase();
-    return p === "high" || p === "medium" || p === "normal" ? p : "normal";
+    return ["normal", "medium", "high"].includes(p) ? p : "normal";
   };
 
-  const getCollectionName = (c) =>
-    str(c?.name || c?.title || c?.slug || c?.code || c)
-      .trim()
-      .toLowerCase();
+  const isPrimaryItem = (item = {}) =>
+    item?.isPrimaryProduct === true ||
+    item?.productSnapshot?.isPrimaryProduct === true;
 
-  const hasBudgetBeesCollection = (item = {}) => {
-    const collections = [
-      ...(Array.isArray(item?.collections) ? item.collections : []),
-      ...(Array.isArray(item?.productSnapshot?.collections)
-        ? item.productSnapshot.collections
-        : []),
-    ];
+  const isSecondaryItem = (item = {}) => !isPrimaryItem(item);
 
-    return collections.some((c) => {
-      const name = getCollectionName(c);
-      return (
-        name.includes("budget bees") ||
-        name.includes("budget-bees") ||
-        name.includes("budget_bees")
-      );
-    });
+  const getCouponDiscountBase = ({ couponDoc, subtotal, eligibleCouponBase }) => {
+    if (!couponDoc) return null;
+
+    const target = str(
+      couponDoc?.discountTarget || couponDoc?.cartRule?.discountTarget || "cart"
+    );
+
+    const hasRules =
+      Array.isArray(couponDoc?.cartRules) &&
+      couponDoc.cartRules.some((rule) => rule?.isActive !== false);
+
+    if (!hasRules || target === "cart") return subtotal;
+
+    if (
+      [
+        "collection_products",
+        "category_products",
+        "matched_products",
+        "secondary_products",
+        "primary_products",
+      ].includes(target)
+    ) {
+      return eligibleCouponBase;
+    }
+
+    return subtotal;
   };
 
   const validateAndComputeCoupon = async ({
@@ -422,17 +433,16 @@ export const createOrder = async (req, res) => {
     cartTotal,
     discountBase = null,
     identity,
+    couponDocFromBase = null,
   }) => {
     if (!code) {
-      return {
-        couponSnapshot: null,
-        couponDiscount: 0,
-        couponDoc: null,
-      };
+      return { couponSnapshot: null, couponDiscount: 0, couponDoc: null };
     }
 
     const couponCode = str(code).trim().toUpperCase();
-    const couponDoc = await Coupon.findOne({ code: couponCode }).session(session);
+    const couponDoc =
+      couponDocFromBase ||
+      (await Coupon.findOne({ code: couponCode }).session(session));
 
     if (!couponDoc) throw new Error("Invalid coupon code.");
     if (!couponDoc.isActive) throw new Error("Coupon is not active.");
@@ -469,7 +479,9 @@ export const createOrder = async (req, res) => {
     }
 
     const baseAmount =
-      discountBase != null ? num(discountBase) : num(cartTotal);
+      discountBase !== null && discountBase !== undefined
+        ? num(discountBase)
+        : num(cartTotal);
 
     if (baseAmount <= 0) {
       throw new Error("Coupon is not applicable on this cart.");
@@ -650,13 +662,11 @@ export const createOrder = async (req, res) => {
           lineId: crypto.randomUUID(),
           productModel: "Product",
           productId: oid(product._id),
-
           fulfillment: {
             allocatedQty: 0,
             shippedQty: 0,
             toProduceQty: qty,
           },
-
           productSnapshot: {
             productCode:
               item?.productSnapshot?.productCode || product.productCode || "",
@@ -671,8 +681,8 @@ export const createOrder = async (req, res) => {
             images: Array.isArray(item?.productSnapshot?.images)
               ? item.productSnapshot.images
               : Array.isArray(product.images)
-              ? product.images
-              : [],
+                ? product.images
+                : [],
             productType:
               product.productType ||
               (product?.variants?.length ? "variable" : "simple"),
@@ -681,15 +691,14 @@ export const createOrder = async (req, res) => {
             hsnCode: str(product.hsnCode),
             weight: num(product.weight),
             currency: product.currency || currency,
+            isPrimaryProduct: isPrimaryItem(item),
           },
-
           variant: {
             variantId: variant?._id || item?.variantId || null,
             sku: variant?.sku || item?.variant?.sku || "",
             attributes: attrs,
             weight: num(variant?.weight),
           },
-
           selectedSize,
           selectedColor,
           quantity: qty,
@@ -700,45 +709,50 @@ export const createOrder = async (req, res) => {
       }
 
       const couponCode =
-        coupon && typeof coupon === "object" ? str(coupon.code) : "";
+        coupon && typeof coupon === "object"
+          ? str(coupon.code).trim().toUpperCase()
+          : "";
 
-      const hasPrimaryProduct = items.some((item) => {
-        if (item?.isPrimaryProduct || item?.productSnapshot?.isPrimaryProduct) {
-          return true;
-        }
+      const hasPrimaryProduct = items.some(isPrimaryItem);
 
-        return !hasBudgetBeesCollection(item);
-      });
+      const eligibleCouponBase = normalizedItems.reduce(
+        (sum, orderItem, index) => {
+          const rawItem = items[index];
 
-      const eligibleCouponBase = normalizedItems.reduce((sum, orderItem, index) => {
-        const rawItem = items[index];
+          return hasPrimaryProduct && isSecondaryItem(rawItem)
+            ? sum + num(orderItem.subtotal)
+            : sum;
+        },
+        0
+      );
 
-        const isEligibleSecondary =
-          rawItem?.isSecondaryProduct ||
-          rawItem?.productSnapshot?.isSecondaryProduct ||
-          hasBudgetBeesCollection(rawItem);
+      const couponDocForBase = couponCode
+        ? await Coupon.findOne({ code: couponCode }).session(session)
+        : null;
 
-        if (hasPrimaryProduct && isEligibleSecondary) {
-          return sum + num(orderItem.subtotal);
-        }
-
-        return sum;
-      }, 0);
+      const discountBase = couponDocForBase
+        ? getCouponDiscountBase({
+            couponDoc: couponDocForBase,
+            subtotal,
+            eligibleCouponBase,
+          })
+        : null;
 
       console.log("🎟️ CREATE ORDER COUPON DEBUG:", {
         couponCode,
         subtotal,
-        hasPrimaryProduct,
         eligibleCouponBase,
+        discountTarget:
+          couponDocForBase?.discountTarget ||
+          couponDocForBase?.cartRule?.discountTarget ||
+          "cart",
+        discountBaseUsed: discountBase,
         items: items.map((item, index) => ({
           productId: item?.productId,
-          price: item?.price,
+          price: item?.price ?? item?.itemPrice ?? item?.item_price,
           quantity: item?.quantity,
-          isPrimaryProduct:
-            item?.isPrimaryProduct || item?.productSnapshot?.isPrimaryProduct,
-          isSecondaryProduct:
-            item?.isSecondaryProduct || item?.productSnapshot?.isSecondaryProduct,
-          isBudgetBees: hasBudgetBeesCollection(item),
+          isPrimaryProduct: isPrimaryItem(item),
+          isSecondaryProduct: isSecondaryItem(item),
           lineSubtotal: normalizedItems[index]?.subtotal,
         })),
       });
@@ -749,13 +763,9 @@ export const createOrder = async (req, res) => {
         await validateAndComputeCoupon({
           code: couponCode,
           cartTotal: subtotal,
-discountBase:
-  couponCode && eligibleCouponBase > 0
-    ? eligibleCouponBase
-    : coupon?.discount
-    ? Math.min(num(coupon.discount) * 2, subtotal)
-    : null,
-              identity,
+          discountBase,
+          identity,
+          couponDocFromBase: couponDocForBase,
         });
 
       const baseForRazorpayExtra = Math.max(
@@ -828,10 +838,11 @@ discountBase:
           ? couponDoc.usedBy
           : [];
 
-        couponDoc.usedBy.push(identity);
-        couponDoc.usedCount = num(couponDoc.usedCount) + 1;
-
-        await couponDoc.save({ session });
+        if (!couponDoc.usedBy.includes(identity)) {
+          couponDoc.usedBy.push(identity);
+          couponDoc.usedCount = num(couponDoc.usedCount) + 1;
+          await couponDoc.save({ session });
+        }
       }
 
       createdOrderId = order._id;
