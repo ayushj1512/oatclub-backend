@@ -7,6 +7,7 @@ import {
   getOrdersByCustomer,
   updateOrder,
   updateOrderStatus,
+  updateOrderPaymentStatus,
   updateTracking,
   getOrderAnalytics,
   getOrderByOrderNumber,
@@ -158,6 +159,7 @@ router.post("/:id/split", splitOrderIntoShipments);
 
 /* Order by ID */
 router.patch("/:id/status", updateOrderStatus);
+router.patch("/:id/payment-status", updateOrderPaymentStatus);
 router.patch("/:id/tracking", updateTracking);
 router.patch("/:id/address", updateOrderAddress);
 router.patch("/:id", updateOrder);

@@ -3661,3 +3661,75 @@ export const markDuplicateOrderAlertsController = async (req, res) => {
     });
   }
 };
+
+
+/* ============================================================
+   UPDATE ORDER PAYMENT STATUS ONLY
+============================================================ */
+export const updateOrderPaymentStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const paymentStatus = String(req.body?.paymentStatus || "")
+      .trim()
+      .toLowerCase();
+
+    const allowedStatuses = [
+      "pending",
+      "paid",
+      "failed",
+      "refunded",
+      "refund_pending",
+      "not_applicable",
+    ];
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    if (!allowedStatuses.includes(paymentStatus)) {
+      return res.status(400).json({
+        message: "Invalid payment status",
+        allowedStatuses,
+      });
+    }
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    order.paymentStatus = paymentStatus;
+
+    // ✅ Razorpay paid => auto confirm
+    if (
+      paymentStatus === "paid" &&
+      String(order.paymentMethod || "").toLowerCase() === "razorpay"
+    ) {
+      order.isConfirmed = true;
+      order.confirmedAt = order.confirmedAt || new Date();
+
+      if (!order.razorpay?.paidAt) {
+        order.razorpay = order.razorpay || {};
+        order.razorpay.paidAt = new Date();
+      }
+    }
+
+    // ✅ refunded status sync
+    if (paymentStatus === "refunded") {
+      order.fulfillmentStatus = "refunded";
+    }
+
+    const updatedOrder = await order.save();
+
+    return res.status(200).json({
+      message: "Payment status updated successfully",
+      order: updatedOrder,
+    });
+  } catch (error) {
+    console.error("❌ Update Payment Status Error:", error);
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
