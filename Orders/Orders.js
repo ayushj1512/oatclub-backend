@@ -463,10 +463,11 @@ cancellation: {
     },
     confirmedAt: { type: Date, default: null },
     confirmedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Admin",
-      default: null,
-    },
+  type: String,
+  enum: ["auto", "customer", "admin"],
+  default: null,
+  index: true,
+},
 
     analytics: {
       categoryBreakdown: [
@@ -586,6 +587,8 @@ orderSchema.pre("validate", function (next) {
     if (isRazorpayPaid && !this.isConfirmed) {
       this.isConfirmed = true;
       this.confirmedAt = new Date();
+        this.confirmedBy = "auto"; // ✅
+
     }
 
     next();

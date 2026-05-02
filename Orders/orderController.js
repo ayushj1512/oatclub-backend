@@ -2068,88 +2068,80 @@ export const confirmOrder = async (req, res) => {
     return setTimeout(fn, 0);
   };
 
+  const normalizeConfirmedBy = () => {
+    const incoming = String(req.body?.confirmedBy || "")
+      .trim()
+      .toLowerCase();
+
+    if (["admin", "customer"].includes(incoming)) return incoming;
+
+    if (req.user?.role === "admin") return "admin";
+
+    return "customer";
+  };
+
   try {
     const orderId = req.params.id;
-    console.log("🔵 [CONFIRM] Request received for orderId:", orderId);
 
     if (!mongoose.Types.ObjectId.isValid(orderId)) {
-      console.log("❌ [CONFIRM] Invalid orderId");
       return res.status(400).json({ message: "Invalid order id" });
     }
 
-    const adminId = req.user?._id || null;
+    const confirmedBy = normalizeConfirmedBy();
     let updatedOrder = null;
+    let shouldTriggerReserve = false;
 
     await session.withTransaction(async () => {
       const order = await Order.findById(orderId).session(session);
       if (!order) throw new Error("Order not found");
 
-      console.log("🟡 [CONFIRM] Order found:", {
-        orderNumber: order.orderNumber,
-        paymentMethod: order.paymentMethod,
-        paymentStatus: order.paymentStatus,
-        isConfirmed: order.isConfirmed,
-      });
-
-      if (order.paymentMethod === "razorpay" && order.paymentStatus !== "paid") {
+      if (
+        String(order.paymentMethod || "").toLowerCase() === "razorpay" &&
+        String(order.paymentStatus || "").toLowerCase() !== "paid"
+      ) {
         throw new Error("Cannot confirm Razorpay order before payment is paid");
       }
 
       if (order.isConfirmed) {
-        console.log("⚠️ [CONFIRM] Order already confirmed");
         updatedOrder = order;
         return;
       }
 
       order.isConfirmed = true;
       order.confirmedAt = new Date();
-      if (adminId) order.confirmedBy = adminId;
+      order.confirmedBy = confirmedBy;
 
       await order.save({ session });
-      updatedOrder = order;
 
-      console.log("✅ [CONFIRM] Order marked confirmed:", order.orderNumber);
+      updatedOrder = order;
+      shouldTriggerReserve = true;
     });
 
     const finalOrder = await Order.findById(updatedOrder._id).lean();
 
-    console.log("🟢 [CONFIRM] Transaction completed. Preparing inventory trigger...");
-
-    // ✅ NON-BLOCKING reserve after confirm
-    try {
+    if (finalOrder && shouldTriggerReserve) {
       const orderNumber = String(finalOrder?.orderNumber || "").trim();
 
-      if (!orderNumber) {
-        console.log("⚠️ [INVENTORY] orderNumber missing — skipping reserve");
-      } else {
-        console.log("🚀 [INVENTORY] Scheduling reserve for:", orderNumber);
-
+      if (orderNumber) {
         defer(async () => {
           try {
-            console.log("🟣 [INVENTORY] Reserve function started for:", orderNumber);
-
-            const result = await reserveInventoryForOrderNumberInternal({
+            await reserveInventoryForOrderNumberInternal({
               orderNumber,
               allowedFulfillment: ["processing", "packed"],
               confirmedOnly: true,
-              debug: true, // turn on deeper logs if your function supports
-            });
-
-            console.log("✅ [INVENTORY] Reserve completed:", {
-              orderNumber,
-              result,
+              debug: true,
             });
           } catch (err) {
             console.error("❌ [INVENTORY] Reserve failed:", err?.message || err);
           }
         });
       }
-    } catch (e) {
-      console.error("❌ [INVENTORY] Schedule failed:", e?.message || e);
     }
 
     return res.status(200).json({
-      message: "Order confirmed successfully",
+      message: finalOrder?.isConfirmed
+        ? "Order confirmed successfully"
+        : "Order already confirmed",
       order: finalOrder,
     });
   } catch (error) {
