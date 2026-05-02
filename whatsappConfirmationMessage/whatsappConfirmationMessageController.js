@@ -325,8 +325,7 @@ export const receiveWhatsappConfirmationWebhook = async (req, res) => {
 export const getWhatsappConfirmationMessages = async (req, res) => {
   try {
     const page = Math.max(Number(req.query.page) || 1, 1);
-    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 200);
-    const skip = (page - 1) * limit;
+const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 100);    const skip = (page - 1) * limit;
 
     const mongoQuery = buildListQuery(req.query);
 

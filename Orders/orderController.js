@@ -3725,3 +3725,69 @@ export const updateOrderPaymentStatus = async (req, res) => {
     });
   }
 };
+
+
+/* ============================================================
+   GET ORDER CONFIRMATION DETAILS
+   - supports order _id OR orderNumber
+============================================================ */
+export const getOrderConfirmationDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const query = mongoose.Types.ObjectId.isValid(String(id))
+      ? { _id: id }
+      : { orderNumber: String(id).trim() };
+
+    const order = await Order.findOne(query)
+      .select("orderNumber isConfirmed confirmedBy confirmedAt paymentMethod fulfillmentStatus cancellation")
+      .lean();
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    const confirmedAtIST = order.confirmedAt
+      ? new Date(order.confirmedAt).toLocaleString("en-IN", {
+          timeZone: "Asia/Kolkata",
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true,
+        })
+      : null;
+
+    return res.status(200).json({
+      success: true,
+      message: "Confirmation details fetched successfully",
+      data: {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+
+        isConfirmed: order.isConfirmed === true,
+        confirmedBy: order.confirmedBy || null,
+        confirmedAt: order.confirmedAt || null,
+        confirmedAtIST,
+
+        paymentMethod: order.paymentMethod || null,
+        fulfillmentStatus: order.fulfillmentStatus || null,
+
+        isCancelled: order?.cancellation?.isCancelled === true,
+        cancelledAt: order?.cancellation?.cancelledAt || null,
+        cancelledBy: order?.cancellation?.cancelledBy || null,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Get Confirmation Details Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};

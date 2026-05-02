@@ -23,6 +23,7 @@ import {
   findOrdersByStateAndPincode,
   getDuplicateOrderAlerts,
   markDuplicateOrderAlertsController,
+  getOrderConfirmationDetails,
 } from "./orderController.js";
 
 import { getRefundPendingCandidates } from "./orderRefunds.controller.js";
@@ -164,6 +165,7 @@ router.patch("/:id/tracking", updateTracking);
 router.patch("/:id/address", updateOrderAddress);
 router.patch("/:id", updateOrder);
 router.put("/:id", updateOrder);
+router.get("/:id/confirmation-details", getOrderConfirmationDetails);
 router.get("/:id", getOrderById);
 
 export default router;
