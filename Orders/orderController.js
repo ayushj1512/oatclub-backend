@@ -35,6 +35,9 @@ import { updateOrderFulfillmentStatus } from "./order.utils.js";
 
 import { sendCodOrderConfirmationWhatsapp } from "../whatsappConfirmationMessage/whatsappConfirmationMessage.service.js";
 
+import {
+  recalculateCustomerAnalytics,
+} from "../Customer/customerAnalytics.service.js";
 // ⚠️ path tumhare project ke hisaab se adjust kar lena
 
 const isParentOrder = (order) => String(order?.orderType || "").toLowerCase() === "parent";
@@ -238,6 +241,29 @@ const buildRmaItemsSnapshots = (order, rmaItems) => {
     });
   }
   return out;
+};
+
+const syncCustomerAnalyticsSafe = (customerId, context = "order") => {
+  const id = customerId?._id || customerId;
+  if (!id) return;
+
+  const run = async () => {
+    try {
+      await recalculateCustomerAnalytics(id);
+      console.log(`✅ Customer analytics synced | ${context} | customer=${id}`);
+    } catch (err) {
+      console.error(
+        `⚠️ Customer analytics sync failed | ${context} | customer=${id}:`,
+        err?.message || err
+      );
+    }
+  };
+
+  if (typeof setImmediate === "function") {
+    setImmediate(run);
+  } else {
+    setTimeout(run, 0);
+  }
 };
 
 const str = (v) => (v == null ? "" : String(v));
@@ -854,6 +880,11 @@ export const createOrder = async (req, res) => {
   .populate("customerId", "name email phone")
   .lean();
 
+  syncCustomerAnalyticsSafe(
+  finalOrder?.customerId?._id || finalOrder?.customerId,
+  "createOrder"
+);
+
 /* ------------------------------------------------------------
    ✅ Auto WhatsApp confirmation for COD unconfirmed orders
    - Non-blocking
@@ -1272,6 +1303,7 @@ export const updateOrder = async (req, res) => {
     }
 
     const updatedOrder = await order.save();
+    syncCustomerAnalyticsSafe(updatedOrder.customerId, "updateOrder");
 
     return res.status(200).json({
       message: "Order updated",
@@ -1646,6 +1678,8 @@ export const updateOrderStatus = async (req, res) => {
     const finalOrder = updatedOrder?._id
       ? await Order.findById(updatedOrder._id).lean()
       : null;
+
+      syncCustomerAnalyticsSafe(finalOrder?.customerId, "updateOrderStatus");
 
     if (finalOrder && shouldTriggerReserve) {
       triggerReserveNonBlocking(finalOrder.orderNumber);
@@ -2118,6 +2152,7 @@ export const confirmOrder = async (req, res) => {
     });
 
     const finalOrder = await Order.findById(updatedOrder._id).lean();
+    syncCustomerAnalyticsSafe(finalOrder?.customerId, "confirmOrder");
 
     if (finalOrder && shouldTriggerReserve) {
       const orderNumber = String(finalOrder?.orderNumber || "").trim();
@@ -3712,6 +3747,7 @@ export const updateOrderPaymentStatus = async (req, res) => {
     }
 
     const updatedOrder = await order.save();
+    syncCustomerAnalyticsSafe(order.customerId, "updateOrderPaymentStatus");
 
     return res.status(200).json({
       message: "Payment status updated successfully",

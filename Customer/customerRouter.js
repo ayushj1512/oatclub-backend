@@ -9,17 +9,21 @@ import {
   getCustomerByCustomerId,
   getCustomerByFirebaseUID,
 
-  // ✅ NEW
+  // ✅ Exists
   checkCustomerExists,
 
-  // ✅ CART ADDS
+  // ✅ Analytics
+  syncCustomerAnalytics,
+  syncAllCustomerAnalytics,
+  getCustomerAnalyticsSummary,
+
+  // ✅ Cart Adds
   addCartAddByCustomerId,
   removeCartAddByCustomerId,
   mergeGuestCartAddsByCustomerId,
 
-  // ✅ NEW: Banking / Payout
+  // ✅ Banking / Payout
   addCustomerBankingDetails,
-
 } from "../Customer/customerController.js";
 
 const router = express.Router();
@@ -30,12 +34,24 @@ const router = express.Router();
 router.post("/", createCustomer);
 
 /**
- * ✅ Check if customer exists (Public)
+ * ✅ Check if customer exists
  */
 router.get("/exists", checkCustomerExists);
 
 /**
- * ✅ Get all customers (Admin)
+ * ✅ Customer analytics summary
+ * GET /api/customers/analytics/summary
+ */
+router.get("/analytics/summary", getCustomerAnalyticsSummary);
+
+/**
+ * ✅ Sync all customer analytics
+ * PATCH /api/customers/analytics/sync-all
+ */
+router.patch("/analytics/sync-all", syncAllCustomerAnalytics);
+
+/**
+ * ✅ Get all customers
  */
 router.get("/", getAllCustomers);
 
@@ -47,7 +63,7 @@ router.get("/by-firebase/:firebaseUID", getCustomerByFirebaseUID);
 
 /**
  * ---------------------------------------------------------
- * ✅ CART ADDS ROUTES
+ * ✅ Cart Adds Routes
  * ---------------------------------------------------------
  */
 router.post("/:id/cart-adds/add", addCartAddByCustomerId);
@@ -56,11 +72,21 @@ router.post("/:id/cart-adds/merge", mergeGuestCartAddsByCustomerId);
 
 /**
  * ---------------------------------------------------------
- * ✅ NEW: Payout / Banking Details Route
+ * ✅ Payout / Banking Details
  * ---------------------------------------------------------
- * PATCH /api/customers/:id/payout-details
  */
 router.patch("/:id/payout-details", addCustomerBankingDetails);
+
+/**
+ * ✅ Sync single customer analytics from orders
+ * PATCH /api/customers/:id/analytics/sync
+ */
+router.patch("/:id/analytics/sync", syncCustomerAnalytics);
+
+/**
+ * ✅ Update manual analytics fields
+ */
+router.patch("/:id/analytics", updateCustomerAnalytics);
 
 /**
  * ✅ Get customer by Mongo ID
@@ -71,11 +97,6 @@ router.get("/:id", getCustomerById);
  * ✅ Update customer by Mongo ID
  */
 router.put("/:id", updateCustomer);
-
-/**
- * ✅ Update analytics
- */
-router.patch("/:id/analytics", updateCustomerAnalytics);
 
 /**
  * ✅ Delete customer

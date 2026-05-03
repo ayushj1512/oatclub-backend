@@ -34,7 +34,7 @@ const customerSchema = new mongoose.Schema(
       index: true,
     },
 
-    phone: { type: String, trim: true, default: "" },
+    phone: { type: String, trim: true, default: "", index: true },
 
     profileImage: { type: String, default: "" },
 
@@ -58,7 +58,7 @@ const customerSchema = new mongoose.Schema(
     state: { type: String, trim: true, default: "" },
     city: { type: String, trim: true, default: "" },
 
-    // ✅ Banking + UPI details (for refunds / payouts) — NO VALIDATORS
+    // ✅ Banking + UPI details for refunds / payouts
     payoutDetails: {
       bank: {
         accountHolderName: { type: String, trim: true, default: "" },
@@ -68,7 +68,6 @@ const customerSchema = new mongoose.Schema(
       upi: {
         upiId: { type: String, trim: true, lowercase: true, default: "" },
       },
-      // optional: track when user last updated payout details
       updatedAt: { type: Date, default: null },
     },
 
@@ -76,7 +75,6 @@ const customerSchema = new mongoose.Schema(
       type: [
         new mongoose.Schema(
           {
-            // product identity
             productId: {
               type: mongoose.Schema.Types.ObjectId,
               ref: "Product",
@@ -89,15 +87,12 @@ const customerSchema = new mongoose.Schema(
               required: true,
               index: true,
             },
-
-            // ✅ variant identity
             variantId: {
               type: mongoose.Schema.Types.ObjectId,
               default: null,
               index: true,
             },
             size: { type: String, trim: true, default: "" },
-
             lastAddedAt: { type: Date, default: Date.now },
           },
           { _id: false }
@@ -151,14 +146,82 @@ const customerSchema = new mongoose.Schema(
       },
     },
 
-    // 📊 Analytics
+    // 📊 Analytics Snapshot
     analytics: {
+      // order count/value
       totalOrders: { type: Number, default: 0 },
       totalSpend: { type: Number, default: 0 },
       avgOrderValue: { type: Number, default: 0 },
+
+      highestOrderValue: { type: Number, default: 0 },
+      lowestOrderValue: { type: Number, default: 0 },
+
+      // fulfillment behavior
+      processingOrders: { type: Number, default: 0 },
+      packedOrders: { type: Number, default: 0 },
+      pickedOrders: { type: Number, default: 0 },
+      shippedOrders: { type: Number, default: 0 },
+      outForDeliveryOrders: { type: Number, default: 0 },
+      deliveredOrders: { type: Number, default: 0 },
+
+      cancelledOrders: { type: Number, default: 0 },
+      returnRequestedOrders: { type: Number, default: 0 },
+      exchangeRequestedOrders: { type: Number, default: 0 },
+      returnedOrders: { type: Number, default: 0 },
+      refundedOrdersByFulfillment: { type: Number, default: 0 },
+      exchangedOrders: { type: Number, default: 0 },
+      rtoOrders: { type: Number, default: 0 },
+      failedOrders: { type: Number, default: 0 },
+
+      // payment behavior
+      codOrders: { type: Number, default: 0 },
+      prepaidOrders: { type: Number, default: 0 },
+      exchangeOrders: { type: Number, default: 0 },
+
+      paymentPendingOrders: { type: Number, default: 0 },
+      paidOrders: { type: Number, default: 0 },
+      paymentFailedOrders: { type: Number, default: 0 },
+      refundPendingOrders: { type: Number, default: 0 },
+      refundedOrders: { type: Number, default: 0 },
+
+      // confirmation behavior
+      confirmedOrders: { type: Number, default: 0 },
+      unconfirmedOrders: { type: Number, default: 0 },
+      confirmedByCustomerOrders: { type: Number, default: 0 },
+      confirmedByAdminOrders: { type: Number, default: 0 },
+      confirmedByAutoOrders: { type: Number, default: 0 },
+
+      // dates
+      firstOrderAt: { type: Date, default: null },
+      lastOrderAt: { type: Date, default: null },
+      lastDeliveredAt: { type: Date, default: null },
+      lastCancelledAt: { type: Date, default: null },
+      lastReturnedAt: { type: Date, default: null },
+      lastRtoAt: { type: Date, default: null },
+
+      // calculated rates
+      deliveryRate: { type: Number, default: 0 },
+      cancellationRate: { type: Number, default: 0 },
+      returnRate: { type: Number, default: 0 },
+      rtoRate: { type: Number, default: 0 },
+      paymentSuccessRate: { type: Number, default: 0 },
+
+      // customer segmentation
+      customerType: {
+        type: String,
+        enum: ["new", "repeat", "vip", "risky", "inactive"],
+        default: "new",
+        index: true,
+      },
+
+      riskScore: { type: Number, default: 0 },
+
+      // existing engagement fields
       wishlistCount: { type: Number, default: 0 },
       couponUses: { type: Number, default: 0 },
       creditsEarned: { type: Number, default: 0 },
+
+      lastAnalyticsSyncAt: { type: Date, default: null },
     },
 
     // 🚀 Status
@@ -222,16 +285,53 @@ customerSchema.index(
   }
 );
 
+/**
+ * ✅ Cart indexes
+ */
 customerSchema.index({ "cartAdds.productCode": 1, "cartAdds.size": 1 });
 customerSchema.index({ "cartAdds.variantId": 1 });
+customerSchema.index({ "cartAdds.productCode": 1 });
 
 /**
- * ✅ Other Indexes
+ * ✅ Basic indexes
  */
 customerSchema.index({ customerId: 1 });
 customerSchema.index({ email: 1 });
+customerSchema.index({ phone: 1 });
 customerSchema.index({ ageGroup: 1 });
 customerSchema.index({ country: 1 });
-customerSchema.index({ "cartAdds.productCode": 1 });
+customerSchema.index({ state: 1 });
+customerSchema.index({ city: 1 });
+customerSchema.index({ isActive: 1 });
+customerSchema.index({ joinedAt: -1 });
+customerSchema.index({ createdAt: -1 });
 
-export default mongoose.models.Customer || mongoose.model("Customer", customerSchema);
+/**
+ * ✅ Analytics indexes
+ */
+customerSchema.index({ "analytics.totalOrders": -1 });
+customerSchema.index({ "analytics.totalSpend": -1 });
+customerSchema.index({ "analytics.avgOrderValue": -1 });
+customerSchema.index({ "analytics.lastOrderAt": -1 });
+customerSchema.index({ "analytics.firstOrderAt": -1 });
+
+customerSchema.index({ "analytics.customerType": 1 });
+customerSchema.index({ "analytics.riskScore": -1 });
+
+customerSchema.index({ "analytics.deliveredOrders": -1 });
+customerSchema.index({ "analytics.cancelledOrders": -1 });
+customerSchema.index({ "analytics.returnedOrders": -1 });
+customerSchema.index({ "analytics.rtoOrders": -1 });
+
+customerSchema.index({ "analytics.deliveryRate": -1 });
+customerSchema.index({ "analytics.cancellationRate": -1 });
+customerSchema.index({ "analytics.returnRate": -1 });
+customerSchema.index({ "analytics.rtoRate": -1 });
+customerSchema.index({ "analytics.paymentSuccessRate": -1 });
+
+customerSchema.index({ "analytics.codOrders": -1 });
+customerSchema.index({ "analytics.prepaidOrders": -1 });
+customerSchema.index({ "analytics.refundPendingOrders": -1 });
+
+export default mongoose.models.Customer ||
+  mongoose.model("Customer", customerSchema);
