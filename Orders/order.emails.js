@@ -1,9 +1,8 @@
 import { Mailer } from "../nodemailer/events/mailer.js";
-import User from "../Customer/Customer.js"; // ✅ adjust path if your User model is somewhere else
+import User from "../Customer/Customer.js";
 
 /**
- * ✅ Admin recipients (hardcoded now)
- * Later you can move to .env ADMIN_ORDER_EMAILS if you want
+ * ✅ Admin recipients
  */
 const ADMIN_ORDER_ALERT_EMAILS = [
   "finance@mirayfashions.com",
@@ -11,7 +10,7 @@ const ADMIN_ORDER_ALERT_EMAILS = [
 ].filter(Boolean);
 
 /* ============================================================
-   ✅ Helpers (safe)
+   ✅ Helpers
 ============================================================ */
 
 const uniqLower = (arr) =>
@@ -41,13 +40,11 @@ const buildAdminOrderCta = (orderId) => {
   return orderId ? `${base}/admin/orders/${orderId}` : base;
 };
 
-/**
- * ✅ Customer order CTA
- * ✅ Updated: /profile/orders
- */
 const buildCustomerOrderCta = (orderId) => {
   const base = baseCustomerUrl();
-  return orderId ? `${base}/profile/orders/${orderId}` : `${base}/profile/orders`;
+  return orderId
+    ? `${base}/profile/orders/${orderId}`
+    : `${base}/profile/orders`;
 };
 
 const buildAdminRmaCta = (orderId, rmaId) => {
@@ -66,9 +63,6 @@ const buildCustomerRmaCta = (orderId, rmaId) => {
 
 const isMailEnabled = () => process.env.MAIL_ENABLED === "true";
 
-/**
- * ✅ Customer details helper (with safe fallbacks)
- */
 const getCustomerDetailsFromOrder = (order) => {
   const shipping = order?.shippingAddressSnapshot || {};
 
@@ -79,7 +73,6 @@ const getCustomerDetailsFromOrder = (order) => {
     shipping?.email ||
     "";
 
-  // ✅ SHIPPING NAME FIX: fullName / name / firstName-lastName
   const shippingName =
     shipping?.fullName ||
     shipping?.name ||
@@ -98,13 +91,52 @@ const getCustomerDetailsFromOrder = (order) => {
   };
 };
 
+const getTrackingPayload = (order = {}) => {
+  const awb =
+    order?.shipment?.shiprocket?.awb ||
+    order?.shipment?.xpressbees?.awb ||
+    order?.trackingDetails?.trackingId ||
+    "";
+
+  const courierName =
+    order?.shipment?.shiprocket?.courierName ||
+    order?.shipment?.xpressbees?.courierName ||
+    order?.trackingDetails?.courierName ||
+    "Courier Partner";
+
+  const trackingLink =
+    order?.shipment?.shiprocket?.trackingUrl ||
+    order?.shipment?.xpressbees?.trackingUrl ||
+    order?.trackingDetails?.trackingUrl ||
+    "";
+
+  return { awb, courierName, trackingLink };
+};
+
+const fetchCustomerFallback = async (order, customerName = "Customer") => {
+  let { email, name } = getCustomerDetailsFromOrder(order);
+
+  if (!email && order?.customerId) {
+    try {
+      const user = await User.findById(order.customerId).lean();
+
+      if (user?.email) email = String(user.email).trim().toLowerCase();
+      if (user?.name) name = String(user.name).trim();
+    } catch (e) {
+      console.log("⚠️ Could not fetch user for email fallback:", e?.message);
+    }
+  }
+
+  return {
+    email,
+    name: name || customerName,
+  };
+};
+
 /* ============================================================
-   ✅ ORDER EMAILS
+   ✅ ORDER CREATED EMAILS
 ============================================================ */
 
-/**
- * ✅ Send admin "order received" emails
- */
 export async function sendAdminOrderReceivedMail(order) {
   try {
     if (!isMailEnabled()) return;
@@ -127,28 +159,13 @@ export async function sendAdminOrderReceivedMail(order) {
   }
 }
 
-/**
- * ✅ Send customer order confirmation email
- */
 export async function sendCustomerOrderConfirmationMail(order) {
   try {
     if (!isMailEnabled()) return;
 
-    let { email: customerEmail, name: customerName } =
-      getCustomerDetailsFromOrder(order);
+    const { email, name } = await fetchCustomerFallback(order);
 
-    // ✅ fallback: fetch user if email missing
-    if (!customerEmail && order?.customerId) {
-      try {
-        const user = await User.findById(order.customerId).lean();
-        if (user?.email) customerEmail = String(user.email).trim().toLowerCase();
-        if (user?.name) customerName = String(user.name).trim();
-      } catch (e) {
-        console.log("⚠️ Could not fetch user for confirmation email");
-      }
-    }
-
-    if (!customerEmail) {
+    if (!email) {
       console.log("📭 Customer confirmation skipped: email missing", {
         orderId: order?._id,
         customerId: order?.customerId,
@@ -160,42 +177,42 @@ export async function sendCustomerOrderConfirmationMail(order) {
     const ctaUrl = buildCustomerOrderCta(orderId);
 
     await Mailer.sendOrderConfirmation({
-      to: customerEmail,
-      name: customerName,
+      to: email,
+      name,
       order,
       ctaUrl,
     });
 
-    console.log("✅ Customer confirmation mail sent:", customerEmail);
+    console.log("✅ Customer confirmation mail sent:", email);
   } catch (err) {
     console.error("❌ Customer confirmation mail error:", err);
   }
 }
 
-/**
- * ✅ Unified: order created trigger (Admin + Customer)
- */
 export function triggerOrderEmails(order) {
   try {
-    sendAdminOrderReceivedMail(order);
-    sendCustomerOrderConfirmationMail(order);
+    sendAdminOrderReceivedMail(order).catch((e) =>
+      console.error("❌ Admin order received trigger error:", e?.message || e)
+    );
+
+    sendCustomerOrderConfirmationMail(order).catch((e) =>
+      console.error("❌ Customer confirmation trigger error:", e?.message || e)
+    );
   } catch (e) {
     console.error("⚠️ triggerOrderEmails failed:", e);
   }
 }
 
 /* ============================================================
-   ✅ ORDER CANCELLATION EMAILS
+   ✅ CANCELLATION EMAILS
 ============================================================ */
 
-/**
- * ✅ Customer order cancellation email
- */
 export async function sendCustomerOrderCancelledMail(order, reason = "") {
   try {
     if (!isMailEnabled()) return;
 
-    const { email, name } = getCustomerDetailsFromOrder(order);
+    const { email, name } = await fetchCustomerFallback(order);
+
     if (!email) {
       console.log("📭 Customer cancellation skipped: email missing");
       return;
@@ -218,9 +235,6 @@ export async function sendCustomerOrderCancelledMail(order, reason = "") {
   }
 }
 
-/**
- * ✅ Admin cancellation mail (optional)
- */
 export async function sendAdminOrderCancelledMail(order, reason = "") {
   try {
     if (!isMailEnabled()) return;
@@ -245,15 +259,172 @@ export async function sendAdminOrderCancelledMail(order, reason = "") {
   }
 }
 
-/**
- * ✅ Unified trigger: Cancellation (Admin + Customer)
- */
 export function triggerOrderCancellationEmails(order, reason = "") {
   try {
-    sendCustomerOrderCancelledMail(order, reason);
-    sendAdminOrderCancelledMail(order, reason);
+    sendCustomerOrderCancelledMail(order, reason).catch((e) =>
+      console.error("❌ Customer cancellation trigger error:", e?.message || e)
+    );
+
+    sendAdminOrderCancelledMail(order, reason).catch((e) =>
+      console.error("❌ Admin cancellation trigger error:", e?.message || e)
+    );
   } catch (e) {
     console.error("⚠️ triggerOrderCancellationEmails failed:", e);
+  }
+}
+
+/* ============================================================
+   ✅ FULFILLMENT EMAILS
+   supported:
+   - shipped
+   - out_for_delivery
+   - delivered
+============================================================ */
+
+export async function sendCustomerOrderShippedMail(order) {
+  try {
+    if (!isMailEnabled()) return;
+
+    const { email, name } = await fetchCustomerFallback(order);
+    if (!email) {
+      console.log("📭 Customer shipped mail skipped: email missing");
+      return;
+    }
+
+    const orderId = buildOrderId(order);
+    const ctaUrl = buildCustomerOrderCta(orderId);
+    const { awb, courierName, trackingLink } = getTrackingPayload(order);
+
+    await Mailer.sendOrderShipped({
+      to: email,
+      name,
+      order,
+      ctaUrl,
+      awb,
+      courierName,
+      trackingLink: trackingLink || ctaUrl,
+    });
+
+    console.log("✅ Customer shipped mail sent:", email);
+  } catch (err) {
+    console.error("❌ Customer shipped mail error:", err);
+  }
+}
+
+export async function sendCustomerOrderOutForDeliveryMail(order) {
+  try {
+    if (!isMailEnabled()) return;
+
+    const { email, name } = await fetchCustomerFallback(order);
+    if (!email) {
+      console.log("📭 Customer OFD mail skipped: email missing");
+      return;
+    }
+
+    const orderId = buildOrderId(order);
+    const ctaUrl = buildCustomerOrderCta(orderId);
+    const { awb, courierName, trackingLink } = getTrackingPayload(order);
+
+    // ✅ If mailer has dedicated OFD method use it, else fallback to tracking template
+    const sendFn =
+      typeof Mailer.sendOrderOutForDelivery === "function"
+        ? Mailer.sendOrderOutForDelivery
+        : Mailer.sendOrderTracking;
+
+    await sendFn({
+      to: email,
+      name,
+      order: {
+        ...order,
+        emailStatusLabel: "Out for Delivery",
+      },
+      ctaUrl,
+      awb,
+      courierName,
+      trackingLink: trackingLink || ctaUrl,
+    });
+
+    console.log("✅ Customer out-for-delivery mail sent:", email);
+  } catch (err) {
+    console.error("❌ Customer out-for-delivery mail error:", err);
+  }
+}
+
+export async function sendCustomerOrderDeliveredMail(order) {
+  try {
+    if (!isMailEnabled()) return;
+
+    const { email, name } = await fetchCustomerFallback(order);
+    if (!email) {
+      console.log("📭 Customer delivered mail skipped: email missing");
+      return;
+    }
+
+    const orderId = buildOrderId(order);
+    const ctaUrl = buildCustomerOrderCta(orderId);
+    const { awb, courierName, trackingLink } = getTrackingPayload(order);
+
+    await Mailer.sendOrderDelivered({
+      to: email,
+      name,
+      order,
+      ctaUrl,
+      awb,
+      courierName,
+      trackingLink: trackingLink || ctaUrl,
+    });
+
+    console.log("✅ Customer delivered mail sent:", email);
+  } catch (err) {
+    console.error("❌ Customer delivered mail error:", err);
+  }
+}
+
+/**
+ * ✅ Unified fulfillment trigger
+ * Call this after status update/save/sync/webhook:
+ *
+ * triggerFulfillmentStatusEmail(updatedOrder, "shipped")
+ * triggerFulfillmentStatusEmail(updatedOrder, "out_for_delivery")
+ * triggerFulfillmentStatusEmail(updatedOrder, "delivered")
+ */
+export function triggerFulfillmentStatusEmail(order, status) {
+  try {
+    const normalizedStatus = String(
+      status || order?.fulfillmentStatus || ""
+    )
+      .trim()
+      .toLowerCase();
+
+    console.log("📦 Fulfillment email trigger check:", {
+      orderNumber: order?.orderNumber,
+      status: normalizedStatus,
+    });
+
+    if (normalizedStatus === "shipped") {
+      sendCustomerOrderShippedMail(order).catch((e) =>
+        console.error("❌ Shipped email trigger error:", e?.message || e)
+      );
+      return;
+    }
+
+    if (normalizedStatus === "out_for_delivery") {
+      sendCustomerOrderOutForDeliveryMail(order).catch((e) =>
+        console.error("❌ OFD email trigger error:", e?.message || e)
+      );
+      return;
+    }
+
+    if (normalizedStatus === "delivered") {
+      sendCustomerOrderDeliveredMail(order).catch((e) =>
+        console.error("❌ Delivered email trigger error:", e?.message || e)
+      );
+      return;
+    }
+
+    console.log("📭 No fulfillment email mapped for status:", normalizedStatus);
+  } catch (e) {
+    console.error("⚠️ triggerFulfillmentStatusEmail failed:", e);
   }
 }
 
@@ -261,9 +432,6 @@ export function triggerOrderCancellationEmails(order, reason = "") {
    ✅ RMA EMAILS
 ============================================================ */
 
-/**
- * ✅ Customer RMA created mail
- */
 export async function sendCustomerRmaCreatedMail({
   order,
   rma,
@@ -272,7 +440,8 @@ export async function sendCustomerRmaCreatedMail({
   try {
     if (!isMailEnabled()) return;
 
-    const { email, name } = getCustomerDetailsFromOrder(order);
+    const { email, name } = await fetchCustomerFallback(order);
+
     if (!email) {
       console.log("📭 Customer RMA mail skipped: email missing");
       return;
@@ -303,9 +472,6 @@ export async function sendCustomerRmaCreatedMail({
   }
 }
 
-/**
- * ✅ Admin RMA created mail
- */
 export async function sendAdminRmaCreatedMail({
   order,
   rma,
@@ -342,9 +508,6 @@ export async function sendAdminRmaCreatedMail({
   }
 }
 
-/**
- * ✅ Unified trigger: RMA created mail
- */
 export function triggerRmaEmails({ order, rma, policy }) {
   try {
     console.log("📩 Triggering RMA emails...", {
@@ -353,8 +516,21 @@ export function triggerRmaEmails({ order, rma, policy }) {
       policyDays: policy?.windowDays,
     });
 
-    sendCustomerRmaCreatedMail({ order, rma, policy: policy || { windowDays: 7 } });
-    sendAdminRmaCreatedMail({ order, rma, policy: policy || { windowDays: 7 } });
+    sendCustomerRmaCreatedMail({
+      order,
+      rma,
+      policy: policy || { windowDays: 7 },
+    }).catch((e) =>
+      console.error("❌ Customer RMA trigger error:", e?.message || e)
+    );
+
+    sendAdminRmaCreatedMail({
+      order,
+      rma,
+      policy: policy || { windowDays: 7 },
+    }).catch((e) =>
+      console.error("❌ Admin RMA trigger error:", e?.message || e)
+    );
   } catch (e) {
     console.error("⚠️ triggerRmaEmails failed:", e);
   }

@@ -6,8 +6,10 @@ import {
 } from "./razorpay.controller.js";
 
 import {
+  createRefundFromOrder,
   processRazorpayRefund,
   fetchRazorpayRefundStatus,
+  getRefundPendingOrders,
 } from "./razorpayRefund.controller.js";
 
 import {
@@ -39,7 +41,16 @@ router.post("/webhook", razorpayWebhook);
    ADMIN REFUNDS
 ========================================================= */
 
+// refund queue
+router.get("/admin/refunds/pending-orders", getRefundPendingOrders);
+
+// create refund record from refund_pending order
+router.post("/admin/refunds/order/:orderId/create", createRefundFromOrder);
+
+// process created refund via Razorpay
 router.post("/admin/refunds/:refundId/process", processRazorpayRefund);
+
+// fetch Razorpay refund status
 router.get("/admin/refunds/:refundId/status", fetchRazorpayRefundStatus);
 
 /* =========================================================

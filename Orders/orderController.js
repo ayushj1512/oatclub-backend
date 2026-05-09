@@ -456,6 +456,176 @@ export const createOrder = async (req, res) => {
     return subtotal;
   };
 
+  // ✅ Universal attribution snapshot for every platform/source
+  const normalizeOrderAttribution = (raw = {}) => {
+    const now = new Date();
+
+    const q = req.query || {};
+    const bodyAttr = raw && typeof raw === "object" ? raw : {};
+
+    const firstTouch = bodyAttr.firstTouch || {};
+    const lastTouch = bodyAttr.lastTouch || {};
+    const sessionAttr = bodyAttr.session || {};
+
+    const pick = (...values) => {
+      for (const v of values) {
+        const cleaned = str(v).trim();
+        if (cleaned) return cleaned;
+      }
+      return "";
+    };
+
+    const lowerPick = (...values) => pick(...values).toLowerCase();
+
+    const utmSource = lowerPick(
+      bodyAttr.source,
+      bodyAttr.utm_source,
+      q.utm_source,
+      lastTouch.source,
+      sessionAttr.source,
+      firstTouch.source
+    );
+
+    const utmMedium = lowerPick(
+      bodyAttr.medium,
+      bodyAttr.utm_medium,
+      q.utm_medium,
+      lastTouch.medium,
+      sessionAttr.medium,
+      firstTouch.medium
+    );
+
+    const utmCampaign = pick(
+      bodyAttr.campaign,
+      bodyAttr.utm_campaign,
+      q.utm_campaign,
+      lastTouch.campaign,
+      sessionAttr.campaign,
+      firstTouch.campaign
+    );
+
+    const finalSource = utmSource || "direct";
+    const finalMedium = utmMedium || "direct";
+
+    const referrer = pick(
+      bodyAttr.referrer,
+      req.headers?.referer,
+      req.headers?.referrer,
+      lastTouch.referrer,
+      firstTouch.referrer
+    );
+
+    const landingUrl = pick(
+      bodyAttr.landingUrl,
+      bodyAttr.firstTouchUrl,
+      firstTouch.landingUrl,
+      firstTouch.pageUrl
+    );
+
+    const lastTouchUrl = pick(
+      bodyAttr.lastTouchUrl,
+      lastTouch.pageUrl,
+      sessionAttr.pageUrl,
+      bodyAttr.pageUrl
+    );
+
+    return {
+      source: finalSource,
+      medium: finalMedium,
+      campaign: utmCampaign,
+
+      firstTouch: {
+        source: lowerPick(firstTouch.source, finalSource),
+        medium: lowerPick(firstTouch.medium, finalMedium),
+        campaign: pick(firstTouch.campaign, utmCampaign),
+        campaignSlug: pick(firstTouch.campaignSlug, bodyAttr.campaignSlug),
+        content: pick(firstTouch.content, bodyAttr.utm_content, q.utm_content),
+        term: pick(firstTouch.term, bodyAttr.utm_term, q.utm_term),
+        pageUrl: pick(firstTouch.pageUrl, landingUrl),
+        landingUrl,
+        referrer,
+        capturedAt: firstTouch.capturedAt || bodyAttr.capturedAt || now,
+      },
+
+      lastTouch: {
+        source: lowerPick(lastTouch.source, finalSource),
+        medium: lowerPick(lastTouch.medium, finalMedium),
+        campaign: pick(lastTouch.campaign, utmCampaign),
+        campaignSlug: pick(lastTouch.campaignSlug, bodyAttr.campaignSlug),
+        content: pick(lastTouch.content, bodyAttr.utm_content, q.utm_content),
+        term: pick(lastTouch.term, bodyAttr.utm_term, q.utm_term),
+        pageUrl: lastTouchUrl,
+        landingUrl: pick(lastTouch.landingUrl, landingUrl),
+        referrer,
+        capturedAt: lastTouch.capturedAt || now,
+      },
+
+      session: {
+        source: lowerPick(sessionAttr.source, finalSource),
+        medium: lowerPick(sessionAttr.medium, finalMedium),
+        campaign: pick(sessionAttr.campaign, utmCampaign),
+        campaignSlug: pick(sessionAttr.campaignSlug, bodyAttr.campaignSlug),
+        content: pick(sessionAttr.content, bodyAttr.utm_content, q.utm_content),
+        term: pick(sessionAttr.term, bodyAttr.utm_term, q.utm_term),
+        pageUrl: pick(sessionAttr.pageUrl, lastTouchUrl),
+        landingUrl: pick(sessionAttr.landingUrl, landingUrl),
+        referrer,
+        capturedAt: sessionAttr.capturedAt || now,
+      },
+
+      campaignId: isObjectId(bodyAttr.campaignId || q.campaignId)
+        ? oid(bodyAttr.campaignId || q.campaignId)
+        : null,
+
+      campaignSlug: pick(
+        bodyAttr.campaignSlug,
+        bodyAttr.utm_campaign,
+        q.utm_campaign
+      ),
+
+      marketingLinkId: pick(bodyAttr.marketingLinkId, bodyAttr.mlid, q.mlid),
+      shortCode: pick(bodyAttr.shortCode, bodyAttr.mcode, q.mcode),
+
+      clickIds: {
+        fbclid: pick(bodyAttr.fbclid, q.fbclid),
+        gclid: pick(bodyAttr.gclid, q.gclid),
+        msclkid: pick(bodyAttr.msclkid, q.msclkid),
+        ttclid: pick(bodyAttr.ttclid, q.ttclid),
+        scClickId: pick(
+          bodyAttr.scClickId,
+          bodyAttr.sc_click_id,
+          q.scClickId,
+          q.sc_click_id
+        ),
+      },
+
+      visitorId: pick(bodyAttr.visitorId, bodyAttr.vid),
+      sessionId: pick(bodyAttr.sessionId, bodyAttr.sid),
+
+      referrer,
+      landingUrl,
+      firstTouchUrl: pick(bodyAttr.firstTouchUrl, landingUrl),
+      lastTouchUrl,
+
+      device: {
+        type: pick(bodyAttr.device?.type, bodyAttr.deviceType),
+        browser: pick(bodyAttr.device?.browser, bodyAttr.browser),
+        os: pick(bodyAttr.device?.os, bodyAttr.os),
+        userAgent: pick(bodyAttr.device?.userAgent, req.headers?.["user-agent"]),
+        ip: pick(
+          bodyAttr.device?.ip,
+          req.headers?.["x-forwarded-for"]?.split(",")?.[0],
+          req.ip,
+          req.socket?.remoteAddress
+        ),
+      },
+
+      raw: bodyAttr,
+      capturedAt: bodyAttr.capturedAt || now,
+      lastUpdatedAt: now,
+    };
+  };
+
   const validateAndComputeCoupon = async ({
     code,
     cartTotal,
@@ -551,6 +721,7 @@ export const createOrder = async (req, res) => {
       billingAddressId,
       items,
       coupon,
+      attribution = {}, // ✅ NEW
       shippingFee = 0,
       tax = 0,
       paymentMethod = "cod",
@@ -563,6 +734,7 @@ export const createOrder = async (req, res) => {
 
     const pm = str(paymentMethod).trim().toLowerCase();
     const finalPriority = normalizePriority(priority);
+    const finalAttribution = normalizeOrderAttribution(attribution);
 
     if (!isObjectId(customerId)) {
       return res.status(400).json({ message: "Invalid customerId" });
@@ -775,14 +947,11 @@ export const createOrder = async (req, res) => {
           couponDocForBase?.cartRule?.discountTarget ||
           "cart",
         discountBaseUsed: discountBase,
-        items: items.map((item, index) => ({
-          productId: item?.productId,
-          price: item?.price ?? item?.itemPrice ?? item?.item_price,
-          quantity: item?.quantity,
-          isPrimaryProduct: isPrimaryItem(item),
-          isSecondaryProduct: isSecondaryItem(item),
-          lineSubtotal: normalizedItems[index]?.subtotal,
-        })),
+        attribution: {
+          source: finalAttribution.source,
+          medium: finalAttribution.medium,
+          campaign: finalAttribution.campaign,
+        },
       });
 
       const totalAmount = subtotal + num(shippingFee) + num(tax);
@@ -853,6 +1022,7 @@ export const createOrder = async (req, res) => {
             paymentStatus: "pending",
             fulfillmentStatus: "processing",
             source,
+            attribution: finalAttribution, // ✅ NEW
             isGiftOrder,
             analytics,
             rmas: [],
@@ -876,34 +1046,30 @@ export const createOrder = async (req, res) => {
       createdOrderId = order._id;
     });
 
-   const finalOrder = await Order.findById(createdOrderId)
-  .populate("customerId", "name email phone")
-  .lean();
+    const finalOrder = await Order.findById(createdOrderId)
+      .populate("customerId", "name email phone")
+      .lean();
 
-  syncCustomerAnalyticsSafe(
-  finalOrder?.customerId?._id || finalOrder?.customerId,
-  "createOrder"
-);
+    syncCustomerAnalyticsSafe(
+      finalOrder?.customerId?._id || finalOrder?.customerId,
+      "createOrder"
+    );
 
-/* ------------------------------------------------------------
-   ✅ Auto WhatsApp confirmation for COD unconfirmed orders
-   - Non-blocking
-   - Order creation will not fail if WhatsApp fails
------------------------------------------------------------- */
-if (
-  String(finalOrder?.paymentMethod || "").toLowerCase() === "cod" &&
-  finalOrder?.isConfirmed !== true
-) {
-  sendCodOrderConfirmationWhatsapp(finalOrder).catch((e) => {
-    console.error("⚠️ COD WhatsApp confirmation failed:", e?.message || e);
-  });
-}
+    // ✅ COD WhatsApp confirmation stays non-blocking
+    if (
+      String(finalOrder?.paymentMethod || "").toLowerCase() === "cod" &&
+      finalOrder?.isConfirmed !== true
+    ) {
+      sendCodOrderConfirmationWhatsapp(finalOrder).catch((e) => {
+        console.error("⚠️ COD WhatsApp confirmation failed:", e?.message || e);
+      });
+    }
 
-try {
-  triggerOrderEmails(finalOrder);
-} catch (e) {
-  console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
-}
+    try {
+      triggerOrderEmails(finalOrder);
+    } catch (e) {
+      console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
+    }
 
     return res.status(201).json({
       message: "Order created successfully",
@@ -981,6 +1147,17 @@ export const getAllOrders = async (req, res) => {
       paymentMethod,
       customerName,
 
+      // ✅ Universal attribution filters
+      attributionSource,
+      attributionMedium,
+      attributionCampaign,
+      campaignId,
+      campaignSlug,
+      marketingLinkId,
+      shortCode,
+      visitorId,
+      sessionId,
+
       page = "1",
       limit = "100",
 
@@ -996,20 +1173,26 @@ export const getAllOrders = async (req, res) => {
     const toStr = (v) => String(v ?? "").trim();
     const toLower = (v) => toStr(v).toLowerCase();
 
-    // normalize query that can be string OR array
     const normalizeArrayParam = (v) => {
       if (v == null) return [];
       const arr = Array.isArray(v) ? v : [v];
-      return arr
-        .map((x) => toStr(x))
-        .filter(Boolean);
+      return arr.map((x) => toStr(x)).filter(Boolean);
     };
 
     const setInOrEq = (field, raw, mapFn = (x) => x) => {
       const arr = normalizeArrayParam(raw).map(mapFn).filter(Boolean);
       if (!arr.length) return;
-      if (arr.length === 1) filters[field] = arr[0];
-      else filters[field] = { $in: arr };
+      filters[field] = arr.length === 1 ? arr[0] : { $in: arr };
+    };
+
+    const setRegex = (field, raw) => {
+      const value = toStr(raw);
+      if (!value) return;
+
+      filters[field] = new RegExp(
+        value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        "i"
+      );
     };
 
     /* ----------------------------
@@ -1019,29 +1202,46 @@ export const getAllOrders = async (req, res) => {
       filters.customerId = new mongoose.Types.ObjectId(String(customerId));
     }
 
-    // ✅ paymentStatus: supports multi
     setInOrEq("paymentStatus", paymentStatus, (x) => toStr(x));
-
-    // ✅ fulfillmentStatus: supports multi (processing/packed etc)
     setInOrEq("fulfillmentStatus", fulfillmentStatus, (x) => toStr(x));
 
-    // confirmation
     if (confirmFilter === "confirmed") filters.isConfirmed = true;
     else if (confirmFilter === "not_confirmed") filters.isConfirmed = { $ne: true };
     else if (isConfirmed != null) filters.isConfirmed = toLower(isConfirmed) === "true";
 
-    // ✅ priority: supports multi + whitelist
     const allowedPriority = new Set(["normal", "medium", "high"]);
-    const prArr = normalizeArrayParam(priority).map((x) => toLower(x));
-    const prClean = prArr.filter((p) => allowedPriority.has(p));
+    const prClean = normalizeArrayParam(priority)
+      .map((x) => toLower(x))
+      .filter((p) => allowedPriority.has(p));
+
     if (prClean.length === 1) filters.priority = prClean[0];
     else if (prClean.length > 1) filters.priority = { $in: prClean };
 
-    // ✅ paymentMethod: supports multi + lowercased
     setInOrEq("paymentMethod", paymentMethod, (x) => toLower(x));
 
     /* ----------------------------
-       ✅ Date range (createdAt) — IST Correct
+       ✅ Universal attribution filters
+    ---------------------------- */
+    setInOrEq("attribution.source", attributionSource, (x) => toLower(x));
+    setInOrEq("attribution.medium", attributionMedium, (x) => toLower(x));
+
+    // campaign can be partial search because names/slugs can vary
+    setRegex("attribution.campaign", attributionCampaign);
+
+    if (campaignId && mongoose.Types.ObjectId.isValid(String(campaignId))) {
+      filters["attribution.campaignId"] = new mongoose.Types.ObjectId(
+        String(campaignId)
+      );
+    }
+
+    setInOrEq("attribution.campaignSlug", campaignSlug, (x) => toLower(x));
+    setInOrEq("attribution.marketingLinkId", marketingLinkId, (x) => toStr(x));
+    setInOrEq("attribution.shortCode", shortCode, (x) => toStr(x));
+    setInOrEq("attribution.visitorId", visitorId, (x) => toStr(x));
+    setInOrEq("attribution.sessionId", sessionId, (x) => toStr(x));
+
+    /* ----------------------------
+       ✅ Date range — IST correct
     ---------------------------- */
     const hasStartAt = !!toStr(startAt);
     const hasEndAt = !!toStr(endAt);
@@ -1067,16 +1267,21 @@ export const getAllOrders = async (req, res) => {
         if (d) filters.createdAt.$lt = d;
       }
 
-      if (!filters.createdAt.$gte && !filters.createdAt.$lt && !filters.createdAt.$lte) {
+      if (
+        !filters.createdAt.$gte &&
+        !filters.createdAt.$lt &&
+        !filters.createdAt.$lte
+      ) {
         delete filters.createdAt;
       }
     }
 
     /* ----------------------------
-       ✅ Amount range (finalPayable)
+       ✅ Amount range
     ---------------------------- */
     const minA = Number(minAmount);
     const maxA = Number(maxAmount);
+
     if (Number.isFinite(minA) || Number.isFinite(maxA)) {
       filters.finalPayable = {};
       if (Number.isFinite(minA)) filters.finalPayable.$gte = minA;
@@ -1084,29 +1289,35 @@ export const getAllOrders = async (req, res) => {
     }
 
     /* ----------------------------
-       ✅ Search (regex)
+       ✅ Search
     ---------------------------- */
     const q = toStr(customerName);
+
     if (q) {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+
       filters.$or = [
         { orderNumber: rx },
         { "shippingAddressSnapshot.fullName": rx },
         { "shippingAddressSnapshot.email": rx },
         { "shippingAddressSnapshot.phone": rx },
+
+        // ✅ attribution searchable too
+        { "attribution.source": rx },
+        { "attribution.medium": rx },
+        { "attribution.campaign": rx },
+        { "attribution.campaignSlug": rx },
+        { "attribution.shortCode": rx },
       ];
     }
 
     /* ----------------------------
        ✅ Pagination
-       - default 100
-       - cap configurable
-       NOTE: if you want to allow admin to pull more, increase MAX_LIMIT.
     ---------------------------- */
     const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
 
     const limitNumRaw = parseInt(String(limit), 10) || 100;
-    const MAX_LIMIT = 200; // ✅ keep 200 OR change to 500/1000 for admin panel
+    const MAX_LIMIT = 200;
     const limitNum = Math.min(Math.max(1, limitNumRaw), MAX_LIMIT);
 
     const skip = (pageNum - 1) * limitNum;
@@ -1140,6 +1351,25 @@ export const getAllOrders = async (req, res) => {
       "shippingAddressSnapshot.email": 1,
       "shippingAddressSnapshot.pincode": 1,
 
+      // ✅ Universal attribution
+      "attribution.source": 1,
+      "attribution.medium": 1,
+      "attribution.campaign": 1,
+      "attribution.campaignId": 1,
+      "attribution.campaignSlug": 1,
+      "attribution.marketingLinkId": 1,
+      "attribution.shortCode": 1,
+      "attribution.visitorId": 1,
+      "attribution.sessionId": 1,
+      "attribution.landingUrl": 1,
+      "attribution.lastTouchUrl": 1,
+      "attribution.referrer": 1,
+      "attribution.clickIds.fbclid": 1,
+      "attribution.clickIds.gclid": 1,
+      "attribution.clickIds.msclkid": 1,
+      "attribution.clickIds.ttclid": 1,
+      "attribution.clickIds.scClickId": 1,
+
       // light tracking
       "shipment.status": 1,
       "shipment.shiprocket.awb": 1,
@@ -1159,11 +1389,7 @@ export const getAllOrders = async (req, res) => {
       "items.variant.sku": 1,
     };
 
-    /* ----------------------------
-       ✅ Sort
-    ---------------------------- */
     const sort = { priorityRank: -1, createdAt: -1 };
-
     const wantSum = toLower(includeSum) === "true";
 
     const promises = [
@@ -1209,7 +1435,10 @@ export const getAllOrders = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Fetch Orders Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 

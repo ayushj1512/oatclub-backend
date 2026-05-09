@@ -1,520 +1,1050 @@
 import mongoose from "mongoose";
-import Order from "../Order.js";
+import { razorpay } from "../../Razorpay/razorpay.instance.js";
+import Order from "../Orders.js";
 import OrderRefund from "./orderRefund.model.js";
 
 const isObjId = (id) => mongoose.Types.ObjectId.isValid(id);
+const paise = (amount) => Math.round(Number(amount || 0) * 100);
 
-const toNum = (v, d = 0) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : d;
+const ACTIVE_REFUND_STATUSES = [
+  "created",
+  "approved",
+  "processing",
+  "manual_required",
+];
+
+const DONE_REFUND_STATUSES = ["processed"];
+
+const getActorId = (req) => req.admin?._id || req.user?._id || null;
+
+const buildRefundItems = (order, selectedItems = []) => {
+  if (!Array.isArray(selectedItems) || selectedItems.length === 0) return [];
+
+  return selectedItems
+    .map((selected) => {
+      const line = order.items?.find(
+        (item) => String(item.lineId) === String(selected.lineId)
+      );
+
+      if (!line) return null;
+
+      const maxQty = Math.max(1, Number(line.quantity || 1));
+      const qty = Math.min(Math.max(1, Number(selected.quantity || 1)), maxQty);
+
+      const price = Number(line.price || 0);
+      const subtotal = Number(line.subtotal || price * maxQty);
+      const proportionalSubtotal = (subtotal / maxQty) * qty;
+      const refundAmount = Number(selected.refundAmount || proportionalSubtotal);
+
+      return {
+        lineId: line.lineId,
+        productModel: line.productModel || "Product",
+        productId: line.productId || null,
+        productCode: line.productSnapshot?.productCode || "",
+        title: line.productSnapshot?.title || "",
+        sku: line.variant?.sku || line.productSnapshot?.sku || "",
+        selectedSize: line.selectedSize || "",
+        selectedColor: line.selectedColor || "",
+        thumbnail: line.productSnapshot?.thumbnail || "",
+        quantity: qty,
+        price,
+        subtotal: proportionalSubtotal,
+        refundAmount,
+      };
+    })
+    .filter(Boolean);
 };
 
-const asyncHandler = (fn) => (req, res) =>
-  Promise.resolve(fn(req, res)).catch((error) => {
-    console.error("OrderRefund Error:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message || "Something went wrong",
-    });
-  });
+const calculateRefundPayload = ({ order, amount, refundType = "full", selectedItems = [] }) => {
+  if (refundType === "partial" && selectedItems.length > 0) {
+    const items = buildRefundItems(order, selectedItems);
+    const itemAmount = items.reduce(
+      (sum, item) => sum + Number(item.refundAmount || 0),
+      0
+    );
 
-const buildRefundFilter = (query = {}) => {
-  const {
-    search,
-    status,
-    paymentMethod,
-    refundMode,
-    refundMethod,
-    refundType,
-    customerId,
-    orderId,
-    rmaNumber,
-    from,
-    to,
-    minAmount,
-    maxAmount,
-  } = query;
-
-  const filter = {};
-
-  if (status) filter.status = status;
-  if (paymentMethod) filter.paymentMethod = paymentMethod;
-  if (refundMode) filter.refundMode = refundMode;
-  if (refundMethod) filter.refundMethod = refundMethod;
-  if (refundType) filter.refundType = refundType;
-  if (rmaNumber) filter.rmaNumber = rmaNumber;
-
-  if (customerId && isObjId(customerId)) filter.customerId = customerId;
-  if (orderId && isObjId(orderId)) filter.orderId = orderId;
-
-  if (from || to) {
-    filter.createdAt = {};
-    if (from) filter.createdAt.$gte = new Date(from);
-    if (to) filter.createdAt.$lte = new Date(to);
+    return {
+      refundType: "partial",
+      amount: itemAmount,
+      items,
+    };
   }
 
-  if (minAmount || maxAmount) {
-    filter.amount = {};
-    if (minAmount) filter.amount.$gte = toNum(minAmount);
-    if (maxAmount) filter.amount.$lte = toNum(maxAmount);
-  }
+  const refundAmount = Number(
+    amount || order.refundSummary?.pendingAmount || order.finalPayable || 0
+  );
 
-  if (search) {
-    const regex = new RegExp(String(search).trim(), "i");
-    filter.$or = [
-      { refundNumber: regex },
-      { orderNumber: regex },
-      { rmaNumber: regex },
-      { reason: regex },
-      { adminNote: regex },
-      { "razorpay.paymentId": regex },
-      { "razorpay.refundId": regex },
-      { "payout.payoutId": regex },
-      { "payout.utr": regex },
-      { "manualRefund.utr": regex },
-      { "manualRefund.transactionId": regex },
-      { "customerRefundDetails.upiId": regex },
-    ];
-  }
-
-  return filter;
-};
-
-const getPagination = (query = {}) => {
-  const page = Math.max(1, toNum(query.page, 1));
-  const limit = Math.min(100, Math.max(1, toNum(query.limit, 20)));
-  const skip = (page - 1) * limit;
-
-  return { page, limit, skip };
-};
-
-const getSort = (sort = "latest") => {
-  const map = {
-    latest: { createdAt: -1 },
-    oldest: { createdAt: 1 },
-    amount_high: { amount: -1 },
-    amount_low: { amount: 1 },
-    processed_latest: { processedAt: -1 },
+  return {
+    refundType: refundAmount >= Number(order.finalPayable || 0) ? "full" : "partial",
+    amount: refundAmount,
+    items: [],
   };
+};
 
-  return map[sort] || map.latest;
+const pushRefundIntoOrderSummary = ({ order, refund, refundAmount, refundType, reason, adminNote = "" }) => {
+  const oldIds = Array.isArray(order.refundSummary?.refundIds)
+    ? order.refundSummary.refundIds
+    : [];
+
+  order.eligibleForRefund = true;
+  order.paymentStatus = "refund_pending";
+
+  order.refundSummary = {
+    ...(order.refundSummary || {}),
+    status: "refund_pending",
+    refundType,
+    eligibleAmount: Number(order.refundSummary?.eligibleAmount || order.finalPayable || refundAmount),
+    refundedAmount: Number(order.refundSummary?.refundedAmount || 0),
+    pendingAmount: refundAmount,
+    reason,
+    adminNote,
+    lastRefundId: refund._id,
+    lastRefundNumber: refund.refundNumber,
+    refundIds: [...oldIds, refund._id],
+    refundRequestedAt: order.refundSummary?.refundRequestedAt || new Date(),
+  };
+};
+
+const normalizeRefundStatusForOrder = ({
+  order,
+  refundedAmount,
+  pendingAmount,
+  failedRefund,
+}) => {
+  const eligibleAmount = Number(
+    order.refundSummary?.eligibleAmount || order.finalPayable || 0
+  );
+
+  let refundStatus = order.eligibleForRefund ? "eligible" : "not_eligible";
+  let paymentStatus = order.paymentStatus;
+
+  if (refundedAmount >= eligibleAmount && eligibleAmount > 0) {
+    refundStatus = "refunded";
+    paymentStatus = "refunded";
+  } else if (refundedAmount > 0) {
+    refundStatus = "partially_refunded";
+    paymentStatus = "partially_refunded";
+  } else if (pendingAmount > 0) {
+    refundStatus = "refund_pending";
+    paymentStatus = "refund_pending";
+  } else if (failedRefund) {
+    refundStatus = "failed";
+    paymentStatus =
+      order.paymentMethod === "razorpay" ? "paid" : order.paymentStatus;
+  }
+
+  return { refundStatus, paymentStatus, eligibleAmount };
 };
 
 const syncOrderRefundSummary = async (orderId) => {
-  const refunds = await OrderRefund.find({ orderId }).lean();
+  const order = await Order.findById(orderId);
+  if (!order) return null;
 
-  const totalRefunded = refunds
-    .filter((r) => r.status === "processed")
+  const refunds = await OrderRefund.find({ orderId }).sort({ createdAt: -1 });
+
+  const refundedAmount = refunds
+    .filter((r) => DONE_REFUND_STATUSES.includes(r.status))
     .reduce((sum, r) => sum + Number(r.amount || 0), 0);
 
-  const pendingRefund = refunds
-    .filter((r) => ["created", "approved", "processing", "manual_required"].includes(r.status))
+  const pendingAmount = refunds
+    .filter((r) => ACTIVE_REFUND_STATUSES.includes(r.status))
     .reduce((sum, r) => sum + Number(r.amount || 0), 0);
 
-  const lastRefund = refunds.sort(
-    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-  )[0];
+  const failedRefund = refunds.find((r) => r.status === "failed");
+  const lastRefund = refunds[0] || null;
 
-  let status = "not_required";
-  if (pendingRefund > 0) status = "pending";
-  if (refunds.some((r) => r.status === "processing")) status = "processing";
-  if (refunds.some((r) => r.status === "manual_required")) status = "manual_required";
-  if (refunds.some((r) => r.status === "failed")) status = "failed";
-  if (totalRefunded > 0) status = pendingRefund > 0 ? "partially_refunded" : "refunded";
+  const { refundStatus, paymentStatus, eligibleAmount } =
+    normalizeRefundStatusForOrder({
+      order,
+      refundedAmount,
+      pendingAmount,
+      failedRefund,
+    });
 
-  await Order.findByIdAndUpdate(orderId, {
-    $set: {
-      paymentStatus:
-        status === "refunded"
-          ? "refunded"
-          : status === "partially_refunded"
-          ? "partially_refunded"
-          : pendingRefund > 0
-          ? "refund_pending"
-          : undefined,
-
-      "refundSummary.status": status,
-      "refundSummary.totalRefunded": totalRefunded,
-      "refundSummary.pendingRefund": pendingRefund,
-      "refundSummary.lastRefundId": lastRefund?._id || null,
-      "refundSummary.lastRefundAt": lastRefund?.createdAt || null,
-    },
-  });
-};
-
-export const createOrderRefund = asyncHandler(async (req, res) => {
-  const {
-    orderId,
-    amount,
-    refundMode,
-    refundMethod,
-    refundType = "full",
-    reason = "",
-    adminNote = "",
-    rmaNumber = "",
-    customerRefundDetails = {},
-    manualRefund = {},
-    proofs = [],
-  } = req.body;
-
-  if (!orderId || !isObjId(orderId)) {
-    return res.status(400).json({ success: false, message: "Valid orderId is required" });
-  }
-
-  const order = await Order.findById(orderId).lean();
-  if (!order) {
-    return res.status(404).json({ success: false, message: "Order not found" });
-  }
-
-  const refundAmount = toNum(amount);
-  if (refundAmount <= 0) {
-    return res.status(400).json({ success: false, message: "Refund amount must be greater than 0" });
-  }
-
-  const refund = await OrderRefund.create({
-    orderId: order._id,
-    orderNumber: order.orderNumber,
-    customerId: order.customerId,
-    paymentMethod: order.paymentMethod,
-    refundMode,
-    refundMethod,
-    refundType,
-    amount: refundAmount,
-    rmaNumber,
-    reason,
-    adminNote,
-    customerRefundDetails,
-    manualRefund,
-    proofs,
-    requestedBy: req.admin?._id || req.user?._id || null,
-    razorpay: {
-      paymentId: order?.razorpay?.paymentId || "",
-    },
-  });
-
-  await syncOrderRefundSummary(order._id);
-
-  res.status(201).json({
-    success: true,
-    message: "Refund created successfully",
-    refund,
-  });
-});
-
-export const getOrderRefunds = asyncHandler(async (req, res) => {
-  const { page, limit, skip } = getPagination(req.query);
-  const filter = buildRefundFilter(req.query);
-  const sort = getSort(req.query.sort);
-
-  const [refunds, total] = await Promise.all([
-    OrderRefund.find(filter)
-      .populate("orderId", "orderNumber finalPayable paymentMethod paymentStatus fulfillmentStatus")
-      .populate("customerId", "name email phone")
-      .populate("requestedBy", "name email")
-      .populate("approvedBy", "name email")
-      .populate("processedBy", "name email")
-      .sort(sort)
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-    OrderRefund.countDocuments(filter),
-  ]);
-
-  res.json({
-    success: true,
-    data: refunds,
-    pagination: {
-      page,
-      limit,
-      total,
-      pages: Math.ceil(total / limit),
-      hasNextPage: page * limit < total,
-      hasPrevPage: page > 1,
-    },
-    filters: req.query,
-  });
-});
-
-export const getRefundDashboard = asyncHandler(async (req, res) => {
-  const filter = buildRefundFilter(req.query);
-
-  const [statusCounts, methodCounts, totals] = await Promise.all([
-    OrderRefund.aggregate([
-      { $match: filter },
-      { $group: { _id: "$status", count: { $sum: 1 }, amount: { $sum: "$amount" } } },
-    ]),
-    OrderRefund.aggregate([
-      { $match: filter },
-      { $group: { _id: "$refundMethod", count: { $sum: 1 }, amount: { $sum: "$amount" } } },
-    ]),
-    OrderRefund.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: null,
-          totalRefunds: { $sum: 1 },
-          totalAmount: { $sum: "$amount" },
-          processedAmount: {
-            $sum: { $cond: [{ $eq: ["$status", "processed"] }, "$amount", 0] },
-          },
-          pendingAmount: {
-            $sum: {
-              $cond: [
-                { $in: ["$status", ["created", "approved", "processing", "manual_required"]] },
-                "$amount",
-                0,
-              ],
-            },
-          },
-        },
-      },
-    ]),
-  ]);
-
-  res.json({
-    success: true,
-    summary: totals[0] || {
-      totalRefunds: 0,
-      totalAmount: 0,
-      processedAmount: 0,
-      pendingAmount: 0,
-    },
-    statusCounts,
-    methodCounts,
-    filters: req.query,
-  });
-});
-
-export const getRefundById = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  if (!isObjId(id)) {
-    return res.status(400).json({ success: false, message: "Invalid refund id" });
-  }
-
-  const refund = await OrderRefund.findById(id)
-    .populate("orderId")
-    .populate("customerId", "name email phone")
-    .populate("requestedBy", "name email")
-    .populate("approvedBy", "name email")
-    .populate("processedBy", "name email");
-
-  if (!refund) {
-    return res.status(404).json({ success: false, message: "Refund not found" });
-  }
-
-  res.json({ success: true, refund });
-});
-
-export const getRefundsByOrder = asyncHandler(async (req, res) => {
-  const { orderId } = req.params;
-  const { page, limit, skip } = getPagination(req.query);
-
-  if (!isObjId(orderId)) {
-    return res.status(400).json({ success: false, message: "Invalid order id" });
-  }
-
-  const filter = { ...buildRefundFilter(req.query), orderId };
-
-  const [refunds, total] = await Promise.all([
-    OrderRefund.find(filter).sort(getSort(req.query.sort)).skip(skip).limit(limit).lean(),
-    OrderRefund.countDocuments(filter),
-  ]);
-
-  res.json({
-    success: true,
-    data: refunds,
-    pagination: {
-      page,
-      limit,
-      total,
-      pages: Math.ceil(total / limit),
-    },
-  });
-});
-
-export const updateOrderRefund = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  if (!isObjId(id)) {
-    return res.status(400).json({ success: false, message: "Invalid refund id" });
-  }
-
-  const allowed = [
-    "refundMode",
-    "refundMethod",
-    "refundType",
-    "amount",
-    "reason",
-    "adminNote",
-    "customerRefundDetails",
-    "manualRefund",
-    "payout",
-  ];
-
-  const update = {};
-  allowed.forEach((key) => {
-    if (req.body[key] !== undefined) update[key] = req.body[key];
-  });
-
-  const refund = await OrderRefund.findByIdAndUpdate(id, update, {
-    new: true,
-    runValidators: true,
-  });
-
-  if (!refund) {
-    return res.status(404).json({ success: false, message: "Refund not found" });
-  }
-
-  await syncOrderRefundSummary(refund.orderId);
-
-  res.json({
-    success: true,
-    message: "Refund updated successfully",
-    refund,
-  });
-});
-
-export const approveOrderRefund = asyncHandler(async (req, res) => {
-  const refund = await OrderRefund.findByIdAndUpdate(
-    req.params.id,
-    {
-      status: "approved",
-      approvedBy: req.admin?._id || req.user?._id || null,
-      approvedAt: new Date(),
-    },
-    { new: true, runValidators: true }
+  order.paymentStatus = paymentStatus;
+  order.eligibleForRefund = ["eligible", "refund_pending", "failed"].includes(
+    refundStatus
   );
 
-  if (!refund) {
-    return res.status(404).json({ success: false, message: "Refund not found" });
-  }
+  order.refundSummary = {
+    ...(order.refundSummary || {}),
 
-  await syncOrderRefundSummary(refund.orderId);
+    status: refundStatus,
+    eligibleAmount,
+    refundedAmount,
+    pendingAmount,
 
-  res.json({ success: true, message: "Refund approved", refund });
-});
+    // ✅ all refund links
+    refundIds: refunds.map((r) => r._id),
 
-export const markRefundProcessing = asyncHandler(async (req, res) => {
-  const refund = await OrderRefund.findByIdAndUpdate(
-    req.params.id,
-    { status: "processing" },
-    { new: true, runValidators: true }
-  );
+    // ✅ latest refund link
+    lastRefundId: lastRefund?._id || null,
+    lastRefundNumber: lastRefund?.refundNumber || "",
 
-  if (!refund) {
-    return res.status(404).json({ success: false, message: "Refund not found" });
-  }
+    // ✅ keep latest type/reason if available
+    refundType: lastRefund?.refundType || order.refundSummary?.refundType || "full",
+    reason: lastRefund?.reason || order.refundSummary?.reason || "",
 
-  await syncOrderRefundSummary(refund.orderId);
+    refundedAt:
+      refundStatus === "refunded"
+        ? order.refundSummary?.refundedAt || new Date()
+        : refundStatus === "partially_refunded"
+        ? order.refundSummary?.refundedAt || new Date()
+        : order.refundSummary?.refundedAt || null,
 
-  res.json({ success: true, message: "Refund marked as processing", refund });
-});
+    failedAt:
+      refundStatus === "failed"
+        ? failedRefund?.failedAt || order.refundSummary?.failedAt || new Date()
+        : null,
 
-export const markManualRefundProcessed = asyncHandler(async (req, res) => {
-  const { utr = "", transactionId = "", paidFrom = "", paidTo = "", paidAt, proofs = [] } = req.body;
-
-  const refund = await OrderRefund.findById(req.params.id);
-  if (!refund) {
-    return res.status(404).json({ success: false, message: "Refund not found" });
-  }
-
-  refund.status = "processed";
-  refund.processedAt = paidAt ? new Date(paidAt) : new Date();
-  refund.processedBy = req.admin?._id || req.user?._id || null;
-
-  refund.manualRefund = {
-    ...refund.manualRefund,
-    utr,
-    transactionId,
-    paidFrom,
-    paidTo,
-    paidAt: refund.processedAt,
+    failureReason:
+      refundStatus === "failed"
+        ? failedRefund?.failureReason || "Refund failed"
+        : "",
   };
 
-  if (Array.isArray(proofs) && proofs.length) {
-    refund.proofs.push(...proofs);
+  if (refundStatus === "refunded") {
+    order.eligibleForRefund = false;
+    order.fulfillmentStatus = "refunded";
+    order.fulfillmentDates = order.fulfillmentDates || {};
+    order.fulfillmentDates.refundedAt =
+      order.fulfillmentDates.refundedAt || new Date();
   }
 
-  await refund.save();
-  await syncOrderRefundSummary(refund.orderId);
+  await order.save();
+  return order;
+};
 
-  res.json({
-    success: true,
-    message: "Manual refund marked as processed",
-    refund,
-  });
-});
+/* =========================================================
+   LIST / QUEUE
+========================================================= */
 
-export const markRefundFailed = asyncHandler(async (req, res) => {
-  const { failureReason = "" } = req.body;
+export const getRefundPendingOrders = async (req, res) => {
+  try {
+    const orders = await Order.find({
+      eligibleForRefund: true,
+      paymentStatus: "refund_pending",
+      "refundSummary.status": "refund_pending",
+    })
+      .populate("customerId", "name email phone")
+      .sort({ updatedAt: -1 })
+      .lean();
 
-  const refund = await OrderRefund.findByIdAndUpdate(
-    req.params.id,
-    {
-      status: "failed",
-      failedAt: new Date(),
-      failureReason,
-    },
-    { new: true, runValidators: true }
-  );
+    const totalRefundAmount = orders.reduce((sum, order) => {
+      return (
+        sum +
+        Number(
+          order?.refundSummary?.pendingAmount ||
+            order?.refundSummary?.eligibleAmount ||
+            order?.finalPayable ||
+            0
+        )
+      );
+    }, 0);
 
-  if (!refund) {
-    return res.status(404).json({ success: false, message: "Refund not found" });
-  }
-
-  await syncOrderRefundSummary(refund.orderId);
-
-  res.json({ success: true, message: "Refund marked as failed", refund });
-});
-
-export const cancelOrderRefund = asyncHandler(async (req, res) => {
-  const refund = await OrderRefund.findByIdAndUpdate(
-    req.params.id,
-    { status: "cancelled" },
-    { new: true, runValidators: true }
-  );
-
-  if (!refund) {
-    return res.status(404).json({ success: false, message: "Refund not found" });
-  }
-
-  await syncOrderRefundSummary(refund.orderId);
-
-  res.json({ success: true, message: "Refund cancelled", refund });
-});
-
-export const addRefundProof = asyncHandler(async (req, res) => {
-  const { type = "screenshot", url, publicId = "", note = "" } = req.body;
-
-  if (!url) {
-    return res.status(400).json({ success: false, message: "Proof image URL is required" });
-  }
-
-  const refund = await OrderRefund.findByIdAndUpdate(
-    req.params.id,
-    {
-      $push: {
-        proofs: {
-          type,
-          url,
-          publicId,
-          note,
-          uploadedBy: req.admin?._id || req.user?._id || null,
-          uploadedAt: new Date(),
-        },
+    return res.json({
+      success: true,
+      count: orders.length,
+      summary: {
+        totalOrders: orders.length,
+        totalRefundAmount,
+        actionRequiredCount: orders.length,
+        refundPendingCount: orders.length,
       },
-    },
-    { new: true, runValidators: true }
-  );
-
-  if (!refund) {
-    return res.status(404).json({ success: false, message: "Refund not found" });
+      orders,
+    });
+  } catch (err) {
+    console.error("getRefundPendingOrders error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Failed to fetch refund pending orders",
+    });
   }
+};
 
-  res.json({
-    success: true,
-    message: "Refund proof added",
-    refund,
-  });
+export const getAllRefunds = async (req, res) => {
+  try {
+    const {
+      status = "",
+      paymentMethod = "",
+      refundMode = "",
+      search = "",
+      page = 1,
+      limit = 50,
+    } = req.query;
+
+    const query = {};
+
+    if (status) query.status = status;
+    if (paymentMethod) query.paymentMethod = paymentMethod;
+    if (refundMode) query.refundMode = refundMode;
+
+    if (search) {
+      query.$or = [
+        { refundNumber: { $regex: search, $options: "i" } },
+        { orderNumber: { $regex: search, $options: "i" } },
+        { rmaNumber: { $regex: search, $options: "i" } },
+        { "razorpay.refundId": { $regex: search, $options: "i" } },
+        { "manualRefund.utr": { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+    const skip = (safePage - 1) * safeLimit;
+
+    const [refunds, totalCount] = await Promise.all([
+      OrderRefund.find(query)
+        .populate("customerId", "name email phone")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(safeLimit)
+        .lean(),
+      OrderRefund.countDocuments(query),
+    ]);
+
+    return res.json({
+      success: true,
+      refunds,
+      pagination: {
+        page: safePage,
+        limit: safeLimit,
+        totalCount,
+        totalPages: Math.max(1, Math.ceil(totalCount / safeLimit)),
+        hasMore: skip + refunds.length < totalCount,
+      },
+    });
+  } catch (err) {
+    console.error("getAllRefunds error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Failed to fetch refunds",
+    });
+  }
+};
+
+export const getRefundById = async (req, res) => {
+  try {
+    const { refundId } = req.params;
+
+    if (!isObjId(refundId)) {
+      return res.status(400).json({ success: false, message: "Invalid refund id" });
+    }
+
+    const refund = await OrderRefund.findById(refundId)
+      .populate("customerId", "name email phone")
+      .lean();
+
+    if (!refund) {
+      return res.status(404).json({ success: false, message: "Refund not found" });
+    }
+
+    const order = await Order.findById(refund.orderId).lean();
+
+    return res.json({
+      success: true,
+      refund,
+      order,
+    });
+  } catch (err) {
+    console.error("getRefundById error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Failed to fetch refund",
+    });
+  }
+};
+
+/* =========================================================
+   RAZORPAY REFUNDS
+========================================================= */
+
+export const createRefundFromOrder = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const {
+  amount,
+  refundType = "full",
+  selectedItems = [],
+  reason = "Paid order cancelled before shipment",
+} = req.body;
+
+    if (!isObjId(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order id" });
+    }
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (order.paymentMethod !== "razorpay") {
+      return res.status(400).json({
+        success: false,
+        message: "Only Razorpay orders can be refunded here",
+      });
+    }
+
+    if (!["paid", "refund_pending", "partially_refunded"].includes(order.paymentStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "Refund allowed only for paid/refund_pending orders",
+      });
+    }
+
+    if (!order.razorpay?.paymentId) {
+      return res.status(400).json({
+        success: false,
+        message: "Razorpay payment id missing",
+      });
+    }
+
+    const calculated = calculateRefundPayload({
+  order,
+  amount,
+  refundType,
+  selectedItems,
 });
+
+const refundAmount = calculated.amount;
+const refundItems = calculated.items;
+const finalRefundType = calculated.refundType;
+
+    if (refundAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Refund amount must be greater than 0",
+      });
+    }
+
+    const existing = await OrderRefund.findOne({
+      orderId: order._id,
+      status: { $in: [...ACTIVE_REFUND_STATUSES, "processed"] },
+    });
+
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        message: "Refund already exists for this order",
+        refund: existing,
+      });
+    }
+
+    const refund = await OrderRefund.create({
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      customerId: order.customerId,
+      paymentMethod: "razorpay",
+      refundMode: "automatic",
+      refundMethod: "razorpay_source",
+      refundType: finalRefundType,
+items: refundItems,
+amount: refundAmount,
+      currency: order.currency || "INR",
+      status: "created",
+      reason,
+      customerVisible: true,
+      customerMessage: "Your refund request has been created.",
+      razorpay: {
+        paymentId: order.razorpay.paymentId,
+      },
+      requestedBy: getActorId(req),
+    });
+
+   pushRefundIntoOrderSummary({
+  order,
+  refund,
+  refundAmount,
+  refundType: finalRefundType,
+  reason,
+});
+
+    await order.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Refund created",
+      refund,
+      order,
+    });
+  } catch (err) {
+    console.error("createRefundFromOrder error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Failed to create refund",
+    });
+  }
+};
+
+export const processRazorpayRefund = async (req, res) => {
+  try {
+    const { refundId } = req.params;
+    const { speed = "normal", notes = {} } = req.body;
+
+    if (!isObjId(refundId)) {
+      return res.status(400).json({ success: false, message: "Invalid refund id" });
+    }
+
+    const refund = await OrderRefund.findById(refundId);
+    if (!refund) {
+      return res.status(404).json({ success: false, message: "Refund not found" });
+    }
+
+    if (refund.status === "processed") {
+      return res.status(400).json({
+        success: false,
+        message: "Refund already processed",
+      });
+    }
+
+    if (refund.status === "processing" && refund.razorpay?.refundId) {
+      return res.status(400).json({
+        success: false,
+        message: "Refund already initiated. Fetch status instead.",
+      });
+    }
+
+    if (refund.paymentMethod !== "razorpay") {
+      return res.status(400).json({
+        success: false,
+        message: "This refund is not a Razorpay payment refund",
+      });
+    }
+
+    if (refund.refundMethod !== "razorpay_source") {
+      return res.status(400).json({
+        success: false,
+        message: "Refund method must be razorpay_source",
+      });
+    }
+
+    const order = await Order.findById(refund.orderId);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Linked order not found",
+      });
+    }
+
+    if (order.paymentMethod !== "razorpay") {
+      return res.status(400).json({
+        success: false,
+        message: "Linked order is not a Razorpay order",
+      });
+    }
+
+    if (!["paid", "refund_pending", "partially_refunded"].includes(order.paymentStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "Order payment status is not eligible for refund",
+      });
+    }
+
+    const paymentId = refund.razorpay?.paymentId || order.razorpay?.paymentId;
+
+    if (!paymentId) {
+      return res.status(400).json({
+        success: false,
+        message: "Razorpay paymentId missing on refund/order",
+      });
+    }
+
+    const amountInPaise = paise(refund.amount);
+
+    if (amountInPaise <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Refund amount must be greater than 0",
+      });
+    }
+
+    refund.status = "processing";
+    refund.refundMode = "automatic";
+    refund.refundMethod = "razorpay_source";
+    refund.razorpay.paymentId = paymentId;
+    refund.customerMessage = "Your refund has been initiated.";
+    await refund.save();
+
+    const receipt = refund.refundNumber || `refund_${order.orderNumber}`;
+
+    const rpRefund = await razorpay.payments.refund(paymentId, {
+      amount: amountInPaise,
+      speed,
+      receipt,
+      notes: {
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        refundId: String(refund._id),
+        refundNumber: refund.refundNumber,
+        reason: refund.reason || "",
+        ...notes,
+      },
+    });
+
+    refund.status = rpRefund.status === "processed" ? "processed" : "processing";
+    refund.razorpay.paymentId = paymentId;
+    refund.razorpay.refundId = rpRefund.id;
+    refund.razorpay.speed = speed;
+    refund.razorpay.receipt = receipt;
+    refund.razorpay.rawResponse = rpRefund;
+
+    if (refund.status === "processed") {
+      refund.processedAt = refund.processedAt || new Date();
+      refund.processedBy = getActorId(req);
+      refund.customerMessage = "Your refund has been processed successfully.";
+    }
+
+    await refund.save();
+
+    const updatedOrder = await syncOrderRefundSummary(order._id);
+
+    return res.json({
+      success: true,
+      message:
+        refund.status === "processed"
+          ? "Razorpay refund processed"
+          : "Razorpay refund initiated",
+      refund,
+      order: updatedOrder,
+      razorpayRefund: rpRefund,
+    });
+  } catch (err) {
+    console.error("processRazorpayRefund error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        err?.error?.description ||
+        err?.message ||
+        "Failed to process Razorpay refund",
+    });
+  }
+};
+
+export const fetchRazorpayRefundStatus = async (req, res) => {
+  try {
+    const { refundId } = req.params;
+
+    if (!isObjId(refundId)) {
+      return res.status(400).json({ success: false, message: "Invalid refund id" });
+    }
+
+    const refund = await OrderRefund.findById(refundId);
+    if (!refund) {
+      return res.status(404).json({ success: false, message: "Refund not found" });
+    }
+
+    const paymentId = refund.razorpay?.paymentId;
+    const razorpayRefundId = refund.razorpay?.refundId;
+
+    if (!paymentId || !razorpayRefundId) {
+      return res.status(400).json({
+        success: false,
+        message: "Razorpay paymentId/refundId missing",
+      });
+    }
+
+    const rpRefund = await razorpay.payments.fetchRefund(paymentId, razorpayRefundId);
+
+    refund.razorpay.rawResponse = rpRefund;
+
+    if (rpRefund.status === "processed") {
+      refund.status = "processed";
+      refund.processedAt = refund.processedAt || new Date();
+      refund.customerMessage = "Your refund has been processed successfully.";
+    }
+
+    if (rpRefund.status === "failed") {
+      refund.status = "failed";
+      refund.failedAt = refund.failedAt || new Date();
+      refund.failureReason =
+        rpRefund.error_description || rpRefund.error_reason || "Razorpay refund failed";
+      refund.customerMessage =
+        "Your refund could not be processed. Our team will review it.";
+    }
+
+    await refund.save();
+
+    const updatedOrder = await syncOrderRefundSummary(refund.orderId);
+
+    return res.json({
+      success: true,
+      refund,
+      order: updatedOrder,
+      razorpayRefund: rpRefund,
+    });
+  } catch (err) {
+    console.error("fetchRazorpayRefundStatus error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        err?.error?.description ||
+        err?.message ||
+        "Failed to fetch Razorpay refund status",
+    });
+  }
+};
+
+/* =========================================================
+   COD / MANUAL REFUNDS
+========================================================= */
+
+export const createManualRefundFromOrder = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    const {
+  amount,
+  refundType = "full",
+  selectedItems = [],
+  reason = "Manual refund requested",
+  refundMethod = "upi",
+  customerRefundDetails = {},
+  adminNote = "",
+  customerMessage = "Your refund request has been created.",
+} = req.body;
+
+    if (!isObjId(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order id" });
+    }
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (!["cod", "exchange", "razorpay"].includes(order.paymentMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: "Unsupported payment method for manual refund",
+      });
+    }
+
+    const calculated = calculateRefundPayload({
+  order,
+  amount,
+  refundType,
+  selectedItems,
+});
+
+const refundAmount = calculated.amount;
+const refundItems = calculated.items;
+const finalRefundType = calculated.refundType;
+
+    if (refundAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Refund amount must be greater than 0",
+      });
+    }
+
+    const allowedManualMethods = [
+      "upi",
+      "bank_transfer",
+      "cash",
+      "store_credit",
+      "other",
+    ];
+
+    if (!allowedManualMethods.includes(refundMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid manual refund method",
+      });
+    }
+
+    const existing = await OrderRefund.findOne({
+      orderId: order._id,
+      status: { $in: [...ACTIVE_REFUND_STATUSES, "processed"] },
+    });
+
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        message: "Refund already exists for this order",
+        refund: existing,
+      });
+    }
+
+    const refund = await OrderRefund.create({
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      customerId: order.customerId,
+      paymentMethod: order.paymentMethod || "cod",
+      refundMode: "manual",
+      refundMethod,
+refundType: finalRefundType,
+items: refundItems,
+amount: refundAmount,
+currency: order.currency || "INR",
+      currency: order.currency || "INR",
+      status: "manual_required",
+      reason,
+      adminNote,
+      customerVisible: true,
+      customerMessage,
+      customerRefundDetails: {
+        mode:
+          refundMethod === "bank_transfer"
+            ? "bank"
+            : refundMethod === "store_credit"
+            ? "store_credit"
+            : refundMethod === "cash"
+            ? "cash"
+            : "upi",
+        upiId: customerRefundDetails?.upiId || "",
+        accountHolderName: customerRefundDetails?.accountHolderName || "",
+        bankName: customerRefundDetails?.bankName || "",
+        accountNumberLast4: customerRefundDetails?.accountNumberLast4 || "",
+        ifsc: customerRefundDetails?.ifsc || "",
+        note: customerRefundDetails?.note || "",
+      },
+      requestedBy: getActorId(req),
+    });
+
+   pushRefundIntoOrderSummary({
+  order,
+  refund,
+  refundAmount,
+  refundType: finalRefundType,
+  reason,
+  adminNote,
+});
+
+    await order.save();
+
+    return res.status(201).json({
+      success: true,
+      message: "Manual refund created",
+      refund,
+      order,
+    });
+  } catch (err) {
+    console.error("createManualRefundFromOrder error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Failed to create manual refund",
+    });
+  }
+};
+
+export const markManualRefundProcessed = async (req, res) => {
+  try {
+    const { refundId } = req.params;
+
+    const {
+      transactionId = "",
+      utr = "",
+      paidFrom = "",
+      paidTo = "",
+      paidAt = null,
+      handledByName = "",
+      proofs = [],
+      customerMessage = "Your refund has been processed successfully.",
+      notifyCustomer = false,
+      notificationChannel = "manual",
+    } = req.body;
+
+    if (!isObjId(refundId)) {
+      return res.status(400).json({ success: false, message: "Invalid refund id" });
+    }
+
+    const refund = await OrderRefund.findById(refundId);
+
+    if (!refund) {
+      return res.status(404).json({ success: false, message: "Refund not found" });
+    }
+
+    if (refund.refundMode !== "manual") {
+      return res.status(400).json({
+        success: false,
+        message: "Only manual refunds can be marked processed here",
+      });
+    }
+
+    if (refund.status === "processed") {
+      return res.status(400).json({
+        success: false,
+        message: "Refund already processed",
+      });
+    }
+
+    refund.status = "processed";
+    refund.processedBy = getActorId(req);
+    refund.processedAt = refund.processedAt || new Date();
+
+    refund.manualRefund = {
+      ...(refund.manualRefund || {}),
+      transactionId,
+      utr,
+      paidFrom,
+      paidTo,
+      paidAt: paidAt ? new Date(paidAt) : new Date(),
+      handledByName,
+    };
+
+    if (Array.isArray(proofs) && proofs.length > 0) {
+      const cleanProofs = proofs
+        .filter((p) => p?.url)
+        .map((p) => ({
+          type: p.type || "screenshot",
+          url: p.url,
+          publicId: p.publicId || "",
+          uploadedBy: getActorId(req),
+          note: p.note || "",
+          uploadedAt: new Date(),
+        }));
+
+      refund.proofs = [...(refund.proofs || []), ...cleanProofs];
+    }
+
+    refund.customerMessage = customerMessage;
+
+    if (notifyCustomer) {
+      refund.notification = {
+        ...(refund.notification || {}),
+        customerNotified: true,
+        notifiedAt: new Date(),
+        channel: notificationChannel,
+        lastMessage: customerMessage,
+      };
+    }
+
+    await refund.save();
+
+    const updatedOrder = await syncOrderRefundSummary(refund.orderId);
+
+    return res.json({
+      success: true,
+      message: "Manual refund marked as processed",
+      refund,
+      order: updatedOrder,
+    });
+  } catch (err) {
+    console.error("markManualRefundProcessed error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Failed to mark manual refund processed",
+    });
+  }
+};
+
+export const markManualRefundFailed = async (req, res) => {
+  try {
+    const { refundId } = req.params;
+    const { failureReason = "Manual refund failed" } = req.body;
+
+    if (!isObjId(refundId)) {
+      return res.status(400).json({ success: false, message: "Invalid refund id" });
+    }
+
+    const refund = await OrderRefund.findById(refundId);
+
+    if (!refund) {
+      return res.status(404).json({ success: false, message: "Refund not found" });
+    }
+
+    if (refund.refundMode !== "manual") {
+      return res.status(400).json({
+        success: false,
+        message: "Only manual refunds can be marked failed here",
+      });
+    }
+
+    refund.status = "failed";
+    refund.failedAt = refund.failedAt || new Date();
+    refund.failureReason = failureReason;
+    refund.customerMessage =
+      "Your refund could not be completed. Our team will review it.";
+
+    await refund.save();
+
+    const updatedOrder = await syncOrderRefundSummary(refund.orderId);
+
+    return res.json({
+      success: true,
+      message: "Manual refund marked as failed",
+      refund,
+      order: updatedOrder,
+    });
+  } catch (err) {
+    console.error("markManualRefundFailed error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Failed to mark manual refund failed",
+    });
+  }
+};
+
+/* =========================================================
+   PROOFS
+========================================================= */
+
+export const addRefundProof = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const {
+      type = "screenshot",
+      url = "",
+      publicId = "",
+      note = "",
+    } = req.body;
+
+    if (!isObjId(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid refund id",
+      });
+    }
+
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        message: "Proof URL is required",
+      });
+    }
+
+    const refund = await OrderRefund.findById(id);
+
+    if (!refund) {
+      return res.status(404).json({
+        success: false,
+        message: "Refund not found",
+      });
+    }
+
+    refund.proofs = [
+      ...(refund.proofs || []),
+      {
+        type,
+        url,
+        publicId,
+        note,
+        uploadedBy: getActorId(req),
+        uploadedAt: new Date(),
+      },
+    ];
+
+    await refund.save();
+
+    const order = await Order.findById(refund.orderId).lean();
+
+    return res.json({
+      success: true,
+      message: "Refund proof added",
+      refund,
+      order,
+    });
+  } catch (err) {
+    console.error("addRefundProof error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Failed to add refund proof",
+    });
+  }
+};

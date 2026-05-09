@@ -1,4 +1,4 @@
-// nodemailer/OrderCancellationEmailTemplate.js
+// nodemailer/events/OrderCancellationEmailTemplate.js
 
 export function orderCancellationTemplate({
   name = "Customer",
@@ -24,7 +24,6 @@ export function orderCancellationTemplate({
 
   const shipping = order?.shippingAddressSnapshot || {};
 
-  // ✅ BEST NAME RESOLUTION (fullName priority)
   const resolvedName =
     shipping?.fullName ||
     shipping?.name ||
@@ -34,7 +33,6 @@ export function orderCancellationTemplate({
     name ||
     "Customer";
 
-  // ✅ Shipping address display name (same logic)
   const shippingName =
     shipping?.fullName ||
     shipping?.name ||
@@ -50,12 +48,10 @@ export function orderCancellationTemplate({
   const shippingZip = shipping?.pincode || shipping?.zip || "";
   const shippingCountry = shipping?.country || "India";
 
-  const subject = `Order Cancelled — #${orderId}`;
+  const cancellationReason = reason ? String(reason).trim() : "";
 
   const apology =
     "We sincerely apologise for the inconvenience. We are working to ensure this does not happen again.";
-
-  const cancellationReason = reason ? String(reason).trim() : "";
 
   const refundLine =
     paymentMethod !== "COD"
@@ -64,7 +60,8 @@ export function orderCancellationTemplate({
 
   const hasValidCta = Boolean(ctaUrl && ctaUrl !== "#");
 
-  // ✅ Text fallback
+  const subject = `Order Cancelled — #${orderId}`;
+
   const text = `Hi ${resolvedName},
 
 Your order has been cancelled.
@@ -101,182 +98,193 @@ Team Miray Fashions
 
   const itemsHtml = items.length
     ? items.map((it) => renderItemCard(it, currency)).join("")
-    : `<div style="border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:16px;">
-        <p style="margin:0;font-size:13px;color:rgba(0,0,0,0.75);">No items found.</p>
-      </div>`;
+    : emptyCard("No items found.");
 
   const discountLabel = couponCode
     ? `Discount (${escapeHtml(couponCode)})`
     : "Discount";
 
   const html = `
-  <div style="background:#fff;color:#000;padding:40px 20px;">
-    <div style="max-width:680px;margin:0 auto;border:1px solid rgba(0,0,0,0.10);border-radius:30px;overflow:hidden;background:#fff;font-family:Poppins,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="color-scheme" content="light dark" />
+<meta name="supported-color-schemes" content="light dark" />
 
-      <!-- Header -->
-      <div style="padding:48px 40px 32px;text-align:center;">
-        <img src="https://res.cloudinary.com/djtva6hec/image/upload/v1764916639/miray/media/k0yvgu5m0ij1husm3ugh.png"
-          alt="Miray Fashions Logo" style="height:56px;width:auto;display:block;margin:0 auto;" />
-        <div style="margin-top:24px;">
-          <p style="margin:0;font-size:11px;letter-spacing:0.45em;color:rgba(0,0,0,0.55);text-transform:uppercase;">Order Cancelled</p>
-          <h1 style="margin:12px 0 0;font-size:17px;letter-spacing:0.22em;font-weight:600;text-transform:uppercase;">
-            #${escapeHtml(orderId)}
-          </h1>
-        </div>
-        <div style="margin:32px auto 0;height:1px;width:80px;background:rgba(0,0,0,0.20);"></div>
-      </div>
+<style>
+:root{
+  color-scheme:light dark;
+  supported-color-schemes:light dark;
+}
 
-      <!-- Body -->
-      <div style="padding:0 40px 48px;">
-        <h2 style="margin:0;font-size:20px;font-weight:600;">Hi ${escapeHtml(
-          resolvedName
-        )}</h2>
-        <p style="margin:8px 0 0;font-size:13px;color:rgba(0,0,0,0.65);">
-          We regret to inform you that your order has been cancelled.
-        </p>
+@media (prefers-color-scheme: dark){
+  body,.miray-bg{background:#0f0f10!important;}
+  .miray-shell{background:#151517!important;border-color:rgba(255,255,255,.08)!important;}
+  .miray-card{background:#1b1b1d!important;border-color:rgba(255,255,255,.08)!important;}
+  .miray-text{color:#e4e4e7!important;}
+  .miray-muted{color:#b4b4b8!important;}
+  .miray-title,.miray-strong{color:#ffffff!important;}
+  .miray-divider{background:rgba(255,255,255,.08)!important;}
+  .miray-btn{background:#ffffff!important;color:#111111!important;border-color:#ffffff!important;}
+  .miray-header{background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%)!important;}
+  .miray-header p,.miray-header span,.miray-header div{color:#e4e4e7!important;}
+  .miray-header h1,.miray-header b{color:#ffffff!important;}
+  .miray-footer{border-color:rgba(255,255,255,.08)!important;}
+}
 
-        <p style="margin:14px 0 0;font-size:13px;color:rgba(0,0,0,0.60);line-height:22px;">
-          ${escapeHtml(apology)}
-        </p>
+[data-ogsc] .miray-bg{background:#0f0f10!important;}
+[data-ogsc] .miray-shell{background:#151517!important;}
+[data-ogsc] .miray-card{background:#1b1b1d!important;}
+[data-ogsc] .miray-text{color:#e4e4e7!important;}
+[data-ogsc] .miray-muted{color:#b4b4b8!important;}
+[data-ogsc] .miray-title,[data-ogsc] .miray-strong{color:#ffffff!important;}
+[data-ogsc] .miray-header{background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%)!important;}
+[data-ogsc] .miray-header p,[data-ogsc] .miray-header span,[data-ogsc] .miray-header div{color:#e4e4e7!important;}
+[data-ogsc] .miray-header h1,[data-ogsc] .miray-header b{color:#ffffff!important;}
+[data-ogsc] .miray-footer{border-color:rgba(255,255,255,.08)!important;}
+</style>
+</head>
 
-        ${
-          cancellationReason
-            ? `<div style="margin-top:18px;border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:14px;">
-                <p style="margin:0;font-size:11px;letter-spacing:0.35em;color:rgba(0,0,0,0.55);text-transform:uppercase;">Cancellation Reason</p>
-                <p style="margin:10px 0 0;font-size:13px;color:rgba(0,0,0,0.75);line-height:22px;">
-                  ${escapeHtml(cancellationReason)}
-                </p>
-              </div>`
-            : ""
-        }
+<body style="margin:0;padding:0;background:#ffffff;">
+<div class="miray-bg" style="padding:40px 20px;background:#ffffff;">
 
-        <div style="margin-top:18px;border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:14px;">
-          <p style="margin:0;font-size:11px;letter-spacing:0.35em;color:rgba(0,0,0,0.55);text-transform:uppercase;">Refund Info</p>
-          <p style="margin:10px 0 0;font-size:13px;color:rgba(0,0,0,0.75);line-height:22px;">
-            ${escapeHtml(refundLine)}
-          </p>
-        </div>
+<div class="miray-shell" style="max-width:680px;margin:auto;background:#ffffff;border:1px solid rgba(0,0,0,.08);border-radius:28px;overflow:hidden;font-family:Poppins,Arial,sans-serif;">
 
-        <!-- Status -->
-        <div style="margin-top:28px;">
-          <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;">
-            <tr>
-              ${statusCard("Payment", paymentMethod, paymentStatus)}
-              ${statusCard("Status", fulfillmentStatus, "Cancelled")}
-              ${statusCard("Order Total", money(finalPayable, currency), "Final Amount")}
-            </tr>
-          </table>
-        </div>
+<div class="miray-header" style="padding:48px 40px 30px;text-align:center;background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%);">
+  <img
+    src="https://res.cloudinary.com/djtva6hec/image/upload/v1778268933/miray/media/zvliktr4z5zboetdz76k.png"
+    alt="Miray Fashions"
+    style="height:56px;max-width:100%;"
+  />
 
-        <!-- Items -->
-        <div style="margin-top:36px;">
-          <p style="margin:0;font-size:11px;letter-spacing:0.35em;color:rgba(0,0,0,0.55);text-transform:uppercase;">Items</p>
-          <div style="margin-top:16px;">${itemsHtml}</div>
-        </div>
+  <p style="margin:24px 0 8px;font-size:11px;letter-spacing:.42em;text-transform:uppercase;color:#d4d4d8;">
+    Order Cancelled
+  </p>
 
-        <!-- Summary -->
-        <div style="margin-top:40px;">
-          <p style="margin:0;font-size:11px;letter-spacing:0.35em;color:rgba(0,0,0,0.55);text-transform:uppercase;">Summary</p>
-          <div style="margin-top:16px;border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:20px;">
-            ${summaryRow("Subtotal", money(subtotal, currency))}
-            ${discount > 0 ? summaryRow(discountLabel, `-${money(discount, currency)}`) : ""}
-            ${couponCode ? summaryRow("Coupon", couponCode) : ""}
-            ${summaryRow("Shipping", money(shippingFee, currency))}
-            ${summaryRow("Tax", money(tax, currency))}
-            <div style="height:1px;background:rgba(0,0,0,0.10);margin:12px 0;"></div>
-            ${summaryRowStrong("Order Total", money(finalPayable, currency))}
-            <p style="margin:12px 0 0;font-size:11px;color:rgba(0,0,0,0.50);">Payment Method: ${escapeHtml(paymentMethod)}</p>
-          </div>
-        </div>
+  <h1 style="margin:0;font-size:18px;letter-spacing:.18em;color:#ffffff;font-weight:700;">
+    #${escapeHtml(orderId)}
+  </h1>
 
-        <!-- Shipping -->
-        <div style="margin-top:40px;">
-          <p style="margin:0;font-size:11px;letter-spacing:0.35em;color:rgba(0,0,0,0.55);text-transform:uppercase;">Shipping Address</p>
-          <div style="margin-top:16px;border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:20px;">
-            <p style="margin:0;font-size:13px;line-height:24px;color:rgba(0,0,0,0.80);">
-              ${escapeHtml(shippingName)}<br/>
-              ${escapeHtml(shippingLine1)}${shippingLine2 ? `<br/>${escapeHtml(shippingLine2)}` : ""}<br/>
-              ${escapeHtml([shippingCity, shippingState, shippingZip].filter(Boolean).join(", "))}<br/>
-              ${escapeHtml(shippingCountry)}
-              ${shippingPhone ? `<br/>Phone: ${escapeHtml(shippingPhone)}` : ""}
-            </p>
-          </div>
-        </div>
+  <p style="margin:12px 0 0;font-size:13px;color:#e4e4e7;line-height:1.6;">
+    Status <b style="color:#ffffff;">Cancelled</b>
+  </p>
+</div>
 
-        <!-- CTA -->
-        ${
-          hasValidCta
-            ? `<div style="margin-top:40px;text-align:center;">
-                <a href="${escapeAttr(ctaUrl)}"
-                  style="display:inline-block;border:1px solid #000;border-radius:9999px;padding:12px 32px;font-size:13px;font-weight:600;letter-spacing:0.03em;color:#000;text-decoration:none;">
-                  View Order Details
-                </a>
-                <p style="margin:12px 0 0;font-size:11px;letter-spacing:0.03em;color:rgba(0,0,0,0.45);">
-                  If you need assistance, reply to this email and we will help you immediately.
-                </p>
-              </div>`
-            : ""
-        }
+<div style="padding:36px 40px 44px;">
 
-        <!-- Signature -->
-        <div style="margin-top:40px;">
-          <div style="height:1px;width:64px;background:rgba(0,0,0,0.20);"></div>
-          <p style="margin:20px 0 0;font-size:15px;line-height:28px;color:rgba(0,0,0,0.80);">
-            With regards,<br/>
-            <span style="font-weight:600;color:#000;">Team Miray Fashions</span>
-          </p>
-        </div>
-      </div>
+<h2 class="miray-title" style="margin:0 0 10px;font-size:24px;color:#111111;">
+  Hi ${escapeHtml(resolvedName)}
+</h2>
 
-      <!-- Footer -->
-      <div style="padding:28px 40px;border-top:1px solid rgba(0,0,0,0.10);">
-        <p style="margin:0;font-size:11px;line-height:22px;color:rgba(0,0,0,0.55);">
-          This is an automated message. You can reply to this email for any assistance.
-        </p>
-      </div>
+<p class="miray-text" style="margin:0 0 12px;font-size:14px;line-height:1.8;color:#555555;">
+  We regret to inform you that your order has been cancelled.
+</p>
 
-    </div>
+<p class="miray-text" style="margin:0 0 26px;font-size:13px;line-height:1.8;color:#666666;">
+  ${escapeHtml(apology)}
+</p>
+
+${
+  cancellationReason
+    ? `
+<div class="miray-card" style="${cardBoxStyle};margin-bottom:14px;">
+  <p class="miray-muted" style="${sectionTitleStyle}">Cancellation Reason</p>
+  <p class="miray-text" style="margin:0;font-size:13px;line-height:1.8;color:#555555;">
+    ${escapeHtml(cancellationReason)}
+  </p>
+</div>`
+    : ""
+}
+
+<div class="miray-card" style="${cardBoxStyle};margin-bottom:26px;">
+  <p class="miray-muted" style="${sectionTitleStyle}">Refund Info</p>
+  <p class="miray-text" style="margin:0;font-size:13px;line-height:1.8;color:#555555;">
+    ${escapeHtml(refundLine)}
+  </p>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;">
+  ${infoCard("Payment", paymentMethod)}
+  ${infoCard("Status", fulfillmentStatus)}
+  ${infoCard("Order Total", money(finalPayable, currency))}
+</div>
+
+<div style="margin-top:30px;">
+  <p class="miray-muted" style="${sectionTitleStyle}">Items</p>
+  ${itemsHtml}
+</div>
+
+<div style="margin-top:30px;">
+  <p class="miray-muted" style="${sectionTitleStyle}">Summary</p>
+
+  <div class="miray-card" style="${cardBoxStyle}">
+    ${summaryRow("Subtotal", money(subtotal, currency))}
+    ${discount > 0 ? summaryRow(discountLabel, `- ${money(discount, currency)}`) : ""}
+    ${couponCode ? summaryRow("Coupon", couponCode) : ""}
+    ${summaryRow("Shipping", money(shippingFee, currency))}
+    ${summaryRow("Tax", money(tax, currency))}
+    <div class="miray-divider" style="height:1px;background:rgba(0,0,0,.08);margin:14px 0;"></div>
+    ${summaryRow("Order Total", money(finalPayable, currency), true)}
+    <p class="miray-muted" style="margin:12px 0 0;font-size:11px;color:#777777;">
+      Payment Method: ${escapeHtml(paymentMethod)}
+    </p>
   </div>
-  `;
+</div>
+
+<div style="margin-top:30px;">
+  <p class="miray-muted" style="${sectionTitleStyle}">Shipping Address</p>
+
+  <div class="miray-card" style="${cardBoxStyle}">
+    <p class="miray-title" style="margin:0 0 6px;font-size:14px;font-weight:600;color:#111111;">
+      ${escapeHtml(shippingName)}
+    </p>
+    <p class="miray-text" style="margin:0;font-size:13px;line-height:1.8;color:#555555;">
+      ${escapeHtml([shippingLine1, shippingLine2].filter(Boolean).join(", ") || "—")}<br/>
+      ${escapeHtml([shippingCity, shippingState, shippingZip].filter(Boolean).join(", ") || "—")}<br/>
+      ${escapeHtml(shippingCountry)}
+      ${shippingPhone ? `<br/>Phone: ${escapeHtml(shippingPhone)}` : ""}
+    </p>
+  </div>
+</div>
+
+${
+  hasValidCta
+    ? `
+<div style="margin-top:30px;text-align:center;">
+  <a href="${escapeAttr(ctaUrl)}" class="miray-btn" style="display:inline-block;padding:15px 26px;border-radius:999px;background:#111111;color:#ffffff;text-decoration:none;font-size:13px;font-weight:600;border:1px solid #111111;">
+    View Order Details
+  </a>
+  <p class="miray-muted" style="margin:12px 0 0;font-size:11px;color:#777777;">
+    If you need assistance, reply to this email and we will help you.
+  </p>
+</div>`
+    : ""
+}
+
+<p class="miray-text" style="margin-top:34px;font-size:14px;line-height:1.8;color:#444444;">
+  With regards,<br />
+  <b class="miray-strong">Team Miray Fashions</b>
+</p>
+
+</div>
+
+<div class="miray-footer" style="padding:24px 40px;border-top:1px solid rgba(0,0,0,.08);">
+  <p class="miray-muted" style="margin:0;font-size:11px;line-height:1.8;color:#777777;">
+    This is an automated message. You can reply to this email for any assistance.
+  </p>
+</div>
+
+</div>
+</div>
+</body>
+</html>
+`;
 
   return { subject, text, html };
 }
 
-/* ------------------------- Helpers (short) ------------------------- */
-
-function up(s) {
-  return String(s || "").toUpperCase();
-}
-
-function statusCard(label, main, sub) {
-  return `
-    <td style="width:33.333%;padding:0 6px;vertical-align:top;">
-      <div style="border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:16px;">
-        <p style="margin:0;font-size:11px;letter-spacing:0.35em;color:rgba(0,0,0,0.55);text-transform:uppercase;">${escapeHtml(label)}</p>
-        <p style="margin:10px 0 0;font-size:13px;color:rgba(0,0,0,0.85);font-weight:500;">${escapeHtml(main)}</p>
-        <p style="margin:6px 0 0;font-size:11px;color:rgba(0,0,0,0.55);">${escapeHtml(sub)}</p>
-      </div>
-    </td>
-  `;
-}
-
-function summaryRow(label, value) {
-  return `
-    <div style="display:flex;justify-content:space-between;font-size:13px;color:rgba(0,0,0,0.75);line-height:22px;margin:0 0 10px;">
-      <span>${escapeHtml(label)}</span>
-      <span>${escapeHtml(value)}</span>
-    </div>
-  `;
-}
-
-function summaryRowStrong(label, value) {
-  return `
-    <div style="display:flex;justify-content:space-between;font-size:14px;color:#000;font-weight:600;line-height:22px;margin-top:6px;">
-      <span>${escapeHtml(label)}</span>
-      <span>${escapeHtml(value)}</span>
-    </div>
-  `;
-}
+/* ---------------- HELPERS ---------------- */
 
 function renderItemCard(it, currency) {
   const snap = it?.productSnapshot || {};
@@ -285,14 +293,20 @@ function renderItemCard(it, currency) {
   const price = num(it?.price);
 
   return `
-    <div style="border:1px solid rgba(0,0,0,0.10);border-radius:16px;padding:16px;margin:0 0 14px;display:flex;justify-content:space-between;gap:14px;">
-      <div style="flex:1;">
-        <p style="margin:0;font-size:14px;font-weight:600;color:#000;">${escapeHtml(title)}</p>
-        <p style="margin:8px 0 0;font-size:12px;color:rgba(0,0,0,0.65);">Qty: ${escapeHtml(qty)}</p>
-      </div>
-      <p style="margin:0;font-size:13px;font-weight:600;color:#000;">${escapeHtml(money(price, currency))}</p>
+  <div class="miray-card" style="display:flex;justify-content:space-between;gap:14px;padding:16px;border-radius:18px;border:1px solid rgba(0,0,0,.08);margin-bottom:14px;background:#ffffff;">
+    <div style="flex:1;">
+      <p class="miray-title" style="margin:0 0 8px;font-size:14px;font-weight:600;color:#111111;">
+        ${escapeHtml(title)}
+      </p>
+      <p class="miray-muted" style="margin:0;font-size:12px;color:#666666;">
+        Qty: ${escapeHtml(qty)}
+      </p>
     </div>
-  `;
+
+    <p class="miray-title" style="margin:0;font-size:13px;font-weight:600;color:#111111;">
+      ${escapeHtml(money(price, currency))}
+    </p>
+  </div>`;
 }
 
 function formatItemText(it, i, currency) {
@@ -300,25 +314,55 @@ function formatItemText(it, i, currency) {
   const title = snap?.title || "Item";
   const qty = num(it?.quantity);
   const price = num(it?.price);
+
   return `${i}. ${title} — Qty: ${qty} — ${money(price, currency)}`;
 }
 
-function money(value, currency = "INR") {
-  const n = num(value);
-  return currency === "INR" ? `₹${fmt(n)}` : `${currency} ${fmt(n)}`;
+function infoCard(label, value) {
+  return `
+  <div class="miray-card" style="padding:14px 16px;border-radius:16px;border:1px solid rgba(0,0,0,.08);background:#fcfcfc;">
+    <p class="miray-muted" style="margin:0 0 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#777777;">
+      ${escapeHtml(label)}
+    </p>
+    <p class="miray-title" style="margin:0;font-size:14px;font-weight:600;color:#111111;">
+      ${escapeHtml(value)}
+    </p>
+  </div>`;
 }
 
-function fmt(n) {
-  try {
-    return Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-  } catch {
-    return String(n);
-  }
+function summaryRow(label, value, strong = false) {
+  return `
+  <div class="miray-text" style="display:flex;justify-content:space-between;margin:10px 0;font-size:${strong ? "15px" : "13px"};color:#444444;">
+    <span ${strong ? 'class="miray-strong" style="font-weight:700;color:#111111;"' : ""}>
+      ${escapeHtml(label)}
+    </span>
+    <span ${strong ? 'class="miray-strong" style="font-weight:700;color:#111111;"' : ""}>
+      ${escapeHtml(value)}
+    </span>
+  </div>`;
+}
+
+function emptyCard(msg) {
+  return `
+  <div class="miray-card miray-muted" style="padding:18px;border-radius:16px;border:1px dashed rgba(0,0,0,.12);color:#777777;background:#ffffff;">
+    ${escapeHtml(msg)}
+  </div>`;
+}
+
+function up(s) {
+  return String(s || "").toUpperCase();
 }
 
 function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+function money(value, currency = "INR") {
+  const n = num(value);
+  return currency === "INR"
+    ? `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+    : `${currency} ${n.toLocaleString()}`;
 }
 
 function escapeHtml(str) {
@@ -333,3 +377,9 @@ function escapeHtml(str) {
 function escapeAttr(str) {
   return escapeHtml(str);
 }
+
+const sectionTitleStyle =
+  "margin:0 0 12px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#777777;";
+
+const cardBoxStyle =
+  "border:1px solid rgba(0,0,0,.08);border-radius:18px;padding:18px;background:#fcfcfc;";

@@ -213,6 +213,96 @@ const rmaSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// ============================================================================
+// UNIVERSAL ATTRIBUTION — snapshot stored on order at purchase time
+// ============================================================================
+
+const attributionTouchSchema = new mongoose.Schema(
+  {
+    source: { type: String, default: "" }, // facebook, google, instagram, whatsapp, organic, direct
+    medium: { type: String, default: "" }, // paid_social, cpc, campaign, referral, organic, direct
+    campaign: { type: String, default: "" },
+    campaignSlug: { type: String, default: "" },
+
+    content: { type: String, default: "" },
+    term: { type: String, default: "" },
+
+    pageUrl: { type: String, default: "" },
+    landingUrl: { type: String, default: "" },
+    referrer: { type: String, default: "" },
+
+    capturedAt: { type: Date, default: null },
+  },
+  { _id: false }
+);
+
+const orderAttributionSchema = new mongoose.Schema(
+  {
+    // main readable fields for admin/report filters
+    source: { type: String, default: "direct", index: true },
+    medium: { type: String, default: "direct", index: true },
+    campaign: { type: String, default: "", index: true },
+
+    // first source that brought user
+    firstTouch: attributionTouchSchema,
+
+    // final source before order
+    lastTouch: attributionTouchSchema,
+
+    // current active session attribution
+    session: attributionTouchSchema,
+
+    // Miray campaign system
+    campaignId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "MarketingCampaign",
+      default: null,
+      index: true,
+    },
+    campaignSlug: { type: String, default: "", index: true },
+    marketingLinkId: { type: String, default: "", index: true },
+    shortCode: { type: String, default: "", index: true },
+
+    // click ids from ad platforms
+    clickIds: {
+      fbclid: { type: String, default: "", index: true },
+      gclid: { type: String, default: "", index: true },
+      msclkid: { type: String, default: "", index: true },
+      ttclid: { type: String, default: "", index: true },
+      scClickId: { type: String, default: "", index: true },
+    },
+
+    // visitor/session identity
+    visitorId: { type: String, default: "", index: true },
+    sessionId: { type: String, default: "", index: true },
+
+    // journey urls
+    referrer: { type: String, default: "" },
+    landingUrl: { type: String, default: "" },
+    firstTouchUrl: { type: String, default: "" },
+    lastTouchUrl: { type: String, default: "" },
+
+    // technical snapshot
+    device: {
+      type: { type: String, default: "" }, // mobile / desktop / tablet
+      browser: { type: String, default: "" },
+      os: { type: String, default: "" },
+      userAgent: { type: String, default: "" },
+      ip: { type: String, default: "" },
+    },
+
+    // raw payload for future debugging
+    raw: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+
+    capturedAt: { type: Date, default: null },
+    lastUpdatedAt: { type: Date, default: null },
+  },
+  { _id: false }
+);
+
 /**
  * MAIN ORDER SCHEMA
  */
@@ -295,11 +385,80 @@ const orderSchema = new mongoose.Schema(
 
     // ✅ FIX: added refund_pending to prevent crashes
     paymentStatus: {
-      type: String,
-      enum: ["pending", "paid", "failed", "refunded", "refund_pending", "not_applicable",],
-      default: "pending",
-      index: true,
-    },
+  type: String,
+  enum: [
+    "pending",
+    "paid",
+    "failed",
+    "refunded",
+    "partially_refunded",
+    "refund_pending",
+    "not_applicable",
+  ],
+  default: "pending",
+  index: true,
+},
+
+
+eligibleForRefund: {
+  type: Boolean,
+  default: false,
+  index: true,
+},
+
+refundSummary: {
+  status: {
+    type: String,
+    enum: [
+      "not_eligible",
+      "eligible",
+      "refund_pending",
+      "processing",
+      "refunded",
+      "partially_refunded",
+      "failed",
+      "manual_required",
+    ],
+    default: "not_eligible",
+    index: true,
+  },
+
+  refundType: {
+    type: String,
+    enum: ["full", "partial"],
+    default: "full",
+  },
+
+  refundIds: [
+  {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "OrderRefund",
+  },
+],
+
+lastRefundId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "OrderRefund",
+  default: null,
+},
+
+lastRefundNumber: { type: String, default: "" },
+
+  eligibleAmount: { type: Number, default: 0 },
+  refundedAmount: { type: Number, default: 0 },
+  pendingAmount: { type: Number, default: 0 },
+
+  reason: { type: String, default: "" },
+  adminNote: { type: String, default: "" },
+
+  markedEligibleAt: { type: Date, default: null },
+  refundRequestedAt: { type: Date, default: null },
+  refundedAt: { type: Date, default: null },
+  failedAt: { type: Date, default: null },
+  failureReason: { type: String, default: "" },
+},
+
+
     // ✅ order confirmation (separate from fulfillment)
     fulfillmentStatus: {
       type: String,
@@ -440,10 +599,22 @@ cancellation: {
     orderNumber: { type: String, unique: true, required: true, index: true },
     orderDate: { type: Date, default: Date.now, index: true },
 
-    source: {
+        source: {
       type: String,
       enum: ["website", "mobile_app", "social_media", "manual"],
       default: "website",
+    },
+
+    // ✅ Universal attribution snapshot
+    attribution: {
+      type: orderAttributionSchema,
+      default: () => ({
+        source: "direct",
+        medium: "direct",
+        campaign: "",
+        capturedAt: new Date(),
+        lastUpdatedAt: new Date(),
+      }),
     },
 
     priority: {
@@ -906,6 +1077,128 @@ orderSchema.pre("validate", function (next) {
   }
 });
 
+
+// ========================================================================================
+// ✅ AUTO-MARK REFUND PENDING WHEN PAID RAZORPAY ORDER IS CANCELLED / RTO
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    const status = String(this.fulfillmentStatus || "").toLowerCase();
+
+    const isRefundTriggerStatus = ["cancelled", "rto"].includes(status);
+
+    const wasPaidRazorpay =
+      this.paymentMethod === "razorpay" &&
+      this.paymentStatus === "paid" &&
+      this.razorpay?.paymentId;
+
+    if (isRefundTriggerStatus && wasPaidRazorpay) {
+      const amount = Number(this.finalPayable || 0);
+
+      this.eligibleForRefund = true;
+      this.paymentStatus = "refund_pending";
+
+      this.refundSummary = {
+        ...(this.refundSummary || {}),
+        status: "refund_pending",
+        refundType: "full",
+        eligibleAmount: amount,
+        refundedAmount: Number(this.refundSummary?.refundedAmount || 0),
+        pendingAmount: amount,
+        reason:
+          this.refundSummary?.reason ||
+          this.cancellation?.reason ||
+          (status === "rto"
+            ? "Paid Razorpay order returned to origin"
+            : "Paid order cancelled before shipment"),
+        markedEligibleAt: this.refundSummary?.markedEligibleAt || new Date(),
+        refundRequestedAt: this.refundSummary?.refundRequestedAt || new Date(),
+      };
+    }
+
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
+
+// ========================================================================================
+// ✅ AUTO-NORMALIZE UNIVERSAL ATTRIBUTION
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    if (!this.attribution) {
+      this.attribution = {};
+    }
+
+    const attr = this.attribution || {};
+
+    const clean = (v = "") => String(v || "").trim();
+    const lower = (v = "") => clean(v).toLowerCase();
+
+    const firstTouch = attr.firstTouch || {};
+    const lastTouch = attr.lastTouch || {};
+    const session = attr.session || {};
+
+    const source =
+      lower(attr.source) ||
+      lower(lastTouch.source) ||
+      lower(session.source) ||
+      lower(firstTouch.source) ||
+      "direct";
+
+    const medium =
+      lower(attr.medium) ||
+      lower(lastTouch.medium) ||
+      lower(session.medium) ||
+      lower(firstTouch.medium) ||
+      "direct";
+
+    const campaign =
+      clean(attr.campaign) ||
+      clean(lastTouch.campaign) ||
+      clean(session.campaign) ||
+      clean(firstTouch.campaign) ||
+      "";
+
+    this.attribution.source = source;
+    this.attribution.medium = medium;
+    this.attribution.campaign = campaign;
+
+    this.attribution.referrer =
+      clean(attr.referrer) ||
+      clean(lastTouch.referrer) ||
+      clean(firstTouch.referrer);
+
+    this.attribution.landingUrl =
+      clean(attr.landingUrl) ||
+      clean(firstTouch.landingUrl) ||
+      clean(firstTouch.pageUrl);
+
+    this.attribution.firstTouchUrl =
+      clean(attr.firstTouchUrl) ||
+      clean(firstTouch.pageUrl) ||
+      clean(firstTouch.landingUrl);
+
+    this.attribution.lastTouchUrl =
+      clean(attr.lastTouchUrl) ||
+      clean(lastTouch.pageUrl) ||
+      clean(lastTouch.landingUrl) ||
+      clean(session.pageUrl);
+
+    if (!this.attribution.capturedAt) {
+      this.attribution.capturedAt = new Date();
+    }
+
+    this.attribution.lastUpdatedAt = new Date();
+
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Core list performance
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ priorityRank: -1, createdAt: -1 });
@@ -942,5 +1235,25 @@ orderSchema.index({ "rmas.reverseShipment.shipmentId": 1 });
 // Xpressbees
 orderSchema.index({ "shipment.xpressbees.awb": 1 });
 orderSchema.index({ "shipment.xpressbees.shipmentId": 1 });
+
+// Refund queries
+orderSchema.index({ eligibleForRefund: 1, createdAt: -1 });
+orderSchema.index({ "refundSummary.status": 1, createdAt: -1 });
+
+// Universal attribution analytics
+orderSchema.index({ "attribution.source": 1, createdAt: -1 });
+orderSchema.index({ "attribution.medium": 1, createdAt: -1 });
+orderSchema.index({ "attribution.campaign": 1, createdAt: -1 });
+orderSchema.index({ "attribution.campaignId": 1, createdAt: -1 });
+orderSchema.index({ "attribution.campaignSlug": 1, createdAt: -1 });
+orderSchema.index({ "attribution.marketingLinkId": 1, createdAt: -1 });
+orderSchema.index({ "attribution.shortCode": 1, createdAt: -1 });
+orderSchema.index({ "attribution.visitorId": 1, createdAt: -1 });
+orderSchema.index({ "attribution.sessionId": 1, createdAt: -1 });
+orderSchema.index({ "attribution.clickIds.fbclid": 1 });
+orderSchema.index({ "attribution.clickIds.gclid": 1 });
+orderSchema.index({ "attribution.clickIds.msclkid": 1 });
+orderSchema.index({ "attribution.clickIds.ttclid": 1 });
+orderSchema.index({ "attribution.clickIds.scClickId": 1 });
 
 export default mongoose.models.Order || mongoose.model("Order", orderSchema);

@@ -83,6 +83,9 @@ import mediaAuthRoutes from "./MediaUser/mediaAuthRoutes.js";
 import commingSoonRoutes from "./ComingSoonModel/comingSoon.routes.js";
 import fabriclogRoutes from "./FabricLog/FabricLogRouter.js";
 
+import orderRefundRoutes from "./Orders/order.refunds/orderRefundRoutes.js";
+import marketingcampaignroutes from "./MarketingCampaign/marketingCampaignRoutes.js";
+
 // --------------------------------------------------
 // APP CONFIG
 // --------------------------------------------------
@@ -224,6 +227,7 @@ app.use("/api/credits", creditRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/offers", offerRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/order-refunds", orderRefundRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/queries", queryRoutes);
 app.use("/api/reviews", reviewRoutes);
@@ -272,6 +276,7 @@ app.use("/api/influencer-program", influencerProgramRoutes);
 app.use("/superadmin", superadminRoutes);
 app.use("/api/home-collections", homeCollectionsRoutes);
 app.use("/api", marqueeRoutes);
+app.use("/api/marketing-campaigns", marketingcampaignroutes);
 
 // --------------------------------------------------
 // ROOT + FEEDS

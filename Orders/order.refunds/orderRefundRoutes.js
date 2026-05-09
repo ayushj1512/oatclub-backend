@@ -1,52 +1,59 @@
 import express from "express";
+
 import {
-  createOrderRefund,
-  getOrderRefunds,
-  getRefundDashboard,
+  getAllRefunds,
   getRefundById,
-  getRefundsByOrder,
-  updateOrderRefund,
-  approveOrderRefund,
-  markRefundProcessing,
+  getRefundPendingOrders,
+  createRefundFromOrder,
+  processRazorpayRefund,
+  fetchRazorpayRefundStatus,
+  createManualRefundFromOrder,
   markManualRefundProcessed,
-  markRefundFailed,
-  cancelOrderRefund,
+  markManualRefundFailed,
   addRefundProof,
 } from "./orderRefundController.js";
 
-// import { protectAdmin } from "../../middleware/adminAuthMiddleware.js";
-
 const router = express.Router();
 
-// ✅ Admin only
-// router.use(protectAdmin);
+/* =========================================================
+   LIST / QUEUE
+========================================================= */
 
-// Dashboard
-router.get("/dashboard", getRefundDashboard);
+router.get("/", getAllRefunds);
+router.get("/pending-orders", getRefundPendingOrders);
 
-// List + filters + pagination
-router.get("/", getOrderRefunds);
+/* =========================================================
+   CREATE REFUNDS FROM ORDER
+========================================================= */
 
-// Order specific refunds + filters + pagination
-router.get("/order/:orderId", getRefundsByOrder);
+router.post("/razorpay/order/:orderId/create", createRefundFromOrder);
+router.post("/manual/order/:orderId/create", createManualRefundFromOrder);
 
-// Single refund
-router.get("/:id", getRefundById);
+/* =========================================================
+   RAZORPAY ACTIONS
+========================================================= */
 
-// Create refund request
-router.post("/", createOrderRefund);
+router.post("/razorpay/:refundId/process", processRazorpayRefund);
+router.get("/razorpay/:refundId/status", fetchRazorpayRefundStatus);
 
-// Update refund details
-router.patch("/:id", updateOrderRefund);
+/* =========================================================
+   MANUAL ACTIONS
+========================================================= */
 
-// Status actions
-router.patch("/:id/approve", approveOrderRefund);
-router.patch("/:id/processing", markRefundProcessing);
-router.patch("/:id/manual-processed", markManualRefundProcessed);
-router.patch("/:id/failed", markRefundFailed);
-router.patch("/:id/cancel", cancelOrderRefund);
+router.patch("/:refundId/manual-processed", markManualRefundProcessed);
+router.patch("/:refundId/manual-failed", markManualRefundFailed);
 
-// Proof image/link
+/* =========================================================
+   PROOFS
+========================================================= */
+
 router.post("/:id/proofs", addRefundProof);
+
+/* =========================================================
+   SINGLE REFUND
+   keep dynamic route last
+========================================================= */
+
+router.get("/:refundId", getRefundById);
 
 export default router;

@@ -1,12 +1,10 @@
-// nodemailer/OrderConfirmationTemplate.js
+// nodemailer/events/OrderConfirmationTemplate.js
 
 export function orderConfirmationTemplate({
   name = "Customer",
   order = {},
   ctaUrl = "#",
 }) {
-  /* ---------------- Core ---------------- */
-
   const orderId = order?.orderId || order?.orderNumber || order?._id || "—";
   const currency = order?.currency || "INR";
 
@@ -23,8 +21,6 @@ export function orderConfirmationTemplate({
       ? "Cancelled"
       : "In progress";
 
-  /* ---------------- Amounts ---------------- */
-
   const subtotal = num(order?.subtotal);
   const discount = num(order?.discount);
   const shippingFee = num(order?.shippingFee);
@@ -33,8 +29,6 @@ export function orderConfirmationTemplate({
 
   const couponCode = order?.coupon?.code ? String(order.coupon.code) : null;
   const items = Array.isArray(order?.items) ? order.items : [];
-
-  /* ---------------- Shipping ---------------- */
 
   const shipping = order?.shippingAddressSnapshot || {};
   const shippingName =
@@ -53,8 +47,6 @@ export function orderConfirmationTemplate({
 
   const hasValidCta = Boolean(ctaUrl && ctaUrl !== "#");
   const subject = `Order Confirmed — #${orderId} 🖤`;
-
-  /* ================= TEXT MAIL ================= */
 
   const text = `Hi ${name},
 
@@ -87,8 +79,6 @@ With regards,
 Team Miray Fashions
 `;
 
-  /* ================= HTML MAIL ================= */
-
   const itemsHtml = items.length
     ? items.map((it) => renderItemCard(it, currency)).join("")
     : emptyCard("No items found.");
@@ -98,78 +88,154 @@ Team Miray Fashions
     : "Discount";
 
   const html = `
-<div style="background:#ffffff;padding:40px 20px;">
-  <div style="max-width:680px;margin:auto;border:1px solid rgba(0,0,0,.1);border-radius:30px;font-family:Poppins,system-ui;">
-    
-    <!-- Header -->
-    <div style="padding:48px 40px 32px;text-align:center;">
-      <img src="https://res.cloudinary.com/djtva6hec/image/upload/v1764916639/miray/media/k0yvgu5m0ij1husm3ugh.png"
-           alt="Miray Fashions" style="height:56px;" />
-      <p style="margin-top:24px;font-size:11px;letter-spacing:.45em;color:#777;text-transform:uppercase;">
-        Order Confirmed
-      </p>
-      <h1 style="margin:10px 0;font-size:17px;letter-spacing:.22em;">
-        #${escapeHtml(orderId)}
-      </h1>
-    </div>
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="color-scheme" content="light dark" />
+<meta name="supported-color-schemes" content="light dark" />
 
-    <!-- Body -->
-    <div style="padding:0 40px 48px;">
-      <h2 style="font-size:20px;">Hi ${escapeHtml(name)} ✨</h2>
-      <p style="font-size:13px;color:#666;">
-        Thank you — your order has been placed successfully.
-      </p>
+<style>
+:root{
+  color-scheme:light dark;
+  supported-color-schemes:light dark;
+}
 
-      ${statusRow(paymentMethod, paymentStatus, fulfillmentStatus, fulfillmentSub, finalPayable, currency)}
+@media (prefers-color-scheme: dark){
+  body,.miray-bg{background:#0f0f10!important;}
+  .miray-shell{background:#151517!important;border-color:rgba(255,255,255,.08)!important;}
+  .miray-card{background:#1b1b1d!important;border-color:rgba(255,255,255,.08)!important;}
+  .miray-text{color:#e4e4e7!important;}
+  .miray-muted{color:#b4b4b8!important;}
+  .miray-title,.miray-strong{color:#ffffff!important;}
+  .miray-divider{background:rgba(255,255,255,.08)!important;}
+  .miray-btn{background:#ffffff!important;color:#111111!important;}
+  .miray-header{background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%)!important;}
+  .miray-header p,.miray-header span,.miray-header div{color:#e4e4e7!important;}
+  .miray-header h1,.miray-header b{color:#ffffff!important;}
+}
 
-      <section>
-        <p class="section-title">Items</p>
-        ${itemsHtml}
-      </section>
+[data-ogsc] .miray-bg{background:#0f0f10!important;}
+[data-ogsc] .miray-shell{background:#151517!important;}
+[data-ogsc] .miray-card{background:#1b1b1d!important;}
+[data-ogsc] .miray-text{color:#e4e4e7!important;}
+[data-ogsc] .miray-muted{color:#b4b4b8!important;}
+[data-ogsc] .miray-title,[data-ogsc] .miray-strong{color:#ffffff!important;}
+[data-ogsc] .miray-header{background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%)!important;}
+[data-ogsc] .miray-header p,[data-ogsc] .miray-header span,[data-ogsc] .miray-header div{color:#e4e4e7!important;}
+[data-ogsc] .miray-header h1,[data-ogsc] .miray-header b{color:#ffffff!important;}
+</style>
+</head>
 
-      <section>
-        <p class="section-title">Summary</p>
-        ${summaryBox(
-          subtotal,
-          discount,
-          discountLabel,
-          couponCode,
-          shippingFee,
-          tax,
-          finalPayable,
-          currency,
-          paymentMethod
-        )}
-      </section>
+<body style="margin:0;padding:0;background:#ffffff;">
+<div class="miray-bg" style="padding:40px 20px;background:#ffffff;">
 
-      <section>
-        <p class="section-title">Shipping Address</p>
-        ${addressBox(
-          shippingName,
-          shippingLine1,
-          shippingLine2,
-          shippingCity,
-          shippingState,
-          shippingZip,
-          shippingCountry,
-          shippingPhone
-        )}
-      </section>
+<div class="miray-shell" style="max-width:680px;margin:auto;background:#ffffff;border:1px solid rgba(0,0,0,.08);border-radius:28px;overflow:hidden;font-family:Poppins,Arial,sans-serif;">
 
-      ${hasValidCta ? ctaButton(ctaUrl) : ""}
+<div class="miray-header" style="padding:48px 40px 30px;text-align:center;background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%);">
+  <img
+    src="https://res.cloudinary.com/djtva6hec/image/upload/v1778268933/miray/media/zvliktr4z5zboetdz76k.png"
+    alt="Miray Fashions"
+    style="height:56px;max-width:100%;"
+  />
 
-      <p style="margin-top:40px;">With regards,<br/><b>Team Miray Fashions</b></p>
-    </div>
+  <p style="margin:24px 0 8px;font-size:11px;letter-spacing:.42em;text-transform:uppercase;color:#d4d4d8;">
+    Order Confirmed
+  </p>
+
+  <h1 style="margin:0;font-size:18px;letter-spacing:.18em;color:#ffffff;font-weight:700;">
+    #${escapeHtml(orderId)}
+  </h1>
+
+  <p style="margin:12px 0 0;font-size:13px;color:#e4e4e7;line-height:1.6;">
+    Status <b style="color:#ffffff;">${escapeHtml(fulfillmentSub)}</b>
+  </p>
+</div>
+
+<div style="padding:36px 40px 44px;">
+
+<h2 class="miray-title" style="margin:0 0 10px;font-size:24px;color:#111111;">
+  Hi ${escapeHtml(name)} ✨
+</h2>
+
+<p class="miray-text" style="margin:0 0 28px;font-size:14px;line-height:1.8;color:#555555;">
+  Thank you — your order has been placed successfully.
+</p>
+
+<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;">
+  ${infoCard("Payment", paymentMethod)}
+  ${infoCard("Payment Status", paymentStatus)}
+  ${infoCard("Order Status", fulfillmentStatus)}
+  ${infoCard("Amount", money(finalPayable, currency))}
+</div>
+
+<div style="margin-top:30px;">
+  <p class="miray-muted" style="${sectionTitleStyle}">Items</p>
+  ${itemsHtml}
+</div>
+
+<div style="margin-top:30px;">
+  <p class="miray-muted" style="${sectionTitleStyle}">Order Summary</p>
+
+  <div class="miray-card" style="${cardBoxStyle}">
+    ${summaryRow("Subtotal", money(subtotal, currency))}
+    ${discount > 0 ? summaryRow(discountLabel, `- ${money(discount, currency)}`) : ""}
+    ${summaryRow("Shipping", money(shippingFee, currency))}
+    ${summaryRow("Tax", money(tax, currency))}
+    <div class="miray-divider" style="height:1px;background:rgba(0,0,0,.08);margin:14px 0;"></div>
+    ${summaryRow("Total Payable", money(finalPayable, currency), true)}
   </div>
 </div>
+
+<div style="margin-top:30px;">
+  <p class="miray-muted" style="${sectionTitleStyle}">Shipping Address</p>
+
+  <div class="miray-card" style="${cardBoxStyle}">
+    <p class="miray-title" style="margin:0 0 6px;font-size:14px;font-weight:600;color:#111111;">
+      ${escapeHtml(shippingName)}
+    </p>
+    <p class="miray-text" style="margin:0;font-size:13px;line-height:1.8;color:#555555;">
+      ${escapeHtml([shippingLine1, shippingLine2].filter(Boolean).join(", ") || "—")}<br/>
+      ${escapeHtml([shippingCity, shippingState, shippingZip].filter(Boolean).join(", ") || "—")}<br/>
+      ${escapeHtml(shippingCountry)}
+      ${shippingPhone ? `<br/>Phone: ${escapeHtml(shippingPhone)}` : ""}
+    </p>
+  </div>
+</div>
+
+${
+  hasValidCta
+    ? `
+<div style="margin-top:30px;text-align:center;">
+  <a href="${escapeAttr(ctaUrl)}" class="miray-btn" style="display:inline-block;padding:15px 24px;border-radius:999px;background:#111111;color:#ffffff;text-decoration:none;font-size:13px;font-weight:600;">
+    View Order
+  </a>
+</div>`
+    : ""
+}
+
+<div class="miray-card" style="margin-top:34px;padding:18px;border-radius:18px;background:#faf7f8;border:1px solid rgba(0,0,0,.05);">
+  <p class="miray-text" style="margin:0;font-size:13px;line-height:1.8;color:#555555;">
+    Thank you for shopping with <b class="miray-strong">Miray Fashions</b> 🖤
+  </p>
+</div>
+
+<p class="miray-text" style="margin-top:34px;font-size:14px;line-height:1.8;color:#444444;">
+  With regards,<br />
+  <b class="miray-strong">Team Miray Fashions</b>
+</p>
+
+</div>
+</div>
+</div>
+</body>
+</html>
 `;
 
   return { subject, text, html };
 }
 
-/* ===================================================================== */
-/* ============================ HELPERS ================================= */
-/* ===================================================================== */
+/* ---------------- HELPERS ---------------- */
 
 function extractVariantInfo(it = {}) {
   const snap = it?.productSnapshot || {};
@@ -178,22 +244,25 @@ function extractVariantInfo(it = {}) {
 
   const size =
     it?.selectedSize ||
-    attrs.find(a => a?.key?.toLowerCase() === "size")?.value ||
+    attrs.find((a) => String(a?.key || "").toLowerCase() === "size")?.value ||
     "";
 
   const color =
     it?.selectedColor ||
-    attrs.find(a => ["color","colour"].includes(a?.key?.toLowerCase()))?.value ||
+    attrs.find((a) =>
+      ["color", "colour"].includes(String(a?.key || "").toLowerCase())
+    )?.value ||
     "";
 
   const sku = variant?.sku || snap?.sku || "";
 
-  const parts = [];
-  if (size) parts.push(`Size: ${size}`);
-  if (color) parts.push(`Color: ${color}`);
-  if (sku) parts.push(`SKU: ${sku}`);
-
-  return parts.join(" • ");
+  return [
+    size ? `Size: ${size}` : "",
+    color ? `Color: ${color}` : "",
+    sku ? `SKU: ${sku}` : "",
+  ]
+    .filter(Boolean)
+    .join(" • ");
 }
 
 function renderItemCard(it, currency) {
@@ -209,14 +278,27 @@ function renderItemCard(it, currency) {
     "";
 
   return `
-  <div style="border:1px solid rgba(0,0,0,.1);border-radius:16px;padding:16px;margin-bottom:14px;display:flex;gap:14px;">
-    ${thumb ? `<img src="${escapeAttr(thumb)}" style="height:64px;width:64px;border-radius:12px;" />` : ""}
+  <div class="miray-card" style="display:flex;gap:14px;padding:16px;border-radius:18px;border:1px solid rgba(0,0,0,.08);margin-bottom:14px;background:#ffffff;">
+    ${
+      thumb
+        ? `<img src="${escapeAttr(thumb)}" alt="${escapeAttr(title)}" style="width:68px;height:68px;object-fit:cover;border-radius:14px;" />`
+        : ""
+    }
+
     <div style="flex:1;">
-      <p style="margin:0;font-weight:600;">${escapeHtml(title)}</p>
-      ${attrsText ? `<p style="font-size:12px;color:#666;">${escapeHtml(attrsText)}</p>` : ""}
-      <div style="display:flex;justify-content:space-between;">
+      <p class="miray-title" style="margin:0 0 8px;font-size:14px;font-weight:600;color:#111111;">
+        ${escapeHtml(title)}
+      </p>
+
+      ${
+        attrsText
+          ? `<p class="miray-muted" style="margin:0 0 8px;font-size:12px;color:#666666;">${escapeHtml(attrsText)}</p>`
+          : ""
+      }
+
+      <div class="miray-text" style="display:flex;justify-content:space-between;font-size:13px;color:#555555;">
         <span>Qty: ${qty}</span>
-        <b>${money(price, currency)}</b>
+        <b class="miray-strong">${money(price, currency)}</b>
       </div>
     </div>
   </div>`;
@@ -227,23 +309,63 @@ function formatItemText(it, i, currency) {
   const qty = num(it?.quantity);
   const price = num(it?.price);
   const attrsText = extractVariantInfo(it);
+
   return `${i}. ${title}${attrsText ? ` (${attrsText})` : ""} — Qty: ${qty} — ${money(price, currency)}`;
 }
 
-/* ---------------- Small UI helpers ---------------- */
+function infoCard(label, value) {
+  return `
+  <div class="miray-card" style="padding:14px 16px;border-radius:16px;border:1px solid rgba(0,0,0,.08);background:#fcfcfc;">
+    <p class="miray-muted" style="margin:0 0 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#777777;">
+      ${escapeHtml(label)}
+    </p>
+    <p class="miray-title" style="margin:0;font-size:14px;font-weight:600;color:#111111;">
+      ${escapeHtml(value)}
+    </p>
+  </div>`;
+}
 
-const up = s => String(s || "").toUpperCase();
-const num = v => (Number.isFinite(Number(v)) ? Number(v) : 0);
-const money = (v, c) => c === "INR" ? `₹${Number(v).toLocaleString("en-IN")}` : `${c} ${v}`;
-const escapeHtml = s => String(s ?? "").replace(/[&<>"']/g, m => ({
-  "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
-}[m]));
+function summaryRow(label, value, strong = false) {
+  return `
+  <div class="miray-text" style="display:flex;justify-content:space-between;margin:10px 0;font-size:${strong ? "15px" : "13px"};color:#444444;">
+    <span ${strong ? 'class="miray-strong" style="font-weight:700;color:#111111;"' : ""}>
+      ${escapeHtml(label)}
+    </span>
+    <span ${strong ? 'class="miray-strong" style="font-weight:700;color:#111111;"' : ""}>
+      ${escapeHtml(value)}
+    </span>
+  </div>`;
+}
+
+function emptyCard(msg) {
+  return `
+  <div class="miray-card miray-muted" style="padding:18px;border-radius:16px;border:1px dashed rgba(0,0,0,.12);color:#777777;background:#ffffff;">
+    ${escapeHtml(msg)}
+  </div>`;
+}
+
+const up = (s) => String(s || "").toUpperCase();
+
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+const money = (v, c) =>
+  c === "INR"
+    ? `₹${Number(v).toLocaleString("en-IN")}`
+    : `${c} ${Number(v).toLocaleString()}`;
+
+const escapeHtml = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (m) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;",
+  }[m]));
+
 const escapeAttr = escapeHtml;
 
-/* ---- Minimal blocks (kept compact) ---- */
+const sectionTitleStyle =
+  "margin:0 0 12px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#777777;";
 
-const emptyCard = msg => `<div style="padding:16px;border:1px dashed #ccc;">${msg}</div>`;
-const statusRow = () => "";
-const summaryBox = () => "";
-const addressBox = () => "";
-const ctaButton = url => `<a href="${escapeAttr(url)}">View Order</a>`;
+const cardBoxStyle =
+  "border:1px solid rgba(0,0,0,.08);border-radius:18px;padding:18px;background:#fcfcfc;";

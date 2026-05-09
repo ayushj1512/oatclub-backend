@@ -7,6 +7,7 @@ import axios from "axios";
 
 import Order from "../../Orders/Orders.js";
 import { getShiprocketToken } from "../../shiprocket/shiprocket.auth.js";
+import { triggerFulfillmentStatusEmail } from "../../Orders/order.emails.js";
 import {
   mapShiprocketToLocal,
   extractShiprocketStatus,
@@ -17,20 +18,13 @@ import {
 
 const { MONGO_URI } = process.env;
 
-/* =============================
-   DNS FIX
-============================= */
 dns.setServers(["1.1.1.1", "8.8.8.8"]);
 
-/* =============================
-   CONFIG
-============================= */
 const DEBUG_PRINT_RAW_PAYLOAD = false;
 const RAW_PAYLOAD_PRINT_LIMIT = 2;
 const DEBUG_PRINT_EACH_ORDER = false;
 const DEBUG_SKIP_LIMIT = 500;
 
-// ✅ Dry run enabled for testing
 const DRY_RUN = false;
 
 const MAX_ORDERS = 0;
@@ -42,9 +36,6 @@ const REQUEST_GAP_MS = 500;
 const MAX_RETRIES_ON_429 = 3;
 const RETRY_BASE_DELAY_MS = 60000;
 
-/* =============================
-   Helpers
-============================= */
 const norm = (v) => String(v || "").trim();
 const lower = (v) => String(v || "").toLowerCase();
 
@@ -113,9 +104,6 @@ function buildCandidateQuery() {
   };
 }
 
-/* =============================
-   Shiprocket helpers
-============================= */
 async function trackByShipmentId(shipmentId, { forceToken = false } = {}) {
   const token = await getShiprocketToken({ force: forceToken });
 
@@ -144,7 +132,9 @@ async function trackByShipmentIdWithRetry(shipmentId) {
       lastError = err;
 
       if (isAuthError(err)) {
-        console.warn(`🔐 Auth error for shipmentId=${shipmentId}. Retrying once with fresh token...`);
+        console.warn(
+          `🔐 Auth error for shipmentId=${shipmentId}. Retrying once with fresh token...`
+        );
         return await trackByShipmentId(shipmentId, { forceToken: true });
       }
 
@@ -165,9 +155,6 @@ async function trackByShipmentIdWithRetry(shipmentId) {
   throw lastError;
 }
 
-/* =============================
-   Debug helpers
-============================= */
 let skipDebugPrinted = 0;
 
 function debugOrderLine({
@@ -210,9 +197,6 @@ function debugSkip(order, reason, extra = {}) {
   });
 }
 
-/* =============================
-   DB helpers
-============================= */
 async function connectDB() {
   await mongoose.connect(MONGO_URI, {
     serverSelectionTimeoutMS: 10000,
@@ -234,9 +218,15 @@ async function disconnectDB() {
   }
 }
 
-/* =============================
-   Per-order processor
-============================= */
+function triggerCronEmailSafe(order, nextStatus) {
+  try {
+    if (!order) return;
+    triggerFulfillmentStatusEmail(order, nextStatus);
+  } catch (e) {
+    console.error("⚠️ Shiprocket cron email trigger failed:", e?.message || e);
+  }
+}
+
 async function processOrder(order, context) {
   const { counters } = context;
   const shipmentId = order?.shipment?.shiprocket?.shipmentId;
@@ -296,8 +286,7 @@ async function processOrder(order, context) {
     const isEligibleProgression =
       (BEFORE_OFD.has(currentFulfillment) &&
         (nextStatus === "out_for_delivery" || nextStatus === "delivered")) ||
-      (currentFulfillment === "out_for_delivery" &&
-        nextStatus === "delivered");
+      (currentFulfillment === "out_for_delivery" && nextStatus === "delivered");
 
     if (!isEligibleProgression) {
       counters.skipped++;
@@ -309,7 +298,7 @@ async function processOrder(order, context) {
         srStatusRaw,
         nextStatus,
         decision: "SKIP",
-        reason: `NOT_ELIGIBLE_PROGRESSION`,
+        reason: "NOT_ELIGIBLE_PROGRESSION",
       });
       return;
     }
@@ -361,15 +350,25 @@ async function processOrder(order, context) {
 
     if (td?.courier_name) {
       $set["shipment.shiprocket.courierName"] = td.courier_name;
+      $set["trackingDetails.courierName"] = td.courier_name;
     }
 
     if (td?.track_url) {
       $set["shipment.shiprocket.trackingUrl"] = td.track_url;
+      $set["trackingDetails.trackingUrl"] = td.track_url;
+    }
+
+    if (order?.shipment?.shiprocket?.awb) {
+      $set["trackingDetails.trackingId"] = order.shipment.shiprocket.awb;
     }
 
     if (isShippedLike(nextStatus) && !order?.shipment?.shippedAt) {
       $set["shipment.shippedAt"] = now;
       $set["trackingDetails.shippedAt"] = now;
+    }
+
+    if (nextStatus === "out_for_delivery" && !order?.fulfillmentDates?.outForDeliveryAt) {
+      $set["fulfillmentDates.outForDeliveryAt"] = now;
     }
 
     if (nextStatus === "delivered") {
@@ -380,10 +379,20 @@ async function processOrder(order, context) {
       if (!order?.trackingDetails?.deliveredAt) {
         $set["trackingDetails.deliveredAt"] = now;
       }
+
+      if (!order?.fulfillmentDates?.deliveredAt) {
+        $set["fulfillmentDates.deliveredAt"] = now;
+      }
     }
 
     if (!DRY_RUN) {
-      await Order.updateOne({ _id: order._id }, { $set });
+      const updatedOrderForEmail = await Order.findOneAndUpdate(
+        { _id: order._id },
+        { $set },
+        { new: true }
+      ).lean();
+
+      triggerCronEmailSafe(updatedOrderForEmail, nextStatus);
     }
 
     counters.updated++;
@@ -444,9 +453,6 @@ async function processOrder(order, context) {
   }
 }
 
-/* =============================
-   Main runner
-============================= */
 async function run() {
   if (!MONGO_URI) throw new Error("Missing MONGO_URI in env");
 
@@ -476,7 +482,7 @@ async function run() {
     const query = buildCandidateQuery();
 
     const ordersAll = await Order.find(query).select(
-      "_id orderNumber orderType isConfirmed fulfillmentStatus shipment trackingDetails"
+      "_id orderNumber orderType isConfirmed fulfillmentStatus fulfillmentDates shipment trackingDetails shippingAddressSnapshot customerId"
     );
 
     const orders =
@@ -521,9 +527,6 @@ async function run() {
   }
 }
 
-/* =============================
-   Export / CLI
-============================= */
 export async function runShiprocketSync() {
   await run();
 }

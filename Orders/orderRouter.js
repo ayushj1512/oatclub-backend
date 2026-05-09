@@ -26,7 +26,10 @@ import {
   getOrderConfirmationDetails,
 } from "./orderController.js";
 
-import { getRefundPendingCandidates } from "./orderRefunds.controller.js";
+import {
+  getRefundPendingCandidates,
+  getEligibleUnrefundedOrders,
+} from "./orderRefunds.controller.js";
 
 import {
   getInvoicesByOrderNumbers,
@@ -50,6 +53,7 @@ import {
   getROASReport,
   getOperationsStatusReport,
   getFinalPayableByStatus,
+    getCancellationAnalyticsReport,
 } from "./orderReportsController.js";
 
 import {
@@ -109,6 +113,7 @@ router.get("/location/search", findOrdersByStateAndPincode);
 
 /* Refund / Escalation */
 router.get("/refund-pending-candidates", getRefundPendingCandidates);
+router.get("/eligible-unrefunded", getEligibleUnrefundedOrders);
 
 /* Accounts / Reports */
 router.get("/accounts/sales-report", getSalesReport);
@@ -123,7 +128,10 @@ router.get("/accounts/business-overview", getOrderBusinessOverview);
 router.get("/reports/roas", getROASReport);
 router.get("/reports/operations-status", getOperationsStatusReport);
 router.get("/reports/final-payable-by-status", getFinalPayableByStatus);
-
+router.get(
+  "/reports/cancellations",
+  getCancellationAnalyticsReport
+);
 /* Invoices */
 router.post("/invoices", getInvoicesByOrderNumbers);
 router.get("/by-number/:orderNumber/invoice", getInvoiceByOrderNumber);

@@ -1,5 +1,6 @@
 // shiprocket/shiprocket.webhook.js
 import Order from "../Orders/Orders.js";
+import { triggerFulfillmentStatusEmail } from "../Orders/order.emails.js";
 
 const SHIPROCKET_WEBHOOK_TOKEN = process.env.SHIPROCKET_WEBHOOK_TOKEN || "";
 
@@ -11,6 +12,9 @@ const STATUS_MAP = {
 };
 
 const safeStr = (v) => (v === undefined || v === null ? "" : String(v).trim());
+
+const cleanObject = (v) =>
+  v && typeof v === "object" && !Array.isArray(v) ? v : {};
 
 const normalizeStatus = (s = "") =>
   String(s)
@@ -30,11 +34,7 @@ const getRawStatus = (data = {}) =>
 const verifyWebhookToken = (req) => {
   if (!SHIPROCKET_WEBHOOK_TOKEN) return true;
 
-  const token = safeStr(
-    req.header("x-api-key") ||
-      req.header("anx-api-key")
-  );
-
+  const token = safeStr(req.header("x-api-key") || req.header("anx-api-key"));
   return token === SHIPROCKET_WEBHOOK_TOKEN;
 };
 
@@ -48,7 +48,6 @@ const toDate = (value) => {
 
   const str = String(value).trim();
 
-  // Shiprocket sample: "23 05 2023 11:43:52"
   const match = str.match(/^(\d{2})\s(\d{2})\s(\d{4})\s(.+)$/);
   if (match) {
     const [, dd, mm, yyyy, time] = match;
@@ -58,6 +57,20 @@ const toDate = (value) => {
 
   const d = new Date(str.includes(" ") ? str.replace(" ", "T") : str);
   return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const triggerWebhookEmailSafe = (order, nextStatus) => {
+  try {
+    triggerFulfillmentStatusEmail(
+      order?.toObject ? order.toObject() : order,
+      nextStatus
+    );
+  } catch (e) {
+    console.error(
+      "⚠️ Shiprocket webhook email trigger failed:",
+      e?.message || e
+    );
+  }
 };
 
 export async function shiprocketWebhook(req, res) {
@@ -78,7 +91,6 @@ export async function shiprocketWebhook(req, res) {
     const normalizedStatus = normalizeStatus(rawStatus);
     const nextStatus = STATUS_MAP[normalizedStatus];
 
-    // Only update OFD + Delivered. Ignore everything else.
     if (!nextStatus) {
       return res.status(200).json({ success: true });
     }
@@ -110,43 +122,89 @@ export async function shiprocketWebhook(req, res) {
       return res.status(200).json({ success: true });
     }
 
+    const existingShipment = cleanObject(order.shipment);
+    const existingShiprocket = cleanObject(existingShipment.shiprocket);
+    const existingXpressbees = cleanObject(existingShipment.xpressbees);
+
+    const currentFulfillment = String(
+      order.fulfillmentStatus || ""
+    ).toLowerCase();
+
+    const currentShipmentStatus = String(
+      existingShipment.status || ""
+    ).toLowerCase();
+
     const eventKey = getEventKey(data, awb, shipmentId, normalizedStatus);
 
-    if (eventKey && order.shipment?.shiprocket?.lastEventKey === eventKey) {
+    if (eventKey && existingShiprocket.lastEventKey === eventKey) {
       return res.status(200).json({ success: true });
     }
 
-    // Delivered should never move back to OFD
     if (
-      order.shipment?.status === "delivered" &&
+      existingShipment.status === "delivered" &&
       nextStatus === "out_for_delivery"
     ) {
       return res.status(200).json({ success: true });
     }
 
+    if (
+      currentFulfillment === nextStatus &&
+      currentShipmentStatus === nextStatus
+    ) {
+      return res.status(200).json({ success: true });
+    }
+
     order.shipment = {
-      ...(order.shipment || {}),
       provider: "shiprocket",
       status: nextStatus,
 
       shiprocket: {
-        ...(order.shipment?.shiprocket || {}),
-        ...(awb ? { awb } : {}),
-        shipmentId:
-          shipmentId || order.shipment?.shiprocket?.shipmentId,
+        orderId: existingShiprocket.orderId || "",
+        shipmentId: shipmentId || existingShiprocket.shipmentId || "",
+        awb: awb || existingShiprocket.awb || "",
         courierName:
-          data.courier_name || order.shipment?.shiprocket?.courierName,
+          data.courier_name || existingShiprocket.courierName || "",
         trackingUrl:
-          data.tracking_url || order.shipment?.shiprocket?.trackingUrl,
+          data.tracking_url || existingShiprocket.trackingUrl || "",
         status: nextStatus,
         lastUpdatedAt: now,
         lastStatusRaw: rawStatus,
         lastStatusNorm: normalizedStatus,
         ...(eventKey ? { lastEventKey: eventKey } : {}),
       },
+
+      // ✅ IMPORTANT: never allow undefined here
+      // fixes: shipment.xpressbees Cast to Object failed for value "undefined"
+      xpressbees: {
+        shipmentId: existingXpressbees.shipmentId || "",
+        awb: existingXpressbees.awb || "",
+        labelUrl: existingXpressbees.labelUrl || "",
+        courierName: existingXpressbees.courierName || "XpressBees",
+        trackingUrl: existingXpressbees.trackingUrl || "",
+        lastWebhook: existingXpressbees.lastWebhook || null,
+        lastTrack: existingXpressbees.lastTrack || null,
+      },
+
+      shippedAt: existingShipment.shippedAt || undefined,
+      deliveredAt: existingShipment.deliveredAt || undefined,
     };
 
     order.fulfillmentStatus = nextStatus;
+
+    order.fulfillmentDates = {
+      ...(order.fulfillmentDates || {}),
+    };
+
+    if (
+      nextStatus === "out_for_delivery" &&
+      !order.fulfillmentDates.outForDeliveryAt
+    ) {
+      order.fulfillmentDates.outForDeliveryAt = now;
+    }
+
+    if (nextStatus === "delivered" && !order.fulfillmentDates.deliveredAt) {
+      order.fulfillmentDates.deliveredAt = now;
+    }
 
     if (awb) {
       const expected =
@@ -156,7 +214,9 @@ export async function shiprocketWebhook(req, res) {
         ...(order.trackingDetails || {}),
         trackingId: awb,
         courierName:
-          data.courier_name || order.trackingDetails?.courierName,
+          data.courier_name || order.trackingDetails?.courierName || "",
+        trackingUrl:
+          data.tracking_url || order.trackingDetails?.trackingUrl || "",
         expectedDelivery:
           toDate(expected) || order.trackingDetails?.expectedDelivery,
       };
@@ -168,7 +228,14 @@ export async function shiprocketWebhook(req, res) {
 
     await order.save();
 
-    return res.status(200).json({ success: true });
+    triggerWebhookEmailSafe(order, nextStatus);
+
+    return res.status(200).json({
+      success: true,
+      updated: true,
+      orderNumber: order.orderNumber,
+      status: nextStatus,
+    });
   } catch (error) {
     console.error("❌ Shiprocket Webhook Error:", error);
     return res.status(200).json({ success: true });

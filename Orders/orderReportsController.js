@@ -1684,6 +1684,350 @@ export const getLowSellingProducts = async (req, res) => {
   }
 };
 
+export const getCancellationAnalyticsReport = async (req, res) => {
+  try {
+    const range = String(req.query.range || "").trim();
+    const from = String(req.query.from || "").trim();
+    const to = String(req.query.to || "").trim();
+
+    const { normalized, match: dateMatch } = buildOperationsReportMatch({
+      range,
+      from,
+      to,
+    });
+
+    const match = {
+      ...dateMatch,
+      "cancellation.isCancelled": true,
+      orderType: { $ne: "parent" },
+    };
+
+    const pipeline = [
+      { $match: match },
+
+      {
+        $facet: {
+          overview: [
+            {
+              $group: {
+                _id: null,
+                totalCancelledOrders: { $sum: 1 },
+                totalCancelledRevenue: {
+                  $sum: { $ifNull: ["$finalPayable", 0] },
+                },
+                avgCancelledOrderValue: {
+                  $avg: { $ifNull: ["$finalPayable", 0] },
+                },
+
+                codCancelled: {
+                  $sum: {
+                    $cond: [{ $eq: ["$paymentMethod", "cod"] }, 1, 0],
+                  },
+                },
+
+                prepaidCancelled: {
+                  $sum: {
+                    $cond: [{ $eq: ["$paymentMethod", "razorpay"] }, 1, 0],
+                  },
+                },
+
+                confirmedCancelled: {
+                  $sum: {
+                    $cond: ["$isConfirmed", 1, 0],
+                  },
+                },
+
+                unconfirmedCancelled: {
+                  $sum: {
+                    $cond: ["$isConfirmed", 0, 1],
+                  },
+                },
+
+                refundPendingOrders: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $in: [
+                          { $toLower: { $ifNull: ["$paymentStatus", ""] } },
+                          ["refund_pending"],
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                totalCancelledOrders: { $ifNull: ["$totalCancelledOrders", 0] },
+                totalCancelledRevenue: {
+                  $round: [{ $ifNull: ["$totalCancelledRevenue", 0] }, 2],
+                },
+                avgCancelledOrderValue: {
+                  $round: [{ $ifNull: ["$avgCancelledOrderValue", 0] }, 2],
+                },
+                codCancelled: { $ifNull: ["$codCancelled", 0] },
+                prepaidCancelled: { $ifNull: ["$prepaidCancelled", 0] },
+                confirmedCancelled: { $ifNull: ["$confirmedCancelled", 0] },
+                unconfirmedCancelled: { $ifNull: ["$unconfirmedCancelled", 0] },
+                refundPendingOrders: { $ifNull: ["$refundPendingOrders", 0] },
+              },
+            },
+          ],
+
+          reasonBreakdown: [
+            {
+              $group: {
+                _id: {
+                  $trim: {
+                    input: {
+                      $toString: {
+                        $ifNull: ["$cancellation.reason", "No reason"],
+                      },
+                    },
+                  },
+                },
+                totalOrders: { $sum: 1 },
+                revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                reason: {
+                  $cond: [{ $eq: ["$_id", ""] }, "No reason", "$_id"],
+                },
+                totalOrders: 1,
+                revenue: { $round: [{ $ifNull: ["$revenue", 0] }, 2] },
+              },
+            },
+            { $sort: { totalOrders: -1 } },
+          ],
+
+          cancelledByBreakdown: [
+            {
+              $group: {
+                _id: {
+                  $ifNull: ["$cancellation.cancelledBy", "unknown"],
+                },
+                totalOrders: { $sum: 1 },
+                revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                cancelledBy: "$_id",
+                totalOrders: 1,
+                revenue: { $round: [{ $ifNull: ["$revenue", 0] }, 2] },
+              },
+            },
+            { $sort: { totalOrders: -1 } },
+          ],
+
+          paymentMethodBreakdown: [
+            {
+              $group: {
+                _id: {
+                  $ifNull: ["$paymentMethod", "unknown"],
+                },
+                totalOrders: { $sum: 1 },
+                revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                paymentMethod: "$_id",
+                totalOrders: 1,
+                revenue: { $round: [{ $ifNull: ["$revenue", 0] }, 2] },
+              },
+            },
+            { $sort: { totalOrders: -1 } },
+          ],
+
+          dailyTrend: [
+            {
+              $project: {
+                ymd: {
+                  $dateToString: {
+                    format: "%Y-%m-%d",
+                    date: {
+                      $ifNull: ["$cancellation.cancelledAt", "$updatedAt"],
+                    },
+                    timezone: IST_TZ,
+                  },
+                },
+                finalPayable: { $ifNull: ["$finalPayable", 0] },
+              },
+            },
+            {
+              $group: {
+                _id: "$ymd",
+                totalOrders: { $sum: 1 },
+                revenue: { $sum: "$finalPayable" },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                ymd: "$_id",
+                totalOrders: 1,
+                revenue: { $round: [{ $ifNull: ["$revenue", 0] }, 2] },
+              },
+            },
+            { $sort: { ymd: 1 } },
+          ],
+
+          topCancelledProducts: [
+            { $unwind: "$items" },
+            {
+              $project: {
+                productCode: {
+                  $trim: {
+                    input: {
+                      $toString: {
+                        $ifNull: ["$items.productSnapshot.productCode", ""],
+                      },
+                    },
+                  },
+                },
+                productName: {
+                  $trim: {
+                    input: {
+                      $toString: {
+                        $ifNull: ["$items.productSnapshot.title", ""],
+                      },
+                    },
+                  },
+                },
+                productImage: {
+                  $let: {
+                    vars: {
+                      thumb: {
+                        $ifNull: ["$items.productSnapshot.thumbnail", ""],
+                      },
+                      firstImage: {
+                        $arrayElemAt: [
+                          { $ifNull: ["$items.productSnapshot.images", []] },
+                          0,
+                        ],
+                      },
+                    },
+                    in: {
+                      $cond: [
+                        { $ne: ["$$thumb", ""] },
+                        "$$thumb",
+                        { $ifNull: ["$$firstImage", ""] },
+                      ],
+                    },
+                  },
+                },
+                quantity: { $ifNull: ["$items.quantity", 0] },
+                subtotal: {
+                  $cond: [
+                    { $gt: [{ $ifNull: ["$items.subtotal", 0] }, 0] },
+                    { $ifNull: ["$items.subtotal", 0] },
+                    {
+                      $multiply: [
+                        { $ifNull: ["$items.price", 0] },
+                        { $ifNull: ["$items.quantity", 0] },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              $match: {
+                productCode: { $ne: "" },
+                quantity: { $gt: 0 },
+              },
+            },
+            {
+              $group: {
+                _id: "$productCode",
+                productCode: { $first: "$productCode" },
+                productName: { $first: "$productName" },
+                productImage: { $first: "$productImage" },
+                cancelledQty: { $sum: "$quantity" },
+                cancelledRevenue: { $sum: "$subtotal" },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                productCode: 1,
+                productName: 1,
+                productImage: 1,
+                cancelledQty: 1,
+                cancelledRevenue: {
+                  $round: [{ $ifNull: ["$cancelledRevenue", 0] }, 2],
+                },
+              },
+            },
+            { $sort: { cancelledQty: -1 } },
+            { $limit: 10 },
+          ],
+        },
+      },
+    ];
+
+    const [result] = await Order.aggregate(pipeline).allowDiskUse(true);
+
+    const totalOrdersMatch = {
+      ...dateMatch,
+      orderType: { $ne: "parent" },
+    };
+
+    const totalOrders = await Order.countDocuments(totalOrdersMatch);
+
+    const overview = result?.overview?.[0] || {
+      totalCancelledOrders: 0,
+      totalCancelledRevenue: 0,
+      avgCancelledOrderValue: 0,
+      codCancelled: 0,
+      prepaidCancelled: 0,
+      confirmedCancelled: 0,
+      unconfirmedCancelled: 0,
+      refundPendingOrders: 0,
+    };
+
+    const cancellationRate =
+      totalOrders > 0
+        ? Number(((overview.totalCancelledOrders / totalOrders) * 100).toFixed(2))
+        : 0;
+
+    return res.status(200).json({
+      success: true,
+      filters: {
+        range: normalized.key || "",
+        from: normalized.from || "",
+        to: normalized.to || "",
+      },
+      summary: {
+        ...overview,
+        totalOrders,
+        cancellationRate,
+      },
+      reasonBreakdown: result?.reasonBreakdown || [],
+      cancelledByBreakdown: result?.cancelledByBreakdown || [],
+      paymentMethodBreakdown: result?.paymentMethodBreakdown || [],
+      dailyTrend: result?.dailyTrend || [],
+      topCancelledProducts: result?.topCancelledProducts || [],
+    });
+  } catch (error) {
+    console.error("getCancellationAnalyticsReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to fetch cancellation analytics report",
+    });
+  }
+};
+
 
 
 export default {
@@ -1693,5 +2037,6 @@ export default {
   getOperationsStatusReport,
   getUnsoldProducts,
   getFinalPayableByStatus,
-  getLowSellingProducts
+  getLowSellingProducts,
+  getCancellationAnalyticsReport,
 };

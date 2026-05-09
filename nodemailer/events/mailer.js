@@ -5,8 +5,10 @@ import { userOnboardingTemplate } from "./UserOnboardingEmailTempalte.js";
 import { orderConfirmationTemplate } from "./OrderConfirmationTemplate.js";
 import { orderCancellationTemplate } from "./OrderCancellationEmailTemplate.js";
 import { orderReceivedAdminTemplate } from "./AdminOrderReceivedTemplate.js";
-import { rmaCreatedTemplate } from "./RmaEmailTemplate.js"; // ✅ ADD RMA TEMPLATE
+import { rmaCreatedTemplate } from "./RmaEmailTemplate.js";
 import { orderTrackingTemplate } from "./OrderTrackingTemplate.js";
+import { orderShippedTemplate } from "./OrderShippedTemplate.js";
+import { orderDeliveredTemplate } from "./OrderDeliveredTemplate.js";
 
 const MAIL_ENABLED = process.env.MAIL_ENABLED === "true";
 
@@ -21,15 +23,15 @@ let transporter = null;
 
 if (MAIL_ENABLED) {
   transporter = nodemailer.createTransport({
-  host: process.env.MAIL_HOST || "smtp.gmail.com",
-  port: Number(process.env.MAIL_PORT || 587),
-  secure: process.env.MAIL_SECURE === "true",
-  name: process.env.MAIL_EHLO_NAME || "mirayfashions.com",
-  auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS,
-  },
-});
+    host: process.env.MAIL_HOST || "smtp.gmail.com",
+    port: Number(process.env.MAIL_PORT || 587),
+    secure: process.env.MAIL_SECURE === "true",
+    name: process.env.MAIL_EHLO_NAME || "mirayfashions.com",
+    auth: {
+      user: process.env.MAIL_USER,
+      pass: process.env.MAIL_PASS,
+    },
+  });
 
   transporter.verify((err) => {
     if (err) {
@@ -108,8 +110,7 @@ export const Mailer = {
   },
 
   /**
-   * ✅ Customer + Admin Order Cancelled (✅ MAIN METHOD)
-   * ✅ This is what your order.emails.js expects
+   * ✅ Customer + Admin Order Cancelled
    */
   sendOrderCancelled: async ({ to, name, order, ctaUrl, reason }) => {
     const { subject, text, html } = orderCancellationTemplate({
@@ -142,9 +143,7 @@ export const Mailer = {
   },
 
   /**
-   * ✅ ✅ RMA CREATED EMAIL (Customer + Admin)
-   * ✅ This is what order.emails.js expects:
-   * Mailer.sendRmaCreated(...)
+   * ✅ RMA Created Email
    */
   sendRmaCreated: async ({ to, name, order, rma, policy, ctaUrl }) => {
     const { subject, text, html } = rmaCreatedTemplate({
@@ -158,10 +157,8 @@ export const Mailer = {
     return sendMail({ to, subject, text, html });
   },
 
-    /**
-   * ✅ Order Tracking / Shipped email (Customer + Admin optional)
-   * Expected params:
-   * to, name, awb, courierName, trackingLink, order
+  /**
+   * ✅ Generic Tracking Email
    */
   sendOrderTracking: async ({
     to,
@@ -170,6 +167,7 @@ export const Mailer = {
     courierName,
     trackingLink,
     order,
+    ctaUrl,
   }) => {
     const { subject, text, html } = orderTrackingTemplate({
       name,
@@ -177,10 +175,118 @@ export const Mailer = {
       courierName,
       trackingLink,
       order,
+      ctaUrl,
     });
 
     return sendMail({ to, subject, text, html });
   },
 
-  
+  /**
+   * ✅ Order Shipped Email
+   * Used by order.emails.js:
+   * Mailer.sendOrderShipped(...)
+   */
+  sendOrderShipped: async ({
+    to,
+    name,
+    order,
+    ctaUrl,
+    awb,
+    courierName,
+    trackingLink,
+  }) => {
+    const patchedOrder = {
+      ...(order || {}),
+      shipment: {
+        ...(order?.shipment || {}),
+        shiprocket: {
+          ...(order?.shipment?.shiprocket || {}),
+          awb: awb || order?.shipment?.shiprocket?.awb || "",
+          courierName:
+            courierName || order?.shipment?.shiprocket?.courierName || "",
+          trackingUrl:
+            trackingLink || order?.shipment?.shiprocket?.trackingUrl || "",
+        },
+      },
+    };
+
+    const { subject, text, html } = orderShippedTemplate({
+      name,
+      order: patchedOrder,
+      ctaUrl,
+    });
+
+    return sendMail({ to, subject, text, html });
+  },
+
+  /**
+   * ✅ Out For Delivery Email
+   * Fallback uses tracking template for now.
+   */
+  sendOrderOutForDelivery: async ({
+    to,
+    name,
+    order,
+    ctaUrl,
+    awb,
+    courierName,
+    trackingLink,
+  }) => {
+    const { subject, text, html } = orderTrackingTemplate({
+      name,
+      awb,
+      courierName,
+      trackingLink: trackingLink || ctaUrl,
+      order: {
+        ...(order || {}),
+        emailStatusLabel: "Out for Delivery",
+      },
+      ctaUrl,
+    });
+
+    return sendMail({
+      to,
+      subject: subject || `Order Out for Delivery — #${order?.orderNumber || order?._id}`,
+      text,
+      html,
+    });
+  },
+
+  /**
+   * ✅ Order Delivered Email
+   * Used by order.emails.js:
+   * Mailer.sendOrderDelivered(...)
+   */
+  sendOrderDelivered: async ({
+    to,
+    name,
+    order,
+    ctaUrl,
+    awb,
+    courierName,
+    trackingLink,
+  }) => {
+    const patchedOrder = {
+      ...(order || {}),
+      shipment: {
+        ...(order?.shipment || {}),
+        shiprocket: {
+          ...(order?.shipment?.shiprocket || {}),
+          awb: awb || order?.shipment?.shiprocket?.awb || "",
+          courierName:
+            courierName || order?.shipment?.shiprocket?.courierName || "",
+          trackingUrl:
+            trackingLink || order?.shipment?.shiprocket?.trackingUrl || "",
+        },
+      },
+    };
+
+    const { subject, text, html } = orderDeliveredTemplate({
+      name,
+      order: patchedOrder,
+      ctaUrl,
+    });
+
+    return sendMail({ to, subject, text, html });
+  },
 };
