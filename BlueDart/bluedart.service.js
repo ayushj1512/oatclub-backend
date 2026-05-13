@@ -428,33 +428,45 @@ export const trackShipmentOnBlueDart = async ({
   carrierSlug,
   vendorId,
 } = {}) => {
-  const endpoint = BLUEDART?.ENDPOINTS?.TRACK_BY_AWB;
-
   const cleanAwb = safeString(awbNumber || awb);
 
-  const payload = cleanObject({
+  if (!cleanAwb && !referenceNumber && !shipmentId) {
+    throw new Error(
+      "awbNumber, referenceNumber or shipmentId is required"
+    );
+  }
+
+  /*
+    eShipz tracking API endpoint currently returns 404
+    for this account.
+
+    So we return normalized fallback tracking data
+    + public tracking URL.
+  */
+
+  const tracking = normalizeEshipzTracking({
     awb_number: cleanAwb,
     reference_number: safeString(referenceNumber),
     shipment_id: safeString(shipmentId),
+    carrier: getCarrierName(),
     slug: getCarrierSlug(carrierSlug),
     vendor_id: getVendorId(vendorId),
+    status: "tracking_pending",
+    message: "Tracking available on public Eshipz page",
   });
-
-  if (!payload.awb_number && !payload.reference_number && !payload.shipment_id) {
-    throw new Error("awbNumber, referenceNumber or shipmentId is required");
-  }
-
-  const response = await post(
-    endpoint,
-    payload,
-    "ESHIPZ TRACK SHIPMENT",
-    "Failed to track Eshipz shipment"
-  );
 
   return {
     success: true,
-    message: "Tracking fetched successfully",
-    tracking: normalizeEshipzTracking(response),
+    message:
+      "Tracking API unavailable. Using Eshipz public tracking URL.",
+    tracking,
+
+    trackingUrl: cleanAwb
+      ? `${
+          BLUEDART?.TRACKING_URL ||
+          "https://track.eshipz.com/track"
+        }?awb=${encodeURIComponent(cleanAwb)}`
+      : "",
   };
 };
 
@@ -470,38 +482,45 @@ export const getTrackingHistoryFromBlueDart = async ({
   carrierSlug,
   vendorId,
 } = {}) => {
-  const endpoint =
-    BLUEDART?.ENDPOINTS?.TRACKING_HISTORY ||
-    BLUEDART?.ENDPOINTS?.TRACK_BY_AWB;
-
   const cleanAwb = safeString(awbNumber || awb);
 
-  const payload = cleanObject({
+  if (!cleanAwb && !referenceNumber && !shipmentId) {
+    throw new Error(
+      "awbNumber, referenceNumber or shipmentId is required"
+    );
+  }
+
+  /*
+    eShipz tracking history endpoint unavailable.
+    Returning safe fallback structure.
+  */
+
+  const tracking = normalizeEshipzTracking({
     awb_number: cleanAwb,
     reference_number: safeString(referenceNumber),
     shipment_id: safeString(shipmentId),
+    carrier: getCarrierName(),
     slug: getCarrierSlug(carrierSlug),
     vendor_id: getVendorId(vendorId),
+    status: "tracking_pending",
+    message: "Tracking history available on public Eshipz page",
+    events: [],
   });
-
-  if (!payload.awb_number && !payload.reference_number && !payload.shipment_id) {
-    throw new Error("awbNumber, referenceNumber or shipmentId is required");
-  }
-
-  const response = await post(
-    endpoint,
-    payload,
-    "ESHIPZ TRACKING HISTORY",
-    "Failed to fetch Eshipz tracking history"
-  );
 
   return {
     success: true,
-    message: "Tracking history fetched successfully",
-    tracking: normalizeEshipzTracking(response),
+    message:
+      "Tracking history API unavailable. Using Eshipz public tracking URL.",
+    tracking,
+
+    trackingUrl: cleanAwb
+      ? `${
+          BLUEDART?.TRACKING_URL ||
+          "https://track.eshipz.com/track"
+        }?awb=${encodeURIComponent(cleanAwb)}`
+      : "",
   };
 };
-
 /* ======================================================
    BULK TRACK SHIPMENTS
 ====================================================== */

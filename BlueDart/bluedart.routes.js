@@ -27,21 +27,34 @@ router.post("/eshipz/shipments/create-from-order", createShipmentFromOrder);
 router.get("/shipments", listShipments);
 router.get("/eshipz/shipments", listShipments);
 
-// Get local shipment by Mongo id
-router.get("/shipments/:id", getShipmentById);
-router.get("/eshipz/shipments/:id", getShipmentById);
+// Bulk sync local shipments
+router.post("/shipments/bulk-sync", bulkSyncShipments);
+router.post("/eshipz/shipments/bulk-sync", bulkSyncShipments);
+
+/* =========================================================
+   TRACK / SYNC SHIPMENT
+========================================================= */
+
+// Track/sync one local shipment by Mongo shipment id
+router.post("/shipments/:id/track", trackShipment);
+router.post("/eshipz/shipments/:id/track", trackShipment);
+
+// Optional clean aliases
+router.post("/track/:id", trackShipment);
+router.post("/eshipz/track/:id", trackShipment);
+
+/* =========================================================
+   GET LOCAL SHIPMENT DETAILS
+   Keep dynamic routes after specific routes
+========================================================= */
 
 // Get local shipment by order number
 router.get("/shipments/order/:orderNumber", getShipmentByOrderNumber);
 router.get("/eshipz/shipments/order/:orderNumber", getShipmentByOrderNumber);
 
-// Track/sync one shipment
-router.post("/shipments/:id/track", trackShipment);
-router.post("/eshipz/shipments/:id/track", trackShipment);
-
-// Bulk sync local shipments
-router.post("/shipments/bulk-sync", bulkSyncShipments);
-router.post("/eshipz/shipments/bulk-sync", bulkSyncShipments);
+// Get local shipment by Mongo id
+router.get("/shipments/:id", getShipmentById);
+router.get("/eshipz/shipments/:id", getShipmentById);
 
 /* =========================================================
    ESHIPZ ORDERS API

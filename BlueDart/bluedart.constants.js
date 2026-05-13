@@ -15,6 +15,13 @@ export const BLUEDART = {
 
   EDD_BASE_URL: "https://ds.eshipz.com",
 
+  /*
+    Public tracking page.
+    eShipz API tracking endpoint is not enabled/available
+    for this account right now, so use this as fallback.
+  */
+  TRACKING_URL: "https://track.eshipz.com/track",
+
   TIMEOUT: 30000,
 
   CARRIER_NAME: "BlueDart",
@@ -88,22 +95,27 @@ export const BLUEDART = {
   ENDPOINTS: {
     /*
       PUSH ORDER / CREATE SHIPMENT
-      Working endpoint from your current curl/setup.
     */
     CREATE_SHIPMENT: "/api/v1/orders",
 
     /*
       GET ORDERS / SINGLE ORDER
-      Used for external orders listing and detail pages.
     */
     GET_ORDERS: "/api/v1/orders",
 
     /*
       TRACKING APIs
-      Keep configurable because eShipz account-level routes can vary.
+
+      NOTE:
+      These are intentionally blank because:
+      - /api/v1/shipments/track returned 404
+      - /api/v1/tracking returned 404
+
+      Use TRACKING_URL fallback:
+      https://track.eshipz.com/track?awb=AWB_NUMBER
     */
-    TRACK_BY_AWB: "/api/v1/shipments/track",
-    TRACKING_HISTORY: "/api/v1/shipments/track",
+    TRACK_BY_AWB: "",
+    TRACKING_HISTORY: "",
 
     /*
       CANCEL SHIPMENT
@@ -117,13 +129,11 @@ export const BLUEDART = {
 
     /*
       UPDATE SHIPMENT
-      Used only if your account supports update endpoint.
     */
     UPDATE_SHIPMENT: "/api/v1/shipments",
 
     /*
       EDD / SLA PREDICTION
-      Uses EDD_BASE_URL: https://ds.eshipz.com
     */
     EDD_PREDICTION: "/prediction/predicted-sla/v1/",
   },
