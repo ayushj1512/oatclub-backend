@@ -24,6 +24,7 @@ import {
   getDuplicateOrderAlerts,
   markDuplicateOrderAlertsController,
   getOrderConfirmationDetails,
+  getOrdersDashboard, // ✅ ADD THIS
 } from "./orderController.js";
 
 import {
@@ -53,7 +54,7 @@ import {
   getROASReport,
   getOperationsStatusReport,
   getFinalPayableByStatus,
-    getCancellationAnalyticsReport,
+  getCancellationAnalyticsReport,
 } from "./orderReportsController.js";
 
 import {
@@ -95,6 +96,9 @@ const router = express.Router();
 router.post("/", createOrder);
 router.get("/", getAllOrders);
 
+/* ✅ Dashboard - keep before any /:id route */
+router.get("/dashboard", getOrdersDashboard);
+
 /* WhatsApp Webhooks */
 router.get("/whatsapp/webhook", verifyWhatsappWebhook);
 router.post("/whatsapp/webhook/order-confirm", whatsappConfirmOrderWebhook);
@@ -128,10 +132,8 @@ router.get("/accounts/business-overview", getOrderBusinessOverview);
 router.get("/reports/roas", getROASReport);
 router.get("/reports/operations-status", getOperationsStatusReport);
 router.get("/reports/final-payable-by-status", getFinalPayableByStatus);
-router.get(
-  "/reports/cancellations",
-  getCancellationAnalyticsReport
-);
+router.get("/reports/cancellations", getCancellationAnalyticsReport);
+
 /* Invoices */
 router.post("/invoices", getInvoicesByOrderNumbers);
 router.get("/by-number/:orderNumber/invoice", getInvoiceByOrderNumber);

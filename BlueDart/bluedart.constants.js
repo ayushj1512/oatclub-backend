@@ -6,12 +6,22 @@ export const BLUEDART = {
   ===================================================== */
   BASE_URL: "https://orders.eshipz.com",
 
-  API_TOKEN: "69afd01bfe4d91fafd3615a6",
+  API_TOKEN:
+    process.env.ESHIPZ_API_TOKEN ||
+    process.env.BLUEDART_API_TOKEN ||
+    "69afd01bfe4d91fafd3615a6",
 
-  APP_URL: "http://app.eshipz.com",
+  APP_URL: "https://app.eshipz.com",
 
+  EDD_BASE_URL: "https://ds.eshipz.com",
+
+  TIMEOUT: 30000,
+
+  CARRIER_NAME: "BlueDart",
   CARRIER_SLUG: "bluedart",
   VENDOR_ID: "1511757753",
+
+  PROVIDER: "eshipz",
 
   /* =====================================================
      SERVICE TYPES
@@ -42,40 +52,79 @@ export const BLUEDART = {
     order_pushed: "order_pushed",
 
     pickup_pending: "pickup_pending",
-    picked: "picked",
+    pickup_scheduled: "pickup_pending",
+    ready_to_ship: "pickup_pending",
 
+    picked: "picked",
+    pickup_done: "picked",
+
+    shipped: "in_transit",
     in_transit: "in_transit",
+    transit: "in_transit",
+    out_for_pickup: "in_transit",
+
     out_for_delivery: "out_for_delivery",
+    ofd: "out_for_delivery",
 
     delivered: "delivered",
 
     rto: "rto",
+    rto_initiated: "rto",
+    rto_delivered: "rto",
+
     cancelled: "cancelled",
+    canceled: "cancelled",
+
     exception: "exception",
     failed: "failed",
+    lost: "exception",
+    damaged: "exception",
   },
 
   /* =====================================================
      API ENDPOINTS
-     (eShipz APIs)
+     eShipz APIs
   ===================================================== */
   ENDPOINTS: {
-
     /*
-      PUSH ORDER TO ESHIPZ
-      This is the endpoint from your working curl
+      PUSH ORDER / CREATE SHIPMENT
+      Working endpoint from your current curl/setup.
     */
     CREATE_SHIPMENT: "/api/v1/orders",
 
     /*
-      Tracking / Cancel / Reverse endpoints
-      will be updated once exact paths
-      are confirmed from Postman collection.
+      GET ORDERS / SINGLE ORDER
+      Used for external orders listing and detail pages.
+    */
+    GET_ORDERS: "/api/v1/orders",
+
+    /*
+      TRACKING APIs
+      Keep configurable because eShipz account-level routes can vary.
     */
     TRACK_BY_AWB: "/api/v1/shipments/track",
+    TRACKING_HISTORY: "/api/v1/shipments/track",
 
+    /*
+      CANCEL SHIPMENT
+    */
     CANCEL_SHIPMENT: "/api/v1/shipments/cancel",
 
+    /*
+      REVERSE SHIPMENT / RETURN SHIPMENT
+    */
     REVERSE_SHIPMENT: "/api/v1/shipments/reverse",
+
+    /*
+      UPDATE SHIPMENT
+      Used only if your account supports update endpoint.
+    */
+    UPDATE_SHIPMENT: "/api/v1/shipments",
+
+    /*
+      EDD / SLA PREDICTION
+      Uses EDD_BASE_URL: https://ds.eshipz.com
+    */
+    EDD_PREDICTION: "/prediction/predicted-sla/v1/",
   },
 };

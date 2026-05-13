@@ -4056,3 +4056,475 @@ export const getOrderConfirmationDetails = async (req, res) => {
     });
   }
 };
+
+// ========================================================================================
+// ✅ GET ORDERS DASHBOARD SUMMARY - FAST AGGREGATED
+// Route: GET /api/orders/dashboard
+// ========================================================================================
+export const getOrdersDashboard = async (req, res) => {
+  try {
+    const now = new Date();
+
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const startOfTomorrow = new Date(startOfToday);
+    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
+    const last7Start = new Date(startOfToday);
+    last7Start.setDate(last7Start.getDate() - 6);
+
+    const last14Start = new Date(startOfToday);
+    last14Start.setDate(last14Start.getDate() - 13);
+
+    const thisWeekStart = new Date(startOfToday);
+    thisWeekStart.setDate(thisWeekStart.getDate() - thisWeekStart.getDay());
+
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const COUNTABLE_MATCH = {
+      $or: [
+        {
+          paymentMethod: "razorpay",
+          paymentStatus: "paid",
+        },
+        {
+          paymentMethod: "cod",
+          isConfirmed: true,
+        },
+        {
+          paymentMethod: "exchange",
+        },
+        {
+          paymentStatus: "not_applicable",
+        },
+      ],
+    };
+
+    const activityDateExpr = {
+      $ifNull: [
+        "$razorpay.paidAt",
+        {
+          $ifNull: [
+            "$confirmedAt",
+            {
+              $ifNull: ["$orderDate", "$createdAt"],
+            },
+          ],
+        },
+      ],
+    };
+
+    const [
+      summaryAgg,
+      pendingConfirmation,
+      refundPending,
+    ] = await Promise.all([
+      Order.aggregate([
+        { $match: COUNTABLE_MATCH },
+        {
+          $addFields: {
+            dashboardActivityAt: activityDateExpr,
+            dashboardSource: {
+              $ifNull: ["$attribution.source", "$source"],
+            },
+          },
+        },
+        {
+          $facet: {
+            total: [
+              {
+                $group: {
+                  _id: null,
+                  count: { $sum: 1 },
+                  revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                },
+              },
+            ],
+
+            today: [
+              {
+                $match: {
+                  dashboardActivityAt: {
+                    $gte: startOfToday,
+                    $lt: startOfTomorrow,
+                  },
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  count: { $sum: 1 },
+                  revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                },
+              },
+            ],
+
+            thisWeek: [
+              {
+                $match: {
+                  dashboardActivityAt: {
+                    $gte: thisWeekStart,
+                    $lte: now,
+                  },
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  count: { $sum: 1 },
+                  revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                },
+              },
+            ],
+
+            thisMonth: [
+              {
+                $match: {
+                  dashboardActivityAt: {
+                    $gte: thisMonthStart,
+                    $lte: now,
+                  },
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  count: { $sum: 1 },
+                  revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                },
+              },
+            ],
+
+            last7: [
+              {
+                $match: {
+                  dashboardActivityAt: {
+                    $gte: last7Start,
+                    $lte: now,
+                  },
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  count: { $sum: 1 },
+                  revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                },
+              },
+            ],
+
+            dailyTrend: [
+              {
+                $match: {
+                  dashboardActivityAt: {
+                    $gte: last14Start,
+                    $lte: now,
+                  },
+                },
+              },
+              {
+                $group: {
+                  _id: {
+                    $dateToString: {
+                      format: "%Y-%m-%d",
+                      date: "$dashboardActivityAt",
+                      timezone: "Asia/Kolkata",
+                    },
+                  },
+                  orders: { $sum: 1 },
+                  revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                  codOrders: {
+                    $sum: {
+                      $cond: [{ $eq: ["$paymentMethod", "cod"] }, 1, 0],
+                    },
+                  },
+                  prepaidOrders: {
+                    $sum: {
+                      $cond: [{ $eq: ["$paymentMethod", "razorpay"] }, 1, 0],
+                    },
+                  },
+                  exchangeOrders: {
+                    $sum: {
+                      $cond: [{ $eq: ["$paymentMethod", "exchange"] }, 1, 0],
+                    },
+                  },
+                  delivered: {
+                    $sum: {
+                      $cond: [{ $eq: ["$fulfillmentStatus", "delivered"] }, 1, 0],
+                    },
+                  },
+                  cancelled: {
+                    $sum: {
+                      $cond: [{ $eq: ["$fulfillmentStatus", "cancelled"] }, 1, 0],
+                    },
+                  },
+                  rto: {
+                    $sum: {
+                      $cond: [{ $eq: ["$fulfillmentStatus", "rto"] }, 1, 0],
+                    },
+                  },
+                  returned: {
+                    $sum: {
+                      $cond: [{ $eq: ["$fulfillmentStatus", "returned"] }, 1, 0],
+                    },
+                  },
+                  refunded: {
+                    $sum: {
+                      $cond: [{ $eq: ["$fulfillmentStatus", "refunded"] }, 1, 0],
+                    },
+                  },
+                },
+              },
+              {
+                $project: {
+                  _id: 0,
+                  date: "$_id",
+                  orders: 1,
+                  revenue: 1,
+                  codOrders: 1,
+                  prepaidOrders: 1,
+                  exchangeOrders: 1,
+                  delivered: 1,
+                  cancelled: 1,
+                  rto: 1,
+                  returned: 1,
+                  refunded: 1,
+                },
+              },
+              { $sort: { date: 1 } },
+            ],
+
+            hourlyTrend: [
+              {
+                $match: {
+                  dashboardActivityAt: {
+                    $gte: thisMonthStart,
+                    $lte: now,
+                  },
+                },
+              },
+              {
+                $group: {
+                  _id: {
+                    $hour: {
+                      date: "$dashboardActivityAt",
+                      timezone: "Asia/Kolkata",
+                    },
+                  },
+                  orders: { $sum: 1 },
+                  revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                },
+              },
+              {
+                $project: {
+                  _id: 0,
+                  hour: "$_id",
+                  orders: 1,
+                  revenue: 1,
+                },
+              },
+              { $sort: { hour: 1 } },
+            ],
+
+            sourcePerformance: [
+              {
+                $group: {
+                  _id: {
+                    $toLower: {
+                      $ifNull: ["$dashboardSource", "direct"],
+                    },
+                  },
+                  orders: { $sum: 1 },
+                  revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                },
+              },
+              {
+                $project: {
+                  _id: 0,
+                  source: "$_id",
+                  orders: 1,
+                  revenue: 1,
+                },
+              },
+              { $sort: { orders: -1, revenue: -1 } },
+              { $limit: 10 },
+            ],
+
+            fulfillment: [
+              {
+                $group: {
+                  _id: "$fulfillmentStatus",
+                  count: { $sum: 1 },
+                  revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                },
+              },
+            ],
+
+            paymentMethods: [
+              {
+                $group: {
+                  _id: "$paymentMethod",
+                  count: { $sum: 1 },
+                  revenue: { $sum: { $ifNull: ["$finalPayable", 0] } },
+                },
+              },
+            ],
+
+            actionStats: [
+              {
+                $group: {
+                  _id: null,
+                  packableOrders: {
+                    $sum: {
+                      $cond: [{ $eq: ["$isPackable", true] }, 1, 0],
+                    },
+                  },
+                  highPriority: {
+                    $sum: {
+                      $cond: [{ $eq: ["$priority", "high"] }, 1, 0],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ]),
+
+      Order.countDocuments({
+        isConfirmed: { $ne: true },
+        fulfillmentStatus: {
+          $nin: ["cancelled", "delivered", "rto", "returned", "refunded"],
+        },
+      }),
+
+      Order.countDocuments({
+        $or: [
+          { paymentStatus: "refund_pending" },
+          { "refundSummary.status": "refund_pending" },
+          { eligibleForRefund: true },
+        ],
+      }),
+    ]);
+
+    const data = summaryAgg?.[0] || {};
+
+    const total = data.total?.[0] || {};
+    const today = data.today?.[0] || {};
+    const thisWeek = data.thisWeek?.[0] || {};
+    const thisMonth = data.thisMonth?.[0] || {};
+    const last7 = data.last7?.[0] || {};
+    const actionStats = data.actionStats?.[0] || {};
+
+    const fulfillmentMap = {};
+    for (const row of data.fulfillment || []) {
+      fulfillmentMap[row._id || "unknown"] = {
+        count: row.count || 0,
+        revenue: row.revenue || 0,
+      };
+    }
+
+    const paymentMap = {};
+    for (const row of data.paymentMethods || []) {
+      paymentMap[row._id || "unknown"] = {
+        count: row.count || 0,
+        revenue: row.revenue || 0,
+      };
+    }
+
+    const processing = fulfillmentMap.processing?.count || 0;
+    const packed = fulfillmentMap.packed?.count || 0;
+    const picked = fulfillmentMap.picked?.count || 0;
+    const shipped = fulfillmentMap.shipped?.count || 0;
+    const outForDelivery = fulfillmentMap.out_for_delivery?.count || 0;
+    const delivered = fulfillmentMap.delivered?.count || 0;
+
+    const cancelled = fulfillmentMap.cancelled?.count || 0;
+    const returned = fulfillmentMap.returned?.count || 0;
+    const rto = fulfillmentMap.rto?.count || 0;
+    const refunded = fulfillmentMap.refunded?.count || 0;
+
+    const issues = cancelled + returned + rto + refunded;
+    const totalCount = total.count || 0;
+
+    return res.status(200).json({
+      success: true,
+
+      summary: {
+        totalOrders: totalCount,
+        totalRevenue: total.revenue || 0,
+
+        todayOrders: today.count || 0,
+        todayRevenue: today.revenue || 0,
+
+        thisWeekOrders: thisWeek.count || 0,
+        thisWeekRevenue: thisWeek.revenue || 0,
+
+        thisMonthOrders: thisMonth.count || 0,
+        thisMonthRevenue: thisMonth.revenue || 0,
+
+        last7Orders: last7.count || 0,
+        last7Revenue: last7.revenue || 0,
+        aov7: last7.count
+          ? Math.round((last7.revenue || 0) / last7.count)
+          : 0,
+
+        deliveryRate: totalCount
+          ? Number(((delivered / totalCount) * 100).toFixed(1))
+          : 0,
+        issueRate: totalCount
+          ? Number(((issues / totalCount) * 100).toFixed(1))
+          : 0,
+      },
+
+      pipeline: {
+        processing,
+        packed,
+        picked,
+        shipped,
+        outForDelivery,
+        delivered,
+        pendingToShip: processing + packed,
+        inTransit: picked + shipped + outForDelivery,
+      },
+
+      issues: {
+        cancelled,
+        returned,
+        rto,
+        refunded,
+        total: issues,
+      },
+
+      payment: {
+        codOrders: paymentMap.cod?.count || 0,
+        codRevenue: paymentMap.cod?.revenue || 0,
+
+        prepaidOrders: paymentMap.razorpay?.count || 0,
+        prepaidRevenue: paymentMap.razorpay?.revenue || 0,
+
+        exchangeOrders: paymentMap.exchange?.count || 0,
+        exchangeRevenue: paymentMap.exchange?.revenue || 0,
+      },
+
+      actions: {
+        pendingConfirmation,
+        refundPending,
+        packableOrders: actionStats.packableOrders || 0,
+        highPriority: actionStats.highPriority || 0,
+      },
+
+      dailyTrend: data.dailyTrend || [],
+      hourlyTrend: data.hourlyTrend || [],
+      sourcePerformance: data.sourcePerformance || [],
+    });
+  } catch (error) {
+    console.error("❌ Orders Dashboard Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load orders dashboard",
+      error: error.message,
+    });
+  }
+};

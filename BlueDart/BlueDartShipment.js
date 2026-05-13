@@ -59,9 +59,32 @@ const bluedartShipmentSchema = new mongoose.Schema(
       index: true,
     },
 
+    // ✅ Partner is eShipz, carrier can be BlueDart
+    partner: {
+      type: String,
+      enum: ["eshipz"],
+      default: "eshipz",
+      index: true,
+    },
+
+    provider: {
+      type: String,
+      enum: ["eshipz"],
+      default: "eshipz",
+      index: true,
+    },
+
     carrierSlug: {
       type: String,
       default: "bluedart",
+      trim: true,
+      lowercase: true,
+      index: true,
+    },
+
+    carrierName: {
+      type: String,
+      default: "BlueDart",
       trim: true,
       index: true,
     },
@@ -104,7 +127,15 @@ const bluedartShipmentSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // ✅ Universal shipment ids
     awbNumber: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
+
+    awb: {
       type: String,
       default: "",
       trim: true,
@@ -125,7 +156,21 @@ const bluedartShipmentSchema = new mongoose.Schema(
       index: true,
     },
 
+    shipmentId: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
+
     externalOrderId: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
+
+    eshipzOrderId: {
       type: String,
       default: "",
       trim: true,
@@ -138,8 +183,11 @@ const bluedartShipmentSchema = new mongoose.Schema(
         "draft",
         "order_pushed",
         "created",
+        "booked",
         "pickup_pending",
+        "pickup_scheduled",
         "picked",
+        "shipped",
         "in_transit",
         "out_for_delivery",
         "delivered",
@@ -153,6 +201,12 @@ const bluedartShipmentSchema = new mongoose.Schema(
     },
 
     statusCode: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    rawStatus: {
       type: String,
       default: "",
       trim: true,
@@ -183,6 +237,12 @@ const bluedartShipmentSchema = new mongoose.Schema(
     recipient: {
       type: addressSchema,
       default: () => ({}),
+    },
+
+    trackingUrl: {
+      type: String,
+      default: "",
+      trim: true,
     },
 
     labelUrl: {
@@ -218,17 +278,7 @@ const bluedartShipmentSchema = new mongoose.Schema(
       default: [],
     },
 
-    shippedAt: {
-      type: Date,
-      default: null,
-    },
-
-    pickedUpAt: {
-      type: Date,
-      default: null,
-    },
-
-    deliveredAt: {
+    expectedDelivery: {
       type: Date,
       default: null,
     },
@@ -238,7 +288,59 @@ const bluedartShipmentSchema = new mongoose.Schema(
       default: null,
     },
 
+    bookedAt: {
+      type: Date,
+      default: null,
+    },
+
+    pickupScheduledAt: {
+      type: Date,
+      default: null,
+    },
+
+    pickedUpAt: {
+      type: Date,
+      default: null,
+    },
+
+    shippedAt: {
+      type: Date,
+      default: null,
+    },
+
+    outForDeliveryAt: {
+      type: Date,
+      default: null,
+    },
+
+    deliveredAt: {
+      type: Date,
+      default: null,
+    },
+
+    rtoAt: {
+      type: Date,
+      default: null,
+    },
+
+    failedAt: {
+      type: Date,
+      default: null,
+    },
+
     lastSyncedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    lastTrackAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    lastWebhookAt: {
       type: Date,
       default: null,
       index: true,
@@ -291,15 +393,64 @@ const bluedartShipmentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: null,
     },
+
+    rawWebhookPayload: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
   },
   { timestamps: true }
 );
 
+// ✅ Keep awb and awbNumber synced
+bluedartShipmentSchema.pre("validate", function (next) {
+  try {
+    if (!this.awb && this.awbNumber) this.awb = this.awbNumber;
+    if (!this.awbNumber && this.awb) this.awbNumber = this.awb;
+
+    if (!this.shipmentId && this.shipmentIdExternal) {
+      this.shipmentId = this.shipmentIdExternal;
+    }
+
+    if (!this.shipmentIdExternal && this.shipmentId) {
+      this.shipmentIdExternal = this.shipmentId;
+    }
+
+    if (!this.provider) this.provider = "eshipz";
+    if (!this.partner) this.partner = "eshipz";
+
+    if (!this.carrierName) this.carrierName = "BlueDart";
+    if (!this.carrierSlug) this.carrierSlug = "bluedart";
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
 bluedartShipmentSchema.index({ orderNumber: 1, shipmentType: 1 });
+bluedartShipmentSchema.index({ orderId: 1, createdAt: -1 });
+
+bluedartShipmentSchema.index({ partner: 1, createdAt: -1 });
+bluedartShipmentSchema.index({ provider: 1, createdAt: -1 });
+bluedartShipmentSchema.index({ carrierSlug: 1, createdAt: -1 });
+bluedartShipmentSchema.index({ carrierName: 1, createdAt: -1 });
+
 bluedartShipmentSchema.index({ awbNumber: 1, orderNumber: 1 });
+bluedartShipmentSchema.index({ awb: 1, orderNumber: 1 });
+
 bluedartShipmentSchema.index({ status: 1, createdAt: -1 });
+bluedartShipmentSchema.index({ paymentMode: 1, createdAt: -1 });
+bluedartShipmentSchema.index({ serviceType: 1, createdAt: -1 });
+
 bluedartShipmentSchema.index({ referenceNumber: 1, createdAt: -1 });
 bluedartShipmentSchema.index({ shipmentIdExternal: 1 });
+bluedartShipmentSchema.index({ shipmentId: 1 });
+bluedartShipmentSchema.index({ externalOrderId: 1 });
+bluedartShipmentSchema.index({ eshipzOrderId: 1 });
+
+bluedartShipmentSchema.index({ syncPending: 1, lastSyncedAt: 1 });
+bluedartShipmentSchema.index({ isCancelled: 1, createdAt: -1 });
 
 export default
   mongoose.models.BlueDartShipment ||

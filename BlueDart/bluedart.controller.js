@@ -15,6 +15,8 @@ import {
 import {
   normalizeTrackingStatus,
   parseDateSafe,
+  extractEshipzIds,
+  buildOrderShipmentPatch,
 } from "./bluedart.utils.js";
 
 const safe = (v) => (v == null ? "" : String(v).trim());
@@ -30,95 +32,109 @@ const toPositiveNumber = (value, fallback) => {
   return Number.isFinite(num) && num > 0 ? num : fallback;
 };
 
-const getErrorMeta = (error) => {
-  return {
-    message: error?.message || "Unknown error",
-    status: error?.response?.status || error?.status || 500,
-    statusText: error?.response?.statusText || error?.statusText || "",
-    data: error?.response?.data || error?.data || null,
-  };
-};
-
-/* =========================================================
-   PICKUP / SENDER ADDRESS
-========================================================= */
-const getPickupSender = () => ({
-  fullName: "Mukesh Singh",
-  phone: "7303491206",
-  email: "support@mirayfashions.com",
-  line1: "TA-97-A, Gali No.-2, Tuglakabad Extension",
-  line2: "Near Haldiram",
-  city: "Delhi",
-  state: "Delhi",
-  pincode: "110019",
-  country: "India",
+const getErrorMeta = (error) => ({
+  message: error?.message || "Unknown error",
+  status: error?.response?.status || error?.status || 500,
+  statusText: error?.response?.statusText || error?.statusText || "",
+  data: error?.response?.data || error?.data || null,
 });
 
-/* =========================================================
-   RESPONSE PARSERS
-========================================================= */
+const getPickupSender = () => ({
+  fullName:
+    process.env.ESHIPZ_SENDER_NAME ||
+    process.env.BLUEDART_SENDER_NAME ||
+    "Mukesh Singh",
+  phone:
+    process.env.ESHIPZ_SENDER_PHONE ||
+    process.env.BLUEDART_SENDER_PHONE ||
+    "7303491206",
+  email:
+    process.env.ESHIPZ_SENDER_EMAIL ||
+    process.env.BLUEDART_SENDER_EMAIL ||
+    "support@mirayfashions.com",
+  line1:
+    process.env.ESHIPZ_SENDER_LINE1 ||
+    process.env.BLUEDART_SENDER_LINE1 ||
+    "TA-97-A, Gali No.-2, Tuglakabad Extension",
+  line2:
+    process.env.ESHIPZ_SENDER_LINE2 ||
+    process.env.BLUEDART_SENDER_LINE2 ||
+    "Near Haldiram",
+  city:
+    process.env.ESHIPZ_SENDER_CITY ||
+    process.env.BLUEDART_SENDER_CITY ||
+    "Delhi",
+  state:
+    process.env.ESHIPZ_SENDER_STATE ||
+    process.env.BLUEDART_SENDER_STATE ||
+    "Delhi",
+  pincode:
+    process.env.ESHIPZ_SENDER_PINCODE ||
+    process.env.BLUEDART_SENDER_PINCODE ||
+    "110019",
+  country:
+    process.env.ESHIPZ_SENDER_COUNTRY ||
+    process.env.BLUEDART_SENDER_COUNTRY ||
+    "India",
+});
+
+const pickDataNode = (data = {}) => {
+  const root = data ?? {};
+  if (Array.isArray(root?.data)) return root.data[0] || {};
+  return root?.data || root?.result || root?.shipment || root;
+};
+
 const extractCreateResult = (data = {}) => {
   const root = data ?? {};
   const meta = root?.meta ?? {};
+  const d = pickDataNode(root);
 
-  const d = Array.isArray(root?.data) ? root.data[0] || {} : root?.data ?? root;
+  const ids = extractEshipzIds(root);
 
   return {
-    awbNumber:
-      d?.awb_number ||
-      d?.awb ||
-      d?.awbNo ||
-      d?.shipment?.awb ||
-      d?.tracking_number ||
-      d?.awb_no ||
-      "",
+    awbNumber: ids.awb,
+    awb: ids.awb,
 
-    shipmentIdExternal:
-      d?.shipment_id ||
-      d?.shipmentId ||
-      d?.shipment?.id ||
-      d?.id ||
-      d?.order_id ||
-      d?.reference_number ||
-      "",
+    shipmentIdExternal: ids.shipmentId,
+    shipmentId: ids.shipmentId,
 
-    labelUrl:
-      d?.label_url ||
-      d?.labelUrl ||
-      d?.shipment?.label_url ||
-      d?.shipment?.labelUrl ||
-      "",
+    externalOrderId: ids.orderId,
+    eshipzOrderId: ids.orderId,
 
-    manifestUrl:
-      d?.manifest_url ||
-      d?.manifestUrl ||
-      d?.shipment?.manifest_url ||
-      "",
+    carrierName: ids.carrierName || "BlueDart",
+    carrierSlug: ids.carrierSlug || "bluedart",
+    serviceType: ids.serviceType || "",
 
-    invoiceUrl:
-      d?.invoice_url ||
-      d?.invoiceUrl ||
-      d?.shipment?.invoice_url ||
-      "",
+    trackingUrl: ids.trackingUrl || "",
+    labelUrl: ids.labelUrl || "",
+    manifestUrl: ids.manifestUrl || "",
+    invoiceUrl: ids.invoiceUrl || "",
+
+    expectedDelivery: ids.expectedDelivery || null,
 
     status:
+      ids.status ||
+      normalizeTrackingStatus(
+        d?.status || d?.order_status || d?.shipment_status || meta?.status || ""
+      ),
+
+    rawStatus:
+      ids.rawStatus ||
       d?.status ||
       d?.order_status ||
       d?.shipment_status ||
       meta?.status ||
       "",
 
-    statusCode:
-      d?.status_code ||
-      d?.code ||
-      meta?.code ||
-      "",
+    statusCode: ids.statusCode || d?.status_code || d?.code || meta?.code || "",
   };
 };
 
 const extractTrackingResult = (data = {}) => {
   const root = data ?? {};
-  const d = Array.isArray(root?.data) ? root.data[0] || {} : root?.data ?? root;
+  const d = pickDataNode(root);
+
+  const ids = extractEshipzIds(root);
 
   const events = Array.isArray(d?.events)
     ? d.events
@@ -128,27 +144,36 @@ const extractTrackingResult = (data = {}) => {
     ? d.scan_details
     : Array.isArray(d?.scans)
     ? d.scans
+    : Array.isArray(d?.tracking)
+    ? d.tracking
     : [];
 
   const latest =
     d?.latest_event ||
     d?.latest_scan ||
+    d?.current_status ||
     events[0] ||
     events[events.length - 1] ||
     {};
 
   const rawStatus =
+    ids.rawStatus ||
     d?.status ||
     d?.shipment_status ||
+    d?.current_status ||
     latest?.status ||
     latest?.event_name ||
     latest?.event ||
     latest?.scan_type ||
     "";
 
+  const normalizedStatus = normalizeTrackingStatus(rawStatus);
+
   return {
+    ...ids,
+
     rawStatus,
-    normalizedStatus: normalizeTrackingStatus(rawStatus),
+    normalizedStatus,
 
     latestTrackingRemark:
       latest?.remark ||
@@ -166,18 +191,26 @@ const extractTrackingResult = (data = {}) => {
 
     deliveredAt: parseDateSafe(
       d?.delivered_at ||
+        d?.deliveredAt ||
         latest?.delivered_at ||
         latest?.delivery_time ||
         latest?.deliveredOn
     ),
 
     shippedAt: parseDateSafe(
-      d?.shipped_at || d?.dispatched_at || latest?.shipped_at
+      d?.shipped_at ||
+        d?.shippedAt ||
+        d?.dispatched_at ||
+        latest?.shipped_at
     ),
 
     pickedUpAt: parseDateSafe(
-      d?.picked_at || d?.pickup_at || latest?.picked_at
+      d?.picked_at || d?.pickedAt || d?.pickup_at || latest?.picked_at
     ),
+
+    outForDeliveryAt: normalizedStatus === "out_for_delivery" ? new Date() : null,
+    rtoAt: normalizedStatus === "rto" ? new Date() : null,
+    failedAt: normalizedStatus === "exception" ? new Date() : null,
 
     events: events.map((ev) => ({
       eventCode: safe(ev?.code || ev?.event_code || ev?.scan_code),
@@ -202,9 +235,39 @@ const extractTrackingResult = (data = {}) => {
   };
 };
 
-/* =========================================================
-   CREATE SHIPMENT FROM ORDER
-========================================================= */
+const patchOrderWithShipment = async ({
+  orderId,
+  orderNumber,
+  shipment,
+  raw,
+  source = "sync",
+}) => {
+  const orderFilter = orderId ? { _id: orderId } : { orderNumber };
+
+  const patch = buildOrderShipmentPatch({
+    shipment: {
+      orderId: shipment?.eshipzOrderId || shipment?.externalOrderId || "",
+      shipmentId: shipment?.shipmentId || shipment?.shipmentIdExternal || "",
+      awb: shipment?.awb || shipment?.awbNumber || "",
+      carrierName: shipment?.carrierName || "BlueDart",
+      carrierId: shipment?.vendorId || "",
+      serviceType: shipment?.serviceType || "",
+      trackingUrl: shipment?.trackingUrl || "",
+      labelUrl: shipment?.labelUrl || "",
+      invoiceUrl: shipment?.invoiceUrl || "",
+      manifestUrl: shipment?.manifestUrl || "",
+      status: shipment?.status || "",
+      rawStatus: shipment?.rawStatus || shipment?.status || "",
+      statusCode: shipment?.statusCode || "",
+      expectedDelivery: shipment?.expectedDelivery || null,
+    },
+    raw,
+    source,
+  });
+
+  return Order.findOneAndUpdate(orderFilter, { $set: patch }, { new: true });
+};
+
 export const createShipmentFromOrder = async (req, res) => {
   try {
     const {
@@ -216,37 +279,30 @@ export const createShipmentFromOrder = async (req, res) => {
       pieces,
       notes,
       serviceType,
+      carrierName,
+      carrierSlug,
     } = req.body || {};
 
-    console.log("\n========== BLUEDART CREATE FROM ORDER ==========");
-    console.log("REQUEST BODY:", req.body);
-
-    if (!safe(orderNumber)) {
-      return fail(res, 400, "orderNumber is required");
-    }
+    if (!safe(orderNumber)) return fail(res, 400, "orderNumber is required");
 
     const order = await Order.findOne({ orderNumber: safe(orderNumber) });
-    console.log("ORDER FOUND:", !!order, order?.orderNumber || null);
+    if (!order) return fail(res, 404, "Order not found");
 
-    if (!order) {
-      return fail(res, 404, "Order not found");
+    if (!order.isConfirmed) {
+      return fail(res, 400, "Order must be confirmed before shipment booking");
     }
 
     const existing = await BlueDartShipment.findOne({
       orderNumber: order.orderNumber,
       shipmentType: "forward",
       isCancelled: false,
-      status: { $nin: ["cancelled", "failed"] },
+      status: { $nin: ["cancelled", "failed", "rto"] },
     });
 
     if (existing) {
-      console.log("ACTIVE SHIPMENT ALREADY EXISTS:", existing?._id);
-      return fail(
-        res,
-        409,
-        "Active BlueDart shipment already exists for this order",
-        { shipment: existing }
-      );
+      return fail(res, 409, "Active Eshipz shipment already exists for this order", {
+        shipment: existing,
+      });
     }
 
     const paymentMethod = safe(order?.paymentMethod).toLowerCase();
@@ -273,24 +329,12 @@ export const createShipmentFromOrder = async (req, res) => {
       pieces: toPositiveNumber(pieces, totalPieces),
       notes,
       serviceType: finalServiceType,
-    });
-
-    console.log("SHIPMENT DOC PREVIEW:", {
-      orderNumber: shipmentDoc?.orderNumber,
-      referenceNumber: shipmentDoc?.referenceNumber,
-      serviceType: shipmentDoc?.serviceType,
-      weight: shipmentDoc?.package?.weight || shipmentDoc?.weight,
-      pieces: shipmentDoc?.package?.pieces || shipmentDoc?.pieces,
-      sender: shipmentDoc?.sender,
-      recipient: shipmentDoc?.recipient,
+      carrierName: safe(carrierName) || BLUEDART?.CARRIER_NAME || "BlueDart",
+      carrierSlug: safe(carrierSlug) || BLUEDART?.CARRIER_SLUG || "bluedart",
     });
 
     const payload = buildCreateShipmentPayload(shipmentDoc, order);
-    console.log("CREATE PAYLOAD:", JSON.stringify(payload, null, 2));
-
     const apiResponse = await createShipmentOnBlueDart(payload);
-    console.log("CREATE API RESPONSE:", JSON.stringify(apiResponse, null, 2));
-
     const parsed = extractCreateResult(apiResponse);
 
     const derivedStatus = parsed.awbNumber
@@ -299,45 +343,66 @@ export const createShipmentFromOrder = async (req, res) => {
 
     const created = await BlueDartShipment.create({
       ...shipmentDoc,
+
       awbNumber: parsed.awbNumber || "",
+      awb: parsed.awb || parsed.awbNumber || "",
+
       shipmentIdExternal:
         parsed.shipmentIdExternal ||
         shipmentDoc?.referenceNumber ||
         shipmentDoc?.orderNumber ||
         "",
+
+      shipmentId:
+        parsed.shipmentId ||
+        parsed.shipmentIdExternal ||
+        shipmentDoc?.referenceNumber ||
+        "",
+
+      externalOrderId: parsed.externalOrderId || "",
+      eshipzOrderId: parsed.eshipzOrderId || parsed.externalOrderId || "",
+
+      carrierName: parsed.carrierName || shipmentDoc.carrierName || "BlueDart",
+      carrierSlug: parsed.carrierSlug || shipmentDoc.carrierSlug || "bluedart",
+
+      trackingUrl: parsed.trackingUrl || "",
       labelUrl: parsed.labelUrl || "",
       manifestUrl: parsed.manifestUrl || "",
       invoiceUrl: parsed.invoiceUrl || "",
+
+      expectedDelivery: parsed.expectedDelivery || null,
+
       status: derivedStatus,
+      rawStatus: parsed.rawStatus || "",
       statusCode: parsed.statusCode || "",
+
+      bookedAt: new Date(),
+      lastSyncedAt: new Date(),
+
       rawCreateRequest: payload,
       rawCreateResponse: apiResponse,
     });
 
-    console.log("CREATED SHIPMENT ID:", created?._id);
-    console.log("CREATED STATUS:", created?.status);
-    console.log("CREATED AWB:", created?.awbNumber || "N/A");
-    console.log("===============================================\n");
+    const updatedOrder = await patchOrderWithShipment({
+      orderId: order._id,
+      shipment: created,
+      raw: apiResponse,
+      source: "sync",
+    });
 
     return ok(
       res,
       parsed.awbNumber
-        ? "BlueDart shipment created successfully"
-        : "BlueDart order pushed successfully",
+        ? "Eshipz shipment created successfully"
+        : "Eshipz order pushed successfully",
       {
         shipment: created,
+        order: updatedOrder,
         externalResponse: apiResponse,
       }
     );
   } catch (error) {
     const meta = getErrorMeta(error);
-
-    console.error("\n========== BLUEDART CREATE ERROR ==========");
-    console.error("MESSAGE:", meta.message);
-    console.error("STATUS:", meta.status);
-    console.error("STATUS TEXT:", meta.statusText);
-    console.error("DATA:", meta.data);
-    console.error("==========================================\n");
 
     return fail(
       res,
@@ -346,17 +411,12 @@ export const createShipmentFromOrder = async (req, res) => {
         meta?.data?.message ||
         meta?.data?.error ||
         meta.message ||
-        "Failed to create BlueDart shipment",
-      {
-        errorData: meta.data,
-      }
+        "Failed to create Eshipz shipment",
+      { errorData: meta.data }
     );
   }
 };
 
-/* =========================================================
-   LIST SHIPMENTS
-========================================================= */
 export const listShipments = async (req, res) => {
   try {
     const {
@@ -365,19 +425,27 @@ export const listShipments = async (req, res) => {
       q = "",
       status = "",
       shipmentType = "",
+      carrierName = "",
+      carrierSlug = "",
     } = req.query;
 
-    const filter = {};
+    const filter = { provider: "eshipz" };
 
     if (safe(status)) filter.status = safe(status);
     if (safe(shipmentType)) filter.shipmentType = safe(shipmentType);
+    if (safe(carrierName)) filter.carrierName = safe(carrierName);
+    if (safe(carrierSlug)) filter.carrierSlug = safe(carrierSlug);
 
     if (safe(q)) {
       filter.$or = [
         { orderNumber: { $regex: safe(q), $options: "i" } },
         { awbNumber: { $regex: safe(q), $options: "i" } },
+        { awb: { $regex: safe(q), $options: "i" } },
         { referenceNumber: { $regex: safe(q), $options: "i" } },
+        { shipmentId: { $regex: safe(q), $options: "i" } },
+        { shipmentIdExternal: { $regex: safe(q), $options: "i" } },
         { "recipient.fullName": { $regex: safe(q), $options: "i" } },
+        { "recipient.phone": { $regex: safe(q), $options: "i" } },
       ];
     }
 
@@ -393,7 +461,7 @@ export const listShipments = async (req, res) => {
       BlueDartShipment.countDocuments(filter),
     ]);
 
-    return ok(res, "Shipments fetched successfully", {
+    return ok(res, "Eshipz shipments fetched successfully", {
       shipments: rows,
       pagination: {
         page: pageNum,
@@ -404,18 +472,12 @@ export const listShipments = async (req, res) => {
     });
   } catch (error) {
     const meta = getErrorMeta(error);
-    return fail(
-      res,
-      meta.status || 500,
-      meta.message || "Failed to fetch shipments",
-      { errorData: meta.data }
-    );
+    return fail(res, meta.status || 500, meta.message || "Failed to fetch shipments", {
+      errorData: meta.data,
+    });
   }
 };
 
-/* =========================================================
-   GET SHIPMENT BY ID
-========================================================= */
 export const getShipmentById = async (req, res) => {
   try {
     const shipment = await BlueDartShipment.findById(req.params.id);
@@ -424,24 +486,19 @@ export const getShipmentById = async (req, res) => {
     return ok(res, "Shipment fetched successfully", { shipment });
   } catch (error) {
     const meta = getErrorMeta(error);
-    return fail(
-      res,
-      meta.status || 500,
-      meta.message || "Failed to fetch shipment",
-      { errorData: meta.data }
-    );
+    return fail(res, meta.status || 500, meta.message || "Failed to fetch shipment", {
+      errorData: meta.data,
+    });
   }
 };
 
-/* =========================================================
-   GET SHIPMENT BY ORDER NUMBER
-========================================================= */
 export const getShipmentByOrderNumber = async (req, res) => {
   try {
     const { orderNumber } = req.params;
-    const shipments = await BlueDartShipment.find({ orderNumber }).sort({
-      createdAt: -1,
-    });
+
+    const shipments = await BlueDartShipment.find({
+      orderNumber: safe(orderNumber),
+    }).sort({ createdAt: -1 });
 
     return ok(res, "Order shipments fetched successfully", { shipments });
   } catch (error) {
@@ -455,62 +512,91 @@ export const getShipmentByOrderNumber = async (req, res) => {
   }
 };
 
-/* =========================================================
-   TRACK SHIPMENT
-========================================================= */
 export const trackShipment = async (req, res) => {
   try {
     const shipment = await BlueDartShipment.findById(req.params.id);
     if (!shipment) return fail(res, 404, "Shipment not found");
 
-    if (!safe(shipment.awbNumber) && !safe(shipment.referenceNumber)) {
-      return fail(res, 400, "Shipment has no AWB/reference to track");
+    if (
+      !safe(shipment.awbNumber) &&
+      !safe(shipment.awb) &&
+      !safe(shipment.referenceNumber) &&
+      !safe(shipment.shipmentId)
+    ) {
+      return fail(res, 400, "Shipment has no AWB/reference/shipmentId to track");
     }
 
-    console.log("\n========== BLUEDART TRACK SHIPMENT ==========");
-    console.log("SHIPMENT ID:", shipment?._id);
-    console.log("AWB:", shipment?.awbNumber);
-    console.log(
-      "REFERENCE:",
-      shipment?.referenceNumber || shipment?.orderNumber
-    );
-
     const apiResponse = await trackShipmentOnBlueDart({
-      awbNumber: shipment.awbNumber,
+      awbNumber: shipment.awbNumber || shipment.awb,
       referenceNumber: shipment.referenceNumber || shipment.orderNumber,
+      shipmentId: shipment.shipmentId || shipment.shipmentIdExternal,
+      carrierSlug: shipment.carrierSlug,
+      vendorId: shipment.vendorId,
     });
-
-    console.log("TRACK API RESPONSE:", JSON.stringify(apiResponse, null, 2));
 
     const parsed = extractTrackingResult(apiResponse);
 
+    shipment.awbNumber = parsed.awb || shipment.awbNumber;
+    shipment.awb = parsed.awb || shipment.awb || shipment.awbNumber;
+
+    shipment.shipmentId = parsed.shipmentId || shipment.shipmentId;
+    shipment.shipmentIdExternal =
+      parsed.shipmentId || shipment.shipmentIdExternal;
+
+    shipment.externalOrderId = parsed.orderId || shipment.externalOrderId;
+    shipment.eshipzOrderId = parsed.orderId || shipment.eshipzOrderId;
+
+    shipment.carrierName = parsed.carrierName || shipment.carrierName;
+    shipment.carrierSlug = parsed.carrierSlug || shipment.carrierSlug;
+    shipment.serviceType = parsed.serviceType || shipment.serviceType;
+
+    shipment.trackingUrl = parsed.trackingUrl || shipment.trackingUrl;
+    shipment.labelUrl = parsed.labelUrl || shipment.labelUrl;
+    shipment.invoiceUrl = parsed.invoiceUrl || shipment.invoiceUrl;
+    shipment.manifestUrl = parsed.manifestUrl || shipment.manifestUrl;
+
     shipment.status = parsed.normalizedStatus || shipment.status;
+    shipment.rawStatus = parsed.rawStatus || shipment.rawStatus;
+    shipment.statusCode = parsed.statusCode || shipment.statusCode;
+
     shipment.latestTrackingRemark =
       parsed.latestTrackingRemark || shipment.latestTrackingRemark;
     shipment.latestTrackingLocation =
       parsed.latestTrackingLocation || shipment.latestTrackingLocation;
+
     shipment.deliveredAt = parsed.deliveredAt || shipment.deliveredAt;
     shipment.shippedAt = parsed.shippedAt || shipment.shippedAt;
     shipment.pickedUpAt = parsed.pickedUpAt || shipment.pickedUpAt;
+    shipment.outForDeliveryAt =
+      parsed.outForDeliveryAt || shipment.outForDeliveryAt;
+    shipment.rtoAt = parsed.rtoAt || shipment.rtoAt;
+    shipment.failedAt = parsed.failedAt || shipment.failedAt;
+    shipment.expectedDelivery =
+      parsed.expectedDelivery || shipment.expectedDelivery;
+
     shipment.trackingEvents = parsed.events;
     shipment.lastSyncedAt = new Date();
+    shipment.lastTrackAt = new Date();
+    shipment.syncPending = false;
     shipment.syncError = "";
     shipment.rawTrackingResponse = apiResponse;
 
     await shipment.save();
 
-    console.log("UPDATED TRACK STATUS:", shipment.status);
-    console.log("============================================\n");
+    const updatedOrder = await patchOrderWithShipment({
+      orderId: shipment.orderId,
+      orderNumber: shipment.orderNumber,
+      shipment,
+      raw: apiResponse,
+      source: "track",
+    });
 
-    return ok(res, "Shipment tracked successfully", { shipment });
+    return ok(res, "Shipment tracked successfully", {
+      shipment,
+      order: updatedOrder,
+    });
   } catch (error) {
     const meta = getErrorMeta(error);
-
-    console.error("\n========== BLUEDART TRACK ERROR ==========");
-    console.error("MESSAGE:", meta.message);
-    console.error("STATUS:", meta.status);
-    console.error("DATA:", meta.data);
-    console.error("=========================================\n");
 
     return fail(
       res,
@@ -520,59 +606,104 @@ export const trackShipment = async (req, res) => {
         meta?.data?.error ||
         meta.message ||
         "Failed to track shipment",
-      {
-        errorData: meta.data,
-      }
+      { errorData: meta.data }
     );
   }
 };
 
-/* =========================================================
-   BULK SYNC SHIPMENTS
-========================================================= */
 export const bulkSyncShipments = async (req, res) => {
   try {
+    const limit = Math.max(1, Math.min(100, Number(req.body?.limit || 50)));
+
     const rows = await BlueDartShipment.find({
+      provider: "eshipz",
       status: {
         $in: [
           "order_pushed",
           "created",
+          "booked",
           "pickup_pending",
+          "pickup_scheduled",
           "picked",
+          "shipped",
           "in_transit",
           "out_for_delivery",
+          "exception",
         ],
       },
       isCancelled: false,
     })
       .sort({ updatedAt: 1 })
-      .limit(50);
+      .limit(limit);
 
     const results = [];
 
     for (const shipment of rows) {
       try {
         const apiResponse = await trackShipmentOnBlueDart({
-          awbNumber: shipment.awbNumber,
+          awbNumber: shipment.awbNumber || shipment.awb,
           referenceNumber: shipment.referenceNumber || shipment.orderNumber,
+          shipmentId: shipment.shipmentId || shipment.shipmentIdExternal,
+          carrierSlug: shipment.carrierSlug,
+          vendorId: shipment.vendorId,
         });
 
         const parsed = extractTrackingResult(apiResponse);
 
+        shipment.awbNumber = parsed.awb || shipment.awbNumber;
+        shipment.awb = parsed.awb || shipment.awb || shipment.awbNumber;
+
+        shipment.shipmentId = parsed.shipmentId || shipment.shipmentId;
+        shipment.shipmentIdExternal =
+          parsed.shipmentId || shipment.shipmentIdExternal;
+
+        shipment.externalOrderId = parsed.orderId || shipment.externalOrderId;
+        shipment.eshipzOrderId = parsed.orderId || shipment.eshipzOrderId;
+
+        shipment.carrierName = parsed.carrierName || shipment.carrierName;
+        shipment.carrierSlug = parsed.carrierSlug || shipment.carrierSlug;
+        shipment.serviceType = parsed.serviceType || shipment.serviceType;
+
+        shipment.trackingUrl = parsed.trackingUrl || shipment.trackingUrl;
+        shipment.labelUrl = parsed.labelUrl || shipment.labelUrl;
+        shipment.invoiceUrl = parsed.invoiceUrl || shipment.invoiceUrl;
+        shipment.manifestUrl = parsed.manifestUrl || shipment.manifestUrl;
+
         shipment.status = parsed.normalizedStatus || shipment.status;
+        shipment.rawStatus = parsed.rawStatus || shipment.rawStatus;
+        shipment.statusCode = parsed.statusCode || shipment.statusCode;
+
         shipment.latestTrackingRemark =
           parsed.latestTrackingRemark || shipment.latestTrackingRemark;
         shipment.latestTrackingLocation =
           parsed.latestTrackingLocation || shipment.latestTrackingLocation;
+
         shipment.deliveredAt = parsed.deliveredAt || shipment.deliveredAt;
         shipment.shippedAt = parsed.shippedAt || shipment.shippedAt;
         shipment.pickedUpAt = parsed.pickedUpAt || shipment.pickedUpAt;
+        shipment.outForDeliveryAt =
+          parsed.outForDeliveryAt || shipment.outForDeliveryAt;
+        shipment.rtoAt = parsed.rtoAt || shipment.rtoAt;
+        shipment.failedAt = parsed.failedAt || shipment.failedAt;
+        shipment.expectedDelivery =
+          parsed.expectedDelivery || shipment.expectedDelivery;
+
         shipment.trackingEvents = parsed.events;
         shipment.lastSyncedAt = new Date();
+        shipment.lastTrackAt = new Date();
+        shipment.syncPending = false;
         shipment.syncError = "";
         shipment.rawTrackingResponse = apiResponse;
 
         await shipment.save();
+
+        await patchOrderWithShipment({
+          orderId: shipment.orderId,
+          orderNumber: shipment.orderNumber,
+          shipment,
+          raw: apiResponse,
+          source: "track",
+        });
 
         results.push({
           id: shipment._id,
@@ -590,7 +721,10 @@ export const bulkSyncShipments = async (req, res) => {
           meta?.data?.error ||
           meta.message ||
           "Sync failed";
+
         shipment.lastSyncedAt = new Date();
+        shipment.syncPending = true;
+
         await shipment.save();
 
         results.push({
@@ -598,12 +732,7 @@ export const bulkSyncShipments = async (req, res) => {
           orderNumber: shipment.orderNumber,
           awbNumber: shipment.awbNumber,
           success: false,
-          error:
-            meta?.data?.meta?.message ||
-            meta?.data?.message ||
-            meta?.data?.error ||
-            meta.message ||
-            "Sync failed",
+          error: shipment.syncError,
           errorData: meta.data,
         });
       }
@@ -624,27 +753,17 @@ export const bulkSyncShipments = async (req, res) => {
   }
 };
 
-
-/* =========================================================
-   LIST BLUEDART / ESHIPZ ORDERS FROM API
-   Example:
-   GET /api/bluedart/orders-api?perPage=10&page=1&shipStatus=shipped
-========================================================= */
 export const listBlueDartOrdersFromApi = async (req, res) => {
   try {
-    const { perPage = 10, page = 1, shipStatus = "" } = req.query;
-
-    console.log("\n========== BLUEDART GET ORDERS FROM API ==========");
-    console.log("QUERY:", req.query);
+    const { perPage = 10, page = 1, shipStatus = "", carrierSlug = "" } =
+      req.query;
 
     const apiResponse = await getOrdersFromBlueDart({
       perPage: Number(perPage) || 10,
       page: Number(page) || 1,
       shipStatus: safe(shipStatus),
+      carrierSlug: safe(carrierSlug),
     });
-
-    console.log("GET ORDERS API RESPONSE:", JSON.stringify(apiResponse, null, 2));
-    console.log("==================================================\n");
 
     const orders = Array.isArray(apiResponse?.data)
       ? apiResponse.data
@@ -654,20 +773,13 @@ export const listBlueDartOrdersFromApi = async (req, res) => {
       ? apiResponse.results
       : [];
 
-    return ok(res, "BlueDart orders fetched successfully", {
+    return ok(res, "Eshipz orders fetched successfully", {
       orders,
       externalResponse: apiResponse,
       pagination: apiResponse?.pagination || apiResponse?.meta || null,
     });
   } catch (error) {
     const meta = getErrorMeta(error);
-
-    console.error("\n========== BLUEDART GET ORDERS ERROR ==========");
-    console.error("MESSAGE:", meta.message);
-    console.error("STATUS:", meta.status);
-    console.error("STATUS TEXT:", meta.statusText);
-    console.error("DATA:", meta.data);
-    console.error("==============================================\n");
 
     return fail(
       res,
@@ -676,19 +788,12 @@ export const listBlueDartOrdersFromApi = async (req, res) => {
         meta?.data?.message ||
         meta?.data?.error ||
         meta.message ||
-        "Failed to fetch BlueDart orders",
-      {
-        errorData: meta.data,
-      }
+        "Failed to fetch Eshipz orders",
+      { errorData: meta.data }
     );
   }
 };
 
-/* =========================================================
-   GET SINGLE BLUEDART / ESHIPZ ORDER FROM API
-   Example:
-   GET /api/bluedart/orders-api/1198
-========================================================= */
 export const getBlueDartOrderBySalesChannelId = async (req, res) => {
   try {
     const salesChannelOrderId =
@@ -698,30 +803,14 @@ export const getBlueDartOrderBySalesChannelId = async (req, res) => {
       return fail(res, 400, "salesChannelOrderId is required");
     }
 
-    console.log("\n========== BLUEDART GET SINGLE ORDER ==========");
-    console.log("SALES CHANNEL ORDER ID:", salesChannelOrderId);
-
     const apiResponse = await getSingleOrderFromBlueDart(salesChannelOrderId);
 
-    console.log(
-      "GET SINGLE ORDER API RESPONSE:",
-      JSON.stringify(apiResponse, null, 2)
-    );
-    console.log("===============================================\n");
-
-    return ok(res, "BlueDart order fetched successfully", {
+    return ok(res, "Eshipz order fetched successfully", {
       order: apiResponse?.data || apiResponse?.order || apiResponse,
       externalResponse: apiResponse,
     });
   } catch (error) {
     const meta = getErrorMeta(error);
-
-    console.error("\n========== BLUEDART GET SINGLE ORDER ERROR ==========");
-    console.error("MESSAGE:", meta.message);
-    console.error("STATUS:", meta.status);
-    console.error("STATUS TEXT:", meta.statusText);
-    console.error("DATA:", meta.data);
-    console.error("====================================================\n");
 
     return fail(
       res,
@@ -730,25 +819,12 @@ export const getBlueDartOrderBySalesChannelId = async (req, res) => {
         meta?.data?.message ||
         meta?.data?.error ||
         meta.message ||
-        "Failed to fetch BlueDart order",
-      {
-        errorData: meta.data,
-      }
+        "Failed to fetch Eshipz order",
+      { errorData: meta.data }
     );
   }
 };
 
-/* =========================================================
-   EDD PREDICTION FROM API
-   Example:
-   POST /api/bluedart/edd-prediction
-   Body:
-   {
-     "originPincode": "110001",
-     "destinationPincode": "400011",
-     "slug": "bluedart"
-   }
-========================================================= */
 export const getBlueDartEddPrediction = async (req, res) => {
   try {
     const {
@@ -763,16 +839,10 @@ export const getBlueDartEddPrediction = async (req, res) => {
     const finalDestination = safe(destinationPincode || destination_pincode);
     const finalSlug = safe(slug) || BLUEDART?.CARRIER_SLUG || "bluedart";
 
-    if (!finalOrigin) {
-      return fail(res, 400, "originPincode is required");
-    }
-
+    if (!finalOrigin) return fail(res, 400, "originPincode is required");
     if (!finalDestination) {
       return fail(res, 400, "destinationPincode is required");
     }
-
-    console.log("\n========== BLUEDART EDD PREDICTION ==========");
-    console.log("REQUEST BODY:", req.body);
 
     const apiResponse = await getEddPredictionFromBlueDart({
       originPincode: finalOrigin,
@@ -780,25 +850,12 @@ export const getBlueDartEddPrediction = async (req, res) => {
       slug: finalSlug,
     });
 
-    console.log(
-      "EDD PREDICTION API RESPONSE:",
-      JSON.stringify(apiResponse, null, 2)
-    );
-    console.log("=============================================\n");
-
-    return ok(res, "BlueDart EDD prediction fetched successfully", {
+    return ok(res, "Eshipz EDD prediction fetched successfully", {
       prediction: apiResponse?.data || apiResponse,
       externalResponse: apiResponse,
     });
   } catch (error) {
     const meta = getErrorMeta(error);
-
-    console.error("\n========== BLUEDART EDD ERROR ==========");
-    console.error("MESSAGE:", meta.message);
-    console.error("STATUS:", meta.status);
-    console.error("STATUS TEXT:", meta.statusText);
-    console.error("DATA:", meta.data);
-    console.error("========================================\n");
 
     return fail(
       res,
@@ -807,10 +864,8 @@ export const getBlueDartEddPrediction = async (req, res) => {
         meta?.data?.message ||
         meta?.data?.error ||
         meta.message ||
-        "Failed to fetch BlueDart EDD prediction",
-      {
-        errorData: meta.data,
-      }
+        "Failed to fetch Eshipz EDD prediction",
+      { errorData: meta.data }
     );
   }
 };

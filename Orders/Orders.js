@@ -528,61 +528,123 @@ cancellation: {
 },
 
     shipment: {
-      provider: {
-        type: String,
-        enum: ["shiprocket", "manual", "xpressbees", "ekart"],
-        default: "shiprocket",
-      },
+  provider: {
+    type: String,
+    enum: ["shiprocket", "xpressbees", "eshipz", "manual"],
+    default: "shiprocket",
+    index: true,
+  },
 
-      shiprocket: {
-        orderId: { type: String, default: "" },
-        shipmentId: { type: String, default: "" },
-        awb: { type: String, default: "", index: true },
-        courierName: { type: String, default: "" },
-        trackingUrl: { type: String, default: "" },
-      },
+  // ✅ Universal fields for all partners
+  orderId: { type: String, default: "", index: true },
+  shipmentId: { type: String, default: "", index: true },
+  awb: { type: String, default: "", index: true },
+  courierName: { type: String, default: "" },
+  trackingUrl: { type: String, default: "" },
+  labelUrl: { type: String, default: "" },
 
-      // ✅ XpressBees (added; does not affect Shiprocket)
-      xpressbees: {
-        shipmentId: { type: String, default: "", index: true }, // ✅ index true
-        awb: { type: String, default: "", index: true },        // ✅ index true
-        labelUrl: { type: String, default: "" },
-        courierName: { type: String, default: "XpressBees" },
-        trackingUrl: { type: String, default: "" },
+  status: {
+    type: String,
+    enum: [
+      "pending",
+      "processing",
+      "packed",
+      "booked",
+      "pickup_scheduled",
+      "picked",
+      "shipped",
+      "in_transit",
+      "out_for_delivery",
+      "delivered",
+      "rto",
+      "cancelled",
+      "failed",
+    ],
+    default: "pending",
+    index: true,
+  },
 
-        lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
-        lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
-      },
+  rawStatus: { type: String, default: "" },
+  statusCode: { type: String, default: "" },
 
-      status: {
-        type: String,
-        enum: [
-          "pending",
-          "processing",
-          "packed",
-          "shipped",
-          "out_for_delivery",
-          "delivered",
-          "rto",
-          "cancelled",
-        ],
-        default: "pending",
-        index: true,
-      },
+  shippedAt: Date,
+  deliveredAt: Date,
+  pickedAt: Date,
+  outForDeliveryAt: Date,
+  rtoAt: Date,
+  cancelledAt: Date,
+  failedAt: Date,
 
-      shippedAt: Date,
-      deliveredAt: Date,
-    },
+  lastSyncedAt: { type: Date, default: null },
+  lastWebhookAt: { type: Date, default: null },
+  lastTrackAt: { type: Date, default: null },
+
+  lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
+  lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
+
+  shiprocket: {
+    orderId: { type: String, default: "" },
+    shipmentId: { type: String, default: "" },
+    awb: { type: String, default: "", index: true },
+    courierName: { type: String, default: "" },
+    trackingUrl: { type: String, default: "" },
+    labelUrl: { type: String, default: "" },
+
+    lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
+    lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
+  },
+
+  xpressbees: {
+    shipmentId: { type: String, default: "", index: true },
+    awb: { type: String, default: "", index: true },
+    labelUrl: { type: String, default: "" },
+    courierName: { type: String, default: "XpressBees" },
+    trackingUrl: { type: String, default: "" },
+
+    lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
+    lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
+  },
+
+  // ✅ eShipz partner data
+  eshipz: {
+    orderId: { type: String, default: "", index: true },
+    shipmentId: { type: String, default: "", index: true },
+    awb: { type: String, default: "", index: true },
+
+    courierName: { type: String, default: "" }, // BlueDart etc.
+    carrierId: { type: String, default: "" },
+    serviceType: { type: String, default: "" },
+
+    trackingUrl: { type: String, default: "" },
+    labelUrl: { type: String, default: "" },
+    invoiceUrl: { type: String, default: "" },
+    manifestUrl: { type: String, default: "" },
+
+    status: { type: String, default: "" },
+    statusCode: { type: String, default: "" },
+
+    expectedDelivery: { type: Date, default: null },
+
+    lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
+    lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
+    rawBookingResponse: { type: mongoose.Schema.Types.Mixed, default: null },
+  },
+},
 
 
     trackingDetails: {
-      trackingId: { type: String, default: "" },
-      courierName: { type: String, default: "" },
-      trackingUrl: { type: String, default: "" },  // ✅ ADD THIS
-      shippedAt: Date,
-      deliveredAt: Date,
-      expectedDelivery: Date,
-    },
+  trackingId: { type: String, default: "", index: true },
+  awb: { type: String, default: "", index: true },
+  provider: { type: String, default: "" },
+  courierName: { type: String, default: "" },
+  trackingUrl: { type: String, default: "" },
+
+  shippedAt: Date,
+  deliveredAt: Date,
+  expectedDelivery: Date,
+
+  lastUpdatedAt: { type: Date, default: null },
+},
 
     customerMessage: { type: String, default: "" },
     adminRemarks: { type: String, default: "" },
@@ -1255,5 +1317,26 @@ orderSchema.index({ "attribution.clickIds.gclid": 1 });
 orderSchema.index({ "attribution.clickIds.msclkid": 1 });
 orderSchema.index({ "attribution.clickIds.ttclid": 1 });
 orderSchema.index({ "attribution.clickIds.scClickId": 1 });
+
+// Shipment partner queries
+orderSchema.index({ "shipment.provider": 1, createdAt: -1 });
+orderSchema.index({ "shipment.status": 1, createdAt: -1 });
+orderSchema.index({ "shipment.awb": 1 });
+orderSchema.index({ "shipment.shipmentId": 1 });
+orderSchema.index({ "shipment.orderId": 1 });
+
+// eShipz
+orderSchema.index({ "shipment.eshipz.awb": 1 });
+orderSchema.index({ "shipment.eshipz.shipmentId": 1 });
+orderSchema.index({ "shipment.eshipz.orderId": 1 });
+orderSchema.index({ "shipment.eshipz.courierName": 1, createdAt: -1 });
+
+// Xpressbees
+orderSchema.index({ "shipment.xpressbees.awb": 1 });
+orderSchema.index({ "shipment.xpressbees.shipmentId": 1 });
+
+// Tracking
+orderSchema.index({ "trackingDetails.awb": 1 });
+orderSchema.index({ "trackingDetails.trackingId": 1 });
 
 export default mongoose.models.Order || mongoose.model("Order", orderSchema);
