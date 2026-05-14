@@ -50,6 +50,33 @@ const singleCartRuleSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const quantityRuleSchema = new mongoose.Schema(
+  {
+    enabled: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    minItems: {
+      type: Number,
+      default: 0,
+      min: [0, "Minimum items cannot be negative"],
+    },
+
+    /**
+     * total_quantity => total cart quantity, e.g. 2 qty of same product counts as 2
+     * unique_items   => unique cart lines/products count, e.g. 2 qty of same product counts as 1
+     */
+    countMode: {
+      type: String,
+      enum: ["total_quantity", "unique_items"],
+      default: "total_quantity",
+    },
+  },
+  { _id: false }
+);
+
 const couponSchema = new mongoose.Schema(
   {
     couponNumber: {
@@ -116,29 +143,26 @@ const couponSchema = new mongoose.Schema(
     },
 
     /**
-     * ✅ NEW: multiple cart rules
+     * ✅ Quantity based AOV rule
      *
-     * Example Budget Bees:
-     * cartRules: [
-     *   { ruleType: "primary_required" },
-     *   { ruleType: "collection_required", collections: ["BUDGET_BEES_ID"] }
-     * ]
+     * Example:
+     * BUY2SAVE200 => quantityRule: { enabled: true, minItems: 2 }
+     * BUY3SAVE300 => quantityRule: { enabled: true, minItems: 3 }
      */
+    quantityRule: {
+      type: quantityRuleSchema,
+      default: () => ({
+        enabled: false,
+        minItems: 0,
+        countMode: "total_quantity",
+      }),
+    },
+
     cartRules: {
       type: [singleCartRuleSchema],
       default: [],
     },
 
-    /**
-     * ✅ Discount target after all rules pass
-     *
-     * cart                => whole cart
-     * primary_products    => primary products only
-     * secondary_products  => secondary products only
-     * category_products   => selected category products
-     * collection_products => selected collection products
-     * matched_products    => category OR collection matched products
-     */
     discountTarget: {
       type: String,
       enum: [
@@ -158,10 +182,6 @@ const couponSchema = new mongoose.Schema(
       default: true,
     },
 
-    /**
-     * ✅ Keep global targeting also for easy admin filters.
-     * These can be auto-filled from cartRules or manually set.
-     */
     categories: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -178,10 +198,6 @@ const couponSchema = new mongoose.Schema(
       },
     ],
 
-    /**
-     * ✅ OLD FIELD kept for backward compatibility only.
-     * New code should use cartRules + discountTarget.
-     */
     cartRule: {
       enabled: { type: Boolean, default: false },
       ruleType: {
@@ -297,7 +313,6 @@ function uniqueIds(arr = []) {
 function syncCartRules(doc) {
   const rules = Array.isArray(doc.cartRules) ? doc.cartRules : [];
 
-  // ✅ collect categories/collections from rules for fast filtering
   const ruleCategories = [];
   const ruleCollections = [];
 
@@ -321,7 +336,6 @@ function syncCartRules(doc) {
   doc.categories = uniqueIds([...existingCategories, ...ruleCategories]);
   doc.collections = uniqueIds([...existingCollections, ...ruleCollections]);
 
-  // ✅ Backward compatibility: convert old cartRule into new cartRules if needed
   if ((!rules || rules.length === 0) && doc.cartRule?.enabled) {
     if (doc.cartRule.ruleType === "primary_secondary") {
       doc.cartRules = [
@@ -363,6 +377,27 @@ function syncCartRules(doc) {
   }
 }
 
+function syncQuantityRule(doc) {
+  if (!doc.quantityRule) {
+    doc.quantityRule = {
+      enabled: false,
+      minItems: 0,
+      countMode: "total_quantity",
+    };
+  }
+
+  doc.quantityRule.enabled = Boolean(doc.quantityRule.enabled);
+  doc.quantityRule.minItems = Math.max(0, Number(doc.quantityRule.minItems || 0));
+
+  if (!["total_quantity", "unique_items"].includes(doc.quantityRule.countMode)) {
+    doc.quantityRule.countMode = "total_quantity";
+  }
+
+  if (doc.quantityRule.minItems <= 0) {
+    doc.quantityRule.enabled = false;
+  }
+}
+
 function syncCoupon(doc) {
   if (doc.validTill) {
     doc.isActive = new Date(doc.validTill) >= new Date();
@@ -380,7 +415,26 @@ function syncCoupon(doc) {
     doc.code = String(doc.code).trim().toUpperCase();
   }
 
+  syncQuantityRule(doc);
   syncCartRules(doc);
+}
+
+function normalizeQuantityRuleUpdate(set = {}) {
+  if (set.quantityRule === undefined) return;
+
+  const rule = set.quantityRule || {};
+
+  set.quantityRule = {
+    enabled: Boolean(rule.enabled),
+    minItems: Math.max(0, Number(rule.minItems || 0)),
+    countMode: ["total_quantity", "unique_items"].includes(rule.countMode)
+      ? rule.countMode
+      : "total_quantity",
+  };
+
+  if (set.quantityRule.minItems <= 0) {
+    set.quantityRule.enabled = false;
+  }
 }
 
 function normalizeUpdate(update = {}) {
@@ -401,6 +455,8 @@ function normalizeUpdate(update = {}) {
   if (set.code) {
     set.code = String(set.code).trim().toUpperCase();
   }
+
+  normalizeQuantityRuleUpdate(set);
 
   if (Array.isArray(set.cartRules)) {
     const ruleCategories = [];
@@ -476,6 +532,8 @@ couponSchema.index({ collections: 1, isActive: 1 });
 couponSchema.index({ "cartRules.ruleType": 1 });
 couponSchema.index({ "cartRules.collections": 1 });
 couponSchema.index({ "cartRules.categories": 1 });
+couponSchema.index({ "quantityRule.enabled": 1 });
+couponSchema.index({ "quantityRule.minItems": 1 });
 couponSchema.index({ discountTarget: 1 });
 couponSchema.index({ code: 1, targetEmail: 1, isActive: 1 });
 couponSchema.index({ code: 1, targetPhone: 1, isActive: 1 });

@@ -2,123 +2,36 @@ import Coupon from "./Coupon.js";
 import mongoose from "mongoose";
 
 /* ------------------------------------------------------------------
-HELPERS
+BASIC HELPERS
 ------------------------------------------------------------------- */
 
 const normCode = (v) => String(v || "").trim().toUpperCase();
 const normEmail = (v) => String(v || "").trim().toLowerCase();
-
-const normPhone = (v) => {
-  const digits = String(v || "").replace(/\D/g, "");
-  return digits.length ? digits : "";
-};
-
+const normPhone = (v) => String(v || "").replace(/\D/g, "");
 const toId = (v) => String(v?._id || v || "");
 
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normEmail(v));
+const isPhone = (v) => normPhone(v).length >= 10 && normPhone(v).length <= 15;
 
-const isPhone = (v) => {
-  const digits = normPhone(v);
-  return digits.length >= 10 && digits.length <= 15;
-};
+const fakeRes = { status: () => ({ json: () => null }) };
 
-const fakeRes = {
-  status: () => ({
-    json: () => null,
-  }),
+const cleanUndefined = (obj = {}) => {
+  Object.keys(obj).forEach((key) => obj[key] === undefined && delete obj[key]);
+  return obj;
 };
 
 const buildCustomerKey = ({ email, phone, customerId }) => {
   if (email && isEmail(email)) return `email:${normEmail(email)}`;
   if (phone && isPhone(phone)) return `phone:${normPhone(phone)}`;
 
-  if (customerId) {
-    const cid = String(customerId).trim();
-    if (!cid || cid.toLowerCase() === "guest") return null;
-    return `id:${cid}`;
-  }
+  const cid = String(customerId || "").trim();
+  if (cid && cid.toLowerCase() !== "guest") return `id:${cid}`;
 
   return null;
 };
 
-const isWithinDates = (coupon) => {
-  const now = new Date();
-  const validFrom = coupon.validFrom ? new Date(coupon.validFrom) : null;
-  const validTill = coupon.validTill ? new Date(coupon.validTill) : null;
-
-  if (validFrom && now < validFrom) return false;
-  if (validTill && now > validTill) return false;
-
-  return true;
-};
-
-const enforceTargets = ({ coupon, email, phone, res }) => {
-  if (coupon.targetEmail && normEmail(email) !== coupon.targetEmail) {
-    res.status(403).json({
-      message: "This coupon is not applicable for this email.",
-    });
-    return false;
-  }
-
-  if (coupon.targetPhone && normPhone(phone) !== coupon.targetPhone) {
-    res.status(403).json({
-      message: "This coupon is not applicable for this phone number.",
-    });
-    return false;
-  }
-
-  return true;
-};
-
-const validateCouponBasics = ({ coupon, cartTotal, customerKey, res }) => {
-  if (!coupon) {
-    res.status(404).json({ message: "Invalid coupon code." });
-    return false;
-  }
-
-  if (!coupon.isActive) {
-    res.status(400).json({ message: "Coupon is not active." });
-    return false;
-  }
-
-  if (!isWithinDates(coupon)) {
-    res.status(400).json({ message: "Coupon is expired or not yet active." });
-    return false;
-  }
-
-  if (Number(cartTotal) < Number(coupon.minPurchase || 0)) {
-    res.status(400).json({
-      message: `Minimum purchase required is ₹${coupon.minPurchase}`,
-    });
-    return false;
-  }
-
-  if (
-    Number(coupon.usageLimit) > 0 &&
-    Number(coupon.usedCount) >= Number(coupon.usageLimit)
-  ) {
-    res.status(400).json({ message: "Coupon usage limit has been reached." });
-    return false;
-  }
-
-  const perLimit = Number(coupon.usageLimitPerCustomer ?? 1);
-
-  if (perLimit > 0 && customerKey) {
-    const usedTimes = (coupon.usedBy || []).filter(
-      (x) => String(x) === customerKey
-    ).length;
-
-    if (usedTimes >= perLimit) {
-      res.status(400).json({ message: "You have already used this coupon." });
-      return false;
-    }
-  }
-
-  return true;
-};
-
 /* ------------------------------------------------------------------
-CART ITEM HELPERS
+CART HELPERS
 ------------------------------------------------------------------- */
 
 const getItemProduct = (item) => item?.product || item || {};
@@ -130,6 +43,7 @@ const getItemQty = (item) => {
 
 const getItemPrice = (item) => {
   const product = getItemProduct(item);
+
   return Number(
     item?.price ??
       item?.salePrice ??
@@ -144,6 +58,13 @@ const getItemTotal = (item) => getItemPrice(item) * getItemQty(item);
 
 const getCartTotalFromItems = (cartItems = []) =>
   cartItems.reduce((sum, item) => sum + getItemTotal(item), 0);
+
+const getCartQty = (cartItems = [], countMode = "total_quantity") => {
+  if (!Array.isArray(cartItems) || !cartItems.length) return 0;
+  if (countMode === "unique_items") return cartItems.length;
+
+  return cartItems.reduce((sum, item) => sum + getItemQty(item), 0);
+};
 
 const isPrimaryItem = (item) => {
   const product = getItemProduct(item);
@@ -187,14 +108,15 @@ const getItemCollectionIds = (item) => {
     .map(toId);
 };
 
+/* ------------------------------------------------------------------
+RULE HELPERS
+------------------------------------------------------------------- */
+
 const arrayMatch = ({ itemIds = [], ruleIds = [], matchMode = "any" }) => {
   const ids = ruleIds.map(toId).filter(Boolean);
   if (!ids.length) return false;
 
-  if (matchMode === "all") {
-    return ids.every((id) => itemIds.includes(id));
-  }
-
+  if (matchMode === "all") return ids.every((id) => itemIds.includes(id));
   return ids.some((id) => itemIds.includes(id));
 };
 
@@ -225,49 +147,39 @@ const itemMatchesRule = (item, rule) => {
 
 const normalizeRuntimeRules = (coupon) => {
   const rules = Array.isArray(coupon.cartRules) ? coupon.cartRules : [];
-
   if (rules.length) return rules.filter((rule) => rule?.isActive !== false);
 
   const oldRule = coupon.cartRule || {};
-
   if (!oldRule.enabled || oldRule.ruleType === "none") return [];
 
   if (oldRule.ruleType === "primary_secondary") {
-    const next = [];
-
-    if (oldRule.requiresPrimaryProduct) {
-      next.push({ ruleType: "primary_required", isActive: true });
-    }
-
-    if (oldRule.requiresSecondaryProduct) {
-      next.push({ ruleType: "secondary_required", isActive: true });
-    }
-
-    return next;
+    return [
+      oldRule.requiresPrimaryProduct && {
+        ruleType: "primary_required",
+        isActive: true,
+      },
+      oldRule.requiresSecondaryProduct && {
+        ruleType: "secondary_required",
+        isActive: true,
+      },
+    ].filter(Boolean);
   }
 
   if (oldRule.ruleType === "category_collection") {
-    const next = [];
-
-    if (coupon.categories?.length) {
-      next.push({
+    return [
+      coupon.categories?.length && {
         ruleType: "category_required",
         categories: coupon.categories,
         matchMode: oldRule.matchMode || "any",
         isActive: true,
-      });
-    }
-
-    if (coupon.collections?.length) {
-      next.push({
+      },
+      coupon.collections?.length && {
         ruleType: "collection_required",
         collections: coupon.collections,
         matchMode: oldRule.matchMode || "any",
         isActive: true,
-      });
-    }
-
-    return next;
+      },
+    ].filter(Boolean);
   }
 
   return [];
@@ -277,7 +189,20 @@ const cartPassesRules = ({ coupon, cartItems = [] }) => {
   const rules = normalizeRuntimeRules(coupon);
   if (!rules.length) return true;
 
-  return rules.every((rule) => cartItems.some((item) => itemMatchesRule(item, rule)));
+  return rules.every((rule) =>
+    cartItems.some((item) => itemMatchesRule(item, rule))
+  );
+};
+
+const cartPassesQuantityRule = ({ coupon, cartItems = [] }) => {
+  const rule = coupon?.quantityRule;
+  if (!rule?.enabled) return true;
+
+  const minItems = Number(rule.minItems || 0);
+  if (minItems <= 0) return true;
+
+  const countMode = rule.countMode || "total_quantity";
+  return getCartQty(cartItems, countMode) >= minItems;
 };
 
 const itemMatchesAnyCategoryRule = (item, rules = []) =>
@@ -287,7 +212,8 @@ const itemMatchesAnyCategoryRule = (item, rules = []) =>
 
 const itemMatchesAnyCollectionRule = (item, rules = []) =>
   rules.some(
-    (rule) => rule.ruleType === "collection_required" && itemMatchesRule(item, rule)
+    (rule) =>
+      rule.ruleType === "collection_required" && itemMatchesRule(item, rule)
   );
 
 const itemMatchesAnyRule = (item, rules = []) =>
@@ -298,11 +224,11 @@ const getDiscountTarget = (coupon) =>
 
 const getEligibleItems = ({ coupon, cartItems = [] }) => {
   if (!Array.isArray(cartItems) || !cartItems.length) return [];
+  if (!cartPassesRules({ coupon, cartItems })) return [];
+  if (!cartPassesQuantityRule({ coupon, cartItems })) return [];
 
   const rules = normalizeRuntimeRules(coupon);
   const target = getDiscountTarget(coupon);
-
-  if (!cartPassesRules({ coupon, cartItems })) return [];
 
   if (target === "cart") return cartItems;
   if (target === "primary_products") return cartItems.filter(isPrimaryItem);
@@ -323,14 +249,103 @@ const getEligibleItems = ({ coupon, cartItems = [] }) => {
   return cartItems;
 };
 
-const calcDiscountAmount = ({ coupon, eligibleTotal, cartTotal }) => {
-  let discount = 0;
+/* ------------------------------------------------------------------
+VALIDATION HELPERS
+------------------------------------------------------------------- */
 
-  if (coupon.discountType === "percentage") {
-    discount = (Number(eligibleTotal) * Number(coupon.discountValue || 0)) / 100;
-  } else {
-    discount = Number(coupon.discountValue || 0);
+const isWithinDates = (coupon) => {
+  const now = new Date();
+  const validFrom = coupon.validFrom ? new Date(coupon.validFrom) : null;
+  const validTill = coupon.validTill ? new Date(coupon.validTill) : null;
+
+  if (validFrom && now < validFrom) return false;
+  if (validTill && now > validTill) return false;
+
+  return true;
+};
+
+const enforceTargets = ({ coupon, email, phone, res }) => {
+  if (coupon.targetEmail && normEmail(email) !== coupon.targetEmail) {
+    res.status(403).json({
+      message: "This coupon is not applicable for this email.",
+    });
+    return false;
   }
+
+  if (coupon.targetPhone && normPhone(phone) !== coupon.targetPhone) {
+    res.status(403).json({
+      message: "This coupon is not applicable for this phone number.",
+    });
+    return false;
+  }
+
+  return true;
+};
+
+const validateCouponBasics = ({ coupon, cartTotal, cartItems, customerKey, res }) => {
+  if (!coupon) {
+    res.status(404).json({ message: "Invalid coupon code." });
+    return false;
+  }
+
+  if (!coupon.isActive) {
+    res.status(400).json({ message: "Coupon is not active." });
+    return false;
+  }
+
+  if (!isWithinDates(coupon)) {
+    res.status(400).json({ message: "Coupon is expired or not yet active." });
+    return false;
+  }
+
+  if (Number(cartTotal) < Number(coupon.minPurchase || 0)) {
+    res.status(400).json({
+      message: `Minimum purchase required is ₹${coupon.minPurchase}`,
+    });
+    return false;
+  }
+
+  if (!cartPassesQuantityRule({ coupon, cartItems })) {
+    const minItems = Number(coupon.quantityRule?.minItems || 0);
+    res.status(400).json({
+      message: `Add at least ${minItems} item${minItems > 1 ? "s" : ""} to use this coupon.`,
+    });
+    return false;
+  }
+
+  if (
+    Number(coupon.usageLimit) > 0 &&
+    Number(coupon.usedCount) >= Number(coupon.usageLimit)
+  ) {
+    res.status(400).json({ message: "Coupon usage limit has been reached." });
+    return false;
+  }
+
+  const perLimit = Number(coupon.usageLimitPerCustomer ?? 1);
+
+  if (perLimit > 0 && customerKey) {
+    const usedTimes = (coupon.usedBy || []).filter(
+      (x) => String(x) === customerKey
+    ).length;
+
+    if (usedTimes >= perLimit) {
+      res.status(400).json({ message: "You have already used this coupon." });
+      return false;
+    }
+  }
+
+  return true;
+};
+
+/* ------------------------------------------------------------------
+DISCOUNT HELPERS
+------------------------------------------------------------------- */
+
+const calcDiscountAmount = ({ coupon, eligibleTotal, cartTotal }) => {
+  let discount =
+    coupon.discountType === "percentage"
+      ? (Number(eligibleTotal) * Number(coupon.discountValue || 0)) / 100
+      : Number(coupon.discountValue || 0);
 
   if (Number(coupon.maxDiscount) > 0) {
     discount = Math.min(discount, Number(coupon.maxDiscount));
@@ -357,7 +372,6 @@ const buildDiscountBreakdown = ({ coupon, cartItems = [], discount }) => {
 
   return eligibleItems.map((item, index) => {
     const itemTotal = getItemTotal(item);
-
     const itemDiscount =
       index === eligibleItems.length - 1
         ? Math.max(0, Math.round(discount - assigned))
@@ -378,17 +392,17 @@ const buildDiscountBreakdown = ({ coupon, cartItems = [], discount }) => {
 };
 
 const calculateCouponDiscount = ({ coupon, cartTotal, cartItems = [] }) => {
-  const hasCartItems = Array.isArray(cartItems) && cartItems.length > 0;
+  const hasItems = Array.isArray(cartItems) && cartItems.length > 0;
 
-  const actualCartTotal = hasCartItems
+  const actualCartTotal = hasItems
     ? getCartTotalFromItems(cartItems)
     : Number(cartTotal || 0);
 
-  const eligibleItems = hasCartItems
+  const eligibleItems = hasItems
     ? getEligibleItems({ coupon, cartItems })
     : [];
 
-  const eligibleTotal = hasCartItems
+  const eligibleTotal = hasItems
     ? eligibleItems.reduce((sum, item) => sum + getItemTotal(item), 0)
     : actualCartTotal;
 
@@ -411,13 +425,13 @@ const calculateCouponDiscount = ({ coupon, cartTotal, cartItems = [] }) => {
     discount,
     finalTotal: Math.max(0, actualCartTotal - discount),
     eligibleTotal,
-    discountBreakdown: buildDiscountBreakdown({
-      coupon,
-      cartItems,
-      discount,
-    }),
+    discountBreakdown: buildDiscountBreakdown({ coupon, cartItems, discount }),
   };
 };
+
+/* ------------------------------------------------------------------
+PAYLOAD / RESPONSE
+------------------------------------------------------------------- */
 
 const normalizeCouponPayload = (body = {}) => ({
   code: body.code ? normCode(body.code) : body.code,
@@ -425,39 +439,33 @@ const normalizeCouponPayload = (body = {}) => ({
   visibility: body.visibility,
   description: body.description,
   autoApply: body.autoApply,
+
   discountType: body.discountType,
   discountValue: body.discountValue,
   minPurchase: body.minPurchase,
   maxDiscount: body.maxDiscount,
 
+  quantityRule: body.quantityRule,
   cartRules: Array.isArray(body.cartRules) ? body.cartRules : undefined,
   discountTarget: body.discountTarget,
   applyToAllEligibleItems: body.applyToAllEligibleItems,
 
   categories: body.categories || undefined,
   collections: body.collections || undefined,
-
-  // old support
   cartRule: body.cartRule,
 
   influencerId: body.influencerId || null,
   issuedBy: body.issuedBy || null,
+
   validFrom: body.validFrom,
   validTill: body.validTill,
   usageLimit: body.usageLimit,
   usageLimitPerCustomer: body.usageLimitPerCustomer,
   isActive: body.isActive,
+
   targetEmail: body.targetEmail ? normEmail(body.targetEmail) : null,
   targetPhone: body.targetPhone ? normPhone(body.targetPhone) : null,
 });
-
-const cleanUndefined = (obj = {}) => {
-  Object.keys(obj).forEach((key) => {
-    if (obj[key] === undefined) delete obj[key];
-  });
-
-  return obj;
-};
 
 const couponResponse = (coupon) => ({
   _id: coupon._id,
@@ -466,11 +474,56 @@ const couponResponse = (coupon) => ({
   autoApply: coupon.autoApply,
   discountType: coupon.discountType,
   discountValue: coupon.discountValue,
+  minPurchase: coupon.minPurchase,
+  maxDiscount: coupon.maxDiscount,
+  quantityRule: coupon.quantityRule,
   cartRules: coupon.cartRules || [],
   discountTarget: getDiscountTarget(coupon),
   applyToAllEligibleItems: coupon.applyToAllEligibleItems,
   cartRule: coupon.cartRule,
 });
+
+/* ------------------------------------------------------------------
+COMMON APPLY LOGIC
+------------------------------------------------------------------- */
+
+const getApplyContext = (body = {}) => {
+  const { code, cartTotal, cartItems = [], email, phone, customerId } = body;
+
+  const actualCartTotal = cartItems.length
+    ? getCartTotalFromItems(cartItems)
+    : Number(cartTotal || 0);
+
+  return {
+    code,
+    couponCode: normCode(code),
+    cartItems,
+    cartTotal,
+    actualCartTotal,
+    email,
+    phone,
+    customerId,
+    customerKey: buildCustomerKey({ email, phone, customerId }),
+  };
+};
+
+const validateApplyInput = ({ code, cartTotal, cartItems, customerKey, res }) => {
+  if (!code || (cartTotal == null && !cartItems.length)) {
+    res.status(400).json({
+      message: "code and cartTotal/cartItems are required.",
+    });
+    return false;
+  }
+
+  if (!customerKey) {
+    res.status(400).json({
+      message: "Please enter email or phone number to apply coupon.",
+    });
+    return false;
+  }
+
+  return true;
+};
 
 /* ------------------------------------------------------------------
 CREATE COUPON
@@ -480,28 +533,16 @@ export const createCoupon = async (req, res) => {
   try {
     const payload = cleanUndefined(normalizeCouponPayload(req.body));
 
-    if (
-      !payload.code ||
-      !payload.validTill ||
-      !payload.discountType ||
-      payload.discountValue == null
-    ) {
-      return res.status(400).json({
-        message: "Missing required coupon fields.",
-      });
+    if (!payload.code || !payload.validTill || !payload.discountType || payload.discountValue == null) {
+      return res.status(400).json({ message: "Missing required coupon fields." });
     }
 
     const existingCoupon = await Coupon.findOne({ code: payload.code });
     if (existingCoupon) {
-      return res.status(400).json({
-        message: "Coupon code already exists.",
-      });
+      return res.status(400).json({ message: "Coupon code already exists." });
     }
 
-    const coupon = await Coupon.create({
-      ...payload,
-      usedBy: [],
-    });
+    const coupon = await Coupon.create({ ...payload, usedBy: [] });
 
     return res.status(201).json({
       message: "Coupon created successfully",
@@ -509,10 +550,7 @@ export const createCoupon = async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating coupon:", error);
-    return res.status(500).json({
-      message: "Server error",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -532,6 +570,7 @@ export const getAllCoupons = async (req, res) => {
       category,
       collection,
       discountTarget,
+      quantityRule,
       search,
     } = req.query;
 
@@ -546,6 +585,9 @@ export const getAllCoupons = async (req, res) => {
     if (category) filter.categories = category;
     if (collection) filter.collections = collection;
     if (discountTarget) filter.discountTarget = discountTarget;
+    if (quantityRule !== undefined) {
+      filter["quantityRule.enabled"] = quantityRule === "true";
+    }
 
     if (search) {
       const q = String(search).trim();
@@ -563,16 +605,10 @@ export const getAllCoupons = async (req, res) => {
       .populate("influencerId", "name email")
       .populate("issuedBy", "username email");
 
-    return res.status(200).json({
-      count: coupons.length,
-      data: coupons,
-    });
+    return res.status(200).json({ count: coupons.length, data: coupons });
   } catch (error) {
     console.error("Error fetching coupons:", error);
-    return res.status(500).json({
-      message: "Server error",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -583,22 +619,17 @@ GET COUPON BY ID / CODE / COUPON NUMBER
 export const getCouponByIdOrCode = async (req, res) => {
   try {
     const { idOrCode } = req.params;
+    const value = String(idOrCode || "").trim();
 
-    let coupon;
-
-    if (mongoose.Types.ObjectId.isValid(idOrCode)) {
-      coupon = await Coupon.findById(idOrCode)
-        .populate("categories", "name slug")
-        .populate("collections", "name slug");
-    } else {
-      const value = String(idOrCode || "").trim();
-
-      coupon = await Coupon.findOne({
-        $or: [{ code: normCode(value) }, { couponNumber: value }],
-      })
-        .populate("categories", "name slug")
-        .populate("collections", "name slug");
-    }
+    const coupon = mongoose.Types.ObjectId.isValid(idOrCode)
+      ? await Coupon.findById(idOrCode)
+          .populate("categories", "name slug")
+          .populate("collections", "name slug")
+      : await Coupon.findOne({
+          $or: [{ code: normCode(value) }, { couponNumber: value }],
+        })
+          .populate("categories", "name slug")
+          .populate("collections", "name slug");
 
     if (!coupon || coupon.visibility === "private") {
       return res.status(404).json({ message: "Coupon not found" });
@@ -607,10 +638,7 @@ export const getCouponByIdOrCode = async (req, res) => {
     return res.status(200).json(coupon);
   } catch (error) {
     console.error("Error fetching coupon:", error);
-    return res.status(500).json({
-      message: "Server error",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -620,19 +648,17 @@ UPDATE COUPON
 
 export const updateCoupon = async (req, res) => {
   try {
-    const { id } = req.params;
     const updates = cleanUndefined(normalizeCouponPayload(req.body));
 
-    const coupon = await Coupon.findByIdAndUpdate(id, { $set: updates }, {
-      new: true,
-      runValidators: true,
-    })
+    const coupon = await Coupon.findByIdAndUpdate(
+      req.params.id,
+      { $set: updates },
+      { new: true, runValidators: true }
+    )
       .populate("categories", "name slug")
       .populate("collections", "name slug");
 
-    if (!coupon) {
-      return res.status(404).json({ message: "Coupon not found" });
-    }
+    if (!coupon) return res.status(404).json({ message: "Coupon not found" });
 
     return res.status(200).json({
       message: "Coupon updated successfully",
@@ -640,10 +666,7 @@ export const updateCoupon = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating coupon:", error);
-    return res.status(500).json({
-      message: "Server error",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -653,22 +676,13 @@ DELETE COUPON
 
 export const deleteCoupon = async (req, res) => {
   try {
-    const { id } = req.params;
+    const coupon = await Coupon.findByIdAndDelete(req.params.id);
+    if (!coupon) return res.status(404).json({ message: "Coupon not found" });
 
-    const coupon = await Coupon.findByIdAndDelete(id);
-    if (!coupon) {
-      return res.status(404).json({ message: "Coupon not found" });
-    }
-
-    return res.status(200).json({
-      message: "Coupon deleted successfully",
-    });
+    return res.status(200).json({ message: "Coupon deleted successfully" });
   } catch (error) {
     console.error("Error deleting coupon:", error);
-    return res.status(500).json({
-      message: "Server error",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -678,36 +692,30 @@ APPLY COUPON
 
 export const applyCoupon = async (req, res) => {
   try {
-    const { code, cartTotal, cartItems = [], email, phone, customerId } = req.body;
+    const ctx = getApplyContext(req.body);
 
-    if (!code || (cartTotal == null && !cartItems.length)) {
-      return res.status(400).json({
-        message: "code and cartTotal/cartItems are required.",
-      });
+    if (!validateApplyInput({ ...ctx, res })) return;
+
+    const coupon = await Coupon.findOne({ code: ctx.couponCode });
+
+    if (
+      !validateCouponBasics({
+        coupon,
+        cartTotal: ctx.actualCartTotal,
+        cartItems: ctx.cartItems,
+        customerKey: ctx.customerKey,
+        res,
+      })
+    ) {
+      return;
     }
 
-    const couponCode = normCode(code);
-    const customerKey = buildCustomerKey({ email, phone, customerId });
-
-    if (!customerKey) {
-      return res.status(400).json({
-        message: "Please enter email or phone number to apply coupon.",
-      });
-    }
-
-    const coupon = await Coupon.findOne({ code: couponCode });
-
-    const actualCartTotal = cartItems.length
-      ? getCartTotalFromItems(cartItems)
-      : Number(cartTotal || 0);
-
-    if (!validateCouponBasics({ coupon, cartTotal: actualCartTotal, customerKey, res })) return;
-    if (!enforceTargets({ coupon, email, phone, res })) return;
+    if (!enforceTargets({ coupon, email: ctx.email, phone: ctx.phone, res })) return;
 
     const result = calculateCouponDiscount({
       coupon,
-      cartTotal: actualCartTotal,
-      cartItems,
+      cartTotal: ctx.actualCartTotal,
+      cartItems: ctx.cartItems,
     });
 
     if (result.discount <= 0) {
@@ -719,19 +727,17 @@ export const applyCoupon = async (req, res) => {
     return res.status(200).json({
       message: "Coupon applied successfully",
       coupon: couponResponse(coupon),
-      cartTotal: actualCartTotal,
+      cartTotal: ctx.actualCartTotal,
+      cartQuantity: getCartQty(ctx.cartItems, coupon.quantityRule?.countMode),
       discount: result.discount,
       finalTotal: result.finalTotal,
       eligibleTotal: result.eligibleTotal,
       discountBreakdown: result.discountBreakdown,
-      customerKey,
+      customerKey: ctx.customerKey,
     });
   } catch (error) {
     console.error("Error applying coupon:", error);
-    return res.status(500).json({
-      message: "Server error",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -775,6 +781,7 @@ export const autoApplyCoupon = async (req, res) => {
       const valid = validateCouponBasics({
         coupon,
         cartTotal: actualCartTotal,
+        cartItems,
         customerKey,
         res: fakeRes,
       });
@@ -790,10 +797,7 @@ export const autoApplyCoupon = async (req, res) => {
       });
 
       if (result.discount <= 0) continue;
-
-      if (!best || result.discount > best.discount) {
-        best = { coupon, ...result };
-      }
+      if (!best || result.discount > best.discount) best = { coupon, ...result };
     }
 
     if (!best) {
@@ -801,6 +805,7 @@ export const autoApplyCoupon = async (req, res) => {
         message: "No auto apply coupon available.",
         applied: false,
         cartTotal: actualCartTotal,
+        cartQuantity: getCartQty(cartItems),
         discount: 0,
         finalTotal: actualCartTotal,
       });
@@ -811,6 +816,7 @@ export const autoApplyCoupon = async (req, res) => {
       applied: true,
       coupon: couponResponse(best.coupon),
       cartTotal: actualCartTotal,
+      cartQuantity: getCartQty(cartItems, best.coupon.quantityRule?.countMode),
       discount: best.discount,
       finalTotal: best.finalTotal,
       eligibleTotal: best.eligibleTotal,
@@ -819,10 +825,7 @@ export const autoApplyCoupon = async (req, res) => {
     });
   } catch (error) {
     console.error("Error auto applying coupon:", error);
-    return res.status(500).json({
-      message: "Server error",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
@@ -832,36 +835,30 @@ REDEEM COUPON
 
 export const redeemCoupon = async (req, res) => {
   try {
-    const { code, cartTotal, cartItems = [], email, phone, customerId } = req.body;
+    const ctx = getApplyContext(req.body);
 
-    if (!code || (cartTotal == null && !cartItems.length)) {
-      return res.status(400).json({
-        message: "code and cartTotal/cartItems are required.",
-      });
+    if (!validateApplyInput({ ...ctx, res })) return;
+
+    const coupon = await Coupon.findOne({ code: ctx.couponCode });
+
+    if (
+      !validateCouponBasics({
+        coupon,
+        cartTotal: ctx.actualCartTotal,
+        cartItems: ctx.cartItems,
+        customerKey: ctx.customerKey,
+        res,
+      })
+    ) {
+      return;
     }
 
-    const couponCode = normCode(code);
-    const customerKey = buildCustomerKey({ email, phone, customerId });
-
-    if (!customerKey) {
-      return res.status(400).json({
-        message: "Please provide email or phone number to redeem coupon.",
-      });
-    }
-
-    const coupon = await Coupon.findOne({ code: couponCode });
-
-    const actualCartTotal = cartItems.length
-      ? getCartTotalFromItems(cartItems)
-      : Number(cartTotal || 0);
-
-    if (!validateCouponBasics({ coupon, cartTotal: actualCartTotal, customerKey, res })) return;
-    if (!enforceTargets({ coupon, email, phone, res })) return;
+    if (!enforceTargets({ coupon, email: ctx.email, phone: ctx.phone, res })) return;
 
     const result = calculateCouponDiscount({
       coupon,
-      cartTotal: actualCartTotal,
-      cartItems,
+      cartTotal: ctx.actualCartTotal,
+      cartItems: ctx.cartItems,
     });
 
     if (result.discount <= 0) {
@@ -871,9 +868,9 @@ export const redeemCoupon = async (req, res) => {
     }
 
     const updated = await Coupon.findOneAndUpdate(
-      { code: couponCode },
+      { code: ctx.couponCode },
       {
-        $push: { usedBy: customerKey },
+        $push: { usedBy: ctx.customerKey },
         $inc: { usedCount: 1 },
       },
       { new: true }
@@ -882,7 +879,8 @@ export const redeemCoupon = async (req, res) => {
     return res.status(200).json({
       message: "Coupon redeemed successfully",
       coupon: couponResponse(updated),
-      cartTotal: actualCartTotal,
+      cartTotal: ctx.actualCartTotal,
+      cartQuantity: getCartQty(ctx.cartItems, updated.quantityRule?.countMode),
       discount: result.discount,
       finalTotal: result.finalTotal,
       eligibleTotal: result.eligibleTotal,
@@ -891,9 +889,6 @@ export const redeemCoupon = async (req, res) => {
     });
   } catch (error) {
     console.error("Error redeeming coupon:", error);
-    return res.status(500).json({
-      message: "Server error",
-      error: error.message,
-    });
+    return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
