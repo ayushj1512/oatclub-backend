@@ -26,7 +26,7 @@ export const BLUEDART = {
 
   CARRIER_NAME: "BlueDart",
   CARRIER_SLUG: "bluedart",
-  VENDOR_ID: "1511757753",
+  VENDOR_ID: "4533749568",
 
   PROVIDER: "eshipz",
 
