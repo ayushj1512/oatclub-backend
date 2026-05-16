@@ -9,6 +9,7 @@ import {
   listBlueDartOrdersFromApi,
   getBlueDartOrderBySalesChannelId,
   getBlueDartEddPrediction,
+  checkBlueDartServiceability,
 } from "./bluedart.controller.js";
 
 const router = express.Router();
@@ -19,7 +20,7 @@ const router = express.Router();
    Carrier: BlueDart
 ========================================================= */
 
-// Create shipment from local order
+// Create shipment/order push from local order
 router.post("/shipments/create-from-order", createShipmentFromOrder);
 router.post("/eshipz/shipments/create-from-order", createShipmentFromOrder);
 
@@ -30,6 +31,16 @@ router.get("/eshipz/shipments", listShipments);
 // Bulk sync local shipments
 router.post("/shipments/bulk-sync", bulkSyncShipments);
 router.post("/eshipz/shipments/bulk-sync", bulkSyncShipments);
+
+/* =========================================================
+   SERVICEABILITY CHECK
+========================================================= */
+
+router.post("/serviceability", checkBlueDartServiceability);
+router.post("/eshipz/serviceability", checkBlueDartServiceability);
+
+router.post("/serviceability/check", checkBlueDartServiceability);
+router.post("/eshipz/serviceability/check", checkBlueDartServiceability);
 
 /* =========================================================
    TRACK / SYNC SHIPMENT

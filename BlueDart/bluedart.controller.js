@@ -12,6 +12,7 @@ import {
   getOrdersFromBlueDart,
   getSingleOrderFromBlueDart,
   getEddPredictionFromBlueDart,
+  checkServiceabilityOnBlueDart,
 } from "./bluedart.service.js";
 import {
   normalizeTrackingStatus,
@@ -284,10 +285,17 @@ export const createShipmentFromOrder = async (req, res) => {
       carrierSlug,
     } = req.body || {};
 
-    if (!safe(orderNumber)) return fail(res, 400, "orderNumber is required");
+    const cleanOrderNumber = safe(orderNumber);
 
-    const order = await Order.findOne({ orderNumber: safe(orderNumber) });
-    if (!order) return fail(res, 404, "Order not found");
+    if (!cleanOrderNumber) {
+      return fail(res, 400, "orderNumber is required");
+    }
+
+    const order = await Order.findOne({ orderNumber: cleanOrderNumber });
+
+    if (!order) {
+      return fail(res, 404, "Order not found");
+    }
 
     if (!order.isConfirmed) {
       return fail(res, 400, "Order must be confirmed before shipment booking");
@@ -298,9 +306,20 @@ export const createShipmentFromOrder = async (req, res) => {
       shipmentType: "forward",
       isCancelled: false,
       status: { $nin: ["cancelled", "failed", "rto"] },
-    });
+    }).sort({ updatedAt: -1 });
 
-    if (existing) {
+    const existingHasRealAwb = Boolean(
+      safe(existing?.awbNumber).trim() || safe(existing?.awb).trim()
+    );
+
+    const existingAlreadyBooked = Boolean(
+      existingHasRealAwb ||
+        ["created", "booked", "pickup_pending", "pickup_scheduled", "picked", "shipped", "in_transit", "out_for_delivery", "delivered"].includes(
+          safe(existing?.status).toLowerCase()
+        )
+    );
+
+    if (existing && existingAlreadyBooked) {
       return fail(res, 409, "Active Eshipz shipment already exists for this order", {
         shipment: existing,
       });
@@ -317,7 +336,10 @@ export const createShipmentFromOrder = async (req, res) => {
     const totalPieces = Array.isArray(order?.items)
       ? Math.max(
           1,
-          order.items.reduce((sum, item) => sum + Number(item?.quantity || 0), 0)
+          order.items.reduce(
+            (sum, item) => sum + Number(item?.quantity || 0),
+            0
+          )
         )
       : BLUEDART?.DEFAULTS?.PIECES || 1;
 
@@ -334,38 +356,65 @@ export const createShipmentFromOrder = async (req, res) => {
       carrierSlug: safe(carrierSlug) || BLUEDART?.CARRIER_SLUG || "bluedart",
     });
 
-const payload = buildCreateShipmentPayload(shipmentDoc, order);
+    const payload = buildCreateShipmentPayload(shipmentDoc, order);
 
-// ✅ eShipz orders API only pushes/syncs order.
-// Do NOT call createShipmentOnBlueDart here because /api/v1/shipments gives 404.
-const apiResponse = await pushOrderToBlueDart(payload);
+    console.log("\n========== ESHIPZ ORDER PUSH REQUEST ==========");
+    console.log("ORDER:", order.orderNumber);
+    console.log("PAYMENT:", paymentMethod);
+    console.log("SERVICE:", finalServiceType);
+    console.log("EXISTING_LOCAL:", existing ? existing._id : "none");
+    console.log("PAYLOAD:", JSON.stringify(payload, null, 2));
+    console.log("==============================================\n");
 
-const parsed = extractCreateResult(apiResponse);
+    const apiResponse = await pushOrderToBlueDart(payload);
 
-    const derivedStatus = parsed.awbNumber
+    console.log("\n========== ESHIPZ ORDER PUSH RESPONSE ==========");
+    console.log(JSON.stringify(apiResponse, null, 2));
+    console.log("===============================================\n");
+
+    const parsed = extractCreateResult(apiResponse);
+
+    const hasAwb = Boolean(parsed?.awbNumber || parsed?.awb);
+
+    const derivedStatus = hasAwb
       ? normalizeTrackingStatus(parsed.status || "created")
       : "order_pushed";
 
-    const created = await BlueDartShipment.create({
+    const shipmentPayload = {
       ...shipmentDoc,
 
-      awbNumber: parsed.awbNumber || "",
+      provider: "eshipz",
+      partner: "eshipz",
+      shipmentType: "forward",
+
+      awbNumber: parsed.awbNumber || parsed.awb || "",
       awb: parsed.awb || parsed.awbNumber || "",
 
       shipmentIdExternal:
         parsed.shipmentIdExternal ||
-        shipmentDoc?.referenceNumber ||
-        shipmentDoc?.orderNumber ||
+        parsed.shipmentId ||
+        parsed.externalOrderId ||
+        parsed.eshipzOrderId ||
         "",
 
       shipmentId:
         parsed.shipmentId ||
         parsed.shipmentIdExternal ||
-        shipmentDoc?.referenceNumber ||
+        parsed.externalOrderId ||
+        parsed.eshipzOrderId ||
         "",
 
-      externalOrderId: parsed.externalOrderId || "",
-      eshipzOrderId: parsed.eshipzOrderId || parsed.externalOrderId || "",
+      externalOrderId:
+        parsed.externalOrderId ||
+        parsed.eshipzOrderId ||
+        parsed.shipmentIdExternal ||
+        "",
+
+      eshipzOrderId:
+        parsed.eshipzOrderId ||
+        parsed.externalOrderId ||
+        parsed.shipmentIdExternal ||
+        "",
 
       carrierName: parsed.carrierName || shipmentDoc.carrierName || "BlueDart",
       carrierSlug: parsed.carrierSlug || shipmentDoc.carrierSlug || "bluedart",
@@ -378,36 +427,56 @@ const parsed = extractCreateResult(apiResponse);
       expectedDelivery: parsed.expectedDelivery || null,
 
       status: derivedStatus,
-      rawStatus: parsed.rawStatus || "",
+      rawStatus: parsed.rawStatus || parsed.status || "",
       statusCode: parsed.statusCode || "",
 
-      bookedAt: new Date(),
+      bookingRequestedAt: existing?.bookingRequestedAt || new Date(),
+      bookedAt: hasAwb ? new Date() : null,
       lastSyncedAt: new Date(),
 
       rawCreateRequest: payload,
       rawCreateResponse: apiResponse,
-    });
+    };
+
+    const created = existing
+      ? await BlueDartShipment.findByIdAndUpdate(
+          existing._id,
+          { $set: shipmentPayload },
+          { new: true }
+        )
+      : await BlueDartShipment.create(shipmentPayload);
 
     const updatedOrder = await patchOrderWithShipment({
       orderId: order._id,
       shipment: created,
       raw: apiResponse,
-      source: "sync",
+      source: hasAwb ? "booking" : "order_push",
     });
 
     return ok(
       res,
-     parsed.awbNumber
-  ? "Eshipz shipment created successfully"
-  : "Eshipz order pushed and saved locally successfully", 
+      hasAwb
+        ? "Eshipz shipment booked successfully"
+        : existing
+        ? "Eshipz order re-pushed and local record updated successfully"
+        : "Eshipz order pushed successfully. Shipment/AWB is not generated by this API.",
       {
         shipment: created,
         order: updatedOrder,
         externalResponse: apiResponse,
+        pushedOnly: !hasAwb,
+        hasAwb,
+        updatedExisting: Boolean(existing),
       }
     );
   } catch (error) {
     const meta = getErrorMeta(error);
+
+    console.error("\n========== ESHIPZ CREATE FROM ORDER ERROR ==========");
+    console.error("MESSAGE:", meta.message);
+    console.error("STATUS:", meta.status);
+    console.error("DATA:", JSON.stringify(meta.data || {}, null, 2));
+    console.error("===================================================\n");
 
     return fail(
       res,
@@ -416,7 +485,7 @@ const parsed = extractCreateResult(apiResponse);
         meta?.data?.message ||
         meta?.data?.error ||
         meta.message ||
-        "Failed to create Eshipz shipment",
+        "Failed to create Eshipz order/shipment",
       { errorData: meta.data }
     );
   }
@@ -870,6 +939,190 @@ export const getBlueDartEddPrediction = async (req, res) => {
         meta?.data?.error ||
         meta.message ||
         "Failed to fetch Eshipz EDD prediction",
+      { errorData: meta.data }
+    );
+  }
+};
+
+export const checkBlueDartServiceability = async (req, res) => {
+  try {
+    const {
+      orderNumber,
+
+      pickupPincode,
+      deliveryPincode,
+
+      originPincode,
+      destinationPincode,
+
+      pickup_pincode,
+      delivery_pincode,
+
+      origin_pincode,
+      destination_pincode,
+
+      weight,
+      cod,
+      paymentMode,
+      serviceType,
+      carrierSlug,
+      vendorId,
+    } = req.body || {};
+
+    let order = null;
+
+    if (safe(orderNumber)) {
+      order = await Order.findOne({ orderNumber: safe(orderNumber) });
+
+      if (!order) {
+        return fail(res, 404, "Order not found");
+      }
+    }
+
+    const orderAddress =
+      order?.shippingAddressSnapshot || order?.shippingAddress || {};
+
+    const finalPickupPincode = safe(
+      pickupPincode ||
+        pickup_pincode ||
+        originPincode ||
+        origin_pincode ||
+        BLUEDART?.PICKUP_PINCODE ||
+        getPickupSender()?.pincode
+    );
+
+    const finalDeliveryPincode = safe(
+      deliveryPincode ||
+        delivery_pincode ||
+        destinationPincode ||
+        destination_pincode ||
+        orderAddress?.pincode ||
+        orderAddress?.zipcode ||
+        orderAddress?.zip
+    );
+
+    const finalPaymentMode = safe(
+      paymentMode || order?.paymentMethod || ""
+    ).toLowerCase();
+
+    const finalCod =
+  cod === true ||
+  cod === 1 ||
+  cod === "1" ||
+  safe(cod).toLowerCase() === "true" ||
+  finalPaymentMode === "cod";
+
+const finalServiceType =
+  safe(serviceType) ||
+  (finalCod
+    ? BLUEDART?.SERVICE_TYPES?.COD || "eTailCODAir"
+    : BLUEDART?.SERVICE_TYPES?.PREPAID || "eTailPrePaidAir");
+
+    const finalWeight = toPositiveNumber(
+      weight,
+      BLUEDART?.DEFAULTS?.WEIGHT || 0.5
+    );
+
+    if (!finalPickupPincode) {
+      return fail(res, 400, "pickupPincode is required");
+    }
+
+    if (!finalDeliveryPincode) {
+      return fail(res, 400, "deliveryPincode is required");
+    }
+
+    console.log("\n========== ESHIPZ SERVICEABILITY CHECK ==========");
+    console.log("ORDER:", order?.orderNumber || "manual");
+    console.log("PICKUP:", finalPickupPincode);
+    console.log("DELIVERY:", finalDeliveryPincode);
+    console.log("PAYMENT_MODE:", finalPaymentMode || "manual");
+    console.log("COD:", finalCod);
+    console.log("SERVICE:", finalServiceType);
+    console.log("WEIGHT:", finalWeight);
+    console.log("================================================\n");
+
+    const apiResponse = await checkServiceabilityOnBlueDart({
+      pickupPincode: finalPickupPincode,
+      deliveryPincode: finalDeliveryPincode,
+      weight: finalWeight,
+      cod: finalCod,
+      paymentMode: finalPaymentMode,
+      serviceType: finalServiceType,
+      carrierSlug: safe(carrierSlug) || BLUEDART?.CARRIER_SLUG || "bluedart",
+      vendorId: safe(vendorId) || BLUEDART?.VENDOR_ID || "",
+    });
+
+    const rawCouriers =
+      apiResponse?.data?.available_courier_companies ||
+      apiResponse?.available_courier_companies ||
+      apiResponse?.data?.couriers ||
+      apiResponse?.couriers ||
+      apiResponse?.data ||
+      [];
+
+    const couriers = Array.isArray(rawCouriers) ? rawCouriers : [];
+
+    const blueDartCourier =
+      couriers.find((c) => {
+        const name = safe(
+          c?.courier_name ||
+            c?.carrier_name ||
+            c?.name ||
+            c?.courier ||
+            c?.slug
+        ).toLowerCase();
+
+        return (
+          name.includes("blue") ||
+          name.includes("bluedart") ||
+          name.includes("blue dart")
+        );
+      }) || null;
+
+    const serviceable =
+      Boolean(blueDartCourier) ||
+      Boolean(apiResponse?.serviceable) ||
+      Boolean(apiResponse?.is_serviceable);
+
+    return ok(res, "Eshipz serviceability checked successfully", {
+      serviceable,
+      blueDartAvailable: Boolean(blueDartCourier),
+      courier: blueDartCourier,
+      couriers,
+      order: order
+        ? {
+            orderNumber: order.orderNumber,
+            paymentMethod: order.paymentMethod,
+            pincode: finalDeliveryPincode,
+          }
+        : null,
+      request: {
+        pickupPincode: finalPickupPincode,
+        deliveryPincode: finalDeliveryPincode,
+        weight: finalWeight,
+        cod: finalCod,
+        paymentMode: finalPaymentMode,
+        serviceType: finalServiceType,
+      },
+      externalResponse: apiResponse,
+    });
+  } catch (error) {
+    const meta = getErrorMeta(error);
+
+    console.error("\n========== ESHIPZ SERVICEABILITY ERROR ==========");
+    console.error("MESSAGE:", meta.message);
+    console.error("STATUS:", meta.status);
+    console.error("DATA:", JSON.stringify(meta.data || {}, null, 2));
+    console.error("================================================\n");
+
+    return fail(
+      res,
+      meta.status || 500,
+      meta?.data?.meta?.message ||
+        meta?.data?.message ||
+        meta?.data?.error ||
+        meta.message ||
+        "Failed to check Eshipz serviceability",
       { errorData: meta.data }
     );
   }

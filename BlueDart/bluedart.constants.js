@@ -12,7 +12,6 @@ export const BLUEDART = {
     "69afd01bfe4d91fafd3615a6",
 
   APP_URL: "https://app.eshipz.com",
-
   EDD_BASE_URL: "https://ds.eshipz.com",
 
   /*
@@ -29,6 +28,11 @@ export const BLUEDART = {
   VENDOR_ID: "4533749568",
 
   PROVIDER: "eshipz",
+
+  PICKUP_PINCODE:
+    process.env.ESHIPZ_PICKUP_PINCODE ||
+    process.env.BLUEDART_PICKUP_PINCODE ||
+    "110019",
 
   /* =====================================================
      SERVICE TYPES
@@ -49,6 +53,7 @@ export const BLUEDART = {
     PIECES: 1,
     COUNTRY: "IN",
     CURRENCY: "INR",
+    HSN_CODE: "62105000",
   },
 
   /* =====================================================
@@ -94,16 +99,37 @@ export const BLUEDART = {
   ===================================================== */
   ENDPOINTS: {
     /*
-      PUSH ORDER / CREATE SHIPMENT
+      PUSH ORDER / SYNC ORDER
+
+      NOTE:
+      This endpoint pushes order to eShipz.
+      It may not generate AWB directly.
     */
-    CREATE_SHIPMENT: "/api/v1/orders",
+    PUSH_ORDER:
+      process.env.ESHIPZ_PUSH_ORDER_ENDPOINT || "/api/v1/orders",
+
+    /*
+      CREATE SHIPMENT / AWB BOOKING
+
+      NOTE:
+      If your account does not support this endpoint,
+      eShipz may return 404.
+    */
+    CREATE_SHIPMENT:
+      process.env.ESHIPZ_CREATE_SHIPMENT_ENDPOINT || "/api/v1/shipments",
 
     /*
       GET ORDERS / SINGLE ORDER
     */
-    GET_ORDERS: "/api/v1/orders",
-      CREATE_SHIPMENT: process.env.ESHIPZ_CREATE_SHIPMENT_ENDPOINT || "/api/v1/shipments",
+    GET_ORDERS:
+      process.env.ESHIPZ_GET_ORDERS_ENDPOINT || "/api/v1/orders",
 
+    /*
+      SERVICEABILITY CHECK
+    */
+    SERVICEABILITY:
+      process.env.ESHIPZ_SERVICEABILITY_ENDPOINT ||
+      "/prediction/predicted-sla/v1/",
 
     /*
       TRACKING APIs

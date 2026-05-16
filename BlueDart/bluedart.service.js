@@ -14,7 +14,7 @@ const EDD_BASE_URL = String(
 
 const FALLBACK_CARRIER_SLUG = "bluedart";
 const FALLBACK_CARRIER_NAME = "BlueDart";
-const FALLBACK_VENDOR_ID = "1511757753";
+const FALLBACK_VENDOR_ID = "4533749568";
 
 /* ======================================================
    HELPERS
@@ -22,6 +22,20 @@ const FALLBACK_VENDOR_ID = "1511757753";
 
 const unwrap = (res) => res?.data ?? {};
 const safeString = (v) => (v == null ? "" : String(v).trim());
+
+const shortJson = (value, limit = 6000) => {
+  try {
+    const str = JSON.stringify(value, null, 2);
+    return str.length > limit ? `${str.slice(0, limit)}\n...TRUNCATED...` : str;
+  } catch {
+    return value;
+  }
+};
+
+const getFirstPayloadOrder = (payload = {}) => {
+  if (Array.isArray(payload?.data)) return payload.data[0] || {};
+  return payload?.data || payload || {};
+};
 
 const cleanObject = (obj = {}) => {
   const cleaned = { ...obj };
@@ -49,6 +63,14 @@ const getAuthHeaders = () => ({
   Accept: "application/json",
   "Content-Type": "application/json",
   "X-API-TOKEN": API_TOKEN,
+});
+
+const maskedHeaders = () => ({
+  Accept: "application/json",
+  "Content-Type": "application/json",
+  "X-API-TOKEN": API_TOKEN
+    ? `***${API_TOKEN.slice(-4)}`
+    : "❌ MISSING_TOKEN",
 });
 
 const assertConfigured = () => {
@@ -111,45 +133,84 @@ const eddClient = axios.create({
    LOGGING
 ====================================================== */
 
-const maskedHeaders = {
-  Accept: "application/json",
-  "Content-Type": "application/json",
-  "X-API-TOKEN": API_TOKEN ? "***TOKEN_PRESENT***" : "",
+const shouldLogPayload =
+  String(process.env.ESHIPZ_DEBUG || process.env.BLUEDART_DEBUG || "true")
+    .toLowerCase()
+    .trim() !== "false";
+
+const logConfigSnapshot = () => {
+  console.log("\n========== ESHIPZ CONFIG SNAPSHOT ==========");
+  console.log("BASE_URL:", BASE_URL);
+  console.log("EDD_BASE_URL:", EDD_BASE_URL);
+  console.log("TOKEN:", API_TOKEN ? `present ***${API_TOKEN.slice(-4)}` : "missing");
+  console.log("CARRIER_NAME:", BLUEDART?.CARRIER_NAME);
+  console.log("CARRIER_SLUG:", BLUEDART?.CARRIER_SLUG);
+  console.log("VENDOR_ID:", BLUEDART?.VENDOR_ID);
+  console.log("PUSH_ORDER ENDPOINT:", BLUEDART?.ENDPOINTS?.PUSH_ORDER || "");
+  console.log("CREATE_SHIPMENT ENDPOINT:", BLUEDART?.ENDPOINTS?.CREATE_SHIPMENT || "");
+  console.log("GET_ORDERS ENDPOINT:", BLUEDART?.ENDPOINTS?.GET_ORDERS || "");
+  console.log("SERVICEABILITY ENDPOINT:", BLUEDART?.ENDPOINTS?.SERVICEABILITY || "");
+  console.log("===========================================\n");
 };
 
-const shouldLogPayload =
-  String(process.env.ESHIPZ_DEBUG || process.env.BLUEDART_DEBUG || "")
-    .toLowerCase()
-    .trim() === "true";
-
 const logRequest = (label, baseUrl, endpoint, payload) => {
-  console.log(`\n========== ${label} ==========`);
+  const firstOrder = getFirstPayloadOrder(payload);
 
+  console.log(`\n========== ${label} REQUEST ==========`);
+  console.log("ORDER_ID:", firstOrder?.order_id || firstOrder?.orderNumber || "");
+  console.log("IS_COD:", firstOrder?.is_cod);
+  console.log("SERVICE_TYPE:", firstOrder?.service_type || firstOrder?.serviceType || "");
+  console.log("SHIPMENT_VALUE:", firstOrder?.shipment_value);
+  console.log("COD_AMOUNT:", firstOrder?.cod_amount);
   console.log("BASE_URL:", baseUrl);
   console.log("ENDPOINT:", endpoint);
   console.log("FINAL_URL:", joinUrl(baseUrl, endpoint));
-  console.log("HEADERS:", maskedHeaders);
+  console.log("HEADERS:", maskedHeaders());
 
   if (shouldLogPayload && payload) {
-    console.log("PAYLOAD:", JSON.stringify(payload, null, 2));
+    console.log("PAYLOAD:", shortJson(payload));
   }
 
   console.log("====================================\n");
 };
 
 const logGetRequest = (label, baseUrl, endpoint, params) => {
-  console.log(`\n========== ${label} ==========`);
-
+  console.log(`\n========== ${label} REQUEST ==========`);
   console.log("BASE_URL:", baseUrl);
   console.log("ENDPOINT:", endpoint);
   console.log("FINAL_URL:", joinUrl(baseUrl, endpoint));
-  console.log("HEADERS:", maskedHeaders);
+  console.log("HEADERS:", maskedHeaders());
+  console.log("QUERY PARAMS:", params || {});
+  console.log("====================================\n");
+};
+
+const logResponse = (label, responseData) => {
+  console.log(`\n========== ${label} RESPONSE ==========`);
+
+  console.log("STATUS:", responseData?.status);
+  console.log("REMARK:", responseData?.remark || responseData?.message || "");
+  console.log("NOTE:", responseData?.note || "");
+  console.log("ORDER_NOT_UPDATED:", shortJson(responseData?.order_not_updated || []));
+  console.log("DATA_TYPE:", Array.isArray(responseData?.data) ? "array" : typeof responseData?.data);
 
   if (shouldLogPayload) {
-    console.log("QUERY PARAMS:", params || {});
+    console.log("FULL_RESPONSE:", shortJson(responseData));
   }
 
-  console.log("====================================\n");
+  const note = safeString(responseData?.note).toLowerCase();
+  const orderNotUpdated = Array.isArray(responseData?.order_not_updated)
+    ? responseData.order_not_updated
+    : [];
+
+  if (note.includes("won't be created") || note.includes("wont be created")) {
+    console.warn("⚠️ ESHIPZ WARNING: Order was edited before on eShipz, so API may not create/update it.");
+  }
+
+  if (orderNotUpdated.length) {
+    console.warn("⚠️ ESHIPZ WARNING: order_not_updated returned:", shortJson(orderNotUpdated));
+  }
+
+  console.log("=====================================\n");
 };
 
 const logError = (label, error) => {
@@ -158,7 +219,8 @@ const logError = (label, error) => {
   console.error("MESSAGE:", error?.message);
   console.error("STATUS:", error?.response?.status);
   console.error("STATUS TEXT:", error?.response?.statusText);
-  console.error("RESPONSE DATA:", error?.response?.data);
+  console.error("RESPONSE DATA:", shortJson(error?.response?.data || {}));
+  console.error("REQUEST FINAL URL:", joinUrl(error?.config?.baseURL, error?.config?.url));
   console.error("REQUEST URL:", error?.config?.url);
   console.error("REQUEST BASE URL:", error?.config?.baseURL);
   console.error("REQUEST METHOD:", error?.config?.method);
@@ -200,12 +262,16 @@ const post = async (endpoint, payload, label, fallbackMessage) => {
     assertConfigured();
     assertEndpoint(endpoint, label);
 
+    logConfigSnapshot();
     logRequest(label, BASE_URL, endpoint, payload);
 
     const res = await client.post(endpoint, payload);
+    const data = unwrap(res);
 
-    console.log(`✅ ${label} SUCCESS`);
-    return unwrap(res);
+    console.log(`✅ ${label} HTTP SUCCESS:`, res?.status);
+    logResponse(label, data);
+
+    return data;
   } catch (error) {
     logError(label, error);
     throw buildError(fallbackMessage, error);
@@ -217,12 +283,16 @@ const get = async (endpoint, params, label, fallbackMessage) => {
     assertConfigured();
     assertEndpoint(endpoint, label);
 
+    logConfigSnapshot();
     logGetRequest(label, BASE_URL, endpoint, params);
 
     const res = await client.get(endpoint, { params });
+    const data = unwrap(res);
 
-    console.log(`✅ ${label} SUCCESS`);
-    return unwrap(res);
+    console.log(`✅ ${label} HTTP SUCCESS:`, res?.status);
+    logResponse(label, data);
+
+    return data;
   } catch (error) {
     logError(label, error);
     throw buildError(fallbackMessage, error);
@@ -234,12 +304,16 @@ const put = async (endpoint, payload, label, fallbackMessage) => {
     assertConfigured();
     assertEndpoint(endpoint, label);
 
+    logConfigSnapshot();
     logRequest(label, BASE_URL, endpoint, payload);
 
     const res = await client.put(endpoint, payload);
+    const data = unwrap(res);
 
-    console.log(`✅ ${label} SUCCESS`);
-    return unwrap(res);
+    console.log(`✅ ${label} HTTP SUCCESS:`, res?.status);
+    logResponse(label, data);
+
+    return data;
   } catch (error) {
     logError(label, error);
     throw buildError(fallbackMessage, error);
@@ -254,9 +328,12 @@ const postToEdd = async (endpoint, payload, label, fallbackMessage) => {
     logRequest(label, EDD_BASE_URL, endpoint, payload);
 
     const res = await eddClient.post(endpoint, payload);
+    const data = unwrap(res);
 
-    console.log(`✅ ${label} SUCCESS`);
-    return unwrap(res);
+    console.log(`✅ ${label} HTTP SUCCESS:`, res?.status);
+    logResponse(label, data);
+
+    return data;
   } catch (error) {
     logError(label, error);
     throw buildError(fallbackMessage, error);
@@ -408,8 +485,13 @@ export const normalizeEshipzTracking = (raw = {}) => {
 export const pushOrderToBlueDart = async (payload = {}) => {
   const endpoint =
     BLUEDART?.ENDPOINTS?.PUSH_ORDER ||
+    BLUEDART?.ENDPOINTS?.CREATE_ORDER ||
     BLUEDART?.ENDPOINTS?.GET_ORDERS ||
     "/api/v1/orders";
+
+  console.log("\n🚚 BLUE DART FLOW: PUSH ORDER TO ESHIPZ");
+  console.log("⚠️ This API only pushes/syncs order. AWB may not generate here.");
+  console.log("Using endpoint:", endpoint);
 
   return post(
     endpoint,
@@ -422,12 +504,120 @@ export const pushOrderToBlueDart = async (payload = {}) => {
 export const createShipmentOnBlueDart = async (payload = {}) => {
   const endpoint = BLUEDART?.ENDPOINTS?.CREATE_SHIPMENT;
 
+  console.log("\n📦 BLUE DART FLOW: CREATE SHIPMENT ON ESHIPZ");
+  console.log("Using endpoint:", endpoint);
+
   return post(
     endpoint,
     payload,
     "ESHIPZ CREATE SHIPMENT",
     "Failed to create Eshipz shipment"
   );
+};
+
+/* ======================================================
+   SERVICEABILITY CHECK
+====================================================== */
+
+export const checkServiceabilityOnBlueDart = async ({
+  pickupPincode,
+  deliveryPincode,
+  originPincode,
+  destinationPincode,
+  weight = BLUEDART?.DEFAULTS?.WEIGHT || 0.5,
+  cod = false,
+  paymentMode = "",
+  serviceType = "",
+  carrierSlug = "",
+  vendorId = "",
+} = {}) => {
+  const finalPickupPincode = safeString(
+    pickupPincode || originPincode || BLUEDART?.PICKUP_PINCODE
+  );
+
+  const finalDeliveryPincode = safeString(
+    deliveryPincode || destinationPincode
+  );
+
+  const finalSlug = safeString(carrierSlug)
+    ? getCarrierSlug(carrierSlug)
+    : getCarrierSlug();
+
+  if (!finalPickupPincode) {
+    throw new Error("pickupPincode is required");
+  }
+
+  if (!finalDeliveryPincode) {
+    throw new Error("deliveryPincode is required");
+  }
+
+  const endpoint =
+    BLUEDART?.ENDPOINTS?.EDD_PREDICTION || "/prediction/predicted-sla/v1/";
+
+  const payload = cleanObject({
+    origin_pincode: finalPickupPincode,
+    destination_pincode: finalDeliveryPincode,
+    slug: finalSlug,
+  });
+
+  console.log("\n🔎 BLUE DART FLOW: SERVICEABILITY VIA EDD");
+  console.log("EDD_BASE_URL:", EDD_BASE_URL);
+  console.log("Endpoint:", endpoint);
+  console.log("Pickup:", finalPickupPincode);
+  console.log("Delivery:", finalDeliveryPincode);
+  console.log("Slug:", finalSlug);
+
+  const eddResponse = await postToEdd(
+    endpoint,
+    payload,
+    "ESHIPZ SERVICEABILITY VIA EDD",
+    "Failed to check Eshipz serviceability via EDD"
+  );
+
+  const predictionSource = eddResponse?.data || eddResponse;
+  const prediction = Array.isArray(predictionSource)
+    ? predictionSource[0] || {}
+    : predictionSource || {};
+
+  const serviceable = Boolean(
+    prediction?.exp_del_date ||
+      prediction?.exp_del_days ||
+      prediction?.eta ||
+      prediction?.edd ||
+      prediction?.predicted_sla ||
+      prediction?.predicted_delivery_date
+  );
+
+  const courier = serviceable
+    ? {
+        courier_name: "BlueDart",
+        carrier_name: "BlueDart",
+        slug: finalSlug,
+        vendor_id: getVendorId(vendorId),
+      }
+    : null;
+
+  return {
+    success: true,
+    provider: "eshipz",
+    mode: "edd_fallback",
+    serviceable,
+    is_serviceable: serviceable,
+    blueDartAvailable: serviceable,
+    courier,
+    couriers: courier ? [courier] : [],
+    request: {
+      pickupPincode: finalPickupPincode,
+      deliveryPincode: finalDeliveryPincode,
+      weight: Number(weight) > 0 ? Number(weight) : 0.5,
+      cod,
+      paymentMode,
+      serviceType,
+      carrierSlug: finalSlug,
+    },
+    prediction,
+    externalResponse: eddResponse,
+  };
 };
 
 /* ======================================================
@@ -445,18 +635,15 @@ export const trackShipmentOnBlueDart = async ({
   const cleanAwb = safeString(awbNumber || awb);
 
   if (!cleanAwb && !referenceNumber && !shipmentId) {
-    throw new Error(
-      "awbNumber, referenceNumber or shipmentId is required"
-    );
+    throw new Error("awbNumber, referenceNumber or shipmentId is required");
   }
 
-  /*
-    eShipz tracking API endpoint currently returns 404
-    for this account.
-
-    So we return normalized fallback tracking data
-    + public tracking URL.
-  */
+  console.log("\n========== ESHIPZ TRACK FALLBACK ==========");
+  console.log("AWB:", cleanAwb);
+  console.log("REFERENCE:", referenceNumber);
+  console.log("SHIPMENT_ID:", shipmentId);
+  console.log("MESSAGE:", "Tracking API unavailable. Returning public tracking URL.");
+  console.log("==========================================\n");
 
   const tracking = normalizeEshipzTracking({
     awb_number: cleanAwb,
@@ -471,15 +658,13 @@ export const trackShipmentOnBlueDart = async ({
 
   return {
     success: true,
-    message:
-      "Tracking API unavailable. Using Eshipz public tracking URL.",
+    message: "Tracking API unavailable. Using Eshipz public tracking URL.",
     tracking,
 
     trackingUrl: cleanAwb
-      ? `${
-          BLUEDART?.TRACKING_URL ||
-          "https://track.eshipz.com/track"
-        }?awb=${encodeURIComponent(cleanAwb)}`
+      ? `${BLUEDART?.TRACKING_URL || "https://track.eshipz.com/track"}?awb=${encodeURIComponent(
+          cleanAwb
+        )}`
       : "",
   };
 };
@@ -499,15 +684,14 @@ export const getTrackingHistoryFromBlueDart = async ({
   const cleanAwb = safeString(awbNumber || awb);
 
   if (!cleanAwb && !referenceNumber && !shipmentId) {
-    throw new Error(
-      "awbNumber, referenceNumber or shipmentId is required"
-    );
+    throw new Error("awbNumber, referenceNumber or shipmentId is required");
   }
 
-  /*
-    eShipz tracking history endpoint unavailable.
-    Returning safe fallback structure.
-  */
+  console.log("\n========== ESHIPZ TRACKING HISTORY FALLBACK ==========");
+  console.log("AWB:", cleanAwb);
+  console.log("REFERENCE:", referenceNumber);
+  console.log("SHIPMENT_ID:", shipmentId);
+  console.log("======================================================\n");
 
   const tracking = normalizeEshipzTracking({
     awb_number: cleanAwb,
@@ -523,18 +707,17 @@ export const getTrackingHistoryFromBlueDart = async ({
 
   return {
     success: true,
-    message:
-      "Tracking history API unavailable. Using Eshipz public tracking URL.",
+    message: "Tracking history API unavailable. Using Eshipz public tracking URL.",
     tracking,
 
     trackingUrl: cleanAwb
-      ? `${
-          BLUEDART?.TRACKING_URL ||
-          "https://track.eshipz.com/track"
-        }?awb=${encodeURIComponent(cleanAwb)}`
+      ? `${BLUEDART?.TRACKING_URL || "https://track.eshipz.com/track"}?awb=${encodeURIComponent(
+          cleanAwb
+        )}`
       : "",
   };
 };
+
 /* ======================================================
    BULK TRACK SHIPMENTS
 ====================================================== */
@@ -575,7 +758,6 @@ export const cancelShipmentOnBlueDart = async ({
   vendorId,
 } = {}) => {
   const endpoint = BLUEDART?.ENDPOINTS?.CANCEL_SHIPMENT;
-
   const cleanAwb = safeString(awbNumber || awb);
 
   const payload = cleanObject({
