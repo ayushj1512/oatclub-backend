@@ -6,6 +6,7 @@ import {
   buildCreateShipmentPayload,
 } from "./bluedart.mapper.js";
 import {
+  pushOrderToBlueDart,
   createShipmentOnBlueDart,
   trackShipmentOnBlueDart,
   getOrdersFromBlueDart,
@@ -333,9 +334,13 @@ export const createShipmentFromOrder = async (req, res) => {
       carrierSlug: safe(carrierSlug) || BLUEDART?.CARRIER_SLUG || "bluedart",
     });
 
-    const payload = buildCreateShipmentPayload(shipmentDoc, order);
-    const apiResponse = await createShipmentOnBlueDart(payload);
-    const parsed = extractCreateResult(apiResponse);
+const payload = buildCreateShipmentPayload(shipmentDoc, order);
+
+// ✅ eShipz orders API only pushes/syncs order.
+// Do NOT call createShipmentOnBlueDart here because /api/v1/shipments gives 404.
+const apiResponse = await pushOrderToBlueDart(payload);
+
+const parsed = extractCreateResult(apiResponse);
 
     const derivedStatus = parsed.awbNumber
       ? normalizeTrackingStatus(parsed.status || "created")
@@ -392,9 +397,9 @@ export const createShipmentFromOrder = async (req, res) => {
 
     return ok(
       res,
-      parsed.awbNumber
-        ? "Eshipz shipment created successfully"
-        : "Eshipz order pushed successfully",
+     parsed.awbNumber
+  ? "Eshipz shipment created successfully"
+  : "Eshipz order pushed and saved locally successfully", 
       {
         shipment: created,
         order: updatedOrder,

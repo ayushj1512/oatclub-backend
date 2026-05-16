@@ -405,6 +405,20 @@ export const normalizeEshipzTracking = (raw = {}) => {
    CREATE SHIPMENT / PUSH ORDER
 ====================================================== */
 
+export const pushOrderToBlueDart = async (payload = {}) => {
+  const endpoint =
+    BLUEDART?.ENDPOINTS?.PUSH_ORDER ||
+    BLUEDART?.ENDPOINTS?.GET_ORDERS ||
+    "/api/v1/orders";
+
+  return post(
+    endpoint,
+    payload,
+    "ESHIPZ PUSH ORDER",
+    "Failed to push Eshipz order"
+  );
+};
+
 export const createShipmentOnBlueDart = async (payload = {}) => {
   const endpoint = BLUEDART?.ENDPOINTS?.CREATE_SHIPMENT;
 

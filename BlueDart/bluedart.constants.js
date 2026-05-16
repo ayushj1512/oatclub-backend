@@ -102,6 +102,8 @@ export const BLUEDART = {
       GET ORDERS / SINGLE ORDER
     */
     GET_ORDERS: "/api/v1/orders",
+      CREATE_SHIPMENT: process.env.ESHIPZ_CREATE_SHIPMENT_ENDPOINT || "/api/v1/shipments",
+
 
     /*
       TRACKING APIs
