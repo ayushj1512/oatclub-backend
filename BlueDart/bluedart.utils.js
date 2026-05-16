@@ -406,7 +406,6 @@ export const buildOrderShipmentPatch = ({
 } = {}) => {
   const status = normalizeTrackingStatus(shipment?.status || shipment?.rawStatus);
   const orderShipmentStatus = toOrderShipmentStatus(status);
-  const orderFulfillmentStatus = toOrderFulfillmentStatus(status);
 
   const now = new Date();
 
@@ -458,8 +457,33 @@ export const buildOrderShipmentPatch = ({
     patch["shipment.eshipz.lastTrack"] = raw;
   }
 
-  if (orderFulfillmentStatus) {
-    patch.fulfillmentStatus = orderFulfillmentStatus;
+  /**
+   * IMPORTANT:
+   * Do not change Order.fulfillmentStatus on initial booking/order push.
+   * Shipment booking is only a logistics action.
+   *
+   * Fulfillment status should only change on real courier movement:
+   * picked, shipped, out_for_delivery, delivered, rto, failed, cancelled.
+   */
+  const shouldUpdateFulfillment =
+    source === "track" || source === "webhook" || source === "sync";
+
+  if (shouldUpdateFulfillment) {
+    const orderFulfillmentStatus = toOrderFulfillmentStatus(status);
+
+    const allowedAutoFulfillmentStatuses = [
+      "picked",
+      "shipped",
+      "out_for_delivery",
+      "delivered",
+      "rto",
+      "failed",
+      "cancelled",
+    ];
+
+    if (allowedAutoFulfillmentStatuses.includes(orderFulfillmentStatus)) {
+      patch.fulfillmentStatus = orderFulfillmentStatus;
+    }
   }
 
   const dateField = getStatusDateField(status);
