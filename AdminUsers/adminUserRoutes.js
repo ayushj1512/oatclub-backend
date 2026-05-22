@@ -9,6 +9,7 @@ import {
   updateAdminRoleAndPermissions,
   changeAdminPassword,
   unlockAdminUser,
+  forceLogoutAdminUser,
   deleteAdminUser,
 } from "./adminUserController.js";
 
@@ -20,8 +21,7 @@ const router = express.Router();
  * ✅ BASE ROUTE: /api/admin-users
  *
  * ⚠️ IMPORTANT:
- * Put /login BEFORE /:id routes
- * Otherwise "/login" will get caught by "/:id"
+ * Put static routes like /login before /:id routes
  */
 
 /* ============================================================
@@ -47,11 +47,14 @@ router.patch("/:id", protectAdmin, updateAdminUser);
 /** ✅ Update Role + Permissions */
 router.patch("/:id/role", protectAdmin, updateAdminRoleAndPermissions);
 
-/** ✅ Change Password */
+/** ✅ Change Password + force old sessions logout */
 router.patch("/:id/password", protectAdmin, changeAdminPassword);
 
 /** ✅ Unlock Admin User */
 router.patch("/:id/unlock", protectAdmin, unlockAdminUser);
+
+/** ✅ Force Logout Admin User from all active sessions */
+router.patch("/:id/force-logout", protectAdmin, forceLogoutAdminUser);
 
 /** ✅ Get Single Admin User */
 router.get("/:id", protectAdmin, getAdminUserById);

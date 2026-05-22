@@ -4,7 +4,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isRetryableError = (err) => {
   const status = err?.response?.status;
-  const msg = JSON.stringify(err?.response?.data || err?.message || "").toLowerCase();
+  const msg = JSON.stringify(
+    err?.response?.data || err?.message || ""
+  ).toLowerCase();
 
   return (
     status === 502 ||
@@ -28,18 +30,19 @@ export async function checkServiceability({
     pickup_postcode: String(pickupPincode || "").trim(),
     delivery_postcode: String(deliveryPincode || "").trim(),
     weight: Number(weight || 0.5),
-    cod: cod === true || cod === "true" || cod === "1" || cod === 1 ? 1 : 0,
+    cod:
+      cod === true ||
+      cod === "true" ||
+      cod === "1" ||
+      cod === 1
+        ? 1
+        : 0,
   };
 
   let lastError;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      console.log("🚚 Shiprocket Serviceability:", {
-        params,
-        attempt,
-      });
-
       const data = await shiprocketApi({
         method: "GET",
         url: "/courier/serviceability/",
@@ -54,13 +57,6 @@ export async function checkServiceability({
       );
     } catch (err) {
       lastError = err;
-
-      console.error("❌ Shiprocket Serviceability Error:", {
-        params,
-        attempt,
-        status: err?.response?.status,
-        data: err?.response?.data || err.message,
-      });
 
       if (isRetryableError(err) && attempt < 3) {
         await sleep(attempt * 2000);

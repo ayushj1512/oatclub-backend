@@ -90,6 +90,8 @@ import {
   whatsappCancelOrderWebhook,
 } from "./order.whatsapp.webhook.js";
 
+import { sendReviewWhatsappManually } from "./orders.review.controller.js";
+
 const router = express.Router();
 
 /* Orders */
@@ -161,6 +163,11 @@ router.get("/:id/rma/:rmaNumber", getRmaByNumber);
 router.patch("/:id/rma/:rmaNumber", updateRma);
 
 /* Actions */
+router.post(
+  "/:orderIdOrNumber/review-whatsapp/send",
+  sendReviewWhatsappManually
+);
+
 router.post("/:id/shiprocket/book", adminBookShiprocketIfMissing);
 router.post("/:id/ship", bookWithShiprocket);
 router.post("/:id/cancel", cancelOrder);

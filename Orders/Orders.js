@@ -2,6 +2,15 @@ import mongoose from "mongoose";
 import crypto from "crypto";
 import Counter from "../models/Counter.js";
 import Coupon from "../Coupon/Coupon.js";
+import {
+  sendOrderReviewWhatsapp,
+  buildReviewLink,
+} from "../fast2sms/index.js";
+
+
+const REVIEW_WHATSAPP_START_DATE = new Date(
+  process.env.REVIEW_WHATSAPP_START_DATE || "2026-05-21T00:00:00.000Z"
+);
 
 /**
  * ORDER ITEM SCHEMA
@@ -404,6 +413,21 @@ eligibleForRefund: {
   type: Boolean,
   default: false,
   index: true,
+},
+
+eligibleForRma: {
+  type: Boolean,
+  default: false,
+  index: true,
+},
+
+reviewRequest: {
+  sent: { type: Boolean, default: false, index: true },
+  sentAt: { type: Date, default: null },
+  channel: { type: String, default: "fast2sms" },
+  token: { type: String, default: "" },
+  link: { type: String, default: "" },
+  error: { type: String, default: "" },
 },
 
 refundSummary: {
@@ -1064,6 +1088,40 @@ orderSchema.pre("validate", function (next) {
   }
 });
 
+// ========================================================================================
+// ✅ AUTO-CALC RMA ELIGIBILITY WINDOW
+// - Delivered orders are RMA eligible for 7 days
+// - After 7 days, eligibleForRma becomes false
+// - Review message sending will be handled by cron/service later
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    const isDelivered =
+      this.fulfillmentStatus === "delivered" ||
+      this.shipment?.status === "delivered";
+
+    const deliveredAt =
+      this.fulfillmentDates?.deliveredAt ||
+      this.shipment?.deliveredAt ||
+      this.trackingDetails?.deliveredAt;
+
+    if (!isDelivered || !deliveredAt) {
+      this.eligibleForRma = false;
+      return next();
+    }
+
+    const deliveredTime = new Date(deliveredAt).getTime();
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const rmaExpired = Date.now() - deliveredTime >= sevenDaysMs;
+
+    this.eligibleForRma = !rmaExpired;
+
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 
 // ========================================================================================
 // ✅ AUTO-CALC isPackable (based on fulfillment)
@@ -1185,6 +1243,8 @@ orderSchema.pre("validate", function (next) {
 });
 
 
+
+
 // ========================================================================================
 // ✅ AUTO-NORMALIZE UNIVERSAL ATTRIBUTION
 // ========================================================================================
@@ -1259,6 +1319,121 @@ orderSchema.pre("validate", function (next) {
   } catch (err) {
     next(err);
   }
+});
+
+// ========================================================================================
+// ✅ SEND REVIEW WHATSAPP WHEN RMA WINDOW EXPIRES
+// ========================================================================================
+orderSchema.statics.sendReviewRequestWhatsapp = async function (orderId) {
+  const order = await this.findById(orderId).populate("customerId");
+
+  if (!order) {
+    return { success: false, skipped: true, reason: "Order not found" };
+  }
+
+  const isDelivered =
+    order.fulfillmentStatus === "delivered" ||
+    order.shipment?.status === "delivered";
+
+  if (!isDelivered) {
+    return { success: false, skipped: true, reason: "Order not delivered" };
+  }
+
+  const createdAt = order.createdAt ? new Date(order.createdAt) : null;
+
+  if (!createdAt || createdAt < REVIEW_WHATSAPP_START_DATE) {
+    return {
+      success: false,
+      skipped: true,
+      reason: "Order created before review WhatsApp start date",
+    };
+  }
+
+  if (order.eligibleForRma) {
+    return {
+      success: false,
+      skipped: true,
+      reason: "RMA window still active",
+    };
+  }
+
+  if (order.reviewRequest?.sent) {
+    return {
+      success: true,
+      skipped: true,
+      reason: "Review WhatsApp already sent",
+    };
+  }
+
+  const reviewLink = buildReviewLink(order.orderNumber);
+
+  try {
+    const response = await sendOrderReviewWhatsapp({ order });
+
+    await this.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          "reviewRequest.sent": true,
+          "reviewRequest.sentAt": new Date(),
+          "reviewRequest.channel": "fast2sms",
+          "reviewRequest.link": reviewLink,
+          "reviewRequest.error": "",
+        },
+      }
+    );
+
+    return {
+      success: true,
+      skipped: false,
+      response,
+    };
+  } catch (err) {
+    await this.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          "reviewRequest.sent": false,
+          "reviewRequest.channel": "fast2sms",
+          "reviewRequest.link": reviewLink,
+          "reviewRequest.error": err.message || "Review WhatsApp failed",
+        },
+      }
+    );
+
+    return {
+      success: false,
+      skipped: false,
+      error: err.message,
+    };
+  }
+};
+
+orderSchema.post("save", function (doc) {
+  const createdAt = doc.createdAt ? new Date(doc.createdAt) : null;
+
+  if (!createdAt || createdAt < REVIEW_WHATSAPP_START_DATE) {
+    return;
+  }
+
+  const isDelivered =
+    doc.fulfillmentStatus === "delivered" ||
+    doc.shipment?.status === "delivered";
+
+  const shouldSendReview =
+    isDelivered &&
+    doc.eligibleForRma === false &&
+    !doc.reviewRequest?.sent;
+
+  if (!shouldSendReview) return;
+
+  setImmediate(async () => {
+    try {
+      await doc.constructor.sendReviewRequestWhatsapp(doc._id);
+    } catch (err) {
+      console.error("❌ Review WhatsApp auto-send failed:", err.message);
+    }
+  });
 });
 
 // Core list performance
@@ -1338,5 +1513,10 @@ orderSchema.index({ "shipment.xpressbees.shipmentId": 1 });
 // Tracking
 orderSchema.index({ "trackingDetails.awb": 1 });
 orderSchema.index({ "trackingDetails.trackingId": 1 });
+
+// RMA / Review request queries
+orderSchema.index({ eligibleForRma: 1, createdAt: -1 });
+orderSchema.index({ "reviewRequest.sent": 1, createdAt: -1 });
+orderSchema.index({ "reviewRequest.token": 1 });
 
 export default mongoose.models.Order || mongoose.model("Order", orderSchema);

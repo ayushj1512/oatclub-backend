@@ -4,28 +4,40 @@ export const BLUEDART = {
   /* =====================================================
      API CONFIG
   ===================================================== */
-  BASE_URL: "https://orders.eshipz.com",
 
-  API_TOKEN:
-    process.env.ESHIPZ_API_TOKEN ||
-    process.env.BLUEDART_API_TOKEN ||
-    "69afd01bfe4d91fafd3615a6",
+  // Main eShipz API (Orders / Shipments)
+  BASE_URL:
+    process.env.ESHIPZ_BASE_URL ||
+    "https://app.eshipz.com/api/v1",
+
+  // Serviceability API
+  SERVICEABILITY_BASE_URL:
+    process.env.ESHIPZ_SERVICEABILITY_BASE_URL ||
+    "https://app.eshipz.com/api/v2",
+
+  // EDD Prediction API
+  EDD_BASE_URL:
+    process.env.ESHIPZ_EDD_BASE_URL ||
+    "https://ds.eshipz.com",
+
+API_TOKEN:
+  process.env.ESHIPZ_API_TOKEN ||
+  process.env.BLUEDART_API_TOKEN ||
+  "69afd01bfe4d91fafd3615a6",
 
   APP_URL: "https://app.eshipz.com",
-  EDD_BASE_URL: "https://ds.eshipz.com",
 
-  /*
-    Public tracking page.
-    eShipz API tracking endpoint is not enabled/available
-    for this account right now, so use this as fallback.
-  */
   TRACKING_URL: "https://track.eshipz.com/track",
 
   TIMEOUT: 30000,
 
   CARRIER_NAME: "BlueDart",
+
   CARRIER_SLUG: "bluedart",
-  VENDOR_ID: "4533749568",
+
+  VENDOR_ID:
+    process.env.ESHIPZ_VENDOR_ID ||
+    "4533749568",
 
   PROVIDER: "eshipz",
 
@@ -37,6 +49,7 @@ export const BLUEDART = {
   /* =====================================================
      SERVICE TYPES
   ===================================================== */
+
   SERVICE_TYPES: {
     COD: "eTailCODAir",
     PREPAID: "eTailPrePaidAir",
@@ -45,124 +58,121 @@ export const BLUEDART = {
   /* =====================================================
      DEFAULT PARCEL VALUES
   ===================================================== */
+
   DEFAULTS: {
     WEIGHT: 0.5,
     LENGTH: 25,
     BREADTH: 20,
     HEIGHT: 5,
     PIECES: 1,
+
     COUNTRY: "IN",
+
     CURRENCY: "INR",
+
     HSN_CODE: "62105000",
   },
 
   /* =====================================================
      STATUS NORMALIZATION MAP
   ===================================================== */
+
   STATUS_MAP: {
     created: "created",
+
     order_pushed: "order_pushed",
 
     pickup_pending: "pickup_pending",
+
     pickup_scheduled: "pickup_pending",
+
     ready_to_ship: "pickup_pending",
 
     picked: "picked",
+
     pickup_done: "picked",
 
     shipped: "in_transit",
+
     in_transit: "in_transit",
+
     transit: "in_transit",
+
     out_for_pickup: "in_transit",
 
     out_for_delivery: "out_for_delivery",
+
     ofd: "out_for_delivery",
 
     delivered: "delivered",
 
     rto: "rto",
+
     rto_initiated: "rto",
+
     rto_delivered: "rto",
 
     cancelled: "cancelled",
+
     canceled: "cancelled",
 
     exception: "exception",
+
     failed: "failed",
+
     lost: "exception",
+
     damaged: "exception",
   },
 
   /* =====================================================
      API ENDPOINTS
-     eShipz APIs
   ===================================================== */
+
   ENDPOINTS: {
-    /*
-      PUSH ORDER / SYNC ORDER
-
-      NOTE:
-      This endpoint pushes order to eShipz.
-      It may not generate AWB directly.
-    */
+    // Orders
     PUSH_ORDER:
-      process.env.ESHIPZ_PUSH_ORDER_ENDPOINT || "/api/v1/orders",
+      process.env.ESHIPZ_PUSH_ORDER_ENDPOINT ||
+      "/orders",
 
-    /*
-      CREATE SHIPMENT / AWB BOOKING
-
-      NOTE:
-      If your account does not support this endpoint,
-      eShipz may return 404.
-    */
-    CREATE_SHIPMENT:
-      process.env.ESHIPZ_CREATE_SHIPMENT_ENDPOINT || "/api/v1/shipments",
-
-    /*
-      GET ORDERS / SINGLE ORDER
-    */
     GET_ORDERS:
-      process.env.ESHIPZ_GET_ORDERS_ENDPOINT || "/api/v1/orders",
+      process.env.ESHIPZ_GET_ORDERS_ENDPOINT ||
+      "/orders",
 
-    /*
-      SERVICEABILITY CHECK
-    */
+    // Shipment Creation
+    CREATE_SHIPMENT:
+      process.env.ESHIPZ_CREATE_SHIPMENT_ENDPOINT ||
+      "/create-shipments",
+
+    UPDATE_SHIPMENT:
+      process.env.ESHIPZ_UPDATE_SHIPMENT_ENDPOINT ||
+      "/shipments",
+
+    CANCEL_SHIPMENT:
+      process.env.ESHIPZ_CANCEL_SHIPMENT_ENDPOINT ||
+      "/shipments/cancel",
+
+    REVERSE_SHIPMENT:
+      process.env.ESHIPZ_REVERSE_SHIPMENT_ENDPOINT ||
+      "/shipments/reverse",
+
+    // Serviceability API (v2)
     SERVICEABILITY:
       process.env.ESHIPZ_SERVICEABILITY_ENDPOINT ||
+      "/services",
+
+    // Tracking
+    TRACK_BY_AWB:
+      process.env.ESHIPZ_TRACK_BY_AWB_ENDPOINT ||
+      "/tracking",
+
+    TRACKING_HISTORY:
+      process.env.ESHIPZ_TRACKING_HISTORY_ENDPOINT ||
+      "/tracking",
+
+    // EDD Prediction
+    EDD_PREDICTION:
+      process.env.ESHIPZ_EDD_PREDICTION_ENDPOINT ||
       "/prediction/predicted-sla/v1/",
-
-    /*
-      TRACKING APIs
-
-      NOTE:
-      These are intentionally blank because:
-      - /api/v1/shipments/track returned 404
-      - /api/v1/tracking returned 404
-
-      Use TRACKING_URL fallback:
-      https://track.eshipz.com/track?awb=AWB_NUMBER
-    */
-    TRACK_BY_AWB: "",
-    TRACKING_HISTORY: "",
-
-    /*
-      CANCEL SHIPMENT
-    */
-    CANCEL_SHIPMENT: "/api/v1/shipments/cancel",
-
-    /*
-      REVERSE SHIPMENT / RETURN SHIPMENT
-    */
-    REVERSE_SHIPMENT: "/api/v1/shipments/reverse",
-
-    /*
-      UPDATE SHIPMENT
-    */
-    UPDATE_SHIPMENT: "/api/v1/shipments",
-
-    /*
-      EDD / SLA PREDICTION
-    */
-    EDD_PREDICTION: "/prediction/predicted-sla/v1/",
   },
 };

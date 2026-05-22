@@ -4,6 +4,8 @@ import { BLUEDART } from "./bluedart.constants.js";
 import {
   buildBlueDartShipmentDocFromOrder,
   buildCreateShipmentPayload,
+buildDirectCreateShipmentPayload,
+buildServiceabilityPayload,
 } from "./bluedart.mapper.js";
 import {
   pushOrderToBlueDart,
@@ -86,6 +88,36 @@ const pickDataNode = (data = {}) => {
   return root?.data || root?.result || root?.shipment || root;
 };
 
+const pickUrl = (...values) => {
+  for (const value of values) {
+    if (!value) continue;
+
+    if (typeof value === "string") {
+      const clean = value.trim();
+      if (clean && clean !== "[object Object]") return clean;
+      continue;
+    }
+
+    if (typeof value === "object") {
+      const nested = pickUrl(
+        value.url,
+        value.contents,
+        value.label_url,
+        value.labelUrl,
+        value.file_url,
+        value.fileUrl,
+        value.invoice,
+        value.manifest,
+        value.package_sticker_url
+      );
+
+      if (nested) return nested;
+    }
+  }
+
+  return "";
+};
+
 const extractCreateResult = (data = {}) => {
   const root = data ?? {};
   const meta = root?.meta ?? {};
@@ -107,10 +139,32 @@ const extractCreateResult = (data = {}) => {
     carrierSlug: ids.carrierSlug || "bluedart",
     serviceType: ids.serviceType || "",
 
-    trackingUrl: ids.trackingUrl || "",
-    labelUrl: ids.labelUrl || "",
-    manifestUrl: ids.manifestUrl || "",
-    invoiceUrl: ids.invoiceUrl || "",
+   trackingUrl: pickUrl(ids.trackingUrl, d?.tracking_link, d?.tracking_url),
+
+labelUrl: pickUrl(
+  ids.labelUrl,
+  d?.label_url,
+  d?.labelUrl,
+  d?.files?.label?.label_meta?.url,
+  d?.files?.label?.label_meta?.contents,
+  d?.files?.label?.url,
+  d?.files?.label
+),
+
+manifestUrl: pickUrl(
+  ids.manifestUrl,
+  d?.manifest_url,
+  d?.manifestUrl,
+  d?.files?.manifest
+),
+
+invoiceUrl: pickUrl(
+  ids.invoiceUrl,
+  d?.invoice_url,
+  d?.invoiceUrl,
+  d?.files?.invoice,
+  d?.files?.label?.invoice
+),
 
     expectedDelivery: ids.expectedDelivery || null,
 
@@ -356,9 +410,9 @@ export const createShipmentFromOrder = async (req, res) => {
       carrierSlug: safe(carrierSlug) || BLUEDART?.CARRIER_SLUG || "bluedart",
     });
 
-    const payload = buildCreateShipmentPayload(shipmentDoc, order);
+const payload = buildDirectCreateShipmentPayload(shipmentDoc, order);
 
-    console.log("\n========== ESHIPZ ORDER PUSH REQUEST ==========");
+    console.log("\n========== ESHIPZ ORDER CREATE REQUEST ==========");
     console.log("ORDER:", order.orderNumber);
     console.log("PAYMENT:", paymentMethod);
     console.log("SERVICE:", finalServiceType);
@@ -366,9 +420,8 @@ export const createShipmentFromOrder = async (req, res) => {
     console.log("PAYLOAD:", JSON.stringify(payload, null, 2));
     console.log("==============================================\n");
 
-    const apiResponse = await pushOrderToBlueDart(payload);
-
-    console.log("\n========== ESHIPZ ORDER PUSH RESPONSE ==========");
+const apiResponse = await createShipmentOnBlueDart(payload);
+    console.log("\n========== ESHIPZ ORDER CREATE RESPONSE ==========");
     console.log(JSON.stringify(apiResponse, null, 2));
     console.log("===============================================\n");
 
@@ -1041,16 +1094,45 @@ const finalServiceType =
     console.log("WEIGHT:", finalWeight);
     console.log("================================================\n");
 
-    const apiResponse = await checkServiceabilityOnBlueDart({
-      pickupPincode: finalPickupPincode,
-      deliveryPincode: finalDeliveryPincode,
-      weight: finalWeight,
-      cod: finalCod,
-      paymentMode: finalPaymentMode,
-      serviceType: finalServiceType,
-      carrierSlug: safe(carrierSlug) || BLUEDART?.CARRIER_SLUG || "bluedart",
-      vendorId: safe(vendorId) || BLUEDART?.VENDOR_ID || "",
-    });
+   const shipmentDoc = buildBlueDartShipmentDocFromOrder(
+  order || {},
+  {
+    sender: getPickupSender(),
+
+    weight: finalWeight,
+
+    serviceType: finalServiceType,
+
+    carrierName:
+      BLUEDART?.CARRIER_NAME || "BlueDart",
+
+    carrierSlug:
+      BLUEDART?.CARRIER_SLUG || "bluedart",
+  }
+);
+
+const payload =
+  buildServiceabilityPayload(
+    shipmentDoc,
+    order
+  );
+
+console.log(
+  "\n========== SERVICEABILITY PAYLOAD =========="
+);
+
+console.log(
+  JSON.stringify(payload, null, 2)
+);
+
+console.log(
+  "============================================\n"
+);
+
+const apiResponse =
+  await checkServiceabilityOnBlueDart(
+    payload
+  );
 
     const rawCouriers =
       apiResponse?.data?.available_courier_companies ||

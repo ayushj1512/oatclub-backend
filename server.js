@@ -86,6 +86,8 @@ import fabriclogRoutes from "./FabricLog/FabricLogRouter.js";
 import orderRefundRoutes from "./Orders/order.refunds/orderRefundRoutes.js";
 import marketingcampaignroutes from "./MarketingCampaign/marketingCampaignRoutes.js";
 
+import eshipzRoutes from "./eshipZ/eshipz.routes.js";
+
 // --------------------------------------------------
 // APP CONFIG
 // --------------------------------------------------
@@ -249,11 +251,13 @@ app.use("/api/marketing", marketingSpendRoutes);
 app.use("/api/commerce-manager", commerceManagerRoutes);
 app.use("/api/commerce-feed", commerceFeed);
 
+
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/homepage-settings", homepageSettingsRoutes);
 app.use("/api/newsletters", newsletterRouter);
 app.use("/api/bluedart", bluedartRoutes);
+app.use("/api/eshipz", eshipzRoutes);
 app.use("/api/remittance", remittanceRoutes);
 
 app.use("/api/media", mediaRoutes);

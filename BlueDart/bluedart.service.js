@@ -12,6 +12,11 @@ const EDD_BASE_URL = String(
   BLUEDART?.EDD_BASE_URL || "https://ds.eshipz.com"
 ).replace(/\/+$/, "");
 
+const SERVICEABILITY_BASE_URL = String(
+  BLUEDART?.SERVICEABILITY_BASE_URL ||
+    "https://app.eshipz.com/api/v2"
+).replace(/\/+$/, "");
+
 const FALLBACK_CARRIER_SLUG = "bluedart";
 const FALLBACK_CARRIER_NAME = "BlueDart";
 const FALLBACK_VENDOR_ID = "4533749568";
@@ -129,6 +134,12 @@ const eddClient = axios.create({
   headers: getAuthHeaders(),
 });
 
+const serviceabilityClient = axios.create({
+  baseURL: SERVICEABILITY_BASE_URL,
+  timeout: Number(BLUEDART?.TIMEOUT || 30000),
+  headers: getAuthHeaders(),
+});
+
 /* ======================================================
    LOGGING
 ====================================================== */
@@ -155,6 +166,7 @@ const logConfigSnapshot = () => {
 
 const logRequest = (label, baseUrl, endpoint, payload) => {
   const firstOrder = getFirstPayloadOrder(payload);
+  console.log("FULL_FIRST_ORDER:", shortJson(firstOrder, 2000));
 
   console.log(`\n========== ${label} REQUEST ==========`);
   console.log("ORDER_ID:", firstOrder?.order_id || firstOrder?.orderNumber || "");
@@ -268,8 +280,44 @@ const post = async (endpoint, payload, label, fallbackMessage) => {
     const res = await client.post(endpoint, payload);
     const data = unwrap(res);
 
+    /* =========================================
+   ESHIPZ SUCCESS VALIDATION
+========================================= */
+
+const responseNote = safeString(data?.note).toLowerCase();
+const responseRemark = safeString(
+  data?.remark || data?.message
+).toLowerCase();
+
+const orderNotUpdated = Array.isArray(data?.order_not_updated)
+  ? data.order_not_updated
+  : [];
+
+const failedBecauseEdited =
+  responseNote.includes("won't be created") ||
+  responseNote.includes("wont be created");
+
+const firstOrder = getFirstPayloadOrder(payload);
+
+if (failedBecauseEdited || orderNotUpdated.length) {
+  console.error("\n❌ ESHIPZ BUSINESS FAILURE DETECTED");
+  console.error("ORDER_NOT_UPDATED:", orderNotUpdated);
+  console.error("NOTE:", data?.note);
+  console.error("REMARK:", data?.remark);
+
+  const err = new Error(
+  "Eshipz accepted request but order was NOT created/updated"
+);
+
+err.data = data;
+
+throw err;
+}
+
     console.log(`✅ ${label} HTTP SUCCESS:`, res?.status);
     logResponse(label, data);
+
+
 
     return data;
   } catch (error) {
@@ -492,6 +540,24 @@ export const pushOrderToBlueDart = async (payload = {}) => {
   console.log("\n🚚 BLUE DART FLOW: PUSH ORDER TO ESHIPZ");
   console.log("⚠️ This API only pushes/syncs order. AWB may not generate here.");
   console.log("Using endpoint:", endpoint);
+  const firstOrder = getFirstPayloadOrder(payload);
+
+console.log("\n========== PRE PUSH VALIDATION ==========");
+console.log("ORDER_ID:", firstOrder?.order_id);
+console.log("SERVICE_TYPE:", firstOrder?.service_type);
+console.log("IS_COD:", firstOrder?.is_cod);
+console.log("COD_AMOUNT:", firstOrder?.cod_amount);
+console.log("SHIPMENT_VALUE:", firstOrder?.shipment_value);
+console.log("ITEMS_COUNT:", firstOrder?.items?.length || 0);
+console.log(
+  "RECEIVER_PHONE:",
+  firstOrder?.receiver_address?.phone
+);
+console.log(
+  "RECEIVER_PINCODE:",
+  firstOrder?.receiver_address?.zipcode
+);
+console.log("=========================================\n");
 
   return post(
     endpoint,
@@ -519,105 +585,63 @@ export const createShipmentOnBlueDart = async (payload = {}) => {
    SERVICEABILITY CHECK
 ====================================================== */
 
-export const checkServiceabilityOnBlueDart = async ({
-  pickupPincode,
-  deliveryPincode,
-  originPincode,
-  destinationPincode,
-  weight = BLUEDART?.DEFAULTS?.WEIGHT || 0.5,
-  cod = false,
-  paymentMode = "",
-  serviceType = "",
-  carrierSlug = "",
-  vendorId = "",
-} = {}) => {
-  const finalPickupPincode = safeString(
-    pickupPincode || originPincode || BLUEDART?.PICKUP_PINCODE
-  );
-
-  const finalDeliveryPincode = safeString(
-    deliveryPincode || destinationPincode
-  );
-
-  const finalSlug = safeString(carrierSlug)
-    ? getCarrierSlug(carrierSlug)
-    : getCarrierSlug();
-
-  if (!finalPickupPincode) {
-    throw new Error("pickupPincode is required");
-  }
-
-  if (!finalDeliveryPincode) {
-    throw new Error("deliveryPincode is required");
-  }
-
+export const checkServiceabilityOnBlueDart = async (
+  payload = {}
+) => {
   const endpoint =
-    BLUEDART?.ENDPOINTS?.EDD_PREDICTION || "/prediction/predicted-sla/v1/";
+    BLUEDART?.ENDPOINTS?.SERVICEABILITY ||
+    "/services";
 
-  const payload = cleanObject({
-    origin_pincode: finalPickupPincode,
-    destination_pincode: finalDeliveryPincode,
-    slug: finalSlug,
-  });
-
-  console.log("\n🔎 BLUE DART FLOW: SERVICEABILITY VIA EDD");
-  console.log("EDD_BASE_URL:", EDD_BASE_URL);
-  console.log("Endpoint:", endpoint);
-  console.log("Pickup:", finalPickupPincode);
-  console.log("Delivery:", finalDeliveryPincode);
-  console.log("Slug:", finalSlug);
-
-  const eddResponse = await postToEdd(
-    endpoint,
-    payload,
-    "ESHIPZ SERVICEABILITY VIA EDD",
-    "Failed to check Eshipz serviceability via EDD"
+  console.log(
+    "\n🔎 BLUE DART FLOW: SERVICEABILITY CHECK"
   );
 
-  const predictionSource = eddResponse?.data || eddResponse;
-  const prediction = Array.isArray(predictionSource)
-    ? predictionSource[0] || {}
-    : predictionSource || {};
-
-  const serviceable = Boolean(
-    prediction?.exp_del_date ||
-      prediction?.exp_del_days ||
-      prediction?.eta ||
-      prediction?.edd ||
-      prediction?.predicted_sla ||
-      prediction?.predicted_delivery_date
+  console.log(
+    "SERVICEABILITY_BASE_URL:",
+    SERVICEABILITY_BASE_URL
   );
 
-  const courier = serviceable
-    ? {
-        courier_name: "BlueDart",
-        carrier_name: "BlueDart",
-        slug: finalSlug,
-        vendor_id: getVendorId(vendorId),
-      }
-    : null;
+  console.log("ENDPOINT:", endpoint);
 
-  return {
-    success: true,
-    provider: "eshipz",
-    mode: "edd_fallback",
-    serviceable,
-    is_serviceable: serviceable,
-    blueDartAvailable: serviceable,
-    courier,
-    couriers: courier ? [courier] : [],
-    request: {
-      pickupPincode: finalPickupPincode,
-      deliveryPincode: finalDeliveryPincode,
-      weight: Number(weight) > 0 ? Number(weight) : 0.5,
-      cod,
-      paymentMode,
-      serviceType,
-      carrierSlug: finalSlug,
-    },
-    prediction,
-    externalResponse: eddResponse,
-  };
+  console.log(
+    "FINAL_URL:",
+    joinUrl(
+      SERVICEABILITY_BASE_URL,
+      endpoint
+    )
+  );
+
+  console.log(
+    "PAYLOAD:",
+    shortJson(payload)
+  );
+
+  try {
+    const res =
+      await serviceabilityClient.post(
+        endpoint,
+        payload
+      );
+
+    const data = unwrap(res);
+
+    console.log(
+      "✅ SERVICEABILITY RESPONSE:",
+      shortJson(data)
+    );
+
+    return data;
+  } catch (error) {
+    logError(
+      "ESHIPZ SERVICEABILITY",
+      error
+    );
+
+    throw buildError(
+      "Failed to check serviceability",
+      error
+    );
+  }
 };
 
 /* ======================================================

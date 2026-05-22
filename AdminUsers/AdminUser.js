@@ -11,7 +11,7 @@ const adminUserSchema = new mongoose.Schema(
       trim: true,
       minlength: 3,
       maxlength: 50,
-      lowercase: true, // ✅ normalize
+      lowercase: true,
       index: true,
     },
 
@@ -23,7 +23,7 @@ const adminUserSchema = new mongoose.Schema(
       trim: true,
       index: true,
       validate: {
-        validator: function (v) {
+        validator(v) {
           return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
         },
         message: "Invalid email format",
@@ -34,7 +34,7 @@ const adminUserSchema = new mongoose.Schema(
       type: String,
       required: true,
       minlength: 6,
-      select: false, // ✅ don't send password by default
+      select: false,
     },
 
     role: {
@@ -45,11 +45,11 @@ const adminUserSchema = new mongoose.Schema(
         "staff",
         "influencer",
         "viewer",
-        "customer_care", // ✅ added
+        "customer_care",
       ],
       default: "admin",
       index: true,
-      lowercase: true, // ✅ extra safety
+      lowercase: true,
       trim: true,
     },
 
@@ -60,7 +60,7 @@ const adminUserSchema = new mongoose.Schema(
     },
 
     profileImage: {
-      type: String, // Cloudinary URL
+      type: String,
       default: "",
     },
 
@@ -70,7 +70,6 @@ const adminUserSchema = new mongoose.Schema(
       default: "",
     },
 
-    // 🔹 Permissions for granular control (optional use)
     permissions: {
       type: [String],
       default: [],
@@ -97,7 +96,19 @@ const adminUserSchema = new mongoose.Schema(
       default: null,
     },
 
-    // 🔹 For auditing purposes
+    // ✅ Used to invalidate all old JWT sessions
+    sessionVersion: {
+      type: Number,
+      default: 0,
+      index: true,
+    },
+
+    // ✅ Helpful for admin audit/debug
+    forceLoggedOutAt: {
+      type: Date,
+      default: null,
+    },
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "AdminUser",
@@ -107,16 +118,15 @@ const adminUserSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-/* ============================================================
-   🔐 Password Hash Middleware
-   ✅ prevents hashing if password already hashed
-============================================================ */
 adminUserSchema.pre("save", async function (next) {
   try {
     if (!this.isModified("password")) return next();
 
-    // ✅ If already hashed (starts with $2a/$2b), skip rehashing
-    if (this.password?.startsWith("$2a$") || this.password?.startsWith("$2b$")) {
+    if (
+      this.password?.startsWith("$2a$") ||
+      this.password?.startsWith("$2b$") ||
+      this.password?.startsWith("$2y$")
+    ) {
       return next();
     }
 
@@ -129,25 +139,16 @@ adminUserSchema.pre("save", async function (next) {
   }
 });
 
-/* ============================================================
-   🔍 Compare Password Method
-============================================================ */
 adminUserSchema.methods.matchPassword = async function (enteredPassword) {
   return bcrypt.compare(enteredPassword, this.password);
 };
 
-/* ============================================================
-   🔒 Lockout Mechanism (Brute force protection)
-   - 5 wrong attempts -> lock for 2 hours
-============================================================ */
 adminUserSchema.methods.incrementLoginAttempts = async function () {
-  const lockTime = 2 * 60 * 60 * 1000; // 2 hours
+  const lockTime = 2 * 60 * 60 * 1000;
 
-  // If currently locked
   if (this.lockUntil && this.lockUntil > Date.now()) {
     this.loginAttempts += 1;
   } else {
-    // not locked OR lock expired
     this.loginAttempts = (this.loginAttempts || 0) + 1;
 
     if (this.loginAttempts >= 5) {
@@ -158,28 +159,27 @@ adminUserSchema.methods.incrementLoginAttempts = async function () {
   await this.save();
 };
 
-/* ============================================================
-   ✅ Reset attempts on successful login
-============================================================ */
 adminUserSchema.methods.resetLoginAttempts = async function () {
   this.loginAttempts = 0;
   this.lockUntil = null;
   await this.save();
 };
 
-/* ============================================================
-   ✅ Helper: check if locked
-============================================================ */
 adminUserSchema.methods.isLocked = function () {
   return this.lockUntil && this.lockUntil > Date.now();
 };
 
-/* ============================================================
-   ✅ Fix for Next.js / Hot reload model caching issue
-============================================================ */
+// ✅ Force logout from all active sessions
+adminUserSchema.methods.forceLogout = async function () {
+  this.sessionVersion = (this.sessionVersion || 0) + 1;
+  this.forceLoggedOutAt = new Date();
+  await this.save();
+};
+
 if (mongoose.models.AdminUser) {
   delete mongoose.models.AdminUser;
 }
 
 const AdminUser = mongoose.model("AdminUser", adminUserSchema);
+
 export default AdminUser;

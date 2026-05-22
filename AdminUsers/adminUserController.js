@@ -21,13 +21,20 @@ const safePermissions = (p) => {
   return p.map((x) => normalize(x)).filter(Boolean);
 };
 
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "7d" });
+const generateToken = (admin) => {
+  return jwt.sign(
+    {
+      id: admin._id,
+      role: admin.role,
+      sessionVersion: admin.sessionVersion || 0,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
 };
 
 /* ============================================================
    ✅ GET: /api/admin-users
-   List admin users with pagination, search, filters
 ============================================================ */
 export const getAdminUsers = async (req, res) => {
   try {
@@ -36,7 +43,6 @@ export const getAdminUsers = async (req, res) => {
 
     const query = {};
 
-    // 🔍 Search by username/email/fullName/phone
     const s = normalize(search);
     if (s) {
       query.$or = [
@@ -47,16 +53,15 @@ export const getAdminUsers = async (req, res) => {
       ];
     }
 
-    // 🎭 Role filter
     if (role && ALLOWED_ROLES.includes(String(role))) {
       query.role = String(role);
     }
 
-    // ✅ Active filter
     if (isActive !== "") query.isActive = String(isActive) === "true";
 
     const safeLimit = Math.min(200, Math.max(1, Number(limit)));
-    const skip = (Math.max(1, Number(page)) - 1) * safeLimit;
+    const safePage = Math.max(1, Number(page));
+    const skip = (safePage - 1) * safeLimit;
 
     const [users, total] = await Promise.all([
       AdminUser.find(query)
@@ -71,7 +76,7 @@ export const getAdminUsers = async (req, res) => {
     res.status(200).json({
       success: true,
       total,
-      page: Number(page),
+      page: safePage,
       limit: safeLimit,
       totalPages: Math.ceil((total || 0) / safeLimit),
       users: users || [],
@@ -83,7 +88,6 @@ export const getAdminUsers = async (req, res) => {
 
 /* ============================================================
    ✅ GET: /api/admin-users/:id
-   Get single admin user
 ============================================================ */
 export const getAdminUserById = async (req, res) => {
   try {
@@ -91,10 +95,12 @@ export const getAdminUserById = async (req, res) => {
       .select("-password")
       .lean();
 
-    if (!user)
-      return res
-        .status(404)
-        .json({ success: false, message: "Admin user not found" });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin user not found",
+      });
+    }
 
     res.status(200).json({ success: true, user });
   } catch (error) {
@@ -104,7 +110,6 @@ export const getAdminUserById = async (req, res) => {
 
 /* ============================================================
    ✅ POST: /api/admin-users
-   Create admin user
 ============================================================ */
 export const createAdminUser = async (req, res) => {
   try {
@@ -151,12 +156,13 @@ export const createAdminUser = async (req, res) => {
     const user = await AdminUser.create({
       username,
       email,
-      password, // hashed by pre-save
+      password,
       role,
       fullName,
       phone,
       profileImage,
       permissions,
+      sessionVersion: 0,
       createdBy: req.admin?._id || null,
     });
 
@@ -170,7 +176,6 @@ export const createAdminUser = async (req, res) => {
       user: createdUser,
     });
   } catch (error) {
-    // ✅ duplicate key
     if (error?.code === 11000) {
       const field = Object.keys(error.keyValue || {})[0] || "field";
       return res.status(409).json({
@@ -185,7 +190,6 @@ export const createAdminUser = async (req, res) => {
 
 /* ============================================================
    ✅ PATCH: /api/admin-users/:id
-   Update profile fields (not password/role)
 ============================================================ */
 export const updateAdminUser = async (req, res) => {
   try {
@@ -193,15 +197,29 @@ export const updateAdminUser = async (req, res) => {
     const { fullName, phone, profileImage, isActive } = payload;
 
     const user = await AdminUser.findById(req.params.id).select("-password");
-    if (!user)
-      return res
-        .status(404)
-        .json({ success: false, message: "Admin user not found" });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin user not found",
+      });
+    }
+
+    const wasActive = user.isActive;
 
     if (fullName !== undefined) user.fullName = normalize(fullName);
     if (phone !== undefined) user.phone = normalize(phone);
     if (profileImage !== undefined) user.profileImage = normalize(profileImage);
-    if (isActive !== undefined) user.isActive = !!isActive;
+
+    if (isActive !== undefined) {
+      user.isActive = !!isActive;
+
+      // ✅ If disabled, force logout all sessions
+      if (wasActive && !user.isActive) {
+        user.sessionVersion = (user.sessionVersion || 0) + 1;
+        user.forceLoggedOutAt = new Date();
+      }
+    }
 
     await user.save();
 
@@ -221,31 +239,47 @@ export const updateAdminUser = async (req, res) => {
 
 /* ============================================================
    ✅ PATCH: /api/admin-users/:id/role
-   Update role + permissions
 ============================================================ */
 export const updateAdminRoleAndPermissions = async (req, res) => {
   try {
     const { role, permissions } = req.body || {};
 
     const user = await AdminUser.findById(req.params.id).select("-password");
-    if (!user)
-      return res
-        .status(404)
-        .json({ success: false, message: "Admin user not found" });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin user not found",
+      });
+    }
+
+    let shouldForceLogout = false;
 
     if (role !== undefined) {
-      const nextRole = String(role);
+      const nextRole = normalizeLower(role);
+
       if (!ALLOWED_ROLES.includes(nextRole)) {
         return res.status(400).json({
           success: false,
           message: "Invalid role",
         });
       }
-      user.role = nextRole;
+
+      if (user.role !== nextRole) {
+        user.role = nextRole;
+        shouldForceLogout = true;
+      }
     }
 
     if (permissions !== undefined) {
       user.permissions = safePermissions(permissions);
+      shouldForceLogout = true;
+    }
+
+    // ✅ Role/permission change should invalidate old token
+    if (shouldForceLogout) {
+      user.sessionVersion = (user.sessionVersion || 0) + 1;
+      user.forceLoggedOutAt = new Date();
     }
 
     await user.save();
@@ -266,7 +300,6 @@ export const updateAdminRoleAndPermissions = async (req, res) => {
 
 /* ============================================================
    ✅ PATCH: /api/admin-users/:id/password
-   Change password securely
 ============================================================ */
 export const changeAdminPassword = async (req, res) => {
   try {
@@ -281,17 +314,26 @@ export const changeAdminPassword = async (req, res) => {
     }
 
     const user = await AdminUser.findById(req.params.id).select("+password");
-    if (!user)
-      return res
-        .status(404)
-        .json({ success: false, message: "Admin user not found" });
 
-    user.password = nextPass; // hashed via pre-save
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin user not found",
+      });
+    }
+
+    user.password = nextPass;
+
+    // ✅ Password change = logout from all old sessions
+    user.sessionVersion = (user.sessionVersion || 0) + 1;
+    user.forceLoggedOutAt = new Date();
+
     await user.save();
 
-    res
-      .status(200)
-      .json({ success: true, message: "Password updated successfully" });
+    res.status(200).json({
+      success: true,
+      message: "Password updated successfully. User has been logged out from old sessions.",
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -299,15 +341,17 @@ export const changeAdminPassword = async (req, res) => {
 
 /* ============================================================
    ✅ PATCH: /api/admin-users/:id/unlock
-   Reset login attempts & lockUntil
 ============================================================ */
 export const unlockAdminUser = async (req, res) => {
   try {
     const user = await AdminUser.findById(req.params.id);
-    if (!user)
-      return res
-        .status(404)
-        .json({ success: false, message: "Admin user not found" });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin user not found",
+      });
+    }
 
     user.loginAttempts = 0;
     user.lockUntil = null;
@@ -330,22 +374,59 @@ export const unlockAdminUser = async (req, res) => {
 };
 
 /* ============================================================
+   ✅ PATCH: /api/admin-users/:id/force-logout
+   Force logout user from all active sessions
+============================================================ */
+export const forceLogoutAdminUser = async (req, res) => {
+  try {
+    const user = await AdminUser.findById(req.params.id).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin user not found",
+      });
+    }
+
+    user.sessionVersion = (user.sessionVersion || 0) + 1;
+    user.forceLoggedOutAt = new Date();
+
+    await user.save();
+
+    const safeUser = await AdminUser.findById(user._id)
+      .select("-password")
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      message: "Admin user logged out from all active sessions",
+      user: safeUser,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ============================================================
    ✅ DELETE: /api/admin-users/:id
-   Delete admin user (hard delete)
 ============================================================ */
 export const deleteAdminUser = async (req, res) => {
   try {
     const user = await AdminUser.findById(req.params.id);
-    if (!user)
-      return res
-        .status(404)
-        .json({ success: false, message: "Admin user not found" });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin user not found",
+      });
+    }
 
     await user.deleteOne();
 
-    res
-      .status(200)
-      .json({ success: true, message: "Admin user deleted successfully" });
+    res.status(200).json({
+      success: true,
+      message: "Admin user deleted successfully",
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -354,7 +435,6 @@ export const deleteAdminUser = async (req, res) => {
 /* ===========================================================
    ✅ ADMIN LOGIN
    POST /api/admin-auth/login
-   - username OR email allowed
 =========================================================== */
 export const adminLogin = async (req, res) => {
   try {
@@ -370,7 +450,6 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // ✅ allow login using username OR email
     const admin = await AdminUser.findOne({
       $or: [{ username }, { email: username }],
     }).select("+password");
@@ -382,7 +461,6 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // ✅ disabled check
     if (!admin.isActive) {
       return res.status(403).json({
         success: false,
@@ -390,7 +468,6 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // ✅ lock check (using schema method)
     if (admin.isLocked && admin.isLocked()) {
       return res.status(403).json({
         success: false,
@@ -398,7 +475,6 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // ✅ password match
     const isMatch = await admin.matchPassword(password);
 
     if (!isMatch) {
@@ -410,13 +486,12 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // ✅ success: reset lock
     if (admin.resetLoginAttempts) await admin.resetLoginAttempts();
 
     admin.lastLogin = new Date();
     await admin.save();
 
-    const token = generateToken(admin._id);
+    const token = generateToken(admin);
 
     return res.status(200).json({
       success: true,
@@ -428,9 +503,13 @@ export const adminLogin = async (req, res) => {
         email: admin.email,
         role: admin.role,
         fullName: admin.fullName || "",
+        profileImage: admin.profileImage || "",
+        phone: admin.phone || "",
         permissions: admin.permissions || [],
         isActive: admin.isActive,
         lastLogin: admin.lastLogin,
+        sessionVersion: admin.sessionVersion || 0,
+        forceLoggedOutAt: admin.forceLoggedOutAt || null,
       },
     });
   } catch (error) {

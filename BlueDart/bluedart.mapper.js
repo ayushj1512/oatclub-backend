@@ -329,7 +329,10 @@ export const buildCreateShipmentPayload = (shipment = {}, order = null) => {
   );
 
   const payloadOrder = {
-    order_id: safe(shipment?.referenceNumber || shipment?.orderNumber),
+order_id: `${safe(shipment?.referenceNumber || shipment?.orderNumber)}-${Date.now()}`,  //   service_type:
+  // safe(shipment?.serviceType) ||
+  // getBlueDartServiceType(sourceOrder) ||
+  // (isCod ? "eTailCODAir" : "eTailPrePaidAir"),
 
     store_name: BLUEDART?.STORE_NAME || "other",
     store_id: BLUEDART?.STORE_ID || "other",
@@ -408,9 +411,17 @@ export const buildCreateShipmentPayload = (shipment = {}, order = null) => {
     ],
 
     invoice_number: safe(sourceOrder?.invoiceNumber || ""),
-    trip_id: safe(shipment?.orderNumber),
-    po_number: safe(shipment?.referenceNumber || shipment?.orderNumber),
+   trip_id: `${safe(shipment?.orderNumber)}-${Date.now()}`,
+po_number: `${safe(shipment?.referenceNumber || shipment?.orderNumber)}-${Date.now()}`,
   };
+
+  console.log("\n========== ESHIPZ MAPPER PAYLOAD CHECK ==========");
+console.log("ORDER_ID:", payloadOrder.order_id);
+console.log("SERVICE_TYPE:", payloadOrder.service_type);
+console.log("IS_COD:", payloadOrder.is_cod);
+console.log("COD_AMOUNT:", payloadOrder.cod_amount);
+console.log("SHIPMENT_VALUE:", payloadOrder.shipment_value);
+console.log("===============================================\n");
 
   return { data: [payloadOrder] };
 };
@@ -529,6 +540,368 @@ export const mapTrackingToShipmentUpdate = (tracking = {}) => {
   }
 
   return update;
+};
+
+export const buildDirectCreateShipmentPayload = (shipment = {}, order = null) => {
+  const sourceOrder = order || {};
+const firstItem =
+  sourceOrder?.items?.[0] ||
+  {};
+
+const productTitle =
+  safe(firstItem?.productSnapshot?.title) ||
+  safe(firstItem?.title) ||
+  "Fashion Apparel";
+
+  const declaredValue = positive(
+    shipment?.declaredValue,
+    getOrderDeclaredValue(sourceOrder)
+  );
+
+  const currency = safe(shipment?.currency || getOrderCurrency(sourceOrder)) || "INR";
+  const isCod = safe(shipment?.paymentMode).toUpperCase() === "COD";
+
+  const invoiceIsoDate = new Date(
+    sourceOrder?.orderDate || sourceOrder?.createdAt || new Date()
+  ).toISOString();
+
+  const addressType = "residential";
+
+  const shipperAddress = {
+    contact_name: safe(shipment?.sender?.fullName),
+    company_name: BLUEDART?.SENDER_COMPANY_NAME || "MIRAY",
+    street1: safe(shipment?.sender?.line1),
+    street2: safe(shipment?.sender?.line2),
+    city: safe(shipment?.sender?.city),
+    state: safe(shipment?.sender?.state),
+    postal_code: safe(shipment?.sender?.pincode),
+    phone: safe(shipment?.sender?.phone),
+    email: safe(shipment?.sender?.email),
+    tax_id: safe(process.env.ESHIPZ_GST_NUMBER || process.env.BLUEDART_GST_NUMBER || ""),
+    country: countryToCode(shipment?.sender?.country),
+    type: addressType,
+  };
+
+  const receiverAddress = {
+    contact_name: safe(shipment?.recipient?.fullName),
+    company_name: "",
+    street1: safe(shipment?.recipient?.line1),
+    street2: safe(shipment?.recipient?.line2),
+    city: safe(shipment?.recipient?.city),
+    state: safe(shipment?.recipient?.state),
+    postal_code: safe(shipment?.recipient?.pincode),
+    phone: safe(shipment?.recipient?.phone),
+    email: safe(shipment?.recipient?.email),
+    country: countryToCode(shipment?.recipient?.country),
+    type: addressType,
+  };
+
+  const itemWeight = {
+    value: getShipmentWeight(shipment),
+    unit: "kg",
+  };
+
+  return {
+    billing: {
+      paid_by: "shipper",
+    },
+
+    vendor_id: BLUEDART?.VENDOR_ID || "",
+description: productTitle,
+    slug: BLUEDART?.CARRIER_SLUG || "bluedart",
+    purpose: "commercial",
+    order_source: "api",
+parcel_contents: productTitle,
+    is_document: false,
+
+    service_type:
+      safe(shipment?.serviceType) ||
+      (isCod ? "eTailCODAir" : "eTailPrePaidAir"),
+
+    charged_weight: {
+      value: getShipmentWeight(shipment),
+      unit: "kg",
+    },
+
+    customer_reference: safe(shipment?.referenceNumber || shipment?.orderNumber),
+    invoice_number: safe(sourceOrder?.invoiceNumber || shipment?.orderNumber),
+    invoice_date: invoiceIsoDate,
+
+    is_cod: isCod,
+
+    collect_on_delivery: {
+      amount: isCod ? positive(shipment?.codAmount, declaredValue) : 0,
+      currency,
+    },
+
+    shipment: {
+      ship_from: shipperAddress,
+      ship_to: receiverAddress,
+      return_to: shipperAddress,
+
+      is_reverse: false,
+      is_to_pay: false,
+
+      parcels: [
+        {
+description: productTitle,
+          box_type: "custom",
+          quantity: positive(shipment?.pieces, 1),
+          weight: {
+            value: getShipmentWeight(shipment),
+            unit: "kg",
+          },
+          dimension: {
+            width: getShipmentBreadth(shipment),
+            height: getShipmentHeight(shipment),
+            length: getShipmentLength(shipment),
+            unit: "cm",
+          },
+          items: getOrderItemsForPayload(sourceOrder, shipment).map((item) => ({
+            description: item.description,
+            origin_country: "IN",
+            sku: item.sku,
+            hs_code: item.hs_code,
+            variant: "",
+            quantity: item.quantity,
+            price: {
+              amount: item?.value?.amount || declaredValue,
+              currency,
+            },
+            weight: itemWeight,
+          })),
+        },
+      ],
+    },
+
+    gst_invoices: [
+      {
+        invoice_number: safe(sourceOrder?.invoiceNumber || shipment?.orderNumber),
+        invoice_date: invoiceIsoDate,
+        invoice_value: declaredValue,
+        ewaybill_number: "",
+        ewaybill_date: "",
+      },
+    ],
+  };
+};
+
+export const buildServiceabilityPayload = (
+  shipment = {},
+  order = null
+) => {
+  const sourceOrder = order || {};
+
+  const isCod =
+    safe(shipment?.paymentMode).toUpperCase() === "COD";
+
+  return {
+    is_document: false,
+
+    shipment: {
+      is_reverse: false,
+
+      purpose: "commercial",
+
+      is_cod: isCod,
+
+      collect_on_delivery: {
+        amount: isCod
+          ? positive(
+              shipment?.codAmount,
+              getOrderDeclaredValue(sourceOrder)
+            )
+          : 0,
+
+        currency:
+          safe(
+            shipment?.currency ||
+              getOrderCurrency(sourceOrder)
+          ) || "INR",
+      },
+
+      ship_from: {
+        contact_name: safe(
+          shipment?.sender?.fullName
+        ),
+
+        company_name:
+          BLUEDART?.SENDER_COMPANY_NAME ||
+          "MIRAY",
+
+        street1: safe(
+          shipment?.sender?.line1
+        ),
+
+        street2: safe(
+          shipment?.sender?.line2
+        ),
+
+        city: safe(
+          shipment?.sender?.city
+        ),
+
+        state: safe(
+          shipment?.sender?.state
+        ),
+
+        postal_code: safe(
+          shipment?.sender?.pincode
+        ),
+
+        country: countryToCode(
+          shipment?.sender?.country
+        ),
+
+        type: "residential",
+
+        phone: safe(
+          shipment?.sender?.phone
+        ),
+
+        email: safe(
+          shipment?.sender?.email
+        ),
+      },
+
+      ship_to: {
+        contact_name: safe(
+          shipment?.recipient?.fullName
+        ),
+
+        company_name: "",
+
+        street1: safe(
+          shipment?.recipient?.line1
+        ),
+
+        street2: safe(
+          shipment?.recipient?.line2
+        ),
+
+        city: safe(
+          shipment?.recipient?.city
+        ),
+
+        state: safe(
+          shipment?.recipient?.state
+        ),
+
+        postal_code: safe(
+          shipment?.recipient?.pincode
+        ),
+
+        country: countryToCode(
+          shipment?.recipient?.country
+        ),
+
+        type: "residential",
+
+        phone: safe(
+          shipment?.recipient?.phone
+        ),
+
+        email: safe(
+          shipment?.recipient?.email
+        ),
+      },
+
+      return_to: {
+        contact_name: safe(
+          shipment?.sender?.fullName
+        ),
+
+        company_name:
+          BLUEDART?.SENDER_COMPANY_NAME ||
+          "MIRAY",
+
+        street1: safe(
+          shipment?.sender?.line1
+        ),
+
+        street2: safe(
+          shipment?.sender?.line2
+        ),
+
+        city: safe(
+          shipment?.sender?.city
+        ),
+
+        state: safe(
+          shipment?.sender?.state
+        ),
+
+        postal_code: safe(
+          shipment?.sender?.pincode
+        ),
+
+        country: countryToCode(
+          shipment?.sender?.country
+        ),
+
+        type: "residential",
+
+        phone: safe(
+          shipment?.sender?.phone
+        ),
+
+        email: safe(
+          shipment?.sender?.email
+        ),
+      },
+
+      parcels: [
+        {
+          description: "Fashion Products",
+
+          box_type: "custom",
+
+          weight: {
+            value: getShipmentWeight(shipment),
+            unit: "kg",
+          },
+
+          dimension: {
+            width: getShipmentBreadth(shipment),
+
+            height: getShipmentHeight(shipment),
+
+            length: getShipmentLength(shipment),
+
+            unit: "cm",
+          },
+
+          items: [
+            {
+              description: "Fashion Products",
+
+              origin_country: "IN",
+
+              quantity: 1,
+
+              price: {
+                amount: positive(
+                  shipment?.declaredValue,
+                  getOrderDeclaredValue(sourceOrder)
+                ),
+
+                currency:
+                  safe(
+                    shipment?.currency ||
+                      getOrderCurrency(sourceOrder)
+                  ) || "INR",
+              },
+
+              weight: {
+                value: getShipmentWeight(shipment),
+                unit: "kg",
+              },
+            },
+          ],
+        },
+      ],
+    },
+  };
 };
 
 export { getDefaultSender };
