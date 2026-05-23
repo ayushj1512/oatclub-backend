@@ -183,6 +183,16 @@ router.patch("/:id/address", updateOrderAddress);
 router.patch("/:id", updateOrder);
 router.put("/:id", updateOrder);
 router.get("/:id/confirmation-details", getOrderConfirmationDetails);
+/* Confirmed / Not Confirmed Orders */
+router.get("/confirmed", (req, res) => {
+  req.query.confirmFilter = "confirmed";
+  return getAllOrders(req, res);
+});
+
+router.get("/not-confirmed", (req, res) => {
+  req.query.confirmFilter = "not_confirmed";
+  return getAllOrders(req, res);
+});
 router.get("/:id", getOrderById);
 
 export default router;

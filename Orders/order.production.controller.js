@@ -1136,9 +1136,7 @@ export const getProcessingOrderProductList = async (req, res) => {
       orderType: { $ne: "parent" },
     };
 
-    if (dateRange) {
-      baseMatch.orderDate = dateRange;
-    }
+    if (dateRange) baseMatch.orderDate = dateRange;
 
     const searchStages = search
       ? [
@@ -1225,21 +1223,22 @@ export const getProcessingOrderProductList = async (req, res) => {
           productImage: { $ifNull: ["$items.productSnapshot.thumbnail", ""] },
           sku: {
             $cond: [
-              {
-                $gt: [
-                  { $strLenCP: { $ifNull: ["$items.variant.sku", ""] } },
-                  0,
-                ],
-              },
+              { $gt: [{ $strLenCP: { $ifNull: ["$items.variant.sku", ""] } }, 0] },
               "$items.variant.sku",
               "$items.productSnapshot.productCode",
             ],
           },
+
           selectedSize: { $ifNull: ["$items.selectedSize", ""] },
           selectedColor: { $ifNull: ["$items.selectedColor", ""] },
+
           orderedQty: { $ifNull: ["$items.quantity", 0] },
+          allocatedQty: { $ifNull: ["$items.fulfillment.allocatedQty", 0] },
+          shippedQty: { $ifNull: ["$items.fulfillment.shippedQty", 0] },
+
           productModel: "$items.productModel",
           productId: "$items.productId",
+          variantId: { $ifNull: ["$items.variant.variantId", null] },
 
           matchedReservedReservations: {
             $filter: {
@@ -1280,7 +1279,7 @@ export const getProcessingOrderProductList = async (req, res) => {
 
       {
         $addFields: {
-          reservedQty: {
+          reservationReservedQty: {
             $sum: {
               $map: {
                 input: "$matchedReservedReservations",
@@ -1294,10 +1293,21 @@ export const getProcessingOrderProductList = async (req, res) => {
 
       {
         $addFields: {
+          reservedQty: {
+            $max: ["$allocatedQty", "$reservationReservedQty"],
+          },
+        },
+      },
+
+      {
+        $addFields: {
           qty: {
             $max: [
               {
-                $subtract: ["$orderedQty", "$reservedQty"],
+                $subtract: [
+                  "$orderedQty",
+                  { $add: ["$reservedQty", "$shippedQty"] },
+                ],
               },
               0,
             ],
@@ -1305,26 +1315,23 @@ export const getProcessingOrderProductList = async (req, res) => {
         },
       },
 
-      {
-        $match: {
-          qty: { $gt: 0 },
-        },
-      },
+      { $match: { qty: { $gt: 0 } } },
 
       {
         $group: {
-          _id: {
-            productCode: "$productCode",
-          },
+          _id: { productCode: "$productCode" },
+
           sku: { $first: "$sku" },
           productCode: { $first: "$productCode" },
           productTitle: { $first: "$productTitle" },
           productImage: { $first: "$productImage" },
           productModel: { $first: "$productModel" },
           productId: { $first: "$productId" },
+          variantId: { $first: "$variantId" },
 
           totalOrderedQty: { $sum: "$orderedQty" },
           totalReservedQty: { $sum: "$reservedQty" },
+          totalShippedQty: { $sum: "$shippedQty" },
           totalQty: { $sum: "$qty" },
 
           orderIds: { $addToSet: "$_id" },
@@ -1334,12 +1341,19 @@ export const getProcessingOrderProductList = async (req, res) => {
             $push: {
               size: "$selectedSize",
               qty: "$qty",
+              orderedQty: "$orderedQty",
+              reservedQty: "$reservedQty",
+              shippedQty: "$shippedQty",
             },
           },
+
           colors: {
             $push: {
               color: "$selectedColor",
               qty: "$qty",
+              orderedQty: "$orderedQty",
+              reservedQty: "$reservedQty",
+              shippedQty: "$shippedQty",
             },
           },
 
@@ -1348,7 +1362,10 @@ export const getProcessingOrderProductList = async (req, res) => {
               orderId: "$_id",
               orderNumber: "$orderNumber",
               orderedQty: "$orderedQty",
+              allocatedQty: "$allocatedQty",
+              reservationReservedQty: "$reservationReservedQty",
               reservedQty: "$reservedQty",
+              shippedQty: "$shippedQty",
               qty: "$qty",
               selectedSize: "$selectedSize",
               selectedColor: "$selectedColor",
@@ -1381,9 +1398,13 @@ export const getProcessingOrderProductList = async (req, res) => {
           productImage: 1,
           productModel: 1,
           productId: 1,
+          variantId: 1,
+
           totalOrderedQty: 1,
           totalReservedQty: 1,
+          totalShippedQty: 1,
           totalQty: 1,
+
           ordersCount: 1,
           orderIds: 1,
           sizes: 1,
@@ -1402,10 +1423,7 @@ export const getProcessingOrderProductList = async (req, res) => {
         { $sort: sortStage },
         ...(wantsAll ? [] : [{ $skip: skip }, { $limit: limitNum }]),
       ]),
-      Order.aggregate([
-        ...pipeline,
-        { $count: "total" },
-      ]),
+      Order.aggregate([...pipeline, { $count: "total" }]),
       Order.aggregate([
         ...pipeline,
         {
@@ -1414,6 +1432,7 @@ export const getProcessingOrderProductList = async (req, res) => {
             totalSkus: { $sum: 1 },
             totalOrderedQty: { $sum: "$totalOrderedQty" },
             totalReservedQty: { $sum: "$totalReservedQty" },
+            totalShippedQty: { $sum: "$totalShippedQty" },
             totalQtyToProduce: { $sum: "$totalQty" },
             allOrderIds: { $push: "$orderIds" },
           },
@@ -1424,6 +1443,7 @@ export const getProcessingOrderProductList = async (req, res) => {
             totalSkus: 1,
             totalOrderedQty: 1,
             totalReservedQty: 1,
+            totalShippedQty: 1,
             totalQtyToProduce: 1,
             totalOrdersCovered: {
               $size: {
@@ -1449,6 +1469,7 @@ export const getProcessingOrderProductList = async (req, res) => {
         totalSkus: Number(summaryAgg?.[0]?.totalSkus || 0),
         totalOrderedQty: Number(summaryAgg?.[0]?.totalOrderedQty || 0),
         totalReservedQty: Number(summaryAgg?.[0]?.totalReservedQty || 0),
+        totalShippedQty: Number(summaryAgg?.[0]?.totalShippedQty || 0),
         totalQtyToProduce: Number(summaryAgg?.[0]?.totalQtyToProduce || 0),
         totalOrdersCovered: Number(summaryAgg?.[0]?.totalOrdersCovered || 0),
       },

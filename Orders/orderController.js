@@ -1442,7 +1442,19 @@ export const getAllOrders = async (req, res) => {
   }
 };
 
+// ✅ GET CONFIRMED ORDERS
+// GET /api/orders/confirmed
+export const getConfirmedOrders = async (req, res) => {
+  req.query.confirmFilter = "confirmed";
+  return getAllOrders(req, res);
+};
 
+// ✅ GET NOT CONFIRMED ORDERS
+// GET /api/orders/not-confirmed
+export const getNotConfirmedOrders = async (req, res) => {
+  req.query.confirmFilter = "not_confirmed";
+  return getAllOrders(req, res);
+};
 
 
 /* ============================================================
