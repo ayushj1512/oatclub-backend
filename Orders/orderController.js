@@ -1715,42 +1715,87 @@ export const updateOrderStatus = async (req, res) => {
       const prevFulfillmentStatus = lower(order?.fulfillmentStatus);
 
       if (fulfillmentStatus === "cancelled") {
-        const allowed = ["processing", "packed"];
+  const allowed = ["processing", "packed"];
+  const currentStatus = lower(order.fulfillmentStatus);
 
-        if (!allowed.includes(lower(order.fulfillmentStatus))) {
-          throw new Error("Cancel allowed only in processing or packed stage");
-        }
+  if (!allowed.includes(currentStatus)) {
+    throw new Error("Cancel allowed only in processing or packed stage");
+  }
 
-        order.fulfillmentStatus = "cancelled";
+  await cancelReservationsInternalByOrder({
+    orderId: order._id,
+    reason: `Order cancelled | orderNumber=${order.orderNumber || ""}`,
+    session,
+  });
 
-        order.cancellation = {
-          ...(order.cancellation?.toObject?.() || order.cancellation || {}),
-          isCancelled: true,
-          cancelledAt: order.cancellation?.cancelledAt || new Date(),
-          cancelledBy: cancelActor,
-          reason: cancelReason || order.cancellation?.reason || "",
-        };
+  const now = new Date();
 
-        if (cancelActor === "admin") {
-          order.adminRemarks =
-            str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
-          order.customerMessage = undefined;
-        } else {
-          order.customerMessage =
-            str(req.body?.customerMessage).trim() || "cancelled_by_customer";
-          order.adminRemarks = undefined;
-        }
+  const setPayload = {
+    fulfillmentStatus: "cancelled",
+    "fulfillmentDates.cancelledAt": now,
 
-        await cancelReservationsInternalByOrder({
-          orderId: order._id,
-          reason: `Order cancelled | orderNumber=${order.orderNumber || ""}`,
-          session,
-        });
+    "cancellation.isCancelled": true,
+    "cancellation.cancelledAt": order.cancellation?.cancelledAt || now,
+    "cancellation.cancelledBy": cancelActor,
+    "cancellation.reason": cancelReason || order.cancellation?.reason || "",
+  };
 
-        await order.save({ session });
-        updatedOrder = order;
-        return;
-      }
+  const unsetPayload = {};
+
+  if (cancelActor === "admin") {
+    setPayload.adminRemarks =
+      str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
+    unsetPayload.customerMessage = "";
+  } else {
+    setPayload.customerMessage =
+      str(req.body?.customerMessage).trim() || "cancelled_by_customer";
+    unsetPayload.adminRemarks = "";
+  }
+
+  const isPaidRazorpay =
+    lower(order.paymentMethod) === "razorpay" &&
+    lower(order.paymentStatus) === "paid" &&
+    order.razorpay?.paymentId;
+
+  if (isPaidRazorpay) {
+    const amount = Number(order.finalPayable || 0);
+
+    setPayload.eligibleForRefund = true;
+    setPayload.paymentStatus = "refund_pending";
+    setPayload["refundSummary.status"] = "refund_pending";
+    setPayload["refundSummary.refundType"] = "full";
+    setPayload["refundSummary.eligibleAmount"] = amount;
+    setPayload["refundSummary.pendingAmount"] = amount;
+    setPayload["refundSummary.reason"] =
+      cancelReason || "Paid order cancelled before shipment";
+    setPayload["refundSummary.markedEligibleAt"] =
+      order.refundSummary?.markedEligibleAt || now;
+    setPayload["refundSummary.refundRequestedAt"] =
+      order.refundSummary?.refundRequestedAt || now;
+  }
+
+  updatedOrder = await Order.findOneAndUpdate(
+    {
+      _id: order._id,
+      fulfillmentStatus: { $in: allowed },
+    },
+    {
+      $set: setPayload,
+      ...(Object.keys(unsetPayload).length ? { $unset: unsetPayload } : {}),
+    },
+    {
+      new: true,
+      session,
+      runValidators: true,
+    }
+  );
+
+  if (!updatedOrder) {
+    throw new Error("Order was already updated. Please refresh and try again.");
+  }
+
+  return;
+}
 
       if (paymentStatus) {
         order.paymentStatus = paymentStatus;
