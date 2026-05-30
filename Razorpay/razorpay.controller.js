@@ -2,9 +2,28 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import { razorpay } from "./razorpay.instance.js";
 import Order from "../Orders/Orders.js";
-
+import { debitWalletForOrderInternal } from "../Customer/customerCredit.service.js";
 
 import { reserveInventoryForOrderNumberInternal } from "../InventoryReservation/inventoryWebhook.js";
+
+const debitWalletAfterRazorpaySuccess = async (order) => {
+  if (
+    order?.walletCredit?.used === true &&
+    Number(order?.walletCredit?.amount || 0) > 0 &&
+    !order?.walletCredit?.debitedAt
+  ) {
+    const debitResult = await debitWalletForOrderInternal({
+      customerId: order.customerId,
+      amount: Number(order.walletCredit.amount),
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+    });
+
+    order.walletCredit.transactionId = debitResult?.log?.creditId || "";
+    order.walletCredit.balanceAfterDebit = debitResult?.balance || 0;
+    order.walletCredit.debitedAt = new Date();
+  }
+};
 
 /**
  * POST /api/razorpay/create-order
@@ -14,14 +33,25 @@ export const createRazorpayOrder = async (req, res, next) => {
     const { mongoOrderId } = req.body;
 
     if (!mongoOrderId || !mongoose.Types.ObjectId.isValid(mongoOrderId)) {
-      return res.status(400).json({ success: false, message: "Invalid mongoOrderId" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid mongoOrderId",
+      });
     }
 
     const order = await Order.findById(mongoOrderId);
-    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
 
     if (order.paymentStatus === "paid") {
-      return res.status(400).json({ success: false, message: "Order already paid" });
+      return res.status(400).json({
+        success: false,
+        message: "Order already paid",
+      });
     }
 
     if (order.paymentMethod !== "razorpay") {
@@ -32,8 +62,12 @@ export const createRazorpayOrder = async (req, res, next) => {
     }
 
     const amountPaise = Math.round(Number(order.finalPayable) * 100);
+
     if (!amountPaise || amountPaise < 100) {
-      return res.status(400).json({ success: false, message: "Invalid order amount" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order amount",
+      });
     }
 
     const rpOrder = await razorpay.orders.create({
@@ -85,34 +119,50 @@ export const verifyRazorpayPayment = async (req, res, next) => {
     } = req.body;
 
     const order = await Order.findById(mongoOrderId);
+
     if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
     }
 
     if (order.paymentStatus === "paid") {
-      return res.json({ success: true });
-    }
+  await debitWalletAfterRazorpaySuccess(order);
+  await order.save();
+
+  return res.json({ success: true });
+}
 
     const body = `${razorpay_order_id}|${razorpay_payment_id}`;
+
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
       .update(body)
       .digest("hex");
 
     if (expectedSignature !== razorpay_signature) {
-      return res.status(400).json({ success: false, message: "Invalid signature" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid signature",
+      });
     }
 
     order.paymentStatus = "paid";
     order.paymentMethod = "razorpay";
+
     order.razorpay = order.razorpay || {};
+    order.razorpay.orderId = razorpay_order_id || order.razorpay.orderId;
     order.razorpay.paymentId = razorpay_payment_id;
     order.razorpay.signature = razorpay_signature;
     order.razorpay.paidAt = new Date();
 
-    await order.save(); // schema hook => auto confirm
+    await debitWalletAfterRazorpaySuccess(order);
+
+    await order.save();
 
     const orderNumber = String(order.orderNumber || "").trim();
+
     if (orderNumber) {
       setImmediate(async () => {
         try {
@@ -123,7 +173,10 @@ export const verifyRazorpayPayment = async (req, res, next) => {
             debug: false,
           });
         } catch (err) {
-          console.error("⚠️ reserve after razorpay verify failed:", err?.message || err);
+          console.error(
+            "⚠️ reserve after razorpay verify failed:",
+            err?.message || err
+          );
         }
       });
     }
@@ -160,30 +213,38 @@ export const razorpayWebhook = async (req, res) => {
     const event = JSON.parse(req.body.toString("utf8"));
     const type = event.event;
 
-    const entity =
-      event?.payload?.payment?.entity ||
-      event?.payload?.order?.entity;
+    const entity = event?.payload?.payment?.entity || event?.payload?.order?.entity;
 
     const mongoOrderId = entity?.notes?.mongoOrderId;
-    if (!mongoOrderId) return res.json({ received: true });
+
+    if (!mongoOrderId) {
+      return res.json({ received: true });
+    }
 
     const order = await Order.findById(mongoOrderId);
-    if (!order) return res.json({ received: true });
+
+    if (!order) {
+      return res.json({ received: true });
+    }
 
     if (type === "payment.captured" || type === "order.paid") {
       const alreadyPaid = order.paymentStatus === "paid";
 
       order.paymentStatus = "paid";
       order.paymentMethod = "razorpay";
+
       order.razorpay = order.razorpay || {};
       order.razorpay.paymentId = entity?.id || order.razorpay.paymentId;
       order.razorpay.orderId = entity?.order_id || order.razorpay.orderId;
       order.razorpay.paidAt = new Date();
 
-      await order.save(); // schema hook => auto confirm
+      await debitWalletAfterRazorpaySuccess(order);
+
+      await order.save();
 
       if (!alreadyPaid) {
         const orderNumber = String(order.orderNumber || "").trim();
+
         if (orderNumber) {
           setImmediate(async () => {
             try {
@@ -194,7 +255,10 @@ export const razorpayWebhook = async (req, res) => {
                 debug: false,
               });
             } catch (err) {
-              console.error("⚠️ reserve after razorpay webhook failed:", err?.message || err);
+              console.error(
+                "⚠️ reserve after razorpay webhook failed:",
+                err?.message || err
+              );
             }
           });
         }
@@ -213,7 +277,4 @@ export const razorpayWebhook = async (req, res) => {
   }
 };
 
-// ✅ alias used by server.js
 export const webhook = razorpayWebhook;
-
-

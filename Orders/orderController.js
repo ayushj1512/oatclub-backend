@@ -836,10 +836,10 @@ export const createOrder = async (req, res) => {
 
         const frontendPrice = num(
           item?.price ??
-            item?.itemPrice ??
-            item?.item_price ??
-            item?.salePrice ??
-            item?.productSnapshot?.price
+          item?.itemPrice ??
+          item?.item_price ??
+          item?.salePrice ??
+          item?.productSnapshot?.price
         );
 
         const dbPrice = num(product.price);
@@ -940,10 +940,10 @@ export const createOrder = async (req, res) => {
 
       const discountBase = couponDocForBase
         ? getCouponDiscountBase({
-            couponDoc: couponDocForBase,
-            subtotal,
-            eligibleCouponBase,
-          })
+          couponDoc: couponDocForBase,
+          subtotal,
+          eligibleCouponBase,
+        })
         : null;
 
       console.log("🎟️ CREATE ORDER COUPON DEBUG:", {
@@ -973,46 +973,47 @@ export const createOrder = async (req, res) => {
           couponDocFromBase: couponDocForBase,
         });
 
-     const afterCouponPayable = Math.max(
-  0,
-  totalAmount - Math.min(num(couponDiscount), totalAmount)
-);
+      const afterCouponPayable = Math.max(
+        0,
+        totalAmount - Math.min(num(couponDiscount), totalAmount)
+      );
 
-const requestedWalletAmount =
-  useWallet === true || num(walletAmount) > 0 || pm === "wallet"
-    ? Math.max(0, num(walletAmount))
-    : 0;
+      const requestedWalletAmount =
+        useWallet === true || num(walletAmount) > 0 || pm === "wallet"
+          ? Math.max(0, num(walletAmount))
+          : 0;
 
-const actualWalletAmount =
-  requestedWalletAmount > 0 || pm === "wallet"
-    ? Math.min(
-        requestedWalletAmount || afterCouponPayable,
-        afterCouponPayable
-      )
-    : 0;
+      const actualWalletAmount =
+        requestedWalletAmount > 0 || pm === "wallet"
+          ? Math.min(
+            requestedWalletAmount || afterCouponPayable,
+            afterCouponPayable
+          )
+          : 0;
 
-const amountAfterWallet = Math.max(
-  0,
-  afterCouponPayable - actualWalletAmount
-);
+      const amountAfterWallet = Math.max(
+        0,
+        afterCouponPayable - actualWalletAmount
+      );
 
-const razorpayExtraDiscount =
-  pm === "razorpay"
-    ? Math.min(
-        amountAfterWallet,
-        Math.round(
-          (amountAfterWallet * RAZORPAY_DISCOUNT_PERCENT) / 100
-        )
-      )
-    : 0;
+      const razorpayExtraDiscount =
+        pm === "razorpay"
+          ? Math.min(
+            amountAfterWallet,
+            Math.round(
+              (amountAfterWallet * RAZORPAY_DISCOUNT_PERCENT) / 100
+            )
+          )
+          : 0;
 
-let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
-if (finalDiscount > totalAmount) finalDiscount = totalAmount;
+      let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
+      if (finalDiscount > totalAmount) finalDiscount = totalAmount;
 
-const finalPayable = Math.max(
-  0,
-  amountAfterWallet - razorpayExtraDiscount
-);
+      const finalPayable = Math.max(
+        0,
+        amountAfterWallet - razorpayExtraDiscount
+      );
+
 
 
       const effectivePaymentMethod =
@@ -1059,7 +1060,10 @@ const finalPayable = Math.max(
               used: actualWalletAmount > 0,
               amount: actualWalletAmount,
               transactionId: "",
-              debitedAt: actualWalletAmount > 0 ? new Date() : null,
+              debitedAt:
+                actualWalletAmount > 0 && effectivePaymentMethod !== "razorpay"
+                  ? new Date()
+                  : null,
               balanceAfterDebit: 0,
             },
 
@@ -1089,7 +1093,7 @@ const finalPayable = Math.max(
         { session }
       );
 
-      if (actualWalletAmount > 0) {
+      if (actualWalletAmount > 0 && effectivePaymentMethod !== "razorpay") {
         const debitResult = await debitWalletForOrderInternal({
           customerId,
           amount: actualWalletAmount,
