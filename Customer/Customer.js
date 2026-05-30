@@ -2,28 +2,174 @@ import mongoose from "mongoose";
 import Counter from "../models/Counter.js";
 
 /**
+ * ✅ Customer Credit Log Schema
+ */
+const customerCreditLogSchema = new mongoose.Schema(
+  {
+    creditId: {
+      type: String,
+      trim: true,
+      default: () => `CR-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      index: true,
+    },
+
+    transactionType: {
+      type: String,
+      enum: ["credit", "debit"],
+      required: true,
+      index: true,
+    },
+
+    type: {
+      type: String,
+      enum: [
+        "refund",
+        "promotion",
+        "influencer",
+        "goodwill",
+        "cashback",
+        "referral_bonus",
+        "manual_credit",
+        "manual_debit",
+        "order_usage",
+        "order_adjustment",
+        "expired",
+        "other",
+      ],
+      required: true,
+      index: true,
+    },
+
+    amount: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    balanceAfterTransaction: {
+      type: Number,
+      default: 0,
+    },
+
+    reason: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    notes: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    // ✅ For refund/order tracking
+    orderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+      default: null,
+      index: true,
+    },
+
+    orderNumber: {
+      type: String,
+      trim: true,
+      default: "",
+      index: true,
+    },
+
+    refundId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "OrderRefund",
+      default: null,
+      index: true,
+    },
+
+    // ✅ Promotion / Influencer tracking
+    promotionName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    influencerName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    influencerCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+      index: true,
+    },
+
+    couponId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Coupon",
+      default: null,
+    },
+
+    couponCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+      index: true,
+    },
+
+    addedBy: {
+      type: String,
+      enum: ["system", "admin", "automation"],
+      default: "system",
+    },
+
+    adminId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      default: null,
+    },
+
+    expiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    isExpired: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    createdAt: {
+      type: Date,
+      default: Date.now,
+      index: true,
+    },
+  },
+  { _id: false }
+);
+
+/**
  * ✅ Customer Schema
  */
 const customerSchema = new mongoose.Schema(
   {
-    // ✅ Customer ID like 0001, 0002...
     customerId: {
       type: String,
       unique: true,
       index: true,
     },
 
-    /**
-     * 🔐 Firebase UID — OPTIONAL (guest checkout allowed)
-     * ✅ No default null (important!)
-     */
     firebaseUID: {
       type: String,
       trim: true,
       index: true,
     },
 
-    // 👤 Basic Profile
     name: { type: String, trim: true, default: "" },
 
     email: {
@@ -38,7 +184,6 @@ const customerSchema = new mongoose.Schema(
 
     profileImage: { type: String, default: "" },
 
-    // 🎂 Optional
     dateOfBirth: { type: Date, default: null },
 
     gender: {
@@ -53,12 +198,10 @@ const customerSchema = new mongoose.Schema(
       default: "Unknown",
     },
 
-    // 🌍 Location
     country: { type: String, trim: true, default: "India" },
     state: { type: String, trim: true, default: "" },
     city: { type: String, trim: true, default: "" },
 
-    // ✅ Banking + UPI details for refunds / payouts
     payoutDetails: {
       bank: {
         accountHolderName: { type: String, trim: true, default: "" },
@@ -69,6 +212,62 @@ const customerSchema = new mongoose.Schema(
         upiId: { type: String, trim: true, lowercase: true, default: "" },
       },
       updatedAt: { type: Date, default: null },
+    },
+
+    /**
+     * 💰 Customer Credits / Wallet
+     */
+    credits: {
+      balance: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      totalCredited: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      totalDebited: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      totalRefundCredits: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      totalPromotionCredits: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      totalInfluencerCredits: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      lastCreditAt: {
+        type: Date,
+        default: null,
+      },
+
+      lastDebitAt: {
+        type: Date,
+        default: null,
+      },
+
+      logs: {
+        type: [customerCreditLogSchema],
+        default: [],
+      },
     },
 
     cartAdds: {
@@ -127,7 +326,6 @@ const customerSchema = new mongoose.Schema(
       },
     },
 
-    // 🧩 Referral
     referralCode: { type: String, trim: true, default: "" },
 
     referredBy: {
@@ -136,7 +334,6 @@ const customerSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ❤️ Preferences
     preferences: {
       categories: [{ type: mongoose.Schema.Types.ObjectId, ref: "Category" }],
       favoriteBrands: [{ type: String, trim: true }],
@@ -146,9 +343,7 @@ const customerSchema = new mongoose.Schema(
       },
     },
 
-    // 📊 Analytics Snapshot
     analytics: {
-      // order count/value
       totalOrders: { type: Number, default: 0 },
       totalSpend: { type: Number, default: 0 },
       avgOrderValue: { type: Number, default: 0 },
@@ -156,7 +351,6 @@ const customerSchema = new mongoose.Schema(
       highestOrderValue: { type: Number, default: 0 },
       lowestOrderValue: { type: Number, default: 0 },
 
-      // fulfillment behavior
       processingOrders: { type: Number, default: 0 },
       packedOrders: { type: Number, default: 0 },
       pickedOrders: { type: Number, default: 0 },
@@ -173,7 +367,6 @@ const customerSchema = new mongoose.Schema(
       rtoOrders: { type: Number, default: 0 },
       failedOrders: { type: Number, default: 0 },
 
-      // payment behavior
       codOrders: { type: Number, default: 0 },
       prepaidOrders: { type: Number, default: 0 },
       exchangeOrders: { type: Number, default: 0 },
@@ -184,14 +377,12 @@ const customerSchema = new mongoose.Schema(
       refundPendingOrders: { type: Number, default: 0 },
       refundedOrders: { type: Number, default: 0 },
 
-      // confirmation behavior
       confirmedOrders: { type: Number, default: 0 },
       unconfirmedOrders: { type: Number, default: 0 },
       confirmedByCustomerOrders: { type: Number, default: 0 },
       confirmedByAdminOrders: { type: Number, default: 0 },
       confirmedByAutoOrders: { type: Number, default: 0 },
 
-      // dates
       firstOrderAt: { type: Date, default: null },
       lastOrderAt: { type: Date, default: null },
       lastDeliveredAt: { type: Date, default: null },
@@ -199,14 +390,12 @@ const customerSchema = new mongoose.Schema(
       lastReturnedAt: { type: Date, default: null },
       lastRtoAt: { type: Date, default: null },
 
-      // calculated rates
       deliveryRate: { type: Number, default: 0 },
       cancellationRate: { type: Number, default: 0 },
       returnRate: { type: Number, default: 0 },
       rtoRate: { type: Number, default: 0 },
       paymentSuccessRate: { type: Number, default: 0 },
 
-      // customer segmentation
       customerType: {
         type: String,
         enum: ["new", "repeat", "vip", "risky", "inactive"],
@@ -216,15 +405,14 @@ const customerSchema = new mongoose.Schema(
 
       riskScore: { type: Number, default: 0 },
 
-      // existing engagement fields
       wishlistCount: { type: Number, default: 0 },
       couponUses: { type: Number, default: 0 },
-      creditsEarned: { type: Number, default: 0 },
+
+      walletCreditsEarned: { type: Number, default: 0 },
 
       lastAnalyticsSyncAt: { type: Date, default: null },
     },
 
-    // 🚀 Status
     isActive: { type: Boolean, default: true },
     joinedAt: { type: Date, default: Date.now },
   },
@@ -246,13 +434,11 @@ customerSchema.pre("save", async function (next) {
       this.customerId = String(counter.seq).padStart(4, "0");
     }
 
-    // ✅ mark payoutDetails.updatedAt when payout details are modified
     if (this.isModified("payoutDetails")) {
       this.payoutDetails = this.payoutDetails || {};
       this.payoutDetails.updatedAt = new Date();
     }
 
-    // ✅ Auto set ageGroup if DOB exists
     if (this.dateOfBirth) {
       const age = Math.floor(
         (Date.now() - this.dateOfBirth.getTime()) /
@@ -274,8 +460,7 @@ customerSchema.pre("save", async function (next) {
 });
 
 /**
- * ✅ INDEX FIX FOR GUEST CHECKOUT
- * Unique firebaseUID ONLY if it exists
+ * ✅ Unique firebaseUID only if exists
  */
 customerSchema.index(
   { firebaseUID: 1 },
@@ -305,6 +490,24 @@ customerSchema.index({ city: 1 });
 customerSchema.index({ isActive: 1 });
 customerSchema.index({ joinedAt: -1 });
 customerSchema.index({ createdAt: -1 });
+
+/**
+ * ✅ Credit / Wallet indexes
+ */
+customerSchema.index({ "credits.balance": -1 });
+customerSchema.index({ "credits.totalCredited": -1 });
+customerSchema.index({ "credits.totalDebited": -1 });
+customerSchema.index({ "credits.totalRefundCredits": -1 });
+customerSchema.index({ "credits.totalPromotionCredits": -1 });
+customerSchema.index({ "credits.totalInfluencerCredits": -1 });
+
+customerSchema.index({ "credits.logs.creditId": 1 });
+customerSchema.index({ "credits.logs.type": 1 });
+customerSchema.index({ "credits.logs.transactionType": 1 });
+customerSchema.index({ "credits.logs.orderNumber": 1 });
+customerSchema.index({ "credits.logs.influencerCode": 1 });
+customerSchema.index({ "credits.logs.couponCode": 1 });
+customerSchema.index({ "credits.logs.createdAt": -1 });
 
 /**
  * ✅ Analytics indexes

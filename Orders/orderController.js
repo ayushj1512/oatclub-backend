@@ -17,7 +17,7 @@ import {
   triggerOrderCancellationEmails,
   triggerRmaEmails,
 } from "./order.emails.js";
-import Coupon from "../Coupon/Coupon.js"; 
+import Coupon from "../Coupon/Coupon.js";
 import {
   consumeReservationsInternalByOrder,
   cancelReservationsInternalByOrder,
@@ -38,7 +38,11 @@ import { sendCodOrderConfirmationWhatsapp } from "../whatsappConfirmationMessage
 import {
   recalculateCustomerAnalytics,
 } from "../Customer/customerAnalytics.service.js";
-// ⚠️ path tumhare project ke hisaab se adjust kar lena
+
+import Customer from "../Customer/Customer.js";
+import {
+  debitWalletForOrderInternal,
+} from "../Customer/customerCredit.service.js";// ⚠️ path tumhare project ke hisaab se adjust kar lena
 
 const isParentOrder = (order) => String(order?.orderType || "").toLowerCase() === "parent";
 const isShipmentOrder = (order) =>
@@ -456,7 +460,6 @@ export const createOrder = async (req, res) => {
     return subtotal;
   };
 
-  // ✅ Universal attribution snapshot for every platform/source
   const normalizeOrderAttribution = (raw = {}) => {
     const now = new Date();
 
@@ -721,10 +724,15 @@ export const createOrder = async (req, res) => {
       billingAddressId,
       items,
       coupon,
-      attribution = {}, // ✅ NEW
+      attribution = {},
       shippingFee = 0,
       tax = 0,
       paymentMethod = "cod",
+
+      // ✅ wallet / customer credit
+      useWallet = false,
+      walletAmount = 0,
+
       source = "website",
       isGiftOrder = false,
       currency = "INR",
@@ -752,9 +760,9 @@ export const createOrder = async (req, res) => {
       return res.status(400).json({ message: "Order items missing" });
     }
 
-    if (!["cod", "razorpay"].includes(pm)) {
+    if (!["cod", "razorpay", "wallet"].includes(pm)) {
       return res.status(400).json({
-        message: "Invalid paymentMethod. Allowed: cod | razorpay",
+        message: "Invalid paymentMethod. Allowed: cod | razorpay | wallet",
       });
     }
 
@@ -965,31 +973,59 @@ export const createOrder = async (req, res) => {
           couponDocFromBase: couponDocForBase,
         });
 
-      const baseForRazorpayExtra = Math.max(
-        0,
-        subtotal - Math.min(num(couponDiscount), subtotal)
-      );
+     const afterCouponPayable = Math.max(
+  0,
+  totalAmount - Math.min(num(couponDiscount), totalAmount)
+);
 
-      const razorpayExtraDiscount =
-        pm === "razorpay"
-          ? Math.min(
-              baseForRazorpayExtra,
-              Math.round(
-                (baseForRazorpayExtra * RAZORPAY_DISCOUNT_PERCENT) / 100
-              )
-            )
-          : 0;
+const requestedWalletAmount =
+  useWallet === true || num(walletAmount) > 0 || pm === "wallet"
+    ? Math.max(0, num(walletAmount))
+    : 0;
 
-      let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
-      if (finalDiscount > totalAmount) finalDiscount = totalAmount;
+const actualWalletAmount =
+  requestedWalletAmount > 0 || pm === "wallet"
+    ? Math.min(
+        requestedWalletAmount || afterCouponPayable,
+        afterCouponPayable
+      )
+    : 0;
 
-      const finalPayable = Math.max(0, totalAmount - finalDiscount);
+const amountAfterWallet = Math.max(
+  0,
+  afterCouponPayable - actualWalletAmount
+);
+
+const razorpayExtraDiscount =
+  pm === "razorpay"
+    ? Math.min(
+        amountAfterWallet,
+        Math.round(
+          (amountAfterWallet * RAZORPAY_DISCOUNT_PERCENT) / 100
+        )
+      )
+    : 0;
+
+let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
+if (finalDiscount > totalAmount) finalDiscount = totalAmount;
+
+const finalPayable = Math.max(
+  0,
+  amountAfterWallet - razorpayExtraDiscount
+);
+
+
+      const effectivePaymentMethod =
+        actualWalletAmount > 0 && finalPayable === 0 ? "wallet" : pm;
+
+      const effectivePaymentStatus =
+        effectivePaymentMethod === "wallet" ? "paid" : "pending";
 
       const analytics = {
         totalItems: totalQty,
         averageItemPrice: totalQty ? subtotal / totalQty : 0,
         couponApplied: Boolean(couponSnapshot?.code),
-        creditsUsed: false,
+        creditsUsed: actualWalletAmount > 0,
         categoryBreakdown: computeCategoryBreakdown(normalizedItems),
         tagsUsed: uniqStrings(
           normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])
@@ -1018,11 +1054,33 @@ export const createOrder = async (req, res) => {
             totalAmount,
             finalPayable,
             currency,
-            paymentMethod: pm,
-            paymentStatus: "pending",
+
+            walletCredit: {
+              used: actualWalletAmount > 0,
+              amount: actualWalletAmount,
+              transactionId: "",
+              debitedAt: actualWalletAmount > 0 ? new Date() : null,
+              balanceAfterDebit: 0,
+            },
+
+            paymentBreakdown: {
+              walletAmount: actualWalletAmount,
+              razorpayAmount:
+                effectivePaymentMethod === "razorpay" ? finalPayable : 0,
+              codAmount: effectivePaymentMethod === "cod" ? finalPayable : 0,
+            },
+
+            paymentMethod: effectivePaymentMethod,
+            paymentStatus: effectivePaymentStatus,
+
+            isConfirmed: effectivePaymentMethod === "wallet",
+            confirmedAt:
+              effectivePaymentMethod === "wallet" ? new Date() : null,
+            confirmedBy: effectivePaymentMethod === "wallet" ? "auto" : null,
+
             fulfillmentStatus: "processing",
             source,
-            attribution: finalAttribution, // ✅ NEW
+            attribution: finalAttribution,
             isGiftOrder,
             analytics,
             rmas: [],
@@ -1031,7 +1089,23 @@ export const createOrder = async (req, res) => {
         { session }
       );
 
-      if (couponDoc && couponSnapshot?.code && identity && pm === "cod") {
+      if (actualWalletAmount > 0) {
+        const debitResult = await debitWalletForOrderInternal({
+          customerId,
+          amount: actualWalletAmount,
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          session,
+        });
+
+        order.walletCredit.transactionId = debitResult?.log?.creditId || "";
+        order.walletCredit.balanceAfterDebit = debitResult?.balance || 0;
+        order.walletCredit.debitedAt = new Date();
+
+        await order.save({ session });
+      }
+
+      if (couponDoc && couponSnapshot?.code && identity && effectivePaymentMethod === "cod") {
         couponDoc.usedBy = Array.isArray(couponDoc.usedBy)
           ? couponDoc.usedBy
           : [];
@@ -1055,7 +1129,6 @@ export const createOrder = async (req, res) => {
       "createOrder"
     );
 
-    // ✅ COD WhatsApp confirmation stays non-blocking
     if (
       String(finalOrder?.paymentMethod || "").toLowerCase() === "cod" &&
       finalOrder?.isConfirmed !== true
@@ -1483,7 +1556,7 @@ export const getOrdersByCustomer = async (req, res) => {
   try {
     const orders = await Order.find({ customerId: req.params.customerId })
       .populate("items.productId")
-.sort({ priority: -1, createdAt: -1 });
+      .sort({ priority: -1, createdAt: -1 });
 
     return res.status(200).json(orders);
   } catch (error) {
@@ -1715,87 +1788,87 @@ export const updateOrderStatus = async (req, res) => {
       const prevFulfillmentStatus = lower(order?.fulfillmentStatus);
 
       if (fulfillmentStatus === "cancelled") {
-  const allowed = ["processing", "packed"];
-  const currentStatus = lower(order.fulfillmentStatus);
+        const allowed = ["processing", "packed"];
+        const currentStatus = lower(order.fulfillmentStatus);
 
-  if (!allowed.includes(currentStatus)) {
-    throw new Error("Cancel allowed only in processing or packed stage");
-  }
+        if (!allowed.includes(currentStatus)) {
+          throw new Error("Cancel allowed only in processing or packed stage");
+        }
 
-  await cancelReservationsInternalByOrder({
-    orderId: order._id,
-    reason: `Order cancelled | orderNumber=${order.orderNumber || ""}`,
-    session,
-  });
+        await cancelReservationsInternalByOrder({
+          orderId: order._id,
+          reason: `Order cancelled | orderNumber=${order.orderNumber || ""}`,
+          session,
+        });
 
-  const now = new Date();
+        const now = new Date();
 
-  const setPayload = {
-    fulfillmentStatus: "cancelled",
-    "fulfillmentDates.cancelledAt": now,
+        const setPayload = {
+          fulfillmentStatus: "cancelled",
+          "fulfillmentDates.cancelledAt": now,
 
-    "cancellation.isCancelled": true,
-    "cancellation.cancelledAt": order.cancellation?.cancelledAt || now,
-    "cancellation.cancelledBy": cancelActor,
-    "cancellation.reason": cancelReason || order.cancellation?.reason || "",
-  };
+          "cancellation.isCancelled": true,
+          "cancellation.cancelledAt": order.cancellation?.cancelledAt || now,
+          "cancellation.cancelledBy": cancelActor,
+          "cancellation.reason": cancelReason || order.cancellation?.reason || "",
+        };
 
-  const unsetPayload = {};
+        const unsetPayload = {};
 
-  if (cancelActor === "admin") {
-    setPayload.adminRemarks =
-      str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
-    unsetPayload.customerMessage = "";
-  } else {
-    setPayload.customerMessage =
-      str(req.body?.customerMessage).trim() || "cancelled_by_customer";
-    unsetPayload.adminRemarks = "";
-  }
+        if (cancelActor === "admin") {
+          setPayload.adminRemarks =
+            str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
+          unsetPayload.customerMessage = "";
+        } else {
+          setPayload.customerMessage =
+            str(req.body?.customerMessage).trim() || "cancelled_by_customer";
+          unsetPayload.adminRemarks = "";
+        }
 
-  const isPaidRazorpay =
-    lower(order.paymentMethod) === "razorpay" &&
-    lower(order.paymentStatus) === "paid" &&
-    order.razorpay?.paymentId;
+        const isPaidRazorpay =
+          lower(order.paymentMethod) === "razorpay" &&
+          lower(order.paymentStatus) === "paid" &&
+          order.razorpay?.paymentId;
 
-  if (isPaidRazorpay) {
-    const amount = Number(order.finalPayable || 0);
+        if (isPaidRazorpay) {
+          const amount = Number(order.finalPayable || 0);
 
-    setPayload.eligibleForRefund = true;
-    setPayload.paymentStatus = "refund_pending";
-    setPayload["refundSummary.status"] = "refund_pending";
-    setPayload["refundSummary.refundType"] = "full";
-    setPayload["refundSummary.eligibleAmount"] = amount;
-    setPayload["refundSummary.pendingAmount"] = amount;
-    setPayload["refundSummary.reason"] =
-      cancelReason || "Paid order cancelled before shipment";
-    setPayload["refundSummary.markedEligibleAt"] =
-      order.refundSummary?.markedEligibleAt || now;
-    setPayload["refundSummary.refundRequestedAt"] =
-      order.refundSummary?.refundRequestedAt || now;
-  }
+          setPayload.eligibleForRefund = true;
+          setPayload.paymentStatus = "refund_pending";
+          setPayload["refundSummary.status"] = "refund_pending";
+          setPayload["refundSummary.refundType"] = "full";
+          setPayload["refundSummary.eligibleAmount"] = amount;
+          setPayload["refundSummary.pendingAmount"] = amount;
+          setPayload["refundSummary.reason"] =
+            cancelReason || "Paid order cancelled before shipment";
+          setPayload["refundSummary.markedEligibleAt"] =
+            order.refundSummary?.markedEligibleAt || now;
+          setPayload["refundSummary.refundRequestedAt"] =
+            order.refundSummary?.refundRequestedAt || now;
+        }
 
-  updatedOrder = await Order.findOneAndUpdate(
-    {
-      _id: order._id,
-      fulfillmentStatus: { $in: allowed },
-    },
-    {
-      $set: setPayload,
-      ...(Object.keys(unsetPayload).length ? { $unset: unsetPayload } : {}),
-    },
-    {
-      new: true,
-      session,
-      runValidators: true,
-    }
-  );
+        updatedOrder = await Order.findOneAndUpdate(
+          {
+            _id: order._id,
+            fulfillmentStatus: { $in: allowed },
+          },
+          {
+            $set: setPayload,
+            ...(Object.keys(unsetPayload).length ? { $unset: unsetPayload } : {}),
+          },
+          {
+            new: true,
+            session,
+            runValidators: true,
+          }
+        );
 
-  if (!updatedOrder) {
-    throw new Error("Order was already updated. Please refresh and try again.");
-  }
+        if (!updatedOrder) {
+          throw new Error("Order was already updated. Please refresh and try again.");
+        }
 
-  return;
-}
+        return;
+      }
 
       if (paymentStatus) {
         order.paymentStatus = paymentStatus;
@@ -1965,7 +2038,7 @@ export const updateOrderStatus = async (req, res) => {
       ? await Order.findById(updatedOrder._id).lean()
       : null;
 
-      syncCustomerAnalyticsSafe(finalOrder?.customerId, "updateOrderStatus");
+    syncCustomerAnalyticsSafe(finalOrder?.customerId, "updateOrderStatus");
 
     if (finalOrder && shouldTriggerReserve) {
       triggerReserveNonBlocking(finalOrder.orderNumber);
@@ -4074,14 +4147,14 @@ export const getOrderConfirmationDetails = async (req, res) => {
 
     const confirmedAtIST = order.confirmedAt
       ? new Date(order.confirmedAt).toLocaleString("en-IN", {
-          timeZone: "Asia/Kolkata",
-          day: "2-digit",
-          month: "short",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        })
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      })
       : null;
 
     return res.status(200).json({

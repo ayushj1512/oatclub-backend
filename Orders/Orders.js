@@ -384,9 +384,23 @@ const orderSchema = new mongoose.Schema(
       paidAt: { type: Date, default: null },
     },
 
+    walletCredit: {
+      used: { type: Boolean, default: false, index: true },
+      amount: { type: Number, default: 0, min: 0 },
+      transactionId: { type: String, default: "", index: true },
+      debitedAt: { type: Date, default: null },
+      balanceAfterDebit: { type: Number, default: 0 },
+    },
+
+    paymentBreakdown: {
+      walletAmount: { type: Number, default: 0, min: 0 },
+      razorpayAmount: { type: Number, default: 0, min: 0 },
+      codAmount: { type: Number, default: 0, min: 0 },
+    },
+
     paymentMethod: {
       type: String,
-      enum: ["cod", "razorpay", "exchange"],
+      enum: ["cod", "razorpay", "exchange", "wallet"],
       default: "cod",
       index: true,
     },
@@ -394,93 +408,93 @@ const orderSchema = new mongoose.Schema(
 
     // ✅ FIX: added refund_pending to prevent crashes
     paymentStatus: {
-  type: String,
-  enum: [
-    "pending",
-    "paid",
-    "failed",
-    "refunded",
-    "partially_refunded",
-    "refund_pending",
-    "not_applicable",
-  ],
-  default: "pending",
-  index: true,
-},
+      type: String,
+      enum: [
+        "pending",
+        "paid",
+        "failed",
+        "refunded",
+        "partially_refunded",
+        "refund_pending",
+        "not_applicable",
+      ],
+      default: "pending",
+      index: true,
+    },
 
 
-eligibleForRefund: {
-  type: Boolean,
-  default: false,
-  index: true,
-},
+    eligibleForRefund: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
 
-eligibleForRma: {
-  type: Boolean,
-  default: false,
-  index: true,
-},
+    eligibleForRma: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
 
-reviewRequest: {
-  sent: { type: Boolean, default: false, index: true },
-  sentAt: { type: Date, default: null },
-  channel: { type: String, default: "fast2sms" },
-  token: { type: String, default: "" },
-  link: { type: String, default: "" },
-  error: { type: String, default: "" },
-},
+    reviewRequest: {
+      sent: { type: Boolean, default: false, index: true },
+      sentAt: { type: Date, default: null },
+      channel: { type: String, default: "fast2sms" },
+      token: { type: String, default: "" },
+      link: { type: String, default: "" },
+      error: { type: String, default: "" },
+    },
 
-refundSummary: {
-  status: {
-    type: String,
-    enum: [
-      "not_eligible",
-      "eligible",
-      "refund_pending",
-      "processing",
-      "refunded",
-      "partially_refunded",
-      "failed",
-      "manual_required",
-    ],
-    default: "not_eligible",
-    index: true,
-  },
+    refundSummary: {
+      status: {
+        type: String,
+        enum: [
+          "not_eligible",
+          "eligible",
+          "refund_pending",
+          "processing",
+          "refunded",
+          "partially_refunded",
+          "failed",
+          "manual_required",
+        ],
+        default: "not_eligible",
+        index: true,
+      },
 
-  refundType: {
-    type: String,
-    enum: ["full", "partial"],
-    default: "full",
-  },
+      refundType: {
+        type: String,
+        enum: ["full", "partial"],
+        default: "full",
+      },
 
-  refundIds: [
-  {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "OrderRefund",
-  },
-],
+      refundIds: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "OrderRefund",
+        },
+      ],
 
-lastRefundId: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "OrderRefund",
-  default: null,
-},
+      lastRefundId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "OrderRefund",
+        default: null,
+      },
 
-lastRefundNumber: { type: String, default: "" },
+      lastRefundNumber: { type: String, default: "" },
 
-  eligibleAmount: { type: Number, default: 0 },
-  refundedAmount: { type: Number, default: 0 },
-  pendingAmount: { type: Number, default: 0 },
+      eligibleAmount: { type: Number, default: 0 },
+      refundedAmount: { type: Number, default: 0 },
+      pendingAmount: { type: Number, default: 0 },
 
-  reason: { type: String, default: "" },
-  adminNote: { type: String, default: "" },
+      reason: { type: String, default: "" },
+      adminNote: { type: String, default: "" },
 
-  markedEligibleAt: { type: Date, default: null },
-  refundRequestedAt: { type: Date, default: null },
-  refundedAt: { type: Date, default: null },
-  failedAt: { type: Date, default: null },
-  failureReason: { type: String, default: "" },
-},
+      markedEligibleAt: { type: Date, default: null },
+      refundRequestedAt: { type: Date, default: null },
+      refundedAt: { type: Date, default: null },
+      failedAt: { type: Date, default: null },
+      failureReason: { type: String, default: "" },
+    },
 
 
     // ✅ order confirmation (separate from fulfillment)
@@ -533,142 +547,142 @@ lastRefundNumber: { type: String, default: "" },
       failedAt: { type: Date, default: null },
       cancelledAt: { type: Date, default: null },
     },
-cancellation: {
-  isCancelled: { type: Boolean, default: false },
+    cancellation: {
+      isCancelled: { type: Boolean, default: false },
 
-  cancelledAt: { type: Date },
+      cancelledAt: { type: Date },
 
-  cancelledBy: {
-    type: String,
-    enum: ["customer", "admin", "system"],
-    default: undefined,
-  },
+      cancelledBy: {
+        type: String,
+        enum: ["customer", "admin", "system"],
+        default: undefined,
+      },
 
-  reason: {
-    type: String,
-    trim: true,
-    default: "",
-  },
-},
+      reason: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+    },
 
     shipment: {
-  provider: {
-    type: String,
-    enum: ["shiprocket", "xpressbees", "eshipz", "manual"],
-    default: "shiprocket",
-    index: true,
-  },
+      provider: {
+        type: String,
+        enum: ["shiprocket", "xpressbees", "eshipz", "manual"],
+        default: "shiprocket",
+        index: true,
+      },
 
-  // ✅ Universal fields for all partners
-  orderId: { type: String, default: "", index: true },
-  shipmentId: { type: String, default: "", index: true },
-  awb: { type: String, default: "", index: true },
-  courierName: { type: String, default: "" },
-  trackingUrl: { type: String, default: "" },
-  labelUrl: { type: String, default: "" },
+      // ✅ Universal fields for all partners
+      orderId: { type: String, default: "", index: true },
+      shipmentId: { type: String, default: "", index: true },
+      awb: { type: String, default: "", index: true },
+      courierName: { type: String, default: "" },
+      trackingUrl: { type: String, default: "" },
+      labelUrl: { type: String, default: "" },
 
-  status: {
-    type: String,
-    enum: [
-      "pending",
-      "processing",
-      "packed",
-      "booked",
-      "pickup_scheduled",
-      "picked",
-      "shipped",
-      "in_transit",
-      "out_for_delivery",
-      "delivered",
-      "rto",
-      "cancelled",
-      "failed",
-    ],
-    default: "pending",
-    index: true,
-  },
+      status: {
+        type: String,
+        enum: [
+          "pending",
+          "processing",
+          "packed",
+          "booked",
+          "pickup_scheduled",
+          "picked",
+          "shipped",
+          "in_transit",
+          "out_for_delivery",
+          "delivered",
+          "rto",
+          "cancelled",
+          "failed",
+        ],
+        default: "pending",
+        index: true,
+      },
 
-  rawStatus: { type: String, default: "" },
-  statusCode: { type: String, default: "" },
+      rawStatus: { type: String, default: "" },
+      statusCode: { type: String, default: "" },
 
-  shippedAt: Date,
-  deliveredAt: Date,
-  pickedAt: Date,
-  outForDeliveryAt: Date,
-  rtoAt: Date,
-  cancelledAt: Date,
-  failedAt: Date,
+      shippedAt: Date,
+      deliveredAt: Date,
+      pickedAt: Date,
+      outForDeliveryAt: Date,
+      rtoAt: Date,
+      cancelledAt: Date,
+      failedAt: Date,
 
-  lastSyncedAt: { type: Date, default: null },
-  lastWebhookAt: { type: Date, default: null },
-  lastTrackAt: { type: Date, default: null },
+      lastSyncedAt: { type: Date, default: null },
+      lastWebhookAt: { type: Date, default: null },
+      lastTrackAt: { type: Date, default: null },
 
-  lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
-  lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
+      lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
+      lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
 
-  shiprocket: {
-    orderId: { type: String, default: "" },
-    shipmentId: { type: String, default: "" },
-    awb: { type: String, default: "", index: true },
-    courierName: { type: String, default: "" },
-    trackingUrl: { type: String, default: "" },
-    labelUrl: { type: String, default: "" },
+      shiprocket: {
+        orderId: { type: String, default: "" },
+        shipmentId: { type: String, default: "" },
+        awb: { type: String, default: "", index: true },
+        courierName: { type: String, default: "" },
+        trackingUrl: { type: String, default: "" },
+        labelUrl: { type: String, default: "" },
 
-    lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
-    lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
-  },
+        lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
+        lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
+      },
 
-  xpressbees: {
-    shipmentId: { type: String, default: "", index: true },
-    awb: { type: String, default: "", index: true },
-    labelUrl: { type: String, default: "" },
-    courierName: { type: String, default: "XpressBees" },
-    trackingUrl: { type: String, default: "" },
+      xpressbees: {
+        shipmentId: { type: String, default: "", index: true },
+        awb: { type: String, default: "", index: true },
+        labelUrl: { type: String, default: "" },
+        courierName: { type: String, default: "XpressBees" },
+        trackingUrl: { type: String, default: "" },
 
-    lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
-    lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
-  },
+        lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
+        lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
+      },
 
-  // ✅ eShipz partner data
-  eshipz: {
-    orderId: { type: String, default: "", index: true },
-    shipmentId: { type: String, default: "", index: true },
-    awb: { type: String, default: "", index: true },
+      // ✅ eShipz partner data
+      eshipz: {
+        orderId: { type: String, default: "", index: true },
+        shipmentId: { type: String, default: "", index: true },
+        awb: { type: String, default: "", index: true },
 
-    courierName: { type: String, default: "" }, // BlueDart etc.
-    carrierId: { type: String, default: "" },
-    serviceType: { type: String, default: "" },
+        courierName: { type: String, default: "" }, // BlueDart etc.
+        carrierId: { type: String, default: "" },
+        serviceType: { type: String, default: "" },
 
-    trackingUrl: { type: String, default: "" },
-    labelUrl: { type: String, default: "" },
-    invoiceUrl: { type: String, default: "" },
-    manifestUrl: { type: String, default: "" },
+        trackingUrl: { type: String, default: "" },
+        labelUrl: { type: String, default: "" },
+        invoiceUrl: { type: String, default: "" },
+        manifestUrl: { type: String, default: "" },
 
-    status: { type: String, default: "" },
-    statusCode: { type: String, default: "" },
+        status: { type: String, default: "" },
+        statusCode: { type: String, default: "" },
 
-    expectedDelivery: { type: Date, default: null },
+        expectedDelivery: { type: Date, default: null },
 
-    lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
-    lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
-    rawBookingResponse: { type: mongoose.Schema.Types.Mixed, default: null },
-  },
-},
+        lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
+        lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
+        rawBookingResponse: { type: mongoose.Schema.Types.Mixed, default: null },
+      },
+    },
 
 
     trackingDetails: {
-  trackingId: { type: String, default: "", index: true },
-  awb: { type: String, default: "", index: true },
-  provider: { type: String, default: "" },
-  courierName: { type: String, default: "" },
-  trackingUrl: { type: String, default: "" },
+      trackingId: { type: String, default: "", index: true },
+      awb: { type: String, default: "", index: true },
+      provider: { type: String, default: "" },
+      courierName: { type: String, default: "" },
+      trackingUrl: { type: String, default: "" },
 
-  shippedAt: Date,
-  deliveredAt: Date,
-  expectedDelivery: Date,
+      shippedAt: Date,
+      deliveredAt: Date,
+      expectedDelivery: Date,
 
-  lastUpdatedAt: { type: Date, default: null },
-},
+      lastUpdatedAt: { type: Date, default: null },
+    },
 
     customerMessage: { type: String, default: "" },
     adminRemarks: { type: String, default: "" },
@@ -685,7 +699,7 @@ cancellation: {
     orderNumber: { type: String, unique: true, required: true, index: true },
     orderDate: { type: Date, default: Date.now, index: true },
 
-        source: {
+    source: {
       type: String,
       enum: ["website", "mobile_app", "social_media", "manual"],
       default: "website",
@@ -720,11 +734,11 @@ cancellation: {
     },
     confirmedAt: { type: Date, default: null },
     confirmedBy: {
-  type: String,
-  enum: ["auto", "customer", "admin"],
-  default: null,
-  index: true,
-},
+      type: String,
+      enum: ["auto", "customer", "admin"],
+      default: null,
+      index: true,
+    },
 
     analytics: {
       categoryBreakdown: [
@@ -770,40 +784,6 @@ orderSchema.pre("validate", function (next) {
   }
 });
 
-
-
-// ========================================================================================
-// ✅ AUTO-HANDLE EXCHANGE PAYMENT LOGIC
-// ========================================================================================
-orderSchema.pre("validate", function (next) {
-  try {
-    if (this.paymentMethod === "exchange") {
-      // no money movement
-      this.paymentStatus = "not_applicable";
-
-      // ensure accounting safety
-      this.subtotal = Number(this.subtotal || 0);
-      this.discount = 0;
-      this.shippingFee = 0;
-      this.tax = 0;
-
-      this.totalAmount = this.subtotal;
-      this.finalPayable = 0;
-
-      // exchange orders are always confirmed logically
-      if (!this.isConfirmed) {
-        this.isConfirmed = true;
-        this.confirmedAt = new Date();
-      }
-    }
-
-    next();
-  } catch (e) {
-    next(e);
-  }
-});
-
-
 // ========================================================================================
 // ⭐ AUTO-GENERATE SEQUENTIAL ORDER NUMBER
 // ========================================================================================
@@ -844,7 +824,7 @@ orderSchema.pre("validate", function (next) {
     if (isRazorpayPaid && !this.isConfirmed) {
       this.isConfirmed = true;
       this.confirmedAt = new Date();
-        this.confirmedBy = "auto"; // ✅
+      this.confirmedBy = "auto"; // ✅
 
     }
 
@@ -972,6 +952,7 @@ orderSchema.pre("validate", function (next) {
         const qty = Math.max(1, Number(it.quantity || 1));
         const price = Number(it.price || 0);
         const subtotal = Number(it.subtotal ?? price * qty);
+
         return { ...it, quantity: qty, price, subtotal };
       });
     }
@@ -980,20 +961,90 @@ orderSchema.pre("validate", function (next) {
       (sum, it) => sum + Number(it.subtotal || 0),
       0
     );
+
+    this.subtotal = subtotal;
+
+    // ✅ Exchange order safety: no money movement
+    if (this.paymentMethod === "exchange") {
+      this.discount = 0;
+      this.shippingFee = 0;
+      this.tax = 0;
+      this.totalAmount = subtotal;
+      this.finalPayable = 0;
+      this.paymentStatus = "not_applicable";
+
+      this.walletCredit = this.walletCredit || {};
+      this.paymentBreakdown = this.paymentBreakdown || {};
+      this.analytics = this.analytics || {};
+
+      this.walletCredit.used = false;
+      this.walletCredit.amount = 0;
+      this.paymentBreakdown.walletAmount = 0;
+      this.paymentBreakdown.razorpayAmount = 0;
+      this.paymentBreakdown.codAmount = 0;
+      this.analytics.creditsUsed = false;
+
+      if (!this.isConfirmed) {
+        this.isConfirmed = true;
+        this.confirmedAt = new Date();
+        this.confirmedBy = "auto";
+      }
+
+      const totalItems = (this.items || []).reduce(
+        (sum, it) => sum + Number(it.quantity || 0),
+        0
+      );
+
+      this.analytics.totalItems = totalItems;
+      this.analytics.averageItemPrice = totalItems ? subtotal / totalItems : 0;
+
+      return next();
+    }
+
     const shippingFee = Number(this.shippingFee || 0);
     const tax = Number(this.tax || 0);
     const discount = Number(this.discount || 0);
 
-    this.subtotal = subtotal;
     this.totalAmount = subtotal + shippingFee + tax;
-    this.finalPayable = Math.max(0, this.totalAmount - discount);
+
+    const beforeWalletPayable = Math.max(0, this.totalAmount - discount);
+
+    const requestedWalletAmount = Number(
+      this.walletCredit?.amount || this.paymentBreakdown?.walletAmount || 0
+    );
+
+    const walletAmount = Math.min(
+      Math.max(0, requestedWalletAmount),
+      beforeWalletPayable
+    );
+
+    this.finalPayable = Math.max(0, beforeWalletPayable - walletAmount);
+
+    this.walletCredit = this.walletCredit || {};
+    this.paymentBreakdown = this.paymentBreakdown || {};
+    this.analytics = this.analytics || {};
+
+    this.walletCredit.used = walletAmount > 0;
+    this.walletCredit.amount = walletAmount;
+    this.paymentBreakdown.walletAmount = walletAmount;
+    this.analytics.creditsUsed = walletAmount > 0;
+
+    if (walletAmount > 0 && this.finalPayable === 0) {
+      this.paymentMethod = "wallet";
+      this.paymentStatus = "paid";
+
+      if (!this.isConfirmed) {
+        this.isConfirmed = true;
+        this.confirmedAt = new Date();
+        this.confirmedBy = "auto";
+      }
+    }
 
     const totalItems = (this.items || []).reduce(
       (sum, it) => sum + Number(it.quantity || 0),
       0
     );
 
-    this.analytics = this.analytics || {};
     this.analytics.totalItems = totalItems;
     this.analytics.averageItemPrice = totalItems ? subtotal / totalItems : 0;
 
@@ -1436,6 +1487,8 @@ orderSchema.post("save", function (doc) {
   });
 });
 
+
+
 // Core list performance
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ priorityRank: -1, createdAt: -1 });
@@ -1518,5 +1571,9 @@ orderSchema.index({ "trackingDetails.trackingId": 1 });
 orderSchema.index({ eligibleForRma: 1, createdAt: -1 });
 orderSchema.index({ "reviewRequest.sent": 1, createdAt: -1 });
 orderSchema.index({ "reviewRequest.token": 1 });
+
+orderSchema.index({ "walletCredit.used": 1, createdAt: -1 });
+orderSchema.index({ "walletCredit.transactionId": 1 });
+orderSchema.index({ "paymentBreakdown.walletAmount": -1, createdAt: -1 });
 
 export default mongoose.models.Order || mongoose.model("Order", orderSchema);

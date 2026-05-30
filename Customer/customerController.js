@@ -127,6 +127,35 @@ const getCustomerType = ({
   return "new";
 };
 
+const toNumber = (v, fallback = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const getPagination = (query = {}) => {
+  const limit = Math.min(100, Math.max(1, toNumber(query.limit, 20)));
+  const page = Math.max(1, toNumber(query.page, 1));
+
+  return {
+    page,
+    limit,
+    skip: (page - 1) * limit,
+  };
+};
+
+const dateRangeFilter = (from, to) => {
+  const filter = {};
+
+  if (from) filter.$gte = new Date(from);
+  if (to) {
+    const end = new Date(to);
+    end.setHours(23, 59, 59, 999);
+    filter.$lte = end;
+  }
+
+  return Object.keys(filter).length ? filter : null;
+};
+
 /**
  * ✅ Recalculate customer analytics from orders
  * Source of truth: Order collection
@@ -611,6 +640,7 @@ export const getAllCustomers = async (req, res) => {
       ageGroup,
       isActive,
       customerType,
+
       minOrders,
       maxOrders,
       minSpend,
@@ -621,6 +651,15 @@ export const getAllCustomers = async (req, res) => {
       maxReturnRate,
       minRiskScore,
       maxRiskScore,
+
+      hasCreditBalance,
+      minCreditBalance,
+      maxCreditBalance,
+      minTotalCredited,
+      maxTotalCredited,
+      minTotalDebited,
+      maxTotalDebited,
+
       sortBy = "createdAt",
       sortOrder = "desc",
       page = 1,
@@ -641,55 +680,45 @@ export const getAllCustomers = async (req, res) => {
           { phone: new RegExp(search, "i") },
           { customerId: new RegExp(search, "i") },
           { firebaseUID: new RegExp(search, "i") },
+          { referralCode: new RegExp(search, "i") },
         ],
       }),
     };
 
-    if (minOrders || maxOrders) {
-      filter["analytics.totalOrders"] = {};
-      if (minOrders) filter["analytics.totalOrders"].$gte = Number(minOrders);
-      if (maxOrders) filter["analytics.totalOrders"].$lte = Number(maxOrders);
+    const addRange = (path, min, max) => {
+      if (!min && !max) return;
+
+      filter[path] = {};
+      if (min) filter[path].$gte = Number(min);
+      if (max) filter[path].$lte = Number(max);
+    };
+
+    addRange("analytics.totalOrders", minOrders, maxOrders);
+    addRange("analytics.totalSpend", minSpend, maxSpend);
+    addRange("analytics.rtoRate", minRtoRate, maxRtoRate);
+    addRange("analytics.returnRate", minReturnRate, maxReturnRate);
+    addRange("analytics.riskScore", minRiskScore, maxRiskScore);
+
+    addRange("credits.balance", minCreditBalance, maxCreditBalance);
+    addRange("credits.totalCredited", minTotalCredited, maxTotalCredited);
+    addRange("credits.totalDebited", minTotalDebited, maxTotalDebited);
+
+    if (hasCreditBalance === "true") {
+      filter["credits.balance"] = { ...(filter["credits.balance"] || {}), $gt: 0 };
     }
 
-    if (minSpend || maxSpend) {
-      filter["analytics.totalSpend"] = {};
-      if (minSpend) filter["analytics.totalSpend"].$gte = Number(minSpend);
-      if (maxSpend) filter["analytics.totalSpend"].$lte = Number(maxSpend);
+    if (hasCreditBalance === "false") {
+      filter["credits.balance"] = { ...(filter["credits.balance"] || {}), $lte: 0 };
     }
 
-    if (minRtoRate || maxRtoRate) {
-      filter["analytics.rtoRate"] = {};
-      if (minRtoRate) filter["analytics.rtoRate"].$gte = Number(minRtoRate);
-      if (maxRtoRate) filter["analytics.rtoRate"].$lte = Number(maxRtoRate);
-    }
-
-    if (minReturnRate || maxReturnRate) {
-      filter["analytics.returnRate"] = {};
-      if (minReturnRate) {
-        filter["analytics.returnRate"].$gte = Number(minReturnRate);
-      }
-      if (maxReturnRate) {
-        filter["analytics.returnRate"].$lte = Number(maxReturnRate);
-      }
-    }
-
-    if (minRiskScore || maxRiskScore) {
-      filter["analytics.riskScore"] = {};
-      if (minRiskScore) {
-        filter["analytics.riskScore"].$gte = Number(minRiskScore);
-      }
-      if (maxRiskScore) {
-        filter["analytics.riskScore"].$lte = Number(maxRiskScore);
-      }
-    }
-
-    const safeLimit = Math.min(100, Math.max(1, Number(limit)));
-    const safePage = Math.max(1, Number(page));
+    const safeLimit = Math.min(100, Math.max(1, Number(limit) || 20));
+    const safePage = Math.max(1, Number(page) || 1);
     const skip = (safePage - 1) * safeLimit;
 
     const allowedSort = {
       createdAt: "createdAt",
       joinedAt: "joinedAt",
+
       totalOrders: "analytics.totalOrders",
       totalSpend: "analytics.totalSpend",
       avgOrderValue: "analytics.avgOrderValue",
@@ -697,6 +726,15 @@ export const getAllCustomers = async (req, res) => {
       rtoRate: "analytics.rtoRate",
       returnRate: "analytics.returnRate",
       riskScore: "analytics.riskScore",
+
+      creditBalance: "credits.balance",
+      totalCredited: "credits.totalCredited",
+      totalDebited: "credits.totalDebited",
+      lastCreditAt: "credits.lastCreditAt",
+      lastDebitAt: "credits.lastDebitAt",
+      refundCredits: "credits.totalRefundCredits",
+      promotionCredits: "credits.totalPromotionCredits",
+      influencerCredits: "credits.totalInfluencerCredits",
     };
 
     const sortField = allowedSort[sortBy] || "createdAt";
@@ -711,16 +749,33 @@ export const getAllCustomers = async (req, res) => {
       Customer.countDocuments(filter),
     ]);
 
-    res.json({
+    return res.status(200).json({
       items,
       total,
       page: safePage,
       pages: Math.ceil(total / safeLimit),
       limit: safeLimit,
+      filters: {
+        search,
+        country,
+        state,
+        city,
+        ageGroup,
+        isActive,
+        customerType,
+        hasCreditBalance,
+      },
+      sort: {
+        sortBy,
+        sortOrder,
+      },
     });
   } catch (err) {
     console.error("Get Customers Error:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
   }
 };
 
@@ -757,6 +812,7 @@ export const updateCustomer = async (req, res) => {
     delete payload.customerId;
     delete payload.cart;
     delete payload.analytics;
+    delete payload.credits;
 
     const ALLOWED_TOP_LEVEL = [
       "name",
@@ -847,7 +903,7 @@ export const updateCustomerAnalytics = async (req, res) => {
     const allowed = [
       "wishlistCount",
       "couponUses",
-      "creditsEarned",
+      "walletCreditsEarned",
     ];
 
     const $set = {
@@ -1325,5 +1381,516 @@ export const addCustomerBankingDetails = async (req, res) => {
   } catch (err) {
     console.error("Add Customer Banking Details Error:", err);
     return res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+/* =========================================================
+   CUSTOMER CREDITS / WALLET
+========================================================= */
+
+const CREDIT_TYPES = [
+  "refund",
+  "promotion",
+  "influencer",
+  "goodwill",
+  "cashback",
+  "referral_bonus",
+  "manual_credit",
+  "manual_debit",
+  "order_usage",
+  "order_adjustment",
+  "expired",
+  "other",
+];
+
+const normalizeCreditPayload = (body = {}) => {
+  return {
+    amount: Number(body.amount || 0),
+    type: body.type ? String(body.type).trim() : "",
+    reason: body.reason ? String(body.reason).trim() : "",
+    notes: body.notes ? String(body.notes).trim() : "",
+
+    orderId: body.orderId || null,
+    orderNumber: body.orderNumber ? String(body.orderNumber).trim() : "",
+
+    refundId: body.refundId || null,
+
+    promotionName: body.promotionName
+      ? String(body.promotionName).trim()
+      : "",
+
+    influencerName: body.influencerName
+      ? String(body.influencerName).trim()
+      : "",
+
+    influencerCode: body.influencerCode
+      ? String(body.influencerCode).trim().toUpperCase()
+      : "",
+
+    couponId: body.couponId || null,
+
+    couponCode: body.couponCode
+      ? String(body.couponCode).trim().toUpperCase()
+      : "",
+
+    addedBy: body.addedBy ? String(body.addedBy).trim() : "admin",
+    adminId: body.adminId || null,
+
+    expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+  };
+};
+
+/**
+ * ✅ Add customer credit
+ * Refund / promotion / influencer / goodwill / cashback etc.
+ */
+export const addCustomerCredit = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const payload = normalizeCreditPayload(req.body);
+
+    if (!payload.amount || payload.amount <= 0) {
+      return res.status(400).json({
+        message: "Valid amount is required",
+      });
+    }
+
+    if (!payload.type || !CREDIT_TYPES.includes(payload.type)) {
+      return res.status(400).json({
+        message: "Valid credit type is required",
+        allowedTypes: CREDIT_TYPES,
+      });
+    }
+
+    if (!payload.reason) {
+      return res.status(400).json({
+        message: "Reason is required",
+      });
+    }
+
+    const customer = await Customer.findById(id);
+
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    customer.credits = customer.credits || {};
+    customer.credits.balance = Number(customer.credits.balance || 0);
+    customer.credits.totalCredited = Number(customer.credits.totalCredited || 0);
+    customer.credits.totalDebited = Number(customer.credits.totalDebited || 0);
+    customer.credits.logs = Array.isArray(customer.credits.logs)
+      ? customer.credits.logs
+      : [];
+
+    const newBalance = customer.credits.balance + payload.amount;
+
+    const log = {
+      transactionType: "credit",
+      type: payload.type,
+      amount: payload.amount,
+      balanceAfterTransaction: newBalance,
+
+      reason: payload.reason,
+      notes: payload.notes,
+
+      orderId: payload.orderId,
+      orderNumber: payload.orderNumber,
+
+      refundId: payload.refundId,
+
+      promotionName: payload.promotionName,
+      influencerName: payload.influencerName,
+      influencerCode: payload.influencerCode,
+
+      couponId: payload.couponId,
+      couponCode: payload.couponCode,
+
+      addedBy: payload.addedBy,
+      adminId: payload.adminId,
+
+      expiresAt: payload.expiresAt,
+      isExpired: false,
+
+      createdAt: new Date(),
+    };
+
+    customer.credits.balance = newBalance;
+    customer.credits.totalCredited += payload.amount;
+    customer.credits.lastCreditAt = new Date();
+
+    if (payload.type === "refund") {
+      customer.credits.totalRefundCredits =
+        Number(customer.credits.totalRefundCredits || 0) + payload.amount;
+    }
+
+    if (payload.type === "promotion") {
+      customer.credits.totalPromotionCredits =
+        Number(customer.credits.totalPromotionCredits || 0) + payload.amount;
+    }
+
+    if (payload.type === "influencer") {
+      customer.credits.totalInfluencerCredits =
+        Number(customer.credits.totalInfluencerCredits || 0) + payload.amount;
+    }
+
+    customer.analytics = customer.analytics || {};
+    customer.analytics.walletCreditsEarned =
+      Number(customer.analytics.walletCreditsEarned || 0) + payload.amount;
+
+    customer.credits.logs.unshift(log);
+
+    // optional safety limit
+    customer.credits.logs = customer.credits.logs.slice(0, 300);
+
+    await customer.save();
+
+    return res.status(200).json({
+      message: "Customer credit added",
+      credits: customer.credits,
+      customer,
+    });
+  } catch (err) {
+    console.error("Add Customer Credit Error:", err);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
+
+/**
+ * ✅ Debit / use customer credit
+ * Used while order payment, manual debit, expired credit etc.
+ */
+export const debitCustomerCredit = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const payload = normalizeCreditPayload(req.body);
+
+    if (!payload.amount || payload.amount <= 0) {
+      return res.status(400).json({
+        message: "Valid amount is required",
+      });
+    }
+
+    const allowedDebitTypes = [
+      "manual_debit",
+      "order_usage",
+      "order_adjustment",
+      "expired",
+      "other",
+    ];
+
+    if (!payload.type || !allowedDebitTypes.includes(payload.type)) {
+      return res.status(400).json({
+        message: "Valid debit type is required",
+        allowedTypes: allowedDebitTypes,
+      });
+    }
+
+    if (!payload.reason) {
+      return res.status(400).json({
+        message: "Reason is required",
+      });
+    }
+
+    const customer = await Customer.findById(id);
+
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    customer.credits = customer.credits || {};
+    customer.credits.balance = Number(customer.credits.balance || 0);
+    customer.credits.totalDebited = Number(customer.credits.totalDebited || 0);
+    customer.credits.logs = Array.isArray(customer.credits.logs)
+      ? customer.credits.logs
+      : [];
+
+    if (customer.credits.balance < payload.amount) {
+      return res.status(400).json({
+        message: "Insufficient credit balance",
+        availableBalance: customer.credits.balance,
+      });
+    }
+
+    const newBalance = customer.credits.balance - payload.amount;
+
+    const log = {
+      transactionType: "debit",
+      type: payload.type,
+      amount: payload.amount,
+      balanceAfterTransaction: newBalance,
+
+      reason: payload.reason,
+      notes: payload.notes,
+
+      orderId: payload.orderId,
+      orderNumber: payload.orderNumber,
+
+      refundId: payload.refundId,
+
+      promotionName: payload.promotionName,
+      influencerName: payload.influencerName,
+      influencerCode: payload.influencerCode,
+
+      couponId: payload.couponId,
+      couponCode: payload.couponCode,
+
+      addedBy: payload.addedBy,
+      adminId: payload.adminId,
+
+      expiresAt: payload.expiresAt,
+      isExpired: payload.type === "expired",
+
+      createdAt: new Date(),
+    };
+
+    customer.credits.balance = newBalance;
+    customer.credits.totalDebited += payload.amount;
+    customer.credits.lastDebitAt = new Date();
+
+    customer.credits.logs.unshift(log);
+    customer.credits.logs = customer.credits.logs.slice(0, 300);
+
+    await customer.save();
+
+    return res.status(200).json({
+      message: "Customer credit debited",
+      credits: customer.credits,
+      customer,
+    });
+  } catch (err) {
+    console.error("Debit Customer Credit Error:", err);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
+
+/**
+ * ✅ Get customer credit logs
+ */
+export const getCustomerCreditLogs = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const {
+      type,
+      transactionType,
+      orderNumber,
+      influencerCode,
+      page = 1,
+      limit = 20,
+    } = req.query;
+
+    const customer = await Customer.findById(id)
+      .select("customerId name email phone credits")
+      .lean();
+
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    let logs = customer?.credits?.logs || [];
+
+    if (type) {
+      logs = logs.filter((log) => log.type === type);
+    }
+
+    if (transactionType) {
+      logs = logs.filter((log) => log.transactionType === transactionType);
+    }
+
+    if (orderNumber) {
+      const safeOrderNumber = String(orderNumber).trim().toLowerCase();
+      logs = logs.filter((log) =>
+        String(log.orderNumber || "").toLowerCase().includes(safeOrderNumber)
+      );
+    }
+
+    if (influencerCode) {
+      const safeCode = String(influencerCode).trim().toUpperCase();
+      logs = logs.filter((log) => log.influencerCode === safeCode);
+    }
+
+    logs = logs.sort(
+      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+    );
+
+    const safeLimit = Math.min(100, Math.max(1, Number(limit)));
+    const safePage = Math.max(1, Number(page));
+    const skip = (safePage - 1) * safeLimit;
+
+    const paginatedLogs = logs.slice(skip, skip + safeLimit);
+
+    return res.status(200).json({
+      customer: {
+        _id: customer._id,
+        customerId: customer.customerId,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+      },
+      summary: {
+        balance: customer?.credits?.balance || 0,
+        totalCredited: customer?.credits?.totalCredited || 0,
+        totalDebited: customer?.credits?.totalDebited || 0,
+        totalRefundCredits: customer?.credits?.totalRefundCredits || 0,
+        totalPromotionCredits: customer?.credits?.totalPromotionCredits || 0,
+        totalInfluencerCredits: customer?.credits?.totalInfluencerCredits || 0,
+      },
+      items: paginatedLogs,
+      total: logs.length,
+      page: safePage,
+      pages: Math.ceil(logs.length / safeLimit),
+      limit: safeLimit,
+    });
+  } catch (err) {
+    console.error("Get Customer Credit Logs Error:", err);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
+
+export const getAllCustomerCreditLogs = async (req, res) => {
+  try {
+    const {
+      type,
+      transactionType,
+      orderNumber,
+      influencerCode,
+      couponCode,
+      search,
+      from,
+      to,
+      sortOrder = "desc",
+    } = req.query;
+
+    const { page, limit, skip } = getPagination(req.query);
+
+    const match = {};
+
+    if (type) match["credits.logs.type"] = type;
+    if (transactionType) match["credits.logs.transactionType"] = transactionType;
+    if (orderNumber) match["credits.logs.orderNumber"] = new RegExp(orderNumber, "i");
+    if (influencerCode) match["credits.logs.influencerCode"] = String(influencerCode).trim().toUpperCase();
+    if (couponCode) match["credits.logs.couponCode"] = String(couponCode).trim().toUpperCase();
+
+    const createdAtRange = dateRangeFilter(from, to);
+    if (createdAtRange) match["credits.logs.createdAt"] = createdAtRange;
+
+    if (search) {
+      const regex = new RegExp(String(search).trim(), "i");
+
+      match.$or = [
+        { "credits.logs.creditId": regex },
+        { "credits.logs.reason": regex },
+        { "credits.logs.notes": regex },
+        { "credits.logs.orderNumber": regex },
+        { "credits.logs.promotionName": regex },
+        { "credits.logs.influencerName": regex },
+        { "credits.logs.influencerCode": regex },
+        { "credits.logs.couponCode": regex },
+        { name: regex },
+        { email: regex },
+        { phone: regex },
+        { customerId: regex },
+      ];
+    }
+
+    const pipeline = [
+      { $unwind: "$credits.logs" },
+      { $match: match },
+      {
+        $project: {
+          _id: 0,
+          customer: {
+            _id: "$_id",
+            customerId: "$customerId",
+            name: "$name",
+            email: "$email",
+            phone: "$phone",
+          },
+          log: "$credits.logs",
+        },
+      },
+      {
+        $sort: {
+          "log.createdAt": sortOrder === "asc" ? 1 : -1,
+        },
+      },
+      {
+        $facet: {
+          items: [{ $skip: skip }, { $limit: limit }],
+          meta: [{ $count: "total" }],
+        },
+      },
+    ];
+
+    const result = await Customer.aggregate(pipeline);
+
+    const items = result?.[0]?.items || [];
+    const total = result?.[0]?.meta?.[0]?.total || 0;
+
+    return res.status(200).json({
+      items,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+      limit,
+    });
+  } catch (err) {
+    console.error("Get All Customer Credit Logs Error:", err);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
+
+export const getCustomerCreditSummary = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const customer = await Customer.findById(id)
+      .select("customerId name email phone credits")
+      .lean();
+
+    if (!customer) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      customer: {
+        _id: customer._id,
+        customerId: customer.customerId,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+      },
+      credits: {
+        balance: customer?.credits?.balance || 0,
+        totalCredited: customer?.credits?.totalCredited || 0,
+        totalDebited: customer?.credits?.totalDebited || 0,
+        totalRefundCredits: customer?.credits?.totalRefundCredits || 0,
+        totalPromotionCredits: customer?.credits?.totalPromotionCredits || 0,
+        totalInfluencerCredits: customer?.credits?.totalInfluencerCredits || 0,
+        lastCreditAt: customer?.credits?.lastCreditAt || null,
+        lastDebitAt: customer?.credits?.lastDebitAt || null,
+      },
+    });
+  } catch (err) {
+    console.error("Get Customer Credit Summary Error:", err);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
   }
 };
