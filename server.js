@@ -1,5 +1,5 @@
 // --------------------------------------------------
-// server.js (MIRAY FASHIONS Backend)
+// server.js (OATCLUB Backend)
 // --------------------------------------------------
 
 // ✅ MUST BE FIRST LINE
@@ -110,28 +110,22 @@ console.log("✅ ENV LOADED @ server.js:", {
 // CORS CONFIG
 // --------------------------------------------------
 const ALLOWED_ORIGINS = [
+  // Local Development
   "http://localhost:3000",
   "http://localhost:3001",
   "http://localhost:3002",
 
-  "https://www.mirayfashions.in",
-  "https://mirayfashions.in",
+  // OATCLUB Store
+  "https://oatclub.in",
+  "https://www.oatclub.in",
+  "https://oatclub-storefront.vercel.app",
 
-  "https://www.mirayfashions.com",
-  "https://mirayfashions.com",
+  // OATCLUB Admin
+  "https://admin.oatclub.in",
+  "https://oatclub-admin.vercel.app",
 
-  "https://product.mirayfashions.com",
-
-  "https://media.mirayfashions.com",
-  "https://www.media.mirayfashions.com",
-  "https://miray-media-project.vercel.app",
-  "https://www.miray-media-project.vercel.app",
-
-  "https://miray-nine.vercel.app",
-
-  "https://admin.mirayfashions.com",
-
-  "https://miray-backend.onrender.com",
+  // Backend Domain
+  "https://studio.oatclub.in",
 ];
 
 // ✅ Shiprocket webhook CORS bypass
@@ -286,7 +280,16 @@ app.use("/api/marketing-campaigns", marketingcampaignroutes);
 // ROOT + FEEDS
 // --------------------------------------------------
 app.get("/", (req, res) => {
-  res.send("🛒 MIRAY FASHIONS API running...");
+  res.send(`
+    🚀 OATCLUB API
+    Own All Trends.
+
+    Build Fast.
+    Move Faster.
+    Stay Unstoppable.
+
+    Status: Online ✅
+  `);
 });
 
 app.use("/", metaFeedRouter);
