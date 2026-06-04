@@ -1,0 +1,1661 @@
+{
+  "summary": {
+    "totalProducts": 19,
+    "completeProducts": 0,
+    "incompleteProducts": 19,
+    "generatedAt": "2026-06-04T17:57:12.538Z"
+  },
+  "products": [
+    {
+      "_id": "6a212e81443a0836cb08d9c3",
+      "productCode": "00001",
+      "title": "Rosalie Embroidered Lace Corset Top",
+      "slug": "rosalie-embroidered-lace-corset-top",
+      "productType": "variable",
+      "price": 999,
+      "categories": [
+        "corset-tops"
+      ],
+      "tags": [],
+      "colors": [
+        "white"
+      ],
+      "thumbnail": "https://img1.shopcider.com/product/1775126550000-sXMw5s.jpg",
+      "imagesCount": 7,
+      "variantsCount": 5,
+      "missingCount": 27,
+      "missingFields": [
+        "fabricDetails",
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "tags",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A romantic white corset-inspired top featuring delicate floral embroidery, lace trims, and feminine bow-tie shoulder straps. Designed with a flattering structured silhouette and soft stretch back for all-day comfort.",
+        "howToStyle": "Pair with light-wash denim, ballet flats, and dainty gold jewelry for a soft feminine look. Layer with a cardigan for effortless daytime styling.",
+        "keyFeatures": [
+          "Structured corset silhouette",
+          "Floral embroidery",
+          "Bow shoulder straps",
+          "Lace trim detailing",
+          "Stretch back panel",
+          "Feminine fit",
+          "Lightweight fabric"
+        ],
+        "fabricDetails": "",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a212ef7443a0836cb08da1b",
+      "productCode": "00002",
+      "title": "Serena Lace-Up Maxi Dress",
+      "slug": "serena-lace-up-maxi-dress",
+      "productType": "variable",
+      "price": 1799,
+      "categories": [
+        "maxi-dresses"
+      ],
+      "tags": [],
+      "colors": [
+        "blue"
+      ],
+      "thumbnail": "https://us.princesspolly.com/cdn/shop/files/0-modelinfo-selina-us2_6d0fffdf-cd88-4753-83d5-68b766cc2781.jpg?v=1773362512&width=1800",
+      "imagesCount": 7,
+      "variantsCount": 5,
+      "missingCount": 27,
+      "missingFields": [
+        "fabricDetails",
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "tags",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A dreamy sky-blue maxi dress featuring a structured strapless bodice, lace-up side detailing, and a flowing full-length silhouette. Designed for effortless elegance from brunch dates to vacation evenings.",
+        "howToStyle": "Style with pointed heels, a woven tote, and minimal gold jewelry for a chic resort-inspired look. Add a cropped cardigan for cooler evenings.",
+        "keyFeatures": [
+          "Strapless neckline",
+          "Lace-up side details",
+          "Flowy maxi silhouette",
+          "Lightweight fabric",
+          "Resort-ready style",
+          "Feminine fit",
+          "Elegant drape"
+        ],
+        "fabricDetails": "",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a212f6a443a0836cb08da69",
+      "productCode": "00003",
+      "title": "Blush Bloom Co-Ord Set",
+      "slug": "blush-bloom-co-ord-set",
+      "productType": "variable",
+      "price": 1699,
+      "categories": [
+        "casual-co-ords"
+      ],
+      "tags": [
+        "pink co ord set",
+        "blush pink set",
+        "skirt co ord set",
+        "cute matching set",
+        "coquette outfit",
+        "summer co ord set",
+        "mini skirt set",
+        "pink outfit women",
+        "oatclub co ord set"
+      ],
+      "colors": [
+        "pink"
+      ],
+      "thumbnail": "https://img1.shopcider.com/product/1775821535000-B4ixDn.jpg",
+      "imagesCount": 9,
+      "variantsCount": 5,
+      "missingCount": 26,
+      "missingFields": [
+        "fabricDetails",
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A feminine blush pink co-ord set featuring a structured square-neck top with delicate lace detailing and a matching mini skirt. Designed for effortless summer styling with a soft romantic aesthetic.",
+        "howToStyle": "Pair with ballet flats, pearl accessories, and a mini shoulder bag for the ultimate coquette-inspired look. Complete with a lightweight cardigan for cooler evenings.",
+        "keyFeatures": [
+          "Matching co-ord set",
+          "Square neckline",
+          "Lace trim detailing",
+          "Mini skirt",
+          "Feminine silhouette",
+          "Lightweight fabric",
+          "Summer-ready style"
+        ],
+        "fabricDetails": "",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a21304a443a0836cb08dac2",
+      "productCode": "00004",
+      "title": "Buttercup Ruffle Tie Top",
+      "slug": "buttercup-ruffle-tie-top",
+      "productType": "variable",
+      "price": 899,
+      "categories": [
+        "crop-tops"
+      ],
+      "tags": [
+        "butter yellow top",
+        "ruffle top women",
+        "tie front top",
+        "soft girl top",
+        "yellow summer top",
+        "coquette top",
+        "cute tops for women",
+        "mesh top women",
+        "oatclub tops"
+      ],
+      "colors": [
+        "yellow"
+      ],
+      "thumbnail": "https://img1.shopcider.com/product/1778204173000-KzdHwn.jpg",
+      "imagesCount": 6,
+      "variantsCount": 5,
+      "missingCount": 26,
+      "missingFields": [
+        "keyFeatures",
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A dreamy butter yellow top featuring delicate ruffle trims, a flattering plunge neckline, and a feminine tie-front detail. Designed to add a soft romantic touch to everyday styling.",
+        "howToStyle": "Pair with white linen trousers, a mini skirt, or relaxed denim for an effortlessly chic summer look. Finish with gold jewelry and ballet flats.",
+        "keyFeatures": [],
+        "fabricDetails": "Crafted from a lightweight stretch mesh fabric with soft ruffle detailing around the neckline and shoulders. Designed for a comfortable body-skimming fit.",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a2130b3443a0836cb08db26",
+      "productCode": "00005",
+      "title": "Ivory Tide Halter Top",
+      "slug": "ivory-tide-halter-top",
+      "productType": "variable",
+      "price": 999,
+      "categories": [
+        "tops"
+      ],
+      "tags": [
+        "white halter top",
+        "halter neck top women",
+        "vacation top",
+        "white summer top",
+        "ruched top women",
+        "beach outfit top",
+        "resort wear top",
+        "cute white top",
+        "oatclub tops"
+      ],
+      "colors": [
+        "white"
+      ],
+      "thumbnail": "https://img1.shopcider.com/product/1774426736000-syshma.jpg",
+      "imagesCount": 5,
+      "variantsCount": 5,
+      "missingCount": 26,
+      "missingFields": [
+        "fabricDetails",
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A timeless white halter top featuring a flattering ruched bodice, open-back silhouette, and elegant tie-neck detail. Designed to elevate your everyday and vacation wardrobe with effortless sophistication.",
+        "howToStyle": "Pair with denim shorts, linen trousers, or a satin maxi skirt for a chic summer look. Complete with layered gold jewelry and strappy sandals.",
+        "keyFeatures": [
+          "Halter neckline",
+          "Tie-back closure",
+          "Ruched bodice",
+          "Open back design",
+          "Stretch back panel",
+          "Lightweight fabric",
+          "Vacation-ready style"
+        ],
+        "fabricDetails": "",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a213120443a0836cb08db95",
+      "productCode": "00006",
+      "title": "Midnight Muse Lace Cami Top",
+      "slug": "midnight-muse-lace-cami-top",
+      "productType": "variable",
+      "price": 899,
+      "categories": [
+        "tank-tops",
+        "tops"
+      ],
+      "tags": [
+        "black cami top",
+        "black corset top",
+        "lace trim top",
+        "going out top",
+        "party top women",
+        "black aesthetic top",
+        "fitted cami top",
+        "y2k top women",
+        "oatclub tops"
+      ],
+      "colors": [
+        "black"
+      ],
+      "thumbnail": "https://img.shopcider.com/hermes/video/1779451435000-em3q7x.png",
+      "imagesCount": 7,
+      "variantsCount": 5,
+      "missingCount": 25,
+      "missingFields": [
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A sleek black cami top featuring delicate lace trims, a structured bustier-inspired silhouette, and adjustable shoulder straps. Designed for effortless day-to-night styling.",
+        "howToStyle": "Pair with tailored trousers, a mini skirt, or wide-leg denim for an elevated evening look. Add silver jewelry and heels for a chic after-dark aesthetic.",
+        "keyFeatures": [
+          "Bustier-inspired design",
+          "Adjustable straps",
+          "Lace trim detailing",
+          "Body-contouring fit",
+          "Stretch fabric",
+          "Day-to-night styling",
+          "Minimalist aesthetic"
+        ],
+        "fabricDetails": "Crafted from a soft stretch knit fabric that hugs the body comfortably. Finished with delicate lace trims and adjustable straps for a flattering fit.",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a21321e443a0836cb08dc1d",
+      "productCode": "00007",
+      "title": "Sky Picnic One-Shoulder Mini Dress",
+      "slug": "sky-picnic-one-shoulder-mini-dress",
+      "productType": "variable",
+      "price": 1499,
+      "categories": [
+        "mini-dresses",
+        "dresses"
+      ],
+      "tags": [
+        "gingham mini dress",
+        "blue gingham dress",
+        "one shoulder dress",
+        "picnic dress",
+        "summer mini dress",
+        "blue check dress",
+        "vacation dress women",
+        "cute mini dress",
+        "oatclub dresses"
+      ],
+      "colors": [
+        "blue"
+      ],
+      "thumbnail": "https://us.princesspolly.com/cdn/shop/files/0-modelinfo-emma-us2_8aa62299-92d1-4414-a1b3-d65835acc932.jpg?v=1780456581&width=1800",
+      "imagesCount": 9,
+      "variantsCount": 5,
+      "missingCount": 25,
+      "missingFields": [
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A playful sky blue gingham mini dress featuring a flattering one-shoulder silhouette, statement back tie detail, and a feminine A-line fit. Perfect for sunny days, brunch dates, and weekend escapes.",
+        "howToStyle": "Pair with cowboy boots, ballet flats, or white sneakers for an effortless summer look. Add silver hoops and a mini shoulder bag for a Pinterest-worthy outfit.",
+        "keyFeatures": [
+          "One-shoulder neckline",
+          "Back tie detail",
+          "Open-back design",
+          "Gingham pattern",
+          "A-line silhouette",
+          "Lightweight fabric",
+          "Summer-ready fit"
+        ],
+        "fabricDetails": "Crafted from a lightweight cotton blend gingham fabric with a soft breathable feel. Designed with an open-back tie detail and a flattering asymmetrical neckline.",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a2132b2443a0836cb08dcb0",
+      "productCode": "00008",
+      "title": "Bluebell Peplum Tie-Back Top",
+      "slug": "bluebell-peplum-tie-back-top",
+      "productType": "variable",
+      "price": 999,
+      "categories": [
+        "tops",
+        "tank-tops"
+      ],
+      "tags": [
+        "blue peplum top",
+        "powder blue top",
+        "tie back top women",
+        "open back top",
+        "summer top women",
+        "cute blue top",
+        "feminine tops",
+        "brunch outfit top",
+        "oatclub tops"
+      ],
+      "colors": [
+        "blue"
+      ],
+      "thumbnail": "https://us.princesspolly.com/cdn/shop/files/0-modelinfo-dekota-us2_dba8ba08-31c8-40ae-a6ba-95c937b33b84.jpg?v=1767935905&width=1800",
+      "imagesCount": 8,
+      "variantsCount": 5,
+      "missingCount": 25,
+      "missingFields": [
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A feminine powder blue peplum top featuring a flattering square neckline, fitted bodice, and elegant tie-back detail. Designed to accentuate the waist while maintaining a soft romantic silhouette.",
+        "howToStyle": "Pair with white linen pants, denim shorts, or a mini skirt for an elevated daytime look. Finish with pearl earrings and strappy sandals.",
+        "keyFeatures": [
+          "Square neckline",
+          "Tie-back design",
+          "Open back detail",
+          "Peplum silhouette",
+          "Fitted waist",
+          "Lightweight fabric",
+          "Feminine fit"
+        ],
+        "fabricDetails": "Crafted from a lightweight cotton blend with a structured bodice and flared peplum hem. Features an open-back design with adjustable tie fastening for a customized fit.",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a213441443a0836cb08dd60",
+      "productCode": "00009",
+      "title": "Ivory Bow Corset Top",
+      "slug": "ivory-bow-corset-top",
+      "productType": "variable",
+      "price": 999,
+      "categories": [
+        "corset-tops"
+      ],
+      "tags": [
+        "ivory corset top",
+        "white corset top women",
+        "bow back top",
+        "tie back corset top",
+        "feminine white top",
+        "summer corset top",
+        "vacation outfit top",
+        "brunch outfit women",
+        "oatclub tops"
+      ],
+      "colors": [
+        "white"
+      ],
+      "thumbnail": "https://img1.shopcider.com/product/1770605250000-HCpxwR.jpg",
+      "imagesCount": 10,
+      "variantsCount": 5,
+      "missingCount": 26,
+      "missingFields": [
+        "fabricDetails",
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A romantic corset-inspired top featuring a structured bodice, delicate ruffle hem, adjustable shoulder straps, and an oversized statement bow at the back. Designed to sculpt the waist while delivering a soft feminine silhouette.",
+        "howToStyle": "Pair with white linen trousers, denim shorts, satin skirts, or tailored pants for an elevated summer look. Complete the outfit with gold jewelry and strappy heels.",
+        "keyFeatures": [
+          "Corset-inspired silhouette",
+          "Statement tie-back bow",
+          "Adjustable straps",
+          "Front button detailing",
+          "Ruffle hem",
+          "Structured bodice",
+          "Feminine fit"
+        ],
+        "fabricDetails": "",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a21364d443a0836cb08de09",
+      "productCode": "00010",
+      "title": "Serena Beaded Strap Asymmetric Co-Ord Set",
+      "slug": "serena-beaded-strap-asymmetric-co-ord-set",
+      "productType": "variable",
+      "price": 1999,
+      "categories": [
+        "casual-co-ords",
+        "co-ord-sets"
+      ],
+      "tags": [
+        "cream co ord set",
+        "vacation co ord",
+        "resort wear",
+        "linen co ord",
+        "summer outfit",
+        "wide leg pants set",
+        "luxury co ord set",
+        "beach holiday outfit",
+        "oatclub"
+      ],
+      "colors": [],
+      "thumbnail": "https://img1.shopcider.com/product/1772595583000-bEHZGz.jpg",
+      "imagesCount": 10,
+      "variantsCount": 5,
+      "missingCount": 27,
+      "missingFields": [
+        "fabricDetails",
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "colors",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "An effortlessly elegant cream co-ord set featuring an asymmetrical flowy camisole with statement bead straps and relaxed wide-leg trousers. Designed for elevated resort dressing and timeless summer sophistication.",
+        "howToStyle": "Pair with minimal gold jewelry, woven sandals, and a structured tote for a refined vacation-ready look. Complete the outfit with oversized sunglasses for effortless luxury.",
+        "keyFeatures": [
+          "Asymmetrical hem top",
+          "Decorative bead shoulder straps",
+          "Relaxed wide-leg trousers",
+          "Elasticated waistband",
+          "Lightweight linen blend",
+          "Resort-inspired silhouette",
+          "Breathable fabric",
+          "Premium drape"
+        ],
+        "fabricDetails": "",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a213721443a0836cb08debd",
+      "productCode": "00011",
+      "title": "Valencia Ruffle Halter Maxi Dress",
+      "slug": "valencia-ruffle-halter-maxi-dress",
+      "productType": "variable",
+      "price": 1599,
+      "categories": [
+        "maxi-dresses",
+        "dresses"
+      ],
+      "tags": [
+        "brown maxi dress",
+        "halter neck dress",
+        "party dress women",
+        "evening dress",
+        "vacation dress",
+        "resort dress",
+        "ruffle maxi dress",
+        "chocolate brown dress",
+        "oatclub"
+      ],
+      "colors": [
+        "brown"
+      ],
+      "thumbnail": "https://img1.shopcider.com/product/1774439084000-5hCnQi.jpg",
+      "imagesCount": 10,
+      "variantsCount": 5,
+      "missingCount": 26,
+      "missingFields": [
+        "fabricDetails",
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A striking chocolate brown maxi dress designed with a plunging halter neckline, elegant waist ruching, and cascading ruffle detailing. Crafted to create a sleek, sculpted silhouette with effortless evening allure.",
+        "howToStyle": "Style with gold statement earrings, strappy heels, and a sleek clutch for elevated evening occasions. Add a soft-glam makeup look to complete the outfit.",
+        "keyFeatures": [
+          "Plunging halter neckline",
+          "Adjustable tie-back closure",
+          "Waist ruching detail",
+          "Cascading side ruffles",
+          "Maxi length silhouette",
+          "Soft stretch fabric",
+          "Body-skimming fit",
+          "Evening-ready design"
+        ],
+        "fabricDetails": "",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a2137a9443a0836cb08df7c",
+      "productCode": "00012",
+      "title": "Olivia Twist Bodice Midi Dress",
+      "slug": "olivia-twist-bodice-midi-dress",
+      "productType": "variable",
+      "price": 1599,
+      "categories": [
+        "midi-dresses"
+      ],
+      "tags": [
+        "olive green dress",
+        "midi dress women",
+        "vacation dress",
+        "summer dress",
+        "linen midi dress",
+        "resort wear women",
+        "fit and flare dress",
+        "oatclub"
+      ],
+      "colors": [
+        "green"
+      ],
+      "thumbnail": "https://img1.shopcider.com/product/1778575093000-GSCj6n.jpg",
+      "imagesCount": 7,
+      "variantsCount": 5,
+      "missingCount": 26,
+      "missingFields": [
+        "fabricDetails",
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A timeless olive green midi dress featuring a twisted sweetheart bodice, delicate bead-accent straps, and a flowing gathered skirt. Designed for effortless elegance from sunlit brunches to coastal getaways.",
+        "howToStyle": "Pair with gold jewelry, strappy sandals, and a woven handbag for a refined resort-inspired look. Layer with a lightweight linen shirt for elevated daytime styling.",
+        "keyFeatures": [
+          "Twist-front bodice",
+          "Adjustable shoulder straps",
+          "Bead strap detailing",
+          "Gathered skirt silhouette",
+          "Open-back bow detail",
+          "Breathable linen blend",
+          "Flattering midi length",
+          "Lightweight feel"
+        ],
+        "fabricDetails": "",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a213886443a0836cb08e0e0",
+      "productCode": "00013",
+      "title": "Mila Ribbed Wrap Tie Top",
+      "slug": "mila-ribbed-wrap-tie-top",
+      "productType": "variable",
+      "price": 999,
+      "categories": [
+        "tops"
+      ],
+      "tags": [
+        "mint green top",
+        "ribbed crop top",
+        "wrap top women",
+        "tie waist top",
+        "casual crop top",
+        "fitted top women",
+        "everyday essentials",
+        "oatclub"
+      ],
+      "colors": [
+        "green"
+      ],
+      "thumbnail": "https://res.cloudinary.com/dpsvrt4sd/image/upload/v1780509748/p5bhw062gum4ptmnmxlu.webp",
+      "imagesCount": 3,
+      "variantsCount": 5,
+      "missingCount": 25,
+      "missingFields": [
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A flattering ribbed wrap crop top designed with a feminine tie-waist detail and elegant V-neckline. Crafted for effortless everyday styling with a soft, body-hugging fit.",
+        "howToStyle": "Pair with high-waisted denim, tailored trousers, or linen shorts for an elevated casual look. Layer with delicate jewelry and minimal sandals for a polished daytime outfit.",
+        "keyFeatures": [
+          "Wrap-front silhouette",
+          "Adjustable side tie closure",
+          "Ribbed texture",
+          "V-neckline",
+          "Cropped length",
+          "Stretch comfort fit",
+          "Lightweight construction",
+          "Everyday essential"
+        ],
+        "fabricDetails": "-Rib Lycra \nComposition : 95% Polyester / 5% Lycra\n\nWASHING INSTRUCTION\n1. Iron on low heat\n2. Tumble dry with low heat\n3. Do not bleach\n4. machine wash with cold water\n5. dryclean",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a2138e4443a0836cb08e1a7",
+      "productCode": "00014",
+      "title": "Sienna Sculpt Halter Top",
+      "slug": "sienna-sculpt-halter-top",
+      "productType": "variable",
+      "price": 799,
+      "categories": [
+        "tops"
+      ],
+      "tags": [
+        "brown corset top",
+        "halter neck top",
+        "ribbed crop top",
+        "chocolate brown top",
+        "fitted top women",
+        "going out top",
+        "trendy tops women",
+        "oatclub"
+      ],
+      "colors": [
+        "brown"
+      ],
+      "thumbnail": "https://res.cloudinary.com/dpsvrt4sd/image/upload/v1780509742/baixr0ubpwlv2eq32iar.webp",
+      "imagesCount": 3,
+      "variantsCount": 5,
+      "missingCount": 25,
+      "missingFields": [
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A sleek halter-neck top designed with a structured corset-inspired silhouette and refined ribbed texture. Crafted to contour beautifully while delivering effortless sophistication for day-to-night styling.",
+        "howToStyle": "Pair with high-waisted denim, tailored trousers, or a satin maxi skirt for a polished look. Finish with gold jewelry and strappy heels for elevated evening dressing.",
+        "keyFeatures": [
+          "Halter neckline",
+          "Corset-inspired silhouette",
+          "Ribbed texture",
+          "Tie-back closure",
+          "Sculpting fit",
+          "Stretch comfort fabric",
+          "Sleeveless design",
+          "Elevated essential"
+        ],
+        "fabricDetails": "-Rib Lycra \nComposition : 95% Polyester / 5% Lycra\n\nWASHING INSTRUCTION\n1. Iron on low heat\n2. Tumble dry with low heat\n3. Do not bleach\n4. machine wash with cold water\n5. dryclean",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a21395c443a0836cb08e329",
+      "productCode": "00015",
+      "title": "Rosalie Lace Trim Ribbed Crop Top",
+      "slug": "rosalie-lace-trim-ribbed-crop-top",
+      "productType": "variable",
+      "price": 799,
+      "categories": [
+        "tops"
+      ],
+      "tags": [
+        "pink crop top",
+        "ribbed crop top",
+        "lace trim top",
+        "feminine top women",
+        "casual crop top",
+        "fitted top women",
+        "cute tops women",
+        "oatclub"
+      ],
+      "colors": [
+        "pink"
+      ],
+      "thumbnail": "https://res.cloudinary.com/dpsvrt4sd/image/upload/v1780509736/z9ermv1utvlhy3qmusru.webp",
+      "imagesCount": 3,
+      "variantsCount": 5,
+      "missingCount": 24,
+      "missingFields": [
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A feminine ribbed crop top featuring delicate contrast lace trim, soft gathered detailing, and a flattering square neckline. Designed to bring effortless charm to everyday dressing.",
+        "howToStyle": "Crafted from a premium rib-knit fabric with natural stretch and a soft-touch finish. Designed to offer a comfortable fit while maintaining shape throughout the day.",
+        "keyFeatures": [
+          "Contrast lace trim",
+          "Square neckline",
+          "Gathered bust detail",
+          "Ribbed texture",
+          "Cropped silhouette",
+          "Stretch comfort fit",
+          "Soft feminine styling",
+          "Everyday essential"
+        ],
+        "fabricDetails": "-Rib Lycra \nComposition : 95% Polyester / 5% Lycra\n\nWASHING INSTRUCTION\n1. Iron on low heat\n2. Tumble dry with low heat\n3. Do not bleach\n4. machine wash with cold water\n5. dryclean",
+        "specifications": [],
+        "fabrics": [
+          {
+            "fabricName": "RIb",
+            "fabricCode": "",
+            "fabricColor": "",
+            "role": "main",
+            "_id": "6a21a60117b17d349588dd3e"
+          }
+        ],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a21399c443a0836cb08e406",
+      "productCode": "00016",
+      "title": "Noir Tie-Front Ribbed Cami Top",
+      "slug": "noir-tie-front-ribbed-cami-top",
+      "productType": "variable",
+      "price": 799,
+      "categories": [
+        "tops",
+        "tank-tops"
+      ],
+      "tags": [
+        "black cami top",
+        "ribbed cami top",
+        "tie front top",
+        "black crop top women",
+        "going out top",
+        "fitted crop top",
+        "trendy tops women",
+        "oatclub"
+      ],
+      "colors": [
+        "black"
+      ],
+      "thumbnail": "https://res.cloudinary.com/dpsvrt4sd/image/upload/v1780509600/vczo65zpdjhhwyouv5i0.webp",
+      "imagesCount": 4,
+      "variantsCount": 5,
+      "missingCount": 25,
+      "missingFields": [
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A sleek black cami top featuring delicate shoulder straps, a feminine tie-front detail, and a sculpting ribbed texture. Designed to effortlessly transition from casual daytime styling to elevated evening looks.",
+        "howToStyle": "Pair with wide-leg trousers, denim, mini skirts, or tailored pants for an effortlessly polished outfit. Layer with an oversized blazer and gold accessories for a sophisticated after-dark look.",
+        "keyFeatures": [
+          "Tie-front neckline",
+          "Ribbed texture",
+          "Adjustable spaghetti straps",
+          "Cropped silhouette",
+          "Stretch comfort fit",
+          "Lightweight construction",
+          "Minimalist design",
+          "Day-to-night versatility"
+        ],
+        "fabricDetails": "-Rib Lycra \nComposition : 95% Polyester / 5% Lycra\n\nWASHING INSTRUCTION\n1. Iron on low heat\n2. Tumble dry with low heat\n3. Do not bleach\n4. machine wash with cold water\n5. dryclean",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a213a04443a0836cb08e4f2",
+      "productCode": "00017",
+      "title": "Celeste Asymmetrical Drape Top",
+      "slug": "celeste-asymmetrical-drape-top",
+      "productType": "variable",
+      "price": 1199,
+      "categories": [
+        "tops"
+      ],
+      "tags": [],
+      "colors": [
+        "blue"
+      ],
+      "thumbnail": "https://res.cloudinary.com/dpsvrt4sd/image/upload/v1780509594/bqgsjckmmw5hyq47nrod.webp",
+      "imagesCount": 2,
+      "variantsCount": 5,
+      "missingCount": 27,
+      "missingFields": [
+        "fabricDetails",
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "tags",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A statement powder blue top featuring a flowing asymmetrical chiffon overlay layered over a fitted ribbed crop silhouette. Designed to create graceful movement with a modern elevated edge.",
+        "howToStyle": "Pair with wide-leg denim, linen trousers, or satin skirts for a chic resort-inspired look. Complete with delicate silver jewelry and strappy sandals for effortless sophistication.",
+        "keyFeatures": [
+          "Asymmetrical drape design",
+          "Lightweight chiffon overlay",
+          "Ribbed inner crop top",
+          "Flowy silhouette",
+          "Semi-sheer texture",
+          "Contemporary statement piece",
+          "Lightweight feel",
+          "Elevated resort styling"
+        ],
+        "fabricDetails": "",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a213a81443a0836cb08e5f3",
+      "productCode": "00018",
+      "title": "Selene Sculpt Ribbed Top",
+      "slug": "selene-sculpt-ribbed-top",
+      "productType": "variable",
+      "price": 899,
+      "categories": [
+        "tops"
+      ],
+      "tags": [
+        "teal top women",
+        "ribbed top women",
+        "square neck top",
+        "full sleeve crop top",
+        "fitted ribbed top",
+        "sculpted top women",
+        "trendy tops women",
+        "oatclub"
+      ],
+      "colors": [
+        "teal green"
+      ],
+      "thumbnail": "https://res.cloudinary.com/dpsvrt4sd/image/upload/v1780509568/m7ygjuhq0rwoc69gsnjv.webp",
+      "imagesCount": 3,
+      "variantsCount": 5,
+      "missingCount": 25,
+      "missingFields": [
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "fabrics",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A modern ribbed top designed with a flattering square neckline, contour-inspired seam detailing, and a sculpted silhouette. Crafted to elevate everyday dressing with effortless sophistication.",
+        "howToStyle": "Pair with tailored trousers, denim, satin skirts, or wide-leg pants for a polished look. Layer with an oversized blazer and minimal jewelry for a refined contemporary outfit.",
+        "keyFeatures": [
+          "Square neckline",
+          "Contour seam detailing",
+          "Ribbed texture",
+          "Sculpting silhouette",
+          "Long sleeves",
+          "Stretch comfort fit",
+          "Elevated everyday essential",
+          "Minimalist design"
+        ],
+        "fabricDetails": "-Rib Lycra \nComposition : 95% Polyester / 5% Lycra\n\nWASHING INSTRUCTION\n1. Iron on low heat\n2. Tumble dry with low heat\n3. Do not bleach\n4. machine wash with cold water\n5. dryclean",
+        "specifications": [],
+        "fabrics": [],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    },
+    {
+      "_id": "6a213ae8443a0836cb08e6f1",
+      "productCode": "00019",
+      "title": "Scarlett Cut-Out Ribbed Crop Top",
+      "slug": "scarlett-cut-out-ribbed-crop-top",
+      "productType": "variable",
+      "price": 799,
+      "categories": [
+        "tops",
+        "crop-tops"
+      ],
+      "tags": [
+        "wine red top",
+        "cut out top women",
+        "ribbed crop top",
+        "trendy tops women",
+        "fitted crop top",
+        "casual tops women",
+        "ootd fashion",
+        "oatclub"
+      ],
+      "colors": [
+        "red"
+      ],
+      "thumbnail": "https://res.cloudinary.com/dpsvrt4sd/image/upload/v1780509543/piubsegto9bwt2p8esuc.webp",
+      "imagesCount": 4,
+      "variantsCount": 5,
+      "missingCount": 24,
+      "missingFields": [
+        "specifications",
+        "specifications.Color",
+        "specifications.Fabric",
+        "specifications.Fit",
+        "specifications.Occasion",
+        "hsnCode",
+        "avgFabricConsumption.value",
+        "weight",
+        "dimensions.length",
+        "dimensions.width",
+        "dimensions.height",
+        "metaTitle",
+        "metaDescription",
+        "keywords",
+        "variants.0.stock",
+        "variants.0.weight",
+        "variants.1.stock",
+        "variants.1.weight",
+        "variants.2.stock",
+        "variants.2.weight",
+        "variants.3.stock",
+        "variants.3.weight",
+        "variants.4.stock",
+        "variants.4.weight"
+      ],
+      "currentData": {
+        "shortDescription": "A statement ribbed crop top featuring a modern chest cut-out detail and a sculpting silhouette. Designed to blend everyday comfort with elevated contemporary style.",
+        "howToStyle": "Pair with high-waisted denim, cargo pants, mini skirts, or tailored trousers for a sleek day-to-night look. Complete the outfit with gold accessories and minimal heels.",
+        "keyFeatures": [
+          "Statement chest cut-out",
+          "Ribbed texture",
+          "Short sleeves",
+          "Stretch comfort fit",
+          "Cropped silhouette",
+          "Lightweight feel",
+          "Modern minimalist design",
+          "Everyday versatility"
+        ],
+        "fabricDetails": "-Rib Lycra \nComposition : 95% Polyester / 5% Lycra\n\nWASHING INSTRUCTION\n1. Iron on low heat\n2. Tumble dry with low heat\n3. Do not bleach\n4. machine wash with cold water\n5. dryclean",
+        "specifications": [],
+        "fabrics": [
+          {
+            "fabricName": "Rib",
+            "fabricCode": "",
+            "fabricColor": "",
+            "role": "main",
+            "_id": "6a21a4ff17b17d349588da1c"
+          }
+        ],
+        "avgFabricConsumption": {
+          "value": 0,
+          "unit": "meter"
+        },
+        "hsnCode": "",
+        "weight": 0,
+        "dimensions": {
+          "length": 0,
+          "width": 0,
+          "height": 0,
+          "unit": "cm"
+        },
+        "metaTitle": "",
+        "metaDescription": "",
+        "keywords": []
+      }
+    }
+  ]
+}

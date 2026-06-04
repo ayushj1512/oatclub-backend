@@ -88,7 +88,6 @@ blogSchema.index({
   excerpt: "text",
   content: "text",
   category: "text",
-  tags: 1,
 });
 
 export default mongoose.models.Blog || mongoose.model("Blog", blogSchema);
