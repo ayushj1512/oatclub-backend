@@ -3664,3 +3664,184 @@ export const getProductCards = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
+/* ============================================================
+   GET ALL PRODUCT MEDIA
+   GET /api/products/media/all
+============================================================ */
+export const getAllProductMedia = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 50,
+      search = "",
+      source = "all",
+      type = "all",
+      role = "all",
+      isActive = "true",
+    } = req.query;
+
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeLimit = Math.min(200, Math.max(1, Number(limit) || 50));
+
+    const match = {};
+    if (isActive !== "all") match.isActive = String(isActive) === "true";
+
+    if (search) {
+      const rx = new RegExp(escapeRegex(String(search).trim()), "i");
+      match.$or = [
+        { title: rx },
+        { slug: rx },
+        { productCode: rx },
+        { images: rx },
+        { thumbnail: rx },
+        { video: rx },
+      ];
+    }
+
+    const pipeline = [
+      { $match: match },
+
+      {
+        $project: {
+          title: 1,
+          slug: 1,
+          productCode: 1,
+          isActive: 1,
+          createdAt: 1,
+          media: {
+            $concatArrays: [
+              [
+                {
+                  url: "$thumbnail",
+                  role: "thumbnail",
+                  position: 0,
+                },
+              ],
+              {
+                $map: {
+                  input: { $ifNull: ["$images", []] },
+                  as: "img",
+                  in: {
+                    url: "$$img",
+                    role: "gallery",
+                    position: { $indexOfArray: ["$images", "$$img"] },
+                  },
+                },
+              },
+              [
+                {
+                  url: "$video",
+                  role: "video",
+                  position: null,
+                },
+              ],
+            ],
+          },
+        },
+      },
+
+      { $unwind: "$media" },
+
+      {
+        $match: {
+          "media.url": { $type: "string", $ne: "" },
+        },
+      },
+
+      {
+        $addFields: {
+          mediaType: {
+            $cond: [
+              {
+                $regexMatch: {
+                  input: "$media.url",
+                  regex: /\.(mp4|webm|mov|m3u8)(\?|$)/i,
+                },
+              },
+              "video",
+              "image",
+            ],
+          },
+          mediaSource: {
+            $switch: {
+              branches: [
+                {
+                  case: {
+                    $regexMatch: {
+                      input: "$media.url",
+                      regex: /res\.cloudinary\.com/i,
+                    },
+                  },
+                  then: "cloudinary",
+                },
+                {
+                  case: {
+                    $regexMatch: {
+                      input: "$media.url",
+                      regex: /(oatclub|miray)/i,
+                    },
+                  },
+                  then: "internal",
+                },
+              ],
+              default: "outsourced",
+            },
+          },
+        },
+      },
+
+      ...(type !== "all" ? [{ $match: { mediaType: type } }] : []),
+      ...(source !== "all" ? [{ $match: { mediaSource: source } }] : []),
+      ...(role !== "all" ? [{ $match: { "media.role": role } }] : []),
+
+      { $sort: { createdAt: -1, "media.position": 1 } },
+
+      {
+        $facet: {
+          data: [
+            { $skip: (safePage - 1) * safeLimit },
+            { $limit: safeLimit },
+            {
+              $project: {
+                _id: 0,
+                url: "$media.url",
+                type: "$mediaType",
+                source: "$mediaSource",
+                role: "$media.role",
+                position: "$media.position",
+                product: {
+                  _id: "$_id",
+                  title: "$title",
+                  slug: "$slug",
+                  productCode: "$productCode",
+                  isActive: "$isActive",
+                },
+              },
+            },
+          ],
+          total: [{ $count: "count" }],
+        },
+      },
+    ];
+
+    const result = await Product.aggregate(pipeline);
+    const media = result?.[0]?.data || [];
+    const totalMedia = result?.[0]?.total?.[0]?.count || 0;
+
+    return res.json({
+      success: true,
+      page: safePage,
+      limit: safeLimit,
+      totalMedia,
+      totalPages: Math.ceil(totalMedia / safeLimit),
+      hasNextPage: safePage * safeLimit < totalMedia,
+      hasPrevPage: safePage > 1,
+      filters: { search, source, type, role, isActive },
+      media,
+    });
+  } catch (e) {
+    console.error("❌ Get Product Media Error:", e);
+    return res.status(500).json({ message: e.message });
+  }
+};

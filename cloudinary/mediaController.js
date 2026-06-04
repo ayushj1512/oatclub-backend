@@ -93,33 +93,38 @@ export const syncCloudinaryMedia = async (req, res) => {
       .execute();
 
     const resources = result.resources || [];
-    const synced = [];
 
-    for (const item of resources) {
-      const exists = await Media.findOne({ publicId: item.public_id });
+    const ops = resources.map((item) => ({
+      updateOne: {
+        filter: { publicId: item.public_id },
+        update: {
+          $setOnInsert: {
+            url: item.secure_url,
+            publicId: item.public_id,
+            resourceType: item.resource_type || "image",
+            format: item.format || "",
+            bytes: item.bytes || 0,
+            width: item.width || 0,
+            height: item.height || 0,
+            folder: item.folder || "",
+            originalName: item.filename || item.public_id?.split("/").pop() || "",
+          },
+        },
+        upsert: true,
+      },
+    }));
 
-      if (exists) continue;
+    if (ops.length) await Media.bulkWrite(ops);
 
-      const doc = await Media.create({
-        url: item.secure_url,
-        publicId: item.public_id,
-        resourceType: item.resource_type || "image",
-        format: item.format || "",
-        bytes: item.bytes || 0,
-        width: item.width || 0,
-        height: item.height || 0,
-        folder: item.folder || "",
-        originalName: item.filename || item.public_id?.split("/").pop() || "",
-      });
-
-      synced.push(doc);
-    }
+    const items = await Media.find()
+      .sort({ createdAt: -1 })
+      .limit(Number(max))
+      .lean();
 
     return res.json({
       message: "Cloudinary media synced",
-      syncedCount: synced.length,
       totalFound: resources.length,
-      media: synced,
+      items,
     });
   } catch (err) {
     console.error("❌ syncCloudinaryMedia:", err);

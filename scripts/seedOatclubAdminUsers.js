@@ -4,7 +4,7 @@ import AdminUser from "../AdminUsers/AdminUser.js";
 
 dotenv.config();
 
-const users = ["maitri"];
+const users = ["maitri","ayush","piyali","sachin","abhishek"];
 
 const buildEmail = (username) => `${username}@oatclub.in`;
 

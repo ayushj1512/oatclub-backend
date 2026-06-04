@@ -35,6 +35,7 @@ import {
   markPatternReady,
   zeroAllVariantStock,
   updatePrimaryProductStatus,
+  getAllProductMedia,
 } from "./productController.js";
 
 import { searchProductsForCard } from "./product.search.controller.js";
@@ -93,6 +94,9 @@ router.post("/selected-codes", getProductsBySelectedCodes);
 router.get("/sku/:sku", getProductBySKU);
 router.get("/code/:code", getProductByCode);
 router.get("/details/:id", getProductByIdOrSlug);
+
+// product media library
+router.get("/media/all", getAllProductMedia);
 
 // all products
 router.get("/", getAllProducts);
