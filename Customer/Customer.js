@@ -480,7 +480,6 @@ customerSchema.index({ "cartAdds.productCode": 1 });
 /**
  * ✅ Basic indexes
  */
-customerSchema.index({ customerId: 1 });
 customerSchema.index({ email: 1 });
 customerSchema.index({ phone: 1 });
 customerSchema.index({ ageGroup: 1 });

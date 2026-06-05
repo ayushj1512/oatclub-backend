@@ -1,6 +1,7 @@
 import Customer from "./Customer.js";
 import Order from "../Orders/Orders.js"; // ✅ adjust path if your Order model path is different
 import { Mailer } from "../nodemailer/events/mailer.js";
+import Counter from "../models/Counter.js";
 
 /* =========================================================
    HELPERS
@@ -154,6 +155,16 @@ const dateRangeFilter = (from, to) => {
   }
 
   return Object.keys(filter).length ? filter : null;
+};
+
+const generateCustomerId = async () => {
+  const counter = await Counter.findOneAndUpdate(
+    { name: "customerId" },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+
+  return String(counter.seq).padStart(4, "0");
 };
 
 /**
@@ -472,10 +483,12 @@ export const createCustomer = async (req, res) => {
           ],
         };
 
-    const before = await Customer.findOne(filter).select("email").lean();
+    const before = await Customer.findOne(filter)
+      .select("email customerId")
+      .lean();
+
     const wasCreated = !before;
     const wasEmailMissingBefore = !before?.email;
-
     const isOAuth = !!safeFirebaseUID;
 
     const $set = { updatedAt: new Date() };
@@ -512,7 +525,20 @@ export const createCustomer = async (req, res) => {
       $set["payoutDetails.updatedAt"] = new Date();
     }
 
+    let generatedCustomerId = null;
+
+    if (wasCreated) {
+      const counter = await Counter.findOneAndUpdate(
+        { name: "customerId" },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+      );
+
+      generatedCustomerId = String(counter.seq).padStart(4, "0");
+    }
+
     const $setOnInsert = {
+      customerId: generatedCustomerId,
       firebaseUID: safeFirebaseUID || null,
       referralCode: finalReferralCode,
       referredBy: referredBy || null,
