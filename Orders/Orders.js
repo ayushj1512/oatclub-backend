@@ -797,10 +797,8 @@ orderSchema.pre("validate", async function (next) {
       { new: true, upsert: true }
     );
 
+    this.orderNumber = String(counter.seq).padStart(6, "0");
 
-    const padded = String(counter.seq).padStart(6, "0");
-
-    this.orderNumber = `MIRAY-${padded}`;
     next();
   } catch (err) {
     next(err);
