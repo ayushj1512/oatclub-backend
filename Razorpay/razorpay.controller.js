@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { razorpay } from "./razorpay.instance.js";
 import Order from "../Orders/Orders.js";
 import { debitWalletForOrderInternal } from "../Customer/customerCredit.service.js";
+import { creditOrderWalletRewardInternal } from "../Customer/orderWalletReward.service.js";
 
 import { reserveInventoryForOrderNumberInternal } from "../InventoryReservation/inventoryWebhook.js";
 
@@ -130,6 +131,9 @@ export const verifyRazorpayPayment = async (req, res, next) => {
     if (order.paymentStatus === "paid") {
   await debitWalletAfterRazorpaySuccess(order);
   await order.save();
+  await creditOrderWalletRewardInternal({ orderId: order._id }).catch((e) => {
+    console.error("⚠️ Wallet reward credit failed:", e?.message || e);
+  });
 
   return res.json({ success: true });
 }
@@ -160,6 +164,9 @@ export const verifyRazorpayPayment = async (req, res, next) => {
     await debitWalletAfterRazorpaySuccess(order);
 
     await order.save();
+    await creditOrderWalletRewardInternal({ orderId: order._id }).catch((e) => {
+      console.error("⚠️ Wallet reward credit failed:", e?.message || e);
+    });
 
     const orderNumber = String(order.orderNumber || "").trim();
 
@@ -241,6 +248,9 @@ export const razorpayWebhook = async (req, res) => {
       await debitWalletAfterRazorpaySuccess(order);
 
       await order.save();
+      await creditOrderWalletRewardInternal({ orderId: order._id }).catch((e) => {
+        console.error("⚠️ Wallet reward credit failed:", e?.message || e);
+      });
 
       if (!alreadyPaid) {
         const orderNumber = String(order.orderNumber || "").trim();

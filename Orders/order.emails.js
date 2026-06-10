@@ -5,7 +5,7 @@ import User from "../Customer/Customer.js";
  * ✅ Admin recipients
  */
 const ADMIN_ORDER_ALERT_EMAILS = [
-  "finance@mirayfashions.com",
+  "oatclub.in@gmail.com",
   "support@mirayfashions.com",
 ].filter(Boolean);
 

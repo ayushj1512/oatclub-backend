@@ -11,8 +11,8 @@ import { rmaCreatedTemplate } from "./events/RmaEmailTemplate.js";
 
 // ✅ Fixed recipients for ORDER_RECEIVED (NO .env)
 const ORDER_RECEIVED_RECIPIENTS = [
-  "finance@mirayfashions.com",
-  "admin@mirayfashions.com",
+  "oatclub.in@gmail.com",
+  
 ];
 
 /* =========================================================

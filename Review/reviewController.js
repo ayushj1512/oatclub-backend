@@ -65,6 +65,9 @@ const uploadReviewImages = async (files = []) => {
   return urls;
 };
 
+const normalizeMediaUrls = (value) =>
+  Array.isArray(value) ? value.map((x) => safeStr(x)).filter(Boolean) : [];
+
 const normalizeFiles = (files) => {
   if (!files) return [];
   if (Array.isArray(files)) return files;
@@ -279,7 +282,7 @@ export const submitOrderReviews = async (req, res) => {
 
         verifiedPurchase: true,
         source: "order_link",
-        status: "approved",
+        status: "pending",
       });
 
       createdReviews.push(review);
@@ -289,10 +292,6 @@ export const submitOrderReviews = async (req, res) => {
         $addToSet: { reviews: review._id },
       });
     }
-
-    await Promise.all(
-      [...affectedProductIds].map((productId) => updateProductRating(productId))
-    );
 
     return res.status(201).json({
       message: "Reviews submitted successfully",
@@ -324,6 +323,7 @@ export const createReview = async (req, res) => {
       reviewText = "",
       verifiedPurchase = false,
       images: bodyImages = [],
+      videos: bodyVideos = [],
     } = req.body || {};
 
     if (!product || !customer || rating === undefined) {
@@ -352,9 +352,8 @@ export const createReview = async (req, res) => {
     if (!p) return res.status(404).json({ message: "Product not found" });
     if (!c) return res.status(404).json({ message: "Customer not found" });
 
-    let finalImages = Array.isArray(bodyImages)
-      ? bodyImages.map((x) => safeStr(x)).filter(Boolean)
-      : [];
+    let finalImages = normalizeMediaUrls(bodyImages);
+    const finalVideos = normalizeMediaUrls(bodyVideos);
 
     const files = normalizeFiles(req.files);
 
@@ -373,17 +372,17 @@ export const createReview = async (req, res) => {
       reviewText: safeStr(reviewText),
       verifiedPurchase: !!verifiedPurchase,
       images: finalImages,
+      videos: finalVideos,
       source: "website",
+      status: "pending",
     });
 
     await Product.findByIdAndUpdate(product, {
       $addToSet: { reviews: review._id },
     });
 
-    await updateProductRating(product);
-
     return res.status(201).json({
-      message: "Review added successfully",
+      message: "Review submitted for approval",
       review,
     });
   } catch (error) {
@@ -415,6 +414,7 @@ export const createProductRating = async (req, res) => {
       reviewText = "",
       verifiedPurchase = false,
       images: bodyImages = [],
+      videos: bodyVideos = [],
     } = req.body || {};
 
     const r = parseRating(rating);
@@ -462,9 +462,8 @@ export const createProductRating = async (req, res) => {
       }
     }
 
-    let finalImages = Array.isArray(bodyImages)
-      ? bodyImages.map((x) => safeStr(x)).filter(Boolean)
-      : [];
+    let finalImages = normalizeMediaUrls(bodyImages);
+    const finalVideos = normalizeMediaUrls(bodyVideos);
 
     const files = normalizeFiles(req.files);
 
@@ -483,14 +482,16 @@ export const createProductRating = async (req, res) => {
       reviewText: safeStr(reviewText),
       verifiedPurchase: !!verifiedPurchase,
       images: finalImages,
+      videos: finalVideos,
       source: customer ? "website" : "admin",
+      status: customer ? "pending" : "approved",
     });
 
     await Product.findByIdAndUpdate(p._id, {
       $addToSet: { reviews: review._id },
     });
 
-    await updateProductRating(p._id);
+    if (!customer) await updateProductRating(p._id);
 
     return res.status(201).json({
       message: "Rating submitted successfully",

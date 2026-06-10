@@ -6,13 +6,11 @@ import HomepageSettings from "./HomepageSettings.js";
 
 const ALLOWED_NAVIGATION_TYPES = ["collection", "category", "custom"];
 
-// Validate category row items
 const validateCategoryRow = (items = []) => {
   if (!Array.isArray(items)) return "categoryRow must be an array";
 
   for (const item of items) {
-    if (!item?.name?.trim())
-      return "Each categoryRow item must have a name";
+    if (!item?.name?.trim()) return "Each categoryRow item must have a name";
 
     if (!item?.navigationType)
       return "Each categoryRow item must have navigationType";
@@ -39,18 +37,36 @@ const validateCategoryRow = (items = []) => {
   return null;
 };
 
-// Validate hero banners
 const validateHeroBanners = (banners = []) => {
   if (!Array.isArray(banners)) return "heroBanners must be an array";
 
   for (const b of banners) {
-    if (!b?.image?.trim()) return "Each hero banner must have an image";
+    if (!b?.desktopImage?.trim())
+      return "Each hero banner must have a desktopImage";
+
+    if (!b?.mobileImage?.trim())
+      return "Each hero banner must have a mobileImage";
   }
 
   return null;
 };
 
-// Normalize category row items
+const validateCategoryBanners = (banners = []) => {
+  if (!Array.isArray(banners)) return "categoryBanners must be an array";
+
+  for (const b of banners) {
+    if (!b?.categoryName?.trim())
+      return "Each category banner must have a categoryName";
+
+    if (!b?.categorySlug?.trim())
+      return "Each category banner must have a categorySlug";
+
+    if (!b?.image?.trim()) return "Each category banner must have an image";
+  }
+
+  return null;
+};
+
 const normalizeCategoryRow = (items = []) =>
   items.map((item, index) => {
     const navigationType = item?.navigationType || "category";
@@ -68,22 +84,36 @@ const normalizeCategoryRow = (items = []) =>
       image: item?.image?.trim() || "",
       video: item?.video?.trim() || "",
       isActive: item?.isActive !== false,
-      sortOrder:
-        typeof item?.sortOrder === "number" ? item.sortOrder : index,
+      sortOrder: typeof item?.sortOrder === "number" ? item.sortOrder : index,
     };
   });
 
-// Normalize hero banners
 const normalizeHeroBanners = (banners = []) =>
   banners.map((b, index) => ({
-    image: b?.image?.trim() || "",
+    desktopImage: b?.desktopImage?.trim() || "",
+    mobileImage: b?.mobileImage?.trim() || "",
     link: b?.link?.trim() || "",
     title: b?.title?.trim() || "",
     isActive: b?.isActive !== false,
     sortOrder: typeof b?.sortOrder === "number" ? b.sortOrder : index,
   }));
 
-// Get or create default settings
+const normalizeCategoryBanners = (banners = []) =>
+  banners.map((b, index) => {
+    const categorySlug = b?.categorySlug?.trim() || "";
+
+    return {
+      categoryName: b?.categoryName?.trim() || "",
+      categorySlug,
+      title: b?.title?.trim() || b?.categoryName?.trim() || "",
+      subtitle: b?.subtitle?.trim() || "",
+      image: b?.image?.trim() || "",
+      link: b?.link?.trim() || (categorySlug ? `/category/${categorySlug}` : ""),
+      isActive: b?.isActive !== false,
+      sortOrder: typeof b?.sortOrder === "number" ? b.sortOrder : index,
+    };
+  });
+
 const getOrCreateDefaultSettings = async () => {
   let doc = await HomepageSettings.findOne({ key: "default" });
 
@@ -92,6 +122,7 @@ const getOrCreateDefaultSettings = async () => {
       key: "default",
       heroBanners: [],
       categoryRow: [],
+      categoryBanners: [],
     });
   }
 
@@ -113,10 +144,15 @@ export const getHomepageSettings = async (req, res) => {
       .filter((c) => c.isActive !== false)
       .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 
+    const categoryBanners = (settings.categoryBanners || [])
+      .filter((c) => c.isActive !== false)
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
     res.json({
       ...settings.toObject(),
       heroBanners,
       categoryRow,
+      categoryBanners,
     });
   } catch (err) {
     console.error("getHomepageSettings error:", err);
@@ -143,6 +179,12 @@ export const updateHomepageSettings = async (req, res) => {
       updates.heroBanners = normalizeHeroBanners(updates.heroBanners);
     }
 
+    if (updates.categoryBanners) {
+      const err = validateCategoryBanners(updates.categoryBanners);
+      if (err) return res.status(400).json({ message: err });
+      updates.categoryBanners = normalizeCategoryBanners(updates.categoryBanners);
+    }
+
     await getOrCreateDefaultSettings();
 
     const updated = await HomepageSettings.findOneAndUpdate(
@@ -154,6 +196,49 @@ export const updateHomepageSettings = async (req, res) => {
     res.json(updated);
   } catch (err) {
     console.error("updateHomepageSettings error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/* =========================================================
+   GET CATEGORY BANNERS ONLY
+========================================================= */
+export const getCategoryBanners = async (req, res) => {
+  try {
+    const settings = await getOrCreateDefaultSettings();
+
+    const categoryBanners = (settings.categoryBanners || [])
+      .filter((c) => c.isActive !== false)
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
+    res.json({ categoryBanners });
+  } catch (err) {
+    console.error("getCategoryBanners error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/* =========================================================
+   UPDATE CATEGORY BANNERS ONLY
+========================================================= */
+export const updateCategoryBanners = async (req, res) => {
+  try {
+    const { categoryBanners } = req.body;
+
+    const err = validateCategoryBanners(categoryBanners);
+    if (err) return res.status(400).json({ message: err });
+
+    await getOrCreateDefaultSettings();
+
+    const updated = await HomepageSettings.findOneAndUpdate(
+      { key: "default" },
+      { categoryBanners: normalizeCategoryBanners(categoryBanners) },
+      { new: true, runValidators: true }
+    );
+
+    res.json(updated);
+  } catch (err) {
+    console.error("updateCategoryBanners error:", err);
     res.status(500).json({ message: err.message });
   }
 };

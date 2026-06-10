@@ -392,6 +392,15 @@ const orderSchema = new mongoose.Schema(
       balanceAfterDebit: { type: Number, default: 0 },
     },
 
+    walletReward: {
+      earned: { type: Boolean, default: false, index: true },
+      amount: { type: Number, default: 0, min: 0 },
+      percent: { type: Number, default: 1, min: 0 },
+      transactionId: { type: String, default: "", index: true },
+      creditedAt: { type: Date, default: null },
+      balanceAfterCredit: { type: Number, default: 0 },
+    },
+
     paymentBreakdown: {
       walletAmount: { type: Number, default: 0, min: 0 },
       razorpayAmount: { type: Number, default: 0, min: 0 },
@@ -1573,5 +1582,7 @@ orderSchema.index({ "reviewRequest.token": 1 });
 orderSchema.index({ "walletCredit.used": 1, createdAt: -1 });
 orderSchema.index({ "walletCredit.transactionId": 1 });
 orderSchema.index({ "paymentBreakdown.walletAmount": -1, createdAt: -1 });
+orderSchema.index({ "walletReward.earned": 1, createdAt: -1 });
+orderSchema.index({ "walletReward.transactionId": 1 });
 
 export default mongoose.models.Order || mongoose.model("Order", orderSchema);

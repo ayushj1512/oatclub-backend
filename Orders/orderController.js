@@ -43,6 +43,7 @@ import Customer from "../Customer/Customer.js";
 import {
   debitWalletForOrderInternal,
 } from "../Customer/customerCredit.service.js";// ⚠️ path tumhare project ke hisaab se adjust kar lena
+import { creditOrderWalletRewardInternal } from "../Customer/orderWalletReward.service.js";
 
 const isParentOrder = (order) => String(order?.orderType || "").toLowerCase() === "parent";
 const isShipmentOrder = (order) =>
@@ -50,7 +51,7 @@ const isShipmentOrder = (order) =>
 
 
 const ADMIN_ORDER_ALERT_EMAILS = [
-  "finance@mirayfashions.com",
+  "oatclub.in@gmail.com",
   "support@mirayfashions.com",
   "miray.ayushjuneja@gmail.com",
 ].filter(Boolean);
@@ -1124,6 +1125,10 @@ export const createOrder = async (req, res) => {
       createdOrderId = order._id;
     });
 
+    await creditOrderWalletRewardInternal({ orderId: createdOrderId }).catch((e) => {
+      console.error("⚠️ Wallet reward credit failed:", e?.message || e);
+    });
+
     const finalOrder = await Order.findById(createdOrderId)
       .populate("customerId", "name email phone")
       .lean();
@@ -1539,7 +1544,12 @@ export const getNotConfirmedOrders = async (req, res) => {
 ============================================================ */
 export const getOrderById = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id)
+    const idOrNumber = String(req.params.id || "").trim();
+    const query = mongoose.Types.ObjectId.isValid(idOrNumber)
+      ? { _id: idOrNumber }
+      : { orderNumber: idOrNumber };
+
+    const order = await Order.findOne(query)
       .populate("customerId", "name email phone")
       .populate("items.productId");
 
@@ -4110,6 +4120,9 @@ export const updateOrderPaymentStatus = async (req, res) => {
     }
 
     const updatedOrder = await order.save();
+    await creditOrderWalletRewardInternal({ orderId: order._id }).catch((e) => {
+      console.error("⚠️ Wallet reward credit failed:", e?.message || e);
+    });
     syncCustomerAnalyticsSafe(order.customerId, "updateOrderPaymentStatus");
 
     return res.status(200).json({

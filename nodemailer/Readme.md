@@ -1,4 +1,4 @@
-# 📩 Miray Fashions — Nodemailer + EventBus Email System (Premium Templates)
+<!-- # 📩 Miray Fashions — Nodemailer + EventBus Email System (Premium Templates)
 
 This folder contains a **minimal, clean, event-driven email system** for Miray Fashions using:
 
@@ -51,7 +51,7 @@ sendMail({ to, subject, text, html })
 
 ✅ Supports `to` as:
 - string: `"user@gmail.com"`
-- array: `["finance@mirayfashions.com","admin@mirayfashions.com"]`
+- array: `["o","admin@mirayfashions.com"]`
 
 ---
 
@@ -96,7 +96,7 @@ Event system that triggers email flows.
 - Sent ONLY to:
 
 ```js
-finance@mirayfashions.com
+oatclub.in@gmail.com
 admin@mirayfashions.com
 ```
 
@@ -113,7 +113,7 @@ This file:
 
 ```js
 const ORDER_RECEIVED_RECIPIENTS = [
-  "finance@mirayfashions.com",
+  "oatclub.in@gmail.com",
   "admin@mirayfashions.com",
 ];
 ```
@@ -225,4 +225,4 @@ This folder is now a complete event-based email system for:
 🖤 Customer onboarding  
 🛒 Order confirmation  
 📌 Admin/finance order notification  
-♻️ RMA request emails  
+♻️ RMA request emails   -->
