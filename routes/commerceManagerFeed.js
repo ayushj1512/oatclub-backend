@@ -5,8 +5,8 @@ import CommerceManager from "../CommerceManager/CommerceManager.js";
 
 const router = express.Router();
 
-const SITE_BASE = "https://www.mirayfashions.com";
-const BRAND = "Miray Fashions";
+const SITE_BASE = "https://www.oatclub.in";
+const BRAND = "OATCLUB";
 const CURRENCY = "INR";
 
 // ✅ FORCE ALL PRODUCTS AS IN STOCK (unlimited)
@@ -187,7 +187,7 @@ ${mpn ? `<g:mpn>${esc(mpn)}</g:mpn>` : ""}
 const buildXml = (itemsXml) => `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
 <channel>
-<title>${esc("Miray Fashions Commerce Manager Feed")}</title>
+<title>${esc("OATCLUB Commerce Manager Feed")}</title>
 <link>${esc(SITE_BASE)}</link>
 <description>${esc("Selected Commerce Manager catalog feed for Meta/Google Commerce.")}</description>
 ${itemsXml}

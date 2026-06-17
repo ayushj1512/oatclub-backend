@@ -13,5 +13,5 @@ export const FAST2SMS_REVIEW_CONFIG = {
   MESSAGE_ID: process.env.FAST2SMS_REVIEW_MESSAGE_ID || "21126",
 
   CLIENT_URL:
-    process.env.CLIENT_URL || "https://www.mirayfashions.com",
+    process.env.CLIENT_URL || "https://www.oatclub.in",
 };

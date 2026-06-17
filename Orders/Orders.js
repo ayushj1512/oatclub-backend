@@ -261,7 +261,7 @@ const orderAttributionSchema = new mongoose.Schema(
     // current active session attribution
     session: attributionTouchSchema,
 
-    // Miray campaign system
+    // oatclub campaign system
     campaignId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "MarketingCampaign",

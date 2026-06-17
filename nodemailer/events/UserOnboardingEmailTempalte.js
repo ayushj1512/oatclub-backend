@@ -1,186 +1,354 @@
-// nodemailer/events/UserOnboardingEmailTempalte.js
+// nodemailer/events/UserOnboardingEmailTemplate.js
 
 export function userOnboardingTemplate({
   name = "",
   ctaUrl = "#",
-  brandName = "Miray Fashions",
-  supportEmail = "support@mirayfashions.com",
+  brandName = "OATCLUB",
+  supportEmail = "support@oatclub.in",
 }) {
   const safeName = String(name || "").trim().replace(/\s+/g, " ");
   const displayName = safeName.length ? safeName : "there";
 
-  const safeBrandName = String(brandName || "Miray Fashions").trim();
-  const safeSupportEmail = String(
-    supportEmail || "support@mirayfashions.com"
-  )
+  const safeBrandName = "OATCLUB";
+  const safeSupportEmail = String(supportEmail || "support@oatclub.in")
     .trim()
     .toLowerCase();
 
-  const subject = `Welcome to ${safeBrandName} ✨`;
+  const subject = `Welcome to OATCLUB`;
   const hasValidCta = Boolean(ctaUrl && ctaUrl !== "#");
 
   const text = `Hi ${displayName},
 
-Welcome to ${safeBrandName} ✨
+Welcome to OATCLUB.
 
-Thank you for creating an account with us — we’re genuinely delighted to have you here.
+Thank you for creating an account with us. Your OATCLUB space is ready.
 
-Your account is now ready. You can:
-• Explore our latest collections
-• Track your orders anytime
-• Save your details for faster checkout
+You can now:
+- Explore our latest collections
+- Track your orders anytime
+- Save your details for faster checkout
 
 ${hasValidCta ? `Get Started: ${ctaUrl}\n` : ""}
 
 Need help? Reply to this email or contact us at ${safeSupportEmail}.
 
 With regards,
-Team ${safeBrandName}
+Team OATCLUB
 `;
 
   const html = `
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
 <meta charset="UTF-8" />
-<meta name="color-scheme" content="light dark" />
-<meta name="supported-color-schemes" content="light dark" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="color-scheme" content="light" />
+<meta name="supported-color-schemes" content="light" />
 
 <style>
-:root{
-  color-scheme:light dark;
-  supported-color-schemes:light dark;
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap");
+
+body{
+  margin:0;
+  padding:0;
+  background:#ffffff;
+  color:#111111;
+  font-family:Inter,Arial,sans-serif;
+  text-transform:uppercase;
 }
 
-@media (prefers-color-scheme: dark){
-  body,.miray-bg{background:#0f0f10!important;}
-  .miray-shell{background:#151517!important;border-color:rgba(255,255,255,.08)!important;}
-  .miray-card{background:#1b1b1d!important;border-color:rgba(255,255,255,.08)!important;}
-  .miray-text{color:#e4e4e7!important;}
-  .miray-muted{color:#b4b4b8!important;}
-  .miray-title,.miray-strong{color:#ffffff!important;}
-  .miray-divider{background:rgba(255,255,255,.08)!important;}
-  .miray-btn{background:#ffffff!important;color:#111111!important;border-color:#ffffff!important;}
-  .miray-link{color:#ffffff!important;}
-  .miray-dot{background:#ffffff!important;}
-  .miray-header{background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%)!important;}
-  .miray-header p,.miray-header span,.miray-header div{color:#e4e4e7!important;}
-  .miray-header h1,.miray-header b{color:#ffffff!important;}
-  .miray-footer{border-color:rgba(255,255,255,.08)!important;}
+.oat-bg{
+  padding:34px 14px;
+  background:#ffffff;
 }
 
-[data-ogsc] .miray-bg{background:#0f0f10!important;}
-[data-ogsc] .miray-shell{background:#151517!important;}
-[data-ogsc] .miray-card{background:#1b1b1d!important;}
-[data-ogsc] .miray-text{color:#e4e4e7!important;}
-[data-ogsc] .miray-muted{color:#b4b4b8!important;}
-[data-ogsc] .miray-title,[data-ogsc] .miray-strong{color:#ffffff!important;}
-[data-ogsc] .miray-link{color:#ffffff!important;}
-[data-ogsc] .miray-dot{background:#ffffff!important;}
-[data-ogsc] .miray-header{background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%)!important;}
-[data-ogsc] .miray-header p,[data-ogsc] .miray-header span,[data-ogsc] .miray-header div{color:#e4e4e7!important;}
-[data-ogsc] .miray-header h1,[data-ogsc] .miray-header b{color:#ffffff!important;}
-[data-ogsc] .miray-footer{border-color:rgba(255,255,255,.08)!important;}
+.oat-shell{
+  max-width:680px;
+  margin:0 auto;
+  background:#ffffff;
+  border:1px solid #111111;
+}
+
+.oat-top{
+  background:#111111;
+  color:#ffffff;
+  text-align:center;
+  padding:10px 18px;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.24em;
+}
+
+.oat-header{
+  padding:30px 26px 26px;
+  text-align:center;
+  border-bottom:1px solid #111111;
+}
+
+.oat-logo{
+  width:112px;
+  max-width:160px;
+  height:auto;
+  object-fit:contain;
+}
+
+.oat-kicker{
+  margin:20px 0 8px;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.26em;
+  color:#111111;
+}
+
+.oat-title{
+  margin:0;
+  font-size:28px;
+  line-height:1.08;
+  font-weight:900;
+  letter-spacing:-.04em;
+  color:#111111;
+}
+
+.oat-subtitle{
+  margin:12px 0 0;
+  font-size:13px;
+  line-height:1.7;
+  color:#555555;
+}
+
+.oat-body{
+  padding:30px 26px 34px;
+}
+
+.oat-greeting{
+  margin:0;
+  font-size:24px;
+  line-height:1.15;
+  font-weight:900;
+  letter-spacing:-.03em;
+  color:#111111;
+}
+
+.oat-copy{
+  margin:14px 0 0;
+  font-size:14px;
+  line-height:1.85;
+  color:#444444;
+}
+
+.oat-section{
+  margin-top:28px;
+}
+
+.oat-section-title{
+  margin:0 0 12px;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.2em;
+  color:#111111;
+}
+
+.oat-card{
+  border:1px solid #111111;
+  background:#ffffff;
+  padding:18px;
+}
+
+.oat-feature{
+  display:flex;
+  gap:12px;
+  margin:0 0 16px;
+}
+
+.oat-feature:last-child{
+  margin-bottom:0;
+}
+
+.oat-dot{
+  width:9px;
+  height:9px;
+  min-width:9px;
+  margin-top:7px;
+  background:#111111;
+}
+
+.oat-feature-title{
+  margin:0;
+  font-size:13px;
+  font-weight:900;
+  color:#111111;
+}
+
+.oat-feature-desc{
+  margin:6px 0 0;
+  font-size:12px;
+  line-height:1.6;
+  color:#666666;
+}
+
+.oat-btn-wrap{
+  margin-top:30px;
+  text-align:center;
+}
+
+.oat-btn{
+  display:inline-block;
+  background:#111111;
+  color:#ffffff !important;
+  text-decoration:none;
+  padding:15px 24px;
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.16em;
+}
+
+.oat-note{
+  margin:12px 0 0;
+  font-size:11px;
+  color:#666666;
+  line-height:1.8;
+}
+
+.oat-link{
+  color:#111111 !important;
+  font-weight:900;
+  text-decoration:underline;
+  word-break:break-word;
+}
+
+.oat-note-card{
+  margin-top:34px;
+  border:1px solid #111111;
+  background:#fafafa;
+  padding:18px;
+}
+
+.oat-footer{
+  padding:20px 26px;
+  background:#111111;
+  color:#ffffff;
+  text-align:center;
+}
+
+.oat-footer p{
+  margin:0;
+  font-size:10px;
+  line-height:1.8;
+  font-weight:700;
+  letter-spacing:.16em;
+  color:#ffffff;
+}
+
+@media only screen and (max-width:620px){
+  .oat-bg{
+    padding:12px 7px;
+  }
+
+  .oat-header,
+  .oat-body{
+    padding-left:18px;
+    padding-right:18px;
+  }
+
+  .oat-title{
+    font-size:24px;
+  }
+
+  .oat-greeting{
+    font-size:22px;
+  }
+}
 </style>
 </head>
 
-<body style="margin:0;padding:0;background:#ffffff;">
-<div class="miray-bg" style="padding:40px 20px;background:#ffffff;">
+<body>
+<div class="oat-bg">
+  <div class="oat-shell">
 
-<div class="miray-shell" style="max-width:680px;margin:auto;background:#ffffff;border:1px solid rgba(0,0,0,.08);border-radius:28px;overflow:hidden;font-family:Poppins,Arial,sans-serif;">
+    <div class="oat-top">
+      OATCLUB / OWN ALL TRENDS
+    </div>
 
-<div class="miray-header" style="padding:48px 40px 30px;text-align:center;background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%);">
-  <img
-    src="https://res.cloudinary.com/djtva6hec/image/upload/v1778268933/miray/media/zvliktr4z5zboetdz76k.png"
-    alt="${escapeAttr(safeBrandName)}"
-    style="height:56px;max-width:100%;"
-  />
+    <div class="oat-header">
+      <img
+        class="oat-logo"
+        src="https://res.cloudinary.com/dpsvrt4sd/image/upload/v1780338447/qavpt44lsxsy3wrvuwi8.png"
+        alt="OATCLUB"
+      />
 
-  <p style="margin:24px 0 8px;font-size:11px;letter-spacing:.42em;text-transform:uppercase;color:#d4d4d8;">
-    Welcome
-  </p>
+      <p class="oat-kicker">WELCOME</p>
+      <h1 class="oat-title">Your Account Is Ready</h1>
 
-  <h1 style="margin:0;font-size:18px;letter-spacing:.14em;color:#ffffff;font-weight:700;text-transform:uppercase;">
-    Your account is ready
-  </h1>
+      <p class="oat-subtitle">
+        Welcome To:
+        <b>${escapeHtml(safeBrandName)}</b>
+      </p>
+    </div>
 
-  <p style="margin:12px 0 0;font-size:13px;color:#e4e4e7;line-height:1.6;">
-    Welcome to <b style="color:#ffffff;">${escapeHtml(safeBrandName)}</b>
-  </p>
-</div>
+    <div class="oat-body">
 
-<div style="padding:36px 40px 44px;">
+      <h2 class="oat-greeting">Hi ${escapeHtml(displayName)},</h2>
 
-<h2 class="miray-title" style="margin:0 0 10px;font-size:24px;color:#111111;">
-  Hi ${escapeHtml(displayName)} ✨
-</h2>
+      <p class="oat-copy">
+        Thank you for creating an account with <b>OATCLUB</b>. Your space is ready for orders, saved details, and faster checkout.
+      </p>
 
-<p class="miray-text" style="margin:0 0 26px;font-size:14px;line-height:1.8;color:#555555;">
-  Thank you for creating an account with
-  <b class="miray-strong">${escapeHtml(safeBrandName)}</b>.
-  We’re genuinely delighted to welcome you.
-</p>
+      <div class="oat-section">
+        <p class="oat-section-title">What You Can Do Now</p>
 
-<div class="miray-card" style="${cardBoxStyle}">
-  <p class="miray-muted" style="${sectionTitleStyle}">What you can do now</p>
+        <div class="oat-card">
+          ${featureRow(
+            "Explore Latest Collections",
+            "Discover new arrivals and fresh edits."
+          )}
+          ${featureRow(
+            "Track Orders Anytime",
+            "Check order updates from your account."
+          )}
+          ${featureRow(
+            "Faster Checkout",
+            "Save your details for a smoother shopping experience."
+          )}
+        </div>
+      </div>
 
-  <div style="margin-top:14px;">
-    ${featureRow(
-      "Explore our latest collections",
-      "Discover new arrivals and timeless favourites."
-    )}
-    ${featureRow(
-      "Track your orders easily",
-      "Check order updates anytime from your account."
-    )}
-    ${featureRow(
-      "Faster checkout",
-      "Save your details for a smooth shopping experience."
-    )}
+      ${
+        hasValidCta
+          ? `
+      <div class="oat-btn-wrap">
+        <a href="${escapeAttr(ctaUrl)}" class="oat-btn">
+          Get Started →
+        </a>
+
+        <p class="oat-note">
+          If the button does not work, copy and paste this link into your browser:<br/>
+          ${escapeHtml(ctaUrl)}
+        </p>
+      </div>`
+          : ""
+      }
+
+      <div class="oat-note-card">
+        <p class="oat-copy" style="margin:0;">
+          Need assistance? Reply to this email or contact us at
+          <a href="mailto:${escapeAttr(safeSupportEmail)}" class="oat-link">
+            ${escapeHtml(safeSupportEmail)}
+          </a>.
+        </p>
+      </div>
+
+      <p class="oat-copy" style="margin-top:34px;">
+        With regards,<br/>
+        <b>Team OATCLUB</b>
+      </p>
+
+    </div>
+
+    <div class="oat-footer">
+      <p>OATCLUB • OWN ALL TRENDS • SUPPORT@OATCLUB.IN</p>
+    </div>
+
   </div>
-</div>
-
-${
-  hasValidCta
-    ? `
-<div style="margin-top:30px;text-align:center;">
-  <a href="${escapeAttr(ctaUrl)}" class="miray-btn" style="display:inline-block;padding:15px 28px;border-radius:999px;background:#111111;color:#ffffff;text-decoration:none;font-size:13px;font-weight:600;border:1px solid #111111;">
-    Get Started
-  </a>
-
-  <p class="miray-muted" style="margin:12px 0 0;font-size:11px;line-height:1.7;color:#777777;">
-    If the button does not work, copy and paste this link into your browser:<br/>
-    <span class="miray-text" style="color:#555555;word-break:break-word;">
-      ${escapeHtml(ctaUrl)}
-    </span>
-  </p>
-</div>`
-    : ""
-}
-
-<div class="miray-card" style="margin-top:34px;padding:18px;border-radius:18px;background:#faf7f8;border:1px solid rgba(0,0,0,.05);">
-  <p class="miray-text" style="margin:0;font-size:13px;line-height:1.8;color:#555555;">
-    Need assistance? Reply to this email or contact us at
-    <a href="mailto:${escapeAttr(safeSupportEmail)}" class="miray-link" style="font-weight:700;color:#111111;text-decoration:none;">
-      ${escapeHtml(safeSupportEmail)}
-    </a>.
-  </p>
-</div>
-
-<p class="miray-text" style="margin-top:34px;font-size:14px;line-height:1.8;color:#444444;">
-  With regards,<br />
-  <b class="miray-strong">Team ${escapeHtml(safeBrandName)}</b>
-</p>
-
-</div>
-
-<div class="miray-footer" style="padding:24px 40px;border-top:1px solid rgba(0,0,0,.08);">
-  <p class="miray-muted" style="margin:0;font-size:11px;line-height:1.8;color:#777777;">
-    This is an automated message. You may reply to this email for any assistance.
-  </p>
-</div>
-
-</div>
 </div>
 </body>
 </html>
@@ -193,16 +361,12 @@ ${
 
 function featureRow(title, desc) {
   return `
-  <div style="display:flex;gap:12px;margin:0 0 16px;">
-    <div class="miray-dot" style="height:10px;width:10px;margin-top:6px;border-radius:999px;background:rgba(0,0,0,.25);"></div>
+  <div class="oat-feature">
+    <div class="oat-dot"></div>
 
     <div style="flex:1;">
-      <p class="miray-title" style="margin:0;font-size:13px;font-weight:700;color:#111111;">
-        ${escapeHtml(title)}
-      </p>
-      <p class="miray-muted" style="margin:6px 0 0;font-size:12px;line-height:1.6;color:#666666;">
-        ${escapeHtml(desc)}
-      </p>
+      <p class="oat-feature-title">${escapeHtml(title)}</p>
+      <p class="oat-feature-desc">${escapeHtml(desc)}</p>
     </div>
   </div>`;
 }
@@ -219,9 +383,3 @@ function escapeHtml(str) {
 function escapeAttr(str) {
   return escapeHtml(str);
 }
-
-const sectionTitleStyle =
-  "margin:0 0 12px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#777777;";
-
-const cardBoxStyle =
-  "border:1px solid rgba(0,0,0,.08);border-radius:18px;padding:18px;background:#fcfcfc;";

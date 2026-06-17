@@ -89,7 +89,7 @@ export const createTicket = async (req, res) => {
     let attachments = [];
 
     if (files.length) {
-      const folder = "miray/support-tickets";
+      const folder = "oatclub/support-tickets";
       const uploads = await Promise.all(
         files.map(async (file) => {
           const r = await uploadToCloudinary(file, folder, "image");
@@ -245,7 +245,7 @@ export const patchTicketDetails = async (req, res) => {
 
     const files = pickFiles(req).slice(0, 5);
     if (files.length) {
-      const folder = "miray/support-tickets";
+      const folder = "oatclub/support-tickets";
       const uploads = await Promise.all(
         files.map(async (file) => {
           const r = await uploadToCloudinary(file, folder, "image");
@@ -378,7 +378,6 @@ export const getTicketsByEmail = async (req, res) => {
 
 /* ===================================================================
    ✅ GET tickets by orderNumber (exact)
-   GET /api/support/tickets/by-order?orderNumber=MIRAY-000271&status=OPEN&page=1&limit=10
 =================================================================== */
 export const getTicketsByOrderNumber = async (req, res) => {
   try {
@@ -424,7 +423,6 @@ export const getTicketsByOrderNumber = async (req, res) => {
 
 /* ===================================================================
    ADMIN list (filters + pagination)
-   GET /api/support/tickets?status=OPEN&issueType=Order%20Issue&q=damage&orderNumber=MIRAY-000271&page=1&limit=15
 =================================================================== */
 export const getTicketsAdminList = async (req, res) => {
   try {

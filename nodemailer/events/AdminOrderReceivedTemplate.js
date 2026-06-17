@@ -1,9 +1,6 @@
 // nodemailer/events/AdminOrderReceivedTemplate.js
 
-export function orderReceivedAdminTemplate({
-  order = {},
-  ctaUrl = "#",
-}) {
+export function orderReceivedAdminTemplate({ order = {}, ctaUrl = "#" }) {
   const orderId = order?.orderNumber || order?._id || "—";
   const currency = order?.currency || "INR";
 
@@ -14,22 +11,13 @@ export function orderReceivedAdminTemplate({
   const billing = order?.billingAddressSnapshot || {};
 
   const customerName =
-    shipping?.fullName ||
-    billing?.fullName ||
-    order?.customer?.name ||
-    "Customer";
+    shipping?.fullName || billing?.fullName || order?.customer?.name || "Customer";
 
   const customerEmail =
-    shipping?.email ||
-    billing?.email ||
-    order?.customer?.email ||
-    "—";
+    shipping?.email || billing?.email || order?.customer?.email || "—";
 
   const customerPhone =
-    shipping?.phone ||
-    billing?.phone ||
-    order?.customer?.phone ||
-    "—";
+    shipping?.phone || billing?.phone || order?.customer?.phone || "—";
 
   const shippingAddress = [
     shipping?.fullName,
@@ -45,34 +33,24 @@ export function orderReceivedAdminTemplate({
 
   const paymentMethod = pretty(order?.paymentMethod || "cod");
   const paymentStatus = pretty(order?.paymentStatus || "pending");
-  const fulfillmentStatus = pretty(
-    order?.fulfillmentStatus || "processing"
-  );
+  const fulfillmentStatus = pretty(order?.fulfillmentStatus || "processing");
 
   const razorpay = order?.razorpay || {};
-
   const paymentRef =
-    razorpay?.paymentId ||
-    razorpay?.orderId ||
-    order?.transactionId ||
-    "—";
+    razorpay?.paymentId || razorpay?.orderId || order?.transactionId || "—";
 
   const subtotal = num(order?.subtotal);
   const discount = num(order?.discount);
   const shippingFee = num(order?.shippingFee);
   const tax = num(order?.tax);
-  const totalAmount = num(order?.totalAmount);
-  const finalPayable = num(order?.finalPayable);
+  const finalPayable = num(order?.finalPayable || order?.totalAmount);
 
   const coupon = order?.coupon || {};
   const couponCode = coupon?.code || null;
   const couponDiscount = num(coupon?.discount);
 
   const items = Array.isArray(order?.items) ? order.items : [];
-  const totalQty = items.reduce(
-    (sum, it) => sum + num(it?.quantity),
-    0
-  );
+  const totalQty = items.reduce((sum, it) => sum + num(it?.quantity), 0);
 
   const source = order?.source || "website";
   const priority = order?.priority || "normal";
@@ -81,10 +59,10 @@ export function orderReceivedAdminTemplate({
 
   const hasValidCta = Boolean(ctaUrl && ctaUrl !== "#");
 
-  const subject = `🆕 New Order Received — #${orderId}`;
+  const subject = `New OATCLUB Order Received — #${orderId}`;
 
   const text = `
-NEW ORDER RECEIVED
+NEW OATCLUB ORDER RECEIVED
 
 Order ID: ${orderId}
 Order Date: ${orderDate}
@@ -113,15 +91,10 @@ Subtotal: ${money(subtotal, currency)}
 Discount: -${money(discount, currency)}
 Shipping: ${money(shippingFee, currency)}
 Tax: ${money(tax, currency)}
-Total Amount: ${money(totalAmount, currency)}
 Final Payable: ${money(finalPayable, currency)}
 
 Coupon:
-${
-  couponCode
-    ? `${couponCode} (-${money(couponDiscount, currency)})`
-    : "—"
-}
+${couponCode ? `${couponCode} (-${money(couponDiscount, currency)})` : "—"}
 
 Other:
 Source: ${source}
@@ -136,193 +109,348 @@ ${hasValidCta ? `Open Order: ${ctaUrl}` : ""}
     : emptyCard("No items found.");
 
   const html = `
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
 <meta charset="UTF-8" />
-<meta name="color-scheme" content="light dark" />
-<meta name="supported-color-schemes" content="light dark" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="color-scheme" content="light" />
+<meta name="supported-color-schemes" content="light" />
 
 <style>
-:root{
-  color-scheme:light dark;
-  supported-color-schemes:light dark;
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700;800&display=swap");
+
+body{
+  margin:0;
+  padding:0;
+  background:#f6f6f6;
+  color:#111111;
+  font-family:Poppins,Arial,sans-serif;
+  text-transform:uppercase;
 }
 
-@media (prefers-color-scheme: dark){
-  body,.miray-bg{background:#0f0f10!important;}
-  .miray-shell{background:#151517!important;border-color:rgba(255,255,255,.08)!important;}
-  .miray-card{background:#1b1b1d!important;border-color:rgba(255,255,255,.08)!important;}
-  .miray-text{color:#e4e4e7!important;}
-  .miray-muted{color:#b4b4b8!important;}
-  .miray-title,.miray-strong{color:#ffffff!important;}
-  .miray-divider{background:rgba(255,255,255,.08)!important;}
-  .miray-btn{background:#ffffff!important;color:#111111!important;border-color:#ffffff!important;}
-  .miray-header{background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%)!important;}
-  .miray-header p,.miray-header span,.miray-header div{color:#e4e4e7!important;}
-  .miray-header h1,.miray-header b{color:#ffffff!important;}
-  .miray-footer{border-color:rgba(255,255,255,.08)!important;}
+.oat-bg{
+  padding:36px 16px;
+  background:#f6f6f6;
 }
 
-[data-ogsc] .miray-bg{background:#0f0f10!important;}
-[data-ogsc] .miray-shell{background:#151517!important;}
-[data-ogsc] .miray-card{background:#1b1b1d!important;}
-[data-ogsc] .miray-text{color:#e4e4e7!important;}
-[data-ogsc] .miray-muted{color:#b4b4b8!important;}
-[data-ogsc] .miray-title,[data-ogsc] .miray-strong{color:#ffffff!important;}
-[data-ogsc] .miray-header{background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%)!important;}
-[data-ogsc] .miray-header p,[data-ogsc] .miray-header span,[data-ogsc] .miray-header div{color:#e4e4e7!important;}
-[data-ogsc] .miray-header h1,[data-ogsc] .miray-header b{color:#ffffff!important;}
-[data-ogsc] .miray-footer{border-color:rgba(255,255,255,.08)!important;}
+.oat-shell{
+  max-width:720px;
+  margin:0 auto;
+  background:#ffffff;
+  border:1px solid #e5e5e5;
+}
+
+.oat-top{
+  background:#111111;
+  color:#ffffff;
+  text-align:center;
+  padding:10px 18px;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.24em;
+}
+
+.oat-header{
+  padding:30px 28px 26px;
+  text-align:center;
+  border-bottom:1px solid #e5e5e5;
+}
+
+.oat-logo-text{
+  margin:0;
+  font-family:"Space Grotesk",Arial,sans-serif;
+  font-size:34px;
+  line-height:1;
+  font-weight:800;
+  letter-spacing:.08em;
+  color:#111111;
+}
+
+.oat-kicker{
+  margin:18px 0 8px;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.26em;
+  color:#555555;
+}
+
+.oat-title{
+  margin:0;
+  font-family:"Space Grotesk",Arial,sans-serif;
+  font-size:26px;
+  line-height:1.1;
+  font-weight:800;
+  color:#111111;
+}
+
+.oat-subtitle{
+  margin:12px 0 0;
+  font-size:13px;
+  line-height:1.7;
+  color:#555555;
+}
+
+.oat-body{
+  padding:30px 28px 34px;
+}
+
+.oat-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:12px;
+}
+
+.oat-info{
+  border:1px solid #e5e5e5;
+  background:#fafafa;
+  padding:14px;
+}
+
+.oat-info-label{
+  margin:0 0 7px;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.16em;
+  color:#777777;
+}
+
+.oat-info-value{
+  margin:0;
+  font-size:13px;
+  font-weight:800;
+  color:#111111;
+}
+
+.oat-section{
+  margin-top:28px;
+}
+
+.oat-section-title{
+  margin:0 0 12px;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.2em;
+  color:#111111;
+}
+
+.oat-card{
+  border:1px solid #e5e5e5;
+  background:#ffffff;
+  padding:18px;
+}
+
+.oat-name{
+  margin:0;
+  font-family:"Space Grotesk",Arial,sans-serif;
+  font-size:16px;
+  font-weight:800;
+  color:#111111;
+}
+
+.oat-text{
+  margin:10px 0 0;
+  font-size:13px;
+  line-height:1.8;
+  color:#555555;
+}
+
+.oat-row{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  padding:8px 0;
+  border-bottom:1px solid #eeeeee;
+  font-size:13px;
+  color:#555555;
+}
+
+.oat-row:last-child{
+  border-bottom:0;
+}
+
+.oat-row b{
+  color:#111111;
+}
+
+.oat-divider{
+  height:1px;
+  background:#e5e5e5;
+  margin:14px 0;
+}
+
+.oat-total{
+  font-size:16px;
+  font-weight:900;
+  color:#111111;
+}
+
+.oat-btn-wrap{
+  margin-top:30px;
+  text-align:center;
+}
+
+.oat-btn{
+  display:inline-block;
+  background:#111111;
+  color:#ffffff !important;
+  text-decoration:none;
+  padding:15px 26px;
+  font-size:12px;
+  font-weight:800;
+  letter-spacing:.14em;
+}
+
+.oat-note{
+  margin:26px 0 0;
+  font-size:11px;
+  color:#777777;
+  line-height:1.8;
+}
+
+.oat-footer{
+  padding:20px 28px;
+  background:#111111;
+  color:#ffffff;
+  text-align:center;
+}
+
+.oat-footer p{
+  margin:0;
+  font-size:10px;
+  line-height:1.8;
+  font-weight:700;
+  letter-spacing:.16em;
+  color:#ffffff;
+}
+
+@media only screen and (max-width:620px){
+  .oat-bg{ padding:14px 8px; }
+
+  .oat-header,
+  .oat-body{
+    padding-left:18px;
+    padding-right:18px;
+  }
+
+  .oat-grid{ grid-template-columns:1fr; }
+
+  .oat-title{ font-size:23px; }
+
+  .oat-row{ display:block; }
+
+  .oat-row b{
+    display:block;
+    margin-top:3px;
+  }
+}
 </style>
 </head>
 
-<body style="margin:0;padding:0;background:#ffffff;">
-<div class="miray-bg" style="padding:40px 20px;background:#ffffff;">
+<body>
+<div class="oat-bg">
+  <div class="oat-shell">
 
-<div class="miray-shell" style="max-width:760px;margin:auto;background:#ffffff;border:1px solid rgba(0,0,0,.08);border-radius:28px;overflow:hidden;font-family:Poppins,Arial,sans-serif;">
+    <div class="oat-top">
+      OATCLUB / ADMIN ORDER ALERT
+    </div>
 
-<div class="miray-header" style="padding:48px 40px 30px;text-align:center;background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%);">
+    <div class="oat-header">
+      <h2 class="oat-logo-text">OATCLUB</h2>
 
-  <img
-    src="https://res.cloudinary.com/djtva6hec/image/upload/v1778268933/miray/media/zvliktr4z5zboetdz76k.png"
-    alt="Miray Fashions"
-    style="height:56px;max-width:100%;"
-  />
+      <p class="oat-kicker">NEW ORDER RECEIVED</p>
+      <h1 class="oat-title">Order #${escapeHtml(orderId)}</h1>
 
-  <p style="margin:24px 0 8px;font-size:11px;letter-spacing:.42em;text-transform:uppercase;color:#d4d4d8;">
-    New Order Received
-  </p>
+      <p class="oat-subtitle">
+        Final payable:
+        <b>${escapeHtml(money(finalPayable, currency))}</b>
+      </p>
+    </div>
 
-  <h1 style="margin:0;font-size:18px;letter-spacing:.14em;color:#ffffff;font-weight:700;">
-    #${escapeHtml(orderId)}
-  </h1>
+    <div class="oat-body">
 
-  <p style="margin:12px 0 0;font-size:13px;color:#e4e4e7;line-height:1.6;">
-    Final Payable
-    <b style="color:#ffffff;">
-      ${escapeHtml(money(finalPayable, currency))}
-    </b>
-  </p>
-</div>
+      <div class="oat-grid">
+        ${infoCard("Payment", paymentMethod)}
+        ${infoCard("Status", fulfillmentStatus)}
+        ${infoCard("Confirmed", isConfirmed)}
+      </div>
 
-<div style="padding:36px 40px 44px;">
+      <div class="oat-section">
+        <p class="oat-section-title">Customer</p>
+        <div class="oat-card">
+          <p class="oat-name">${escapeHtml(customerName)}</p>
+          <p class="oat-text">
+            Email: ${escapeHtml(customerEmail)}<br/>
+            Phone: ${escapeHtml(customerPhone)}
+          </p>
+        </div>
+      </div>
 
-<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;">
-  ${infoCard("Payment", paymentMethod)}
-  ${infoCard("Status", fulfillmentStatus)}
-  ${infoCard("Confirmed", isConfirmed)}
-</div>
+      <div class="oat-section">
+        <p class="oat-section-title">Shipping Address</p>
+        <div class="oat-card">
+          <p class="oat-text">${escapeHtml(shippingAddress || "—")}</p>
+        </div>
+      </div>
 
-<div style="margin-top:30px;">
-  <p class="miray-muted" style="${sectionTitleStyle}">
-    Customer
-  </p>
+      <div class="oat-section">
+        <p class="oat-section-title">Items (${items.length} • Qty ${totalQty})</p>
+        ${itemsHtml}
+      </div>
 
-  <div class="miray-card" style="${cardBoxStyle}">
-    <p class="miray-title" style="margin:0;font-size:15px;font-weight:700;color:#111111;">
-      ${escapeHtml(customerName)}
-    </p>
+      <div class="oat-section">
+        <p class="oat-section-title">Pricing</p>
+        <div class="oat-card">
+          ${summaryRow("Subtotal", money(subtotal, currency))}
+          ${summaryRow("Discount", `-${money(discount, currency)}`)}
+          ${summaryRow("Shipping", money(shippingFee, currency))}
+          ${summaryRow("Tax", money(tax, currency))}
+          <div class="oat-divider"></div>
+          ${summaryRowStrong("Final Payable", money(finalPayable, currency))}
 
-    <p class="miray-text" style="margin:10px 0 0;font-size:13px;line-height:1.8;color:#555555;">
-      Email: ${escapeHtml(customerEmail)}<br/>
-      Phone: ${escapeHtml(customerPhone)}
-    </p>
+          ${
+            couponCode
+              ? `<p class="oat-text">Coupon: <b>${escapeHtml(
+                  couponCode
+                )}</b> (-${escapeHtml(money(couponDiscount, currency))})</p>`
+              : ""
+          }
+        </div>
+      </div>
+
+      <div class="oat-section">
+        <p class="oat-section-title">Meta</p>
+        <div class="oat-card">
+          <p class="oat-text">
+            Source: <b>${escapeHtml(source)}</b><br/>
+            Priority: <b>${escapeHtml(priority)}</b><br/>
+            Gift Order: <b>${escapeHtml(isGiftOrder)}</b><br/>
+            Payment Ref: <b>${escapeHtml(paymentRef)}</b>
+          </p>
+        </div>
+      </div>
+
+      ${
+        hasValidCta
+          ? `
+      <div class="oat-btn-wrap">
+        <a href="${escapeAttr(ctaUrl)}" class="oat-btn">
+          Open Order In Admin →
+        </a>
+      </div>`
+          : ""
+      }
+
+      <p class="oat-note">
+        This is an automated OATCLUB admin notification from oatclub.in.
+      </p>
+    </div>
+
+    <div class="oat-footer">
+      <p>OATCLUB • ADMIN NOTIFICATION • WEBSITE CHECKOUT • OATCLUB.IN</p>
+    </div>
+
   </div>
-</div>
-
-<div style="margin-top:30px;">
-  <p class="miray-muted" style="${sectionTitleStyle}">
-    Shipping Address
-  </p>
-
-  <div class="miray-card" style="${cardBoxStyle}">
-    <p class="miray-text" style="margin:0;font-size:13px;line-height:1.8;color:#555555;">
-      ${escapeHtml(shippingAddress || "—")}
-    </p>
-  </div>
-</div>
-
-<div style="margin-top:30px;">
-  <p class="miray-muted" style="${sectionTitleStyle}">
-    Items (${items.length} • Qty ${totalQty})
-  </p>
-
-  ${itemsHtml}
-</div>
-
-<div style="margin-top:30px;">
-  <p class="miray-muted" style="${sectionTitleStyle}">
-    Pricing
-  </p>
-
-  <div class="miray-card" style="${cardBoxStyle}">
-    ${summaryRow("Subtotal", money(subtotal, currency))}
-    ${summaryRow("Discount", `-${money(discount, currency)}`)}
-    ${summaryRow("Shipping", money(shippingFee, currency))}
-    ${summaryRow("Tax", money(tax, currency))}
-    <div class="miray-divider" style="height:1px;background:rgba(0,0,0,.08);margin:14px 0;"></div>
-    ${summaryRowStrong(
-      "Final Payable",
-      money(finalPayable, currency)
-    )}
-
-    ${
-      couponCode
-        ? `
-    <p class="miray-muted" style="margin:12px 0 0;font-size:12px;color:#777777;">
-      Coupon: <b class="miray-strong">${escapeHtml(
-        couponCode
-      )}</b> (-${escapeHtml(
-            money(couponDiscount, currency)
-          )})
-    </p>`
-        : ""
-    }
-  </div>
-</div>
-
-<div style="margin-top:30px;">
-  <p class="miray-muted" style="${sectionTitleStyle}">
-    Meta
-  </p>
-
-  <div class="miray-card" style="${cardBoxStyle}">
-    <p class="miray-text" style="margin:0;font-size:13px;line-height:1.8;color:#555555;">
-      Source: <b class="miray-strong">${escapeHtml(source)}</b><br/>
-      Priority: <b class="miray-strong">${escapeHtml(priority)}</b><br/>
-      Gift Order: <b class="miray-strong">${escapeHtml(isGiftOrder)}</b><br/>
-      Payment Ref: <b class="miray-strong">${escapeHtml(paymentRef)}</b>
-    </p>
-  </div>
-</div>
-
-${
-  hasValidCta
-    ? `
-<div style="margin-top:30px;text-align:center;">
-  <a href="${escapeAttr(
-    ctaUrl
-  )}" class="miray-btn" style="display:inline-block;padding:15px 26px;border-radius:999px;background:#111111;color:#ffffff;text-decoration:none;font-size:13px;font-weight:600;border:1px solid #111111;">
-    Open Order in Admin
-  </a>
-</div>`
-    : ""
-}
-
-<p class="miray-muted" style="margin-top:30px;font-size:11px;color:#777777;">
-  This is an automated notification.
-</p>
-
-</div>
-
-<div class="miray-footer" style="padding:24px 40px;border-top:1px solid rgba(0,0,0,.08);">
-  <p class="miray-muted" style="margin:0;font-size:11px;line-height:1.8;color:#777777;">
-    Miray Fashions Admin Notification
-  </p>
-</div>
-
-</div>
 </div>
 </body>
 </html>
@@ -342,38 +470,31 @@ function renderItemRow(it, currency) {
   const img = getItemImage(it);
 
   return `
-  <div class="miray-card" style="display:flex;gap:14px;padding:16px;border-radius:18px;border:1px solid rgba(0,0,0,.08);margin-bottom:14px;background:#ffffff;">
-
+  <div class="oat-card" style="display:flex;gap:14px;margin-bottom:14px;align-items:flex-start;">
     ${
       img
         ? `
     <img
       src="${escapeAttr(img)}"
       alt="${escapeAttr(title)}"
-      style="width:72px;height:72px;object-fit:cover;border-radius:14px;border:1px solid rgba(0,0,0,.06);"
+      style="width:76px;height:92px;object-fit:cover;border:1px solid #e5e5e5;"
     />`
         : ""
     }
 
     <div style="flex:1;">
-      <p class="miray-title" style="margin:0;font-size:14px;font-weight:700;color:#111111;">
+      <p class="oat-name" style="font-size:14px;">
         ${escapeHtml(title)}
       </p>
 
       ${
         attrs
-          ? `
-      <p class="miray-muted" style="margin:8px 0 0;font-size:12px;color:#666666;">
-        ${escapeHtml(attrs)}
-      </p>`
+          ? `<p class="oat-text" style="font-size:12px;">${escapeHtml(attrs)}</p>`
           : ""
       }
 
-      <p class="miray-text" style="margin:10px 0 0;font-size:13px;color:#555555;">
-        Qty: <b class="miray-strong">${qty}</b> •
-        Price: <b class="miray-strong">${escapeHtml(
-          money(price, currency)
-        )}</b>
+      <p class="oat-text">
+        Qty: <b>${qty}</b> • Price: <b>${escapeHtml(money(price, currency))}</b>
       </p>
     </div>
   </div>`;
@@ -381,62 +502,49 @@ function renderItemRow(it, currency) {
 
 function infoCard(label, value) {
   return `
-  <div class="miray-card" style="padding:14px 16px;border-radius:16px;border:1px solid rgba(0,0,0,.08);background:#fcfcfc;">
-    <p class="miray-muted" style="margin:0 0 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#777777;">
-      ${escapeHtml(label)}
-    </p>
-
-    <p class="miray-title" style="margin:0;font-size:14px;font-weight:700;color:#111111;">
-      ${escapeHtml(value)}
-    </p>
+  <div class="oat-info">
+    <p class="oat-info-label">${escapeHtml(label)}</p>
+    <p class="oat-info-value">${escapeHtml(value)}</p>
   </div>`;
 }
 
 function emptyCard(msg) {
   return `
-  <div class="miray-card miray-muted" style="padding:18px;border-radius:16px;border:1px dashed rgba(0,0,0,.12);color:#777777;background:#ffffff;">
-    ${escapeHtml(msg)}
+  <div class="oat-card">
+    <p class="oat-text">${escapeHtml(msg)}</p>
   </div>`;
 }
 
 function summaryRow(label, value) {
   return `
-  <div class="miray-text" style="display:flex;justify-content:space-between;gap:12px;margin:6px 0;font-size:13px;color:#555555;">
+  <div class="oat-row">
     <span>${escapeHtml(label)}</span>
-    <span class="miray-strong" style="font-weight:700;color:#111111;">
-      ${escapeHtml(value)}
-    </span>
+    <b>${escapeHtml(value)}</b>
   </div>`;
 }
 
 function summaryRowStrong(label, value) {
   return `
-  <div class="miray-text" style="display:flex;justify-content:space-between;gap:12px;margin:8px 0;font-size:15px;color:#111111;font-weight:800;">
+  <div class="oat-row oat-total">
     <span>${escapeHtml(label)}</span>
-    <span>${escapeHtml(value)}</span>
+    <b>${escapeHtml(value)}</b>
   </div>`;
 }
 
 function extractVariantInfo(it = {}) {
   const snap = it?.productSnapshot || {};
   const variant = it?.variant || {};
-  const attrs = Array.isArray(variant?.attributes)
-    ? variant.attributes
-    : [];
+  const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
 
   const size =
     it?.selectedSize ||
-    attrs.find(
-      (a) => String(a?.key || "").toLowerCase() === "size"
-    )?.value ||
+    attrs.find((a) => String(a?.key || "").toLowerCase() === "size")?.value ||
     "";
 
   const color =
     it?.selectedColor ||
     attrs.find((a) =>
-      ["color", "colour"].includes(
-        String(a?.key || "").toLowerCase()
-      )
+      ["color", "colour"].includes(String(a?.key || "").toLowerCase())
     )?.value ||
     "";
 
@@ -453,7 +561,6 @@ function extractVariantInfo(it = {}) {
 
 function getItemImage(it = {}) {
   const snap = it?.productSnapshot || {};
-
   const thumb = String(snap?.thumbnail || "").trim();
 
   const img0 = Array.isArray(snap?.images)
@@ -467,21 +574,18 @@ function formatItemText(it, i, currency) {
   const title = it?.productSnapshot?.title || "Item";
   const qty = num(it?.quantity);
   const price = num(it?.price);
-
   const attrs = extractVariantInfo(it);
 
-  return `${i}. ${title}${
-    attrs ? ` (${attrs})` : ""
-  } — Qty: ${qty} — ${money(price, currency)}`;
+  return `${i}. ${title}${attrs ? ` (${attrs})` : ""} — Qty: ${qty} — ${money(
+    price,
+    currency
+  )}`;
 }
 
-const num = (v) =>
-  Number.isFinite(Number(v)) ? Number(v) : 0;
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 const money = (v, c) =>
-  c === "INR"
-    ? `₹${Number(v).toLocaleString("en-IN")}`
-    : `${c} ${Number(v)}`;
+  c === "INR" ? `₹${Number(v).toLocaleString("en-IN")}` : `${c} ${Number(v)}`;
 
 const pretty = (s) =>
   String(s || "")
@@ -515,9 +619,3 @@ function escapeHtml(str) {
 }
 
 const escapeAttr = escapeHtml;
-
-const sectionTitleStyle =
-  "margin:0 0 12px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#777777;";
-
-const cardBoxStyle =
-  "border:1px solid rgba(0,0,0,.08);border-radius:18px;padding:18px;background:#fcfcfc;";

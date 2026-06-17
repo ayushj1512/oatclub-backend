@@ -1,23 +1,23 @@
 {
-  "name": "ecommerce-analytics",
+  "name": "oatclub-backend",
   "version": "1.0.0",
-  "description": "Miray backend server with Express, MongoDB, Cloudinary, and Nodemailer",
+  "description": "OATCLUB backend server with Express, MongoDB, Cloudinary, Nodemailer, Razorpay, Shiprocket, and analytics",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "cron:shiprocket": "node cronjob/shiprocket/shiprocketSync.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "cron:shiprocket": "node cronjob/shiprocket/shiprocketSync.js"
   },
   "keywords": [
     "express",
     "ecommerce",
-    "miray",
+    "oatclub",
     "backend",
-    "api"
+    "api",
+    "fashion"
   ],
-  "author": "Miray Fashion",
+  "author": "OATCLUB",
   "license": "ISC",
   "dependencies": {
     "axios": "^1.15.0",
@@ -52,13 +52,5 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.11"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ayushj1512/miray-backend.git"
-  },
-  "bugs": {
-    "url": "https://github.com/ayushj1512/miray-backend/issues"
-  },
-  "homepage": "https://github.com/ayushj1512/miray-backend#readme"
+  }
 }

@@ -1,4 +1,4 @@
-import { Mailer } from "../nodemailer/events/mailer.js";
+import { Mailer } from "../nodemailer/mailer.js";
 import User from "../Customer/Customer.js";
 
 /**
@@ -6,7 +6,6 @@ import User from "../Customer/Customer.js";
  */
 const ADMIN_ORDER_ALERT_EMAILS = [
   "oatclub.in@gmail.com",
-  "support@mirayfashions.com",
 ].filter(Boolean);
 
 /* ============================================================

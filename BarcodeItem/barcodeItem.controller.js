@@ -87,7 +87,6 @@ export async function getBarcodeItemByBarcode(req, res) {
 
 /**
  * POST /api/barcodes/scan
- * Body: { barcodeText: "MIRAY-12134-M-1299" }
  * - validates format
  * - returns existing record if present
  * - optional: createIfMissing=true to auto-create from scan
@@ -195,7 +194,7 @@ export async function generateBarcodePngNoSave(req, res) {
     if (!ALLOWED_SIZES.includes(sizeRaw)) return sendError(res, 400, `size must be one of: ${ALLOWED_SIZES.join(", ")}`);
     if (!priceRaw) return sendError(res, 400, "price is required");
 
-    const barcodeText = `MIRAY-${productId}-${sizeRaw}-${priceRaw}`;
+    const barcodeText = `OATCLUB-${productId}-${sizeRaw}-${priceRaw}`;
 
     const png = await bwipjs.toBuffer({
       bcid: "code128",

@@ -28,12 +28,12 @@ export function orderShippedTemplate({
     ? items.map((it) => renderItemCard(it, currency)).join("")
     : "";
 
-  const subject = `Order Shipped — #${orderId} 🚚`;
+  const subject = `OATCLUB Order Shipped — #${orderId}`;
 
   const text = [
     `Hi ${name},`,
     ``,
-    `Your order has been shipped and is on the way.`,
+    `Your OATCLUB order has been shipped and is on the way.`,
     ``,
     `Order ID: ${orderId}`,
     `Shipped On: ${formatDate(shippedAt)}`,
@@ -44,7 +44,7 @@ export function orderShippedTemplate({
     hasValidCta ? `View Order: ${ctaUrl}` : "",
     ``,
     `With regards,`,
-    `Team Miray Fashions`,
+    `Team OATCLUB`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -53,138 +53,394 @@ export function orderShippedTemplate({
     infoBox("Order ID", orderId),
     hasShippingMeta ? infoBox("Courier", courierName) : "",
     hasShippingMeta ? infoBox("AWB / Tracking ID", awb) : "",
-    hasExpectedDelivery ? infoBox("Expected Delivery", formatDate(expectedDelivery)) : "",
+    hasExpectedDelivery
+      ? infoBox("Expected Delivery", formatDate(expectedDelivery))
+      : "",
   ]
     .filter(Boolean)
     .join("");
 
   const html = `
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
 <meta charset="UTF-8" />
-<meta name="color-scheme" content="light dark" />
-<meta name="supported-color-schemes" content="light dark" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="color-scheme" content="light" />
+<meta name="supported-color-schemes" content="light" />
 
 <style>
-:root{
-  color-scheme:light dark;
-  supported-color-schemes:light dark;
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap");
+
+body{
+  margin:0;
+  padding:0;
+  background:#ffffff;
+  color:#111111;
+  font-family:Inter,Arial,sans-serif;
+  text-transform:uppercase;
 }
 
-@media (prefers-color-scheme: dark){
-  body,.miray-bg{background:#0f0f10!important;}
-  .miray-shell{background:#151517!important;border-color:rgba(255,255,255,.08)!important;}
-  .miray-card{background:#1b1b1d!important;border-color:rgba(255,255,255,.08)!important;}
-  .miray-text{color:#e4e4e7!important;}
-  .miray-muted{color:#b4b4b8!important;}
-  .miray-title,.miray-strong{color:#ffffff!important;}
-  .miray-divider{background:rgba(255,255,255,.08)!important;}
-  .miray-btn{background:#ffffff!important;color:#111111!important;border-color:#ffffff!important;}
-  .miray-btn-secondary{background:#232326!important;color:#ffffff!important;border-color:rgba(255,255,255,.08)!important;}
-  .miray-header{background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%)!important;}
-  .miray-header p,.miray-header span,.miray-header div{color:#e4e4e7!important;}
-  .miray-header h1,.miray-header b{color:#ffffff!important;}
+.oat-bg{
+  padding:34px 14px;
+  background:#ffffff;
 }
 
-[data-ogsc] .miray-bg{background:#0f0f10!important;}
-[data-ogsc] .miray-shell{background:#151517!important;}
-[data-ogsc] .miray-card{background:#1b1b1d!important;}
-[data-ogsc] .miray-text{color:#e4e4e7!important;}
-[data-ogsc] .miray-muted{color:#b4b4b8!important;}
-[data-ogsc] .miray-title,[data-ogsc] .miray-strong{color:#ffffff!important;}
-[data-ogsc] .miray-header{background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%)!important;}
-[data-ogsc] .miray-header p,[data-ogsc] .miray-header span,[data-ogsc] .miray-header div{color:#e4e4e7!important;}
-[data-ogsc] .miray-header h1,[data-ogsc] .miray-header b{color:#ffffff!important;}
+.oat-shell{
+  max-width:680px;
+  margin:0 auto;
+  background:#ffffff;
+  border:1px solid #111111;
+}
+
+.oat-top{
+  background:#111111;
+  color:#ffffff;
+  text-align:center;
+  padding:10px 18px;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.24em;
+}
+
+.oat-header{
+  padding:30px 26px 26px;
+  text-align:center;
+  border-bottom:1px solid #111111;
+}
+
+.oat-logo{
+  width:112px;
+  max-width:160px;
+  height:auto;
+  object-fit:contain;
+}
+
+.oat-kicker{
+  margin:20px 0 8px;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.26em;
+  color:#111111;
+}
+
+.oat-title{
+  margin:0;
+  font-size:28px;
+  line-height:1.08;
+  font-weight:900;
+  letter-spacing:-.04em;
+  color:#111111;
+}
+
+.oat-subtitle{
+  margin:12px 0 0;
+  font-size:13px;
+  line-height:1.7;
+  color:#555555;
+}
+
+.oat-body{
+  padding:30px 26px 34px;
+}
+
+.oat-greeting{
+  margin:0;
+  font-size:24px;
+  line-height:1.15;
+  font-weight:900;
+  letter-spacing:-.03em;
+  color:#111111;
+}
+
+.oat-copy{
+  margin:14px 0 0;
+  font-size:14px;
+  line-height:1.85;
+  color:#444444;
+}
+
+.oat-section{
+  margin-top:28px;
+}
+
+.oat-section-title{
+  margin:0 0 12px;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.2em;
+  color:#111111;
+}
+
+.oat-card{
+  border:1px solid #111111;
+  background:#ffffff;
+  padding:18px;
+}
+
+.oat-shipment-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px;
+}
+
+.oat-info{
+  border:1px solid #111111;
+  background:#ffffff;
+  padding:14px;
+}
+
+.oat-info-label{
+  margin:0 0 7px;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.16em;
+  color:#777777;
+}
+
+.oat-info-value{
+  margin:0;
+  font-size:13px;
+  font-weight:900;
+  color:#111111;
+  word-break:break-word;
+}
+
+.oat-item{
+  display:flex;
+  gap:14px;
+  border:1px solid #111111;
+  background:#ffffff;
+  padding:16px;
+  margin-bottom:14px;
+}
+
+.oat-thumb{
+  width:72px;
+  height:88px;
+  object-fit:cover;
+  border:1px solid #111111;
+}
+
+.oat-item-content{
+  flex:1;
+}
+
+.oat-item-title{
+  margin:0 0 8px;
+  font-size:14px;
+  font-weight:900;
+  color:#111111;
+}
+
+.oat-item-meta{
+  margin:0 0 10px;
+  font-size:12px;
+  color:#666666;
+  line-height:1.6;
+}
+
+.oat-item-bottom{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  font-size:13px;
+  color:#444444;
+}
+
+.oat-item-bottom b{
+  color:#111111;
+}
+
+.oat-btn-wrap{
+  margin-top:22px;
+  text-align:center;
+}
+
+.oat-btn{
+  display:inline-block;
+  background:#111111;
+  color:#ffffff !important;
+  text-decoration:none;
+  padding:15px 24px;
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.16em;
+}
+
+.oat-btn-secondary{
+  display:inline-block;
+  background:#ffffff;
+  color:#111111 !important;
+  border:1px solid #111111;
+  text-decoration:none;
+  padding:14px 22px;
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.16em;
+}
+
+.oat-note-card{
+  margin-top:34px;
+  border:1px solid #111111;
+  background:#fafafa;
+  padding:18px;
+}
+
+.oat-footer{
+  padding:20px 26px;
+  background:#111111;
+  color:#ffffff;
+  text-align:center;
+}
+
+.oat-footer p{
+  margin:0;
+  font-size:10px;
+  line-height:1.8;
+  font-weight:700;
+  letter-spacing:.16em;
+  color:#ffffff;
+}
+
+@media only screen and (max-width:620px){
+  .oat-bg{
+    padding:12px 7px;
+  }
+
+  .oat-header,
+  .oat-body{
+    padding-left:18px;
+    padding-right:18px;
+  }
+
+  .oat-shipment-grid{
+    grid-template-columns:1fr;
+  }
+
+  .oat-title{
+    font-size:24px;
+  }
+
+  .oat-greeting{
+    font-size:22px;
+  }
+
+  .oat-item{
+    display:block;
+  }
+
+  .oat-thumb{
+    width:100%;
+    height:auto;
+    max-height:220px;
+    margin-bottom:12px;
+  }
+
+  .oat-item-bottom{
+    display:block;
+  }
+
+  .oat-item-bottom b{
+    display:block;
+    margin-top:4px;
+  }
+}
 </style>
 </head>
 
-<body style="margin:0;padding:0;background:#ffffff;">
-<div class="miray-bg" style="padding:40px 20px;background:#ffffff;">
+<body>
+<div class="oat-bg">
+  <div class="oat-shell">
 
-<div class="miray-shell" style="max-width:680px;margin:auto;background:#ffffff;border:1px solid rgba(0,0,0,.08);border-radius:28px;overflow:hidden;font-family:Poppins,Arial,sans-serif;">
+    <div class="oat-top">
+      OATCLUB / SHIPPING UPDATE
+    </div>
 
-<div class="miray-header" style="padding:48px 40px 30px;text-align:center;background:linear-gradient(180deg,#18181b 0%,#0f0f10 100%);">
-  <img
-    src="https://res.cloudinary.com/djtva6hec/image/upload/v1778268933/miray/media/zvliktr4z5zboetdz76k.png"
-    alt="Miray Fashions"
-    style="height:56px;max-width:100%;"
-  />
+    <div class="oat-header">
+      <img
+        class="oat-logo"
+        src="https://res.cloudinary.com/dpsvrt4sd/image/upload/v1780338447/qavpt44lsxsy3wrvuwi8.png"
+        alt="OATCLUB"
+      />
 
-  <p style="margin:24px 0 8px;font-size:11px;letter-spacing:.42em;text-transform:uppercase;color:#d4d4d8;">
-    Order Shipped
-  </p>
+      <p class="oat-kicker">ORDER SHIPPED</p>
+      <h1 class="oat-title">Order #${escapeHtml(orderId)}</h1>
 
-  <h1 style="margin:0;font-size:18px;letter-spacing:.18em;color:#ffffff;font-weight:700;">
-    #${escapeHtml(orderId)}
-  </h1>
+      <p class="oat-subtitle">
+        Shipped On:
+        <b>${escapeHtml(formatDate(shippedAt))}</b>
+      </p>
+    </div>
 
-  <p style="margin:12px 0 0;font-size:13px;color:#e4e4e7;line-height:1.6;">
-    Shipped on <b style="color:#ffffff;">${escapeHtml(formatDate(shippedAt))}</b>
-  </p>
-</div>
+    <div class="oat-body">
 
-<div style="padding:36px 40px 44px;">
+      <h2 class="oat-greeting">Hi ${escapeHtml(name)},</h2>
 
-<h2 class="miray-title" style="margin:0 0 10px;font-size:24px;color:#111111;">
-  Hi ${escapeHtml(name)} 🚚
-</h2>
+      <p class="oat-copy">
+        Your OATCLUB order is on the way. You can find your shipment details below.
+      </p>
 
-<p class="miray-text" style="margin:0 0 26px;font-size:14px;line-height:1.8;color:#555555;">
-  Your order is on the way. You can find your shipment details below.
-</p>
+      <div class="oat-section">
+        <p class="oat-section-title">Shipment Details</p>
 
-<div class="miray-card" style="${cardBoxStyle}">
-  <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;">
-    ${shipmentBoxes}
+        <div class="oat-card">
+          <div class="oat-shipment-grid">
+            ${shipmentBoxes}
+          </div>
+
+          ${
+            hasTracking
+              ? `
+          <div class="oat-btn-wrap">
+            <a href="${escapeAttr(trackingLink)}" class="oat-btn">
+              Track Shipment →
+            </a>
+          </div>`
+              : ""
+          }
+        </div>
+      </div>
+
+      ${
+        itemsHtml
+          ? `
+      <div class="oat-section">
+        <p class="oat-section-title">Items</p>
+        ${itemsHtml}
+      </div>`
+          : ""
+      }
+
+      ${
+        hasValidCta
+          ? `
+      <div class="oat-btn-wrap" style="margin-top:30px;">
+        <a href="${escapeAttr(ctaUrl)}" class="oat-btn-secondary">
+          View Order →
+        </a>
+      </div>`
+          : ""
+      }
+
+      <div class="oat-note-card">
+        <p class="oat-copy" style="margin:0;">
+          We will keep you updated on the next delivery milestone.
+        </p>
+      </div>
+
+      <p class="oat-copy" style="margin-top:34px;">
+        With regards,<br/>
+        <b>Team OATCLUB</b>
+      </p>
+
+    </div>
+
+    <div class="oat-footer">
+      <p>OATCLUB • OWN ALL TRENDS • SUPPORT@OATCLUB.IN</p>
+    </div>
+
   </div>
-
-  ${
-    hasTracking
-      ? `
-  <div style="margin-top:18px;text-align:center;">
-    <a href="${escapeAttr(trackingLink)}" class="miray-btn" style="display:inline-block;padding:14px 24px;border-radius:999px;background:#111111;color:#ffffff;text-decoration:none;font-size:13px;font-weight:600;border:1px solid #111111;">
-      Track Shipment
-    </a>
-  </div>`
-      : ""
-  }
-</div>
-
-${
-  itemsHtml
-    ? `
-<div style="margin-top:30px;">
-  <p class="miray-muted" style="${sectionTitleStyle}">Items</p>
-  ${itemsHtml}
-</div>`
-    : ""
-}
-
-${
-  hasValidCta
-    ? `
-<div style="margin-top:30px;text-align:center;">
-  <a href="${escapeAttr(ctaUrl)}" class="miray-btn-secondary" style="display:inline-block;padding:14px 24px;border-radius:999px;background:#ffffff;color:#111111;text-decoration:none;font-size:13px;font-weight:600;border:1px solid rgba(0,0,0,.08);">
-    View Order
-  </a>
-</div>`
-    : ""
-}
-
-<div class="miray-card" style="margin-top:34px;padding:18px;border-radius:18px;background:#faf7f8;border:1px solid rgba(0,0,0,.05);">
-  <p class="miray-text" style="margin:0;font-size:13px;line-height:1.8;color:#555555;">
-    We’ll keep you updated on the next delivery milestone.
-  </p>
-</div>
-
-<p class="miray-text" style="margin-top:34px;font-size:14px;line-height:1.8;color:#444444;">
-  With regards,<br />
-  <b class="miray-strong">Team Miray Fashions</b>
-</p>
-
-</div>
-</div>
 </div>
 </body>
 </html>
@@ -209,34 +465,30 @@ function renderItemCard(it, currency) {
   const meta = getItemMeta(it);
 
   return `
-  <div class="miray-card" style="display:flex;gap:14px;padding:16px;border-radius:18px;border:1px solid rgba(0,0,0,.08);margin-bottom:14px;background:#ffffff;">
+  <div class="oat-item">
     ${
       thumb
-        ? `<img src="${escapeAttr(thumb)}" alt="${escapeAttr(title)}" style="width:68px;height:68px;object-fit:cover;border-radius:14px;" />`
+        ? `<img class="oat-thumb" src="${escapeAttr(thumb)}" alt="${escapeAttr(title)}" />`
         : ""
     }
 
-    <div style="flex:1;">
-      <p class="miray-title" style="margin:0 0 8px;font-size:14px;font-weight:600;color:#111111;">
-        ${escapeHtml(title)}
-      </p>
+    <div class="oat-item-content">
+      <p class="oat-item-title">${escapeHtml(title)}</p>
 
-      ${
-        meta
-          ? `<p class="miray-muted" style="margin:0 0 8px;font-size:12px;color:#666666;">${escapeHtml(meta)}</p>`
-          : ""
-      }
+      ${meta ? `<p class="oat-item-meta">${escapeHtml(meta)}</p>` : ""}
 
-      <div class="miray-text" style="display:flex;justify-content:space-between;gap:10px;font-size:13px;color:#555555;">
-        <span>Qty: ${qty}</span>
-        <b class="miray-strong">${money(price, currency)}</b>
+      <div class="oat-item-bottom">
+        <span>Qty: ${escapeHtml(qty)}</span>
+        <b>${escapeHtml(money(price, currency))}</b>
       </div>
     </div>
   </div>`;
 }
 
 function getItemMeta(it = {}) {
-  const attrs = Array.isArray(it?.variant?.attributes) ? it.variant.attributes : [];
+  const attrs = Array.isArray(it?.variant?.attributes)
+    ? it.variant.attributes
+    : [];
 
   const size =
     it?.selectedSize ||
@@ -263,13 +515,9 @@ function getItemMeta(it = {}) {
 
 function infoBox(label, value) {
   return `
-  <div class="miray-card" style="padding:14px 16px;border-radius:16px;border:1px solid rgba(0,0,0,.08);background:#ffffff;">
-    <p class="miray-muted" style="margin:0 0 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#777777;">
-      ${escapeHtml(label)}
-    </p>
-    <p class="miray-title" style="margin:0;font-size:14px;font-weight:600;color:#111111;word-break:break-word;">
-      ${escapeHtml(value)}
-    </p>
+  <div class="oat-info">
+    <p class="oat-info-label">${escapeHtml(label)}</p>
+    <p class="oat-info-value">${escapeHtml(value)}</p>
   </div>`;
 }
 
@@ -300,9 +548,3 @@ const escapeHtml = (s) =>
   }[m]));
 
 const escapeAttr = escapeHtml;
-
-const sectionTitleStyle =
-  "margin:0 0 12px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#777777;";
-
-const cardBoxStyle =
-  "border:1px solid rgba(0,0,0,.08);border-radius:18px;padding:18px;background:#fcfcfc;";

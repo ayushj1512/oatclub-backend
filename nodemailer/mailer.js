@@ -1,114 +1,80 @@
 import nodemailer from "nodemailer";
+import "dotenv/config";
 
-import { userOnboardingTemplate } from "./UserOnboardingEmailTempalte.js";
-import { orderConfirmationTemplate } from "./OrderConfirmationTemplate.js";
-import { orderCancellationTemplate } from "./OrderCancellationEmailTemplate.js";
-import { orderReceivedAdminTemplate } from "./AdminOrderReceivedTemplate.js";
-import { rmaCreatedTemplate } from "./RmaEmailTemplate.js";
-import { orderTrackingTemplate } from "./OrderTrackingTemplate.js";
-import { orderDeliveredTemplate } from "./OrderDeliveredTemplate.js";
-import { orderShippedTemplate } from "./OrderShippedTemplate.js";
+import { userOnboardingTemplate } from "./events/UserOnboardingEmailTempalte.js";
+import { orderConfirmationTemplate } from "./events/OrderConfirmationTemplate.js";
+import { orderCancellationTemplate } from "./events/OrderCancellationEmailTemplate.js";
+import { orderReceivedAdminTemplate } from "./events/AdminOrderReceivedTemplate.js";
+import { rmaCreatedTemplate } from "./events/RmaEmailTemplate.js";
+import { orderTrackingTemplate } from "./events/OrderTrackingTemplate.js";
+import { orderShippedTemplate } from "./events/OrderShippedTemplate.js";
+import { orderDeliveredTemplate } from "./events/OrderDeliveredTemplate.js";
 
-let cachedTransporter;
+const MAIL_ENABLED = String(process.env.MAIL_ENABLED).toLowerCase() !== "false";
 
-function getBool(v, fallback = false) {
-  if (v == null) return fallback;
-  return String(v).toLowerCase() === "true";
-}
+console.log("📨 MAIL_ENABLED:", process.env.MAIL_ENABLED);
+console.log("📧 MAIL_USER:", process.env.MAIL_USER);
+console.log("🔐 MAIL_PASS:", process.env.MAIL_PASS ? "✅ present" : "❌ missing");
 
-function isMailEnabled() {
-  return String(process.env.MAIL_ENABLED).toLowerCase() !== "false";
-}
+let cachedTransporter = null;
 
 function getTransporter() {
   if (cachedTransporter) return cachedTransporter;
 
-  const host = process.env.MAIL_HOST || "smtp-relay.gmail.com";
-  const port = Number(process.env.MAIL_PORT || 587);
-  const secure = getBool(process.env.MAIL_SECURE, port === 465);
-
-  const config = {
-    host,
-    port,
-    secure,
-
-    // Relay on 587 should use STARTTLS
-    requireTLS: true,
-
-    // Avoid HELO/EHLO mismatch warnings
-    name: process.env.SMTP_EHLO_NAME || "mirayfashions.com",
-
-    // Reuse connections
+  cachedTransporter = nodemailer.createTransport({
+    host: process.env.MAIL_HOST || "smtp.gmail.com",
+    port: Number(process.env.MAIL_PORT || 587),
+    secure: String(process.env.MAIL_SECURE).toLowerCase() === "true",
+    requireTLS: Number(process.env.MAIL_PORT || 587) === 587,
+    name: process.env.MAIL_EHLO_NAME || process.env.SMTP_EHLO_NAME || "oatclub.in",
+    auth: {
+      user: process.env.MAIL_USER,
+      pass: process.env.MAIL_PASS,
+    },
     pool: true,
     maxConnections: Number(process.env.MAIL_MAX_CONNECTIONS || 2),
     maxMessages: Number(process.env.MAIL_MAX_MESSAGES || 500),
-    rateDelta: Number(process.env.MAIL_RATE_DELTA || 1000),
-    rateLimit: Number(process.env.MAIL_RATE_LIMIT || 5),
-
-    // Timeouts
-    connectionTimeout: Number(process.env.MAIL_CONN_TIMEOUT || 30_000),
-    greetingTimeout: Number(process.env.MAIL_GREET_TIMEOUT || 30_000),
-    socketTimeout: Number(process.env.MAIL_SOCKET_TIMEOUT || 60_000),
-  };
-
-  // Auth only if provided
-  if (process.env.MAIL_USER && process.env.MAIL_PASS) {
-    config.auth = {
-      user: process.env.MAIL_USER,
-      pass: process.env.MAIL_PASS,
-    };
-  }
-
-  cachedTransporter = nodemailer.createTransport(config);
+  });
 
   cachedTransporter.verify((err) => {
-    if (err) {
-      console.error("❌ SMTP verify failed:", err.message);
-    } else {
-      console.log("✅ SMTP server ready to send emails");
-    }
+    if (err) console.error("❌ SMTP verify failed:", err.message);
+    else console.log("✅ SMTP server ready to send emails");
   });
 
   return cachedTransporter;
 }
 
-export async function sendMail({ to, subject, html, text, headers = {} }) {
-  if (!isMailEnabled()) {
-    console.log("📭 MAIL_ENABLED false → skipping mail send", { to, subject });
+export async function sendMail({ to, subject, text, html, headers = {} }) {
+  if (!MAIL_ENABLED) {
+    console.log("📭 MAIL_ENABLED false → skipping mail", { to, subject });
     return { disabled: true };
   }
 
-  if (!to) {
-    throw new Error("Recipient email missing");
+  if (!to) throw new Error("Recipient email missing");
+  if (!process.env.MAIL_USER || !process.env.MAIL_PASS) {
+    throw new Error("MAIL_USER or MAIL_PASS missing in .env");
   }
 
   const transporter = getTransporter();
 
-  // Force envelope MAIL FROM for better relay acceptance
+  const from = process.env.MAIL_FROM || `OATCLUB <${process.env.MAIL_USER}>`;
+  const replyTo = process.env.MAIL_REPLY_TO || process.env.MAIL_USER;
   const envelopeFrom = process.env.MAIL_ENVELOPE_FROM || process.env.MAIL_USER;
-  const from = process.env.MAIL_FROM || process.env.MAIL_USER;
-  const replyTo = process.env.MAIL_REPLY_TO || undefined;
 
-  console.log("📤 Sending mail...", {
-    to,
-    subject,
-    from,
-    replyTo,
-    envelopeFrom,
-  });
+  console.log("📤 Sending mail...", { to, subject, from, replyTo });
 
   const info = await transporter.sendMail({
     from,
     replyTo,
-    envelope: {
-      from: envelopeFrom,
-      to,
-    },
     to,
     subject,
     text,
     html,
     headers,
+    envelope: {
+      from: envelopeFrom,
+      to,
+    },
   });
 
   console.log(`✅ Email sent → ${to} | ${subject}`);
@@ -116,13 +82,7 @@ export async function sendMail({ to, subject, html, text, headers = {} }) {
 }
 
 export const Mailer = {
-  sendUserOnboarding: async ({
-    to,
-    name,
-    ctaUrl,
-    brandName,
-    supportEmail,
-  }) => {
+  sendUserOnboarding: async ({ to, name, ctaUrl, brandName, supportEmail }) => {
     const { subject, text, html } = userOnboardingTemplate({
       name,
       ctaUrl,
@@ -154,7 +114,6 @@ export const Mailer = {
     return sendMail({ to, subject, text, html });
   },
 
-  // backward compatibility
   sendOrderCancellation: async ({ to, name, order, ctaUrl, reason }) => {
     return Mailer.sendOrderCancelled({ to, name, order, ctaUrl, reason });
   },
@@ -187,6 +146,7 @@ export const Mailer = {
     courierName,
     trackingLink,
     order,
+    ctaUrl,
   }) => {
     const { subject, text, html } = orderTrackingTemplate({
       name,
@@ -194,28 +154,96 @@ export const Mailer = {
       courierName,
       trackingLink,
       order,
-    });
-
-    return sendMail({ to, subject, text, html });
-  },
-
-  sendOrderShipped: async ({ to, name, order, ctaUrl }) => {
-    const { subject, text, html } = orderShippedTemplate({
-      name,
-      order,
       ctaUrl,
     });
 
     return sendMail({ to, subject, text, html });
   },
 
-  sendOrderDelivered: async ({ to, name, order, ctaUrl }) => {
+  sendOrderShipped: async ({
+    to,
+    name,
+    order,
+    ctaUrl,
+    awb,
+    courierName,
+    trackingLink,
+  }) => {
+    const patchedOrder = patchShipment(order, awb, courierName, trackingLink);
+
+    const { subject, text, html } = orderShippedTemplate({
+      name,
+      order: patchedOrder,
+      ctaUrl,
+    });
+
+    return sendMail({ to, subject, text, html });
+  },
+
+  sendOrderOutForDelivery: async ({
+    to,
+    name,
+    order,
+    ctaUrl,
+    awb,
+    courierName,
+    trackingLink,
+  }) => {
+    const { subject, text, html } = orderTrackingTemplate({
+      name,
+      awb,
+      courierName,
+      trackingLink: trackingLink || ctaUrl,
+      order: {
+        ...(order || {}),
+        emailStatusLabel: "Out for Delivery",
+      },
+      ctaUrl,
+    });
+
+    return sendMail({
+      to,
+      subject:
+        subject || `Order Out for Delivery — #${order?.orderNumber || order?._id}`,
+      text,
+      html,
+    });
+  },
+
+  sendOrderDelivered: async ({
+    to,
+    name,
+    order,
+    ctaUrl,
+    awb,
+    courierName,
+    trackingLink,
+  }) => {
+    const patchedOrder = patchShipment(order, awb, courierName, trackingLink);
+
     const { subject, text, html } = orderDeliveredTemplate({
       name,
-      order,
+      order: patchedOrder,
       ctaUrl,
     });
 
     return sendMail({ to, subject, text, html });
   },
 };
+
+function patchShipment(order, awb, courierName, trackingLink) {
+  return {
+    ...(order || {}),
+    shipment: {
+      ...(order?.shipment || {}),
+      shiprocket: {
+        ...(order?.shipment?.shiprocket || {}),
+        awb: awb || order?.shipment?.shiprocket?.awb || "",
+        courierName:
+          courierName || order?.shipment?.shiprocket?.courierName || "",
+        trackingUrl:
+          trackingLink || order?.shipment?.shiprocket?.trackingUrl || "",
+      },
+    },
+  };
+}

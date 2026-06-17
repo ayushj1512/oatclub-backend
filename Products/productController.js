@@ -3779,7 +3779,7 @@ export const getAllProductMedia = async (req, res) => {
                   case: {
                     $regexMatch: {
                       input: "$media.url",
-                      regex: /(oatclub|miray)/i,
+                      regex: /(oatclub)/i,
                     },
                   },
                   then: "internal",

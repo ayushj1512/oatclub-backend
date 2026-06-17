@@ -1,8 +1,8 @@
 import CommerceManager from "./CommerceManager.js";
 import Product from "../Products/Products.js";
 
-const SITE_BASE = "https://www.mirayfashions.com";
-const BRAND = "Miray Fashions";
+const SITE_BASE = "https://www.oatclub.in";
+const BRAND = "Oatclub";
 const CURRENCY = "INR";
 const CACHE_TTL_MS = 55 * 60 * 1000;
 const META_GENDER = "female";
@@ -241,7 +241,7 @@ ${mpn ? `<g:mpn>${esc(mpn)}</g:mpn>` : ""}
 const buildXml = (itemsXml = "") => `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
 <channel>
-<title>${esc("Miray Fashions Commerce Manager Feed")}</title>
+<title>${esc("Oatclub Commerce Manager Feed")}</title>
 <link>${esc(SITE_BASE)}</link>
 <description>${esc("Selected products feed for Meta Commerce Manager.")}</description>
 ${itemsXml}

@@ -1,4 +1,4 @@
-# Shiprocket Auto-Booking + Tracking (MIRAY FASHIONS) — Handover README
+# Shiprocket Auto-Booking + Tracking  — Handover README
 
 > Status as of **2026-01-06**  
 > Goal: Automatically create Shiprocket shipment when an order is created, save `shipment_id`, and later update AWB/tracking via **assign AWB** and/or **webhook**.

@@ -10,7 +10,7 @@ import {
   assignAwb,
 } from "../shiprocket/index.js";
 import { buildShiprocketPayload } from "../shiprocket/shiprocket.payload.js";
-import { Mailer } from "../nodemailer/events/mailer.js"; // ✅ adjust relative path if needed
+import { Mailer } from "../nodemailer/mailer.js"; // ✅ adjust relative path if needed
 // ✅ Centralized email triggers
 import {
   triggerOrderEmails,
@@ -52,8 +52,6 @@ const isShipmentOrder = (order) =>
 
 const ADMIN_ORDER_ALERT_EMAILS = [
   "oatclub.in@gmail.com",
-  "support@mirayfashions.com",
-  "miray.ayushjuneja@gmail.com",
 ].filter(Boolean);
 
 const RAZORPAY_DISCOUNT_PERCENT = 10;
@@ -2105,7 +2103,6 @@ export const updateOrderStatus = async (req, res) => {
 
 /* ============================================================
    ✅ DUPLICATE / EXCHANGE ORDER
-   - Creates MIRAY-000217-R1, R2 ...
    - paymentMethod: exchange
    - paymentStatus: not_applicable
 ============================================================ */
@@ -2232,10 +2229,9 @@ export const duplicateExchangeOrder = async (req, res) => {
       const original = await Order.findById(orderId).session(session);
       if (!original) throw new Error("Original order not found");
 
-      const base = str(original.orderNumber).trim(); // MIRAY-000217
+      const base = str(original.orderNumber).trim(); // OATCLUB-000217
       if (!base) throw new Error("Original orderNumber missing");
 
-      // ✅ find next sequence: MIRAY-000217-R{n}
       const regex = new RegExp(`^${escapeRegExp(base)}-R(\\d+)$`, "i");
       const existing = await Order.find(
         { orderNumber: { $regex: regex } },
@@ -2689,7 +2685,6 @@ export const getOrderAnalytics = async (req, res) => {
   }
 };
 
-// ✅ GET ORDER BY ORDER NUMBER (ex: MIRAY-000005)
 export const getOrderByOrderNumber = async (req, res) => {
   try {
     const orderNumber = String(req.params.orderNumber || "").trim();

@@ -1,4 +1,4 @@
-// miray-backend/utility/sku.js
+
 
 const clean = (s = "") =>
   String(s)

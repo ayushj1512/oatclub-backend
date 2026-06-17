@@ -4,15 +4,14 @@ import Product from "../Products/Products.js";
 
 const router = express.Router();
 
-const SITE_BASE = "https://www.mirayfashions.com";
-const BRAND = "Miray Fashions";
+const SITE_BASE = "https://www.oatclub.in";
+const BRAND = "OATCLUB";
 const CURRENCY = "INR";
 
 // ✅ FORCE ALL PRODUCTS AS IN STOCK (unlimited)
 const ALWAYS_IN_STOCK = true;
 
-const CACHE_TTL_MS = 55 * 60 * 1000;
-
+const CACHE_TTL_MS = 30 * 60 * 1000;
 // ✅ Inventory: "infinite" quantity to satisfy Meta Commerce surfaces
 const INVENTORY_INFINITE = 999999;
 
@@ -179,7 +178,7 @@ ${mpn ? `<g:mpn>${esc(mpn)}</g:mpn>` : ""}
 const buildXml = (itemsXml) => `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
 <channel>
-<title>${esc("Miray Fashions Product Feed")}</title>
+<title>${esc("OATCLUB Product Feed")}</title>
 <link>${esc(SITE_BASE)}</link>
 <description>${esc("Latest catalog feed for Meta/Google Commerce.")}</description>
 ${itemsXml}

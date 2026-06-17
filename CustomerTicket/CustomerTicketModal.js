@@ -49,7 +49,7 @@ const CustomerTicketSchema = new mongoose.Schema(
 
     /* =====================================================
        ✅ NEW: ORDER NUMBER ASSOCIATION (for tracking ease)
-       Example: MIRAY-000271
+      
     ====================================================== */
     orderNumber: {
       type: String,

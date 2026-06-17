@@ -13,7 +13,7 @@ export const normalizeIndianPhone = (value = "") => {
 };
 
 export const buildOrderActionLink = (orderNumber) =>
-  `https://www.mirayfashions.com/orders/action/${encodeURIComponent(orderNumber)}`;
+  `https://www.oatclub.in/orders/action/${encodeURIComponent(orderNumber)}`;
 
 export const nowIST = () =>
   new Date(

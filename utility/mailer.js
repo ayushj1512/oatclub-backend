@@ -5,11 +5,11 @@ import nodemailer from "nodemailer";
  * Uses your custom domain email
  */
 export const mailTransporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST, // e.g. mail.mirayfashions.com
+  host: process.env.SMTP_HOST, 
   port: Number(process.env.SMTP_PORT || 587),
   secure: false, // true only for 465
   auth: {
-    user: process.env.SMTP_USER, // no-reply@mirayfashions.com
+    user: process.env.SMTP_USER, 
     pass: process.env.SMTP_PASS,
   },
 });

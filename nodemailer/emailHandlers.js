@@ -9,10 +9,9 @@ import { orderConfirmationTemplate } from "./OrderConfirmationTemplate.js";
 import { orderReceivedTemplate } from "./OrderReceivedTemplate.js";
 import { rmaCreatedTemplate } from "./events/RmaEmailTemplate.js";
 
-// ✅ Fixed recipients for ORDER_RECEIVED (NO .env)
+// ✅ Fixed recipients for ORDER_RECEIVED
 const ORDER_RECEIVED_RECIPIENTS = [
   "oatclub.in@gmail.com",
-  
 ];
 
 /* =========================================================
@@ -26,10 +25,15 @@ eventBus.on(EVENTS.USER_REGISTERED, async ({ email, name, ctaUrl }) => {
 
     const { subject, text, html } = onboardingTemplate({
       name,
-      ctaUrl: ctaUrl || "https://mirayfashions.com",
+      ctaUrl: ctaUrl || "https://oatclub.in",
     });
 
-    await sendMail({ to: email, subject, text, html });
+    await sendMail({
+      to: email,
+      subject,
+      text,
+      html,
+    });
 
     console.log("✅ USER_REGISTERED onboarding email sent to:", email);
   } catch (err) {
@@ -50,10 +54,15 @@ eventBus.on(EVENTS.ORDER_CONFIRMED, async ({ email, name, order, ctaUrl }) => {
     const { subject, text, html } = orderConfirmationTemplate({
       name,
       order,
-      ctaUrl: ctaUrl || "https://mirayfashions.com/account/orders",
+      ctaUrl: ctaUrl || "https://oatclub.in/account/orders",
     });
 
-    await sendMail({ to: email, subject, text, html });
+    await sendMail({
+      to: email,
+      subject,
+      text,
+      html,
+    });
 
     console.log("✅ ORDER_CONFIRMED email sent to:", email);
   } catch (err) {
@@ -62,7 +71,7 @@ eventBus.on(EVENTS.ORDER_CONFIRMED, async ({ email, name, order, ctaUrl }) => {
 });
 
 /* =========================================================
-   ✅ ORDER RECEIVED → Stakeholders Email (Finance + Admin)
+   ✅ ORDER RECEIVED → Internal Team Email
    event payload:
    { order }
 ========================================================= */
@@ -75,14 +84,14 @@ eventBus.on(EVENTS.ORDER_RECEIVED, async ({ order }) => {
     });
 
     await sendMail({
-      to: ORDER_RECEIVED_RECIPIENTS, // ✅ ONLY these two
+      to: ORDER_RECEIVED_RECIPIENTS,
       subject,
       text,
       html,
     });
 
     console.log(
-      "✅ ORDER_RECEIVED email sent to finance + admin:",
+      "✅ ORDER_RECEIVED email sent to OATCLUB team:",
       order?.orderNumber || order?._id
     );
   } catch (err) {
@@ -95,26 +104,34 @@ eventBus.on(EVENTS.ORDER_RECEIVED, async ({ order }) => {
    event payload:
    { email, name, order, rma, policy, ctaUrl? }
 ========================================================= */
-eventBus.on(EVENTS.RMA_REQUESTED, async ({ email, name, order, rma, policy, ctaUrl }) => {
-  try {
-    if (!email) throw new Error("Missing email in RMA_REQUESTED event");
-    if (!order) throw new Error("Missing order in RMA_REQUESTED event");
-    if (!rma) throw new Error("Missing rma in RMA_REQUESTED event");
+eventBus.on(
+  EVENTS.RMA_REQUESTED,
+  async ({ email, name, order, rma, policy, ctaUrl }) => {
+    try {
+      if (!email) throw new Error("Missing email in RMA_REQUESTED event");
+      if (!order) throw new Error("Missing order in RMA_REQUESTED event");
+      if (!rma) throw new Error("Missing rma in RMA_REQUESTED event");
 
-    const { subject, text, html } = rmaCreatedTemplate({
-      name,
-      order,
-      rma,
-      policy,
-      ctaUrl: ctaUrl || "https://mirayfashions.com/account/rma",
-    });
+      const { subject, text, html } = rmaCreatedTemplate({
+        name,
+        order,
+        rma,
+        policy,
+        ctaUrl: ctaUrl || "https://oatclub.in/account/rma",
+      });
 
-    await sendMail({ to: email, subject, text, html });
+      await sendMail({
+        to: email,
+        subject,
+        text,
+        html,
+      });
 
-    console.log("✅ RMA_REQUESTED email sent to:", email);
-  } catch (err) {
-    console.error("❌ RMA_REQUESTED email failed:", err.message);
+      console.log("✅ RMA_REQUESTED email sent to:", email);
+    } catch (err) {
+      console.error("❌ RMA_REQUESTED email failed:", err.message);
+    }
   }
-});
+);
 
-console.log("✅ Email handlers registered (templates wired).");
+console.log("✅ OATCLUB email handlers registered successfully.");

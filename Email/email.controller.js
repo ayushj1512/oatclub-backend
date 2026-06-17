@@ -1,5 +1,5 @@
 import Order from "../Orders/Orders.js"; // ⚠️ adjust path
-import { Mailer } from "../nodemailer/events/mailer.js"; // ⚠️ adjust path
+import { Mailer } from "../nodemailer/mailer.js"; // ⚠️ adjust path
 
 // If you want to reuse existing booking logic, import it.
 // Option A (recommended): call existing controller/service that already books shiprocket

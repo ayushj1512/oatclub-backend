@@ -9,7 +9,7 @@ const mediaSchema = new mongoose.Schema(
     bytes: { type: Number, default: 0 },
     width: { type: Number, default: 0 },
     height: { type: Number, default: 0 },
-    folder: { type: String, default: "miray/media" },
+    folder: { type: String, default: "oatclub/media" },
     originalName: { type: String, default: "" },
   },
   { timestamps: true }

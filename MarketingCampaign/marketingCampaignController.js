@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import MarketingCampaign from "./MarketingCampaign.js";
 
 const FRONTEND_URL =
-  process.env.FRONTEND_URL || "https://www.mirayfashions.com/";
+  process.env.FRONTEND_URL || "https://www.oatclub.in/";
 
 const generateShortCode = () => crypto.randomBytes(6).toString("hex");
 

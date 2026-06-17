@@ -22,7 +22,6 @@ dns.setServers(["1.1.1.1", "1.0.0.1"]);
 // ROUTES
 // --------------------------------------------------
 import pingRoutes from "./routes/pingRouter.js";
-import newsletterRouter from "./Newsletter/newsletterRouter.js";
 import addressRoutes from "./Address/addressRouter.js";
 import blogRoutes from "./Blogs/blogRouter.js";
 import categoryRoutes from "./Category/categoryRouter.js";
@@ -38,7 +37,6 @@ import reviewRoutes from "./Review/reviewRouter.js";
 import wishlistRoutes from "./Wishlist/wishlistRouter.js";
 import fabricRoutes from "./Fabric/fabric.routes.js";
 import sizeChartRoutes from "./SizeChart/sizeChartRoutes.js";
-import proxyImageRoute from "./routes/imageProxy.route.js";
 import emailRoutes from "./Email/email.routes.js";
 import collaborationRoutes from "./Collaboration/CollaborationRoutes.js";
 import attributeRoutes from "./Attribute/attributeRoutes.js";
@@ -62,7 +60,6 @@ import ticketRoutes from "./routes/admin/tickets.js";
 import superadminRoutes from "./routes/superadmin.js";
 import marketingSpendRoutes from "./MarketingSpend/marketingSpendRoutes.js";
 import marqueeRoutes from "./MarqueeItem/marquee.routes.js";
-import bluedartRoutes from "./BlueDart/bluedart.routes.js";
 
 import productViewAnalyticsRoutes from "./productviews/analytics.routes.js";
 import reelsRoutes from "./reels/reels.router.js";
@@ -84,8 +81,6 @@ import fabriclogRoutes from "./FabricLog/FabricLogRouter.js";
 
 import orderRefundRoutes from "./Orders/order.refunds/orderRefundRoutes.js";
 import marketingcampaignroutes from "./MarketingCampaign/marketingCampaignRoutes.js";
-
-import eshipzRoutes from "./eshipZ/eshipz.routes.js";
 
 // --------------------------------------------------
 // APP CONFIG
@@ -113,7 +108,7 @@ const ALLOWED_ORIGINS = [
   "http://localhost:3000",
   "http://localhost:3001",
   "http://localhost:3002",
-
+  "http://192.168.29.74:3000",
   // OATCLUB Store
   "https://oatclub.in",
   "https://www.oatclub.in",
@@ -231,7 +226,6 @@ app.use("/api/fabrics", fabricRoutes);
 app.use("/api/fabric-logs", fabriclogRoutes);
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/admin-users", adminUserRoutes);
-app.use("/api/proxy-image", proxyImageRoute);
 app.use("/api", emailRoutes);
 app.use("/api/collaborations", collaborationRoutes);
 app.use("/api", bestsellerRoutes);
@@ -247,9 +241,6 @@ app.use("/api/commerce-feed", commerceFeed);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/homepage-settings", homepageSettingsRoutes);
-app.use("/api/newsletters", newsletterRouter);
-app.use("/api/bluedart", bluedartRoutes);
-app.use("/api/eshipz", eshipzRoutes);
 app.use("/api/remittance", remittanceRoutes);
 
 app.use("/api/media", mediaRoutes);

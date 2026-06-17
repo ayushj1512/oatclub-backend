@@ -1,6 +1,6 @@
 import Customer from "./Customer.js";
 import Order from "../Orders/Orders.js"; // ✅ adjust path if your Order model path is different
-import { Mailer } from "../nodemailer/events/mailer.js";
+import { Mailer } from "../nodemailer/mailer.js";
 import Counter from "../models/Counter.js";
 
 /* =========================================================
@@ -388,8 +388,8 @@ const sendOnboardingIfPossible = async (customer) => {
       to: customer.email,
       name: customer?.name || "Customer",
       ctaUrl: `${process.env.CLIENT_URL}/account`,
-      brandName: "Miray Fashions",
-      supportEmail: process.env.MAIL_REPLY_TO || "support@mirayfashions.com",
+      brandName: "Oatclub",
+      supportEmail: process.env.MAIL_REPLY_TO || "hey@oatclub.in",
     });
 
     console.log(`✅ Onboarding email sent to: ${customer.email}`);

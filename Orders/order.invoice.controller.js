@@ -24,26 +24,25 @@ const paymentTitleMap = {
 };
 
 const SELLER = {
-  name: "Miray Fashions",
-  brand: "Miray",
+  name: "OATCLUB",
+  brand: "OATCLUB",
 
-  logo: "https://res.cloudinary.com/djtva6hec/image/upload/v1767036287/miray/media/qopxsngt9pusq1bohaif.png",
-  signature:
-    "https://res.cloudinary.com/djtva6hec/image/upload/v1767032209/miray/media/say6eugu7grxc0tomvf0.png",
+  logo:
+    "http://res.cloudinary.com/dpsvrt4sd/image/upload/v1781123546/odb5ckquouajjzfbxin0.webp",
+  signature: "",
 
-  address:
-    "TA-97-A, Gali No.-2, Tuglakabad Extension, New Delhi - 110019",
+  address: "REGISTERED BUSINESS ADDRESS AS PER GST",
   city: "New Delhi",
   state: "Delhi",
   country: "India",
-  pincode: "110019",
+  pincode: "",
 
-  phone: "(+91) 7303491206",
-  email: "support@mirayfashions.com",
-  website: "https://mirayfashions.com",
+  phone: "(+91) 7217649990",
+  email: "hey@oatclub.in",
+  website: "https://www.oatclub.in/",
 
-  gstin: "07ACCFM1594P1ZO",
-  pan: "ACCFM1594P",
+  gstin: "07BAGPN9548F1ZC",
+  pan: "BAGPN9548F",
 
   defaultGst: 5,
   currency: "INR",
@@ -73,9 +72,8 @@ const getCourierName = (order = {}) =>
   ) || "-";
 
 const getAwb = (order = {}) =>
-  safe(
-    order?.shipment?.shiprocket?.awb || order?.trackingDetails?.trackingId
-  ) || "-";
+  safe(order?.shipment?.shiprocket?.awb || order?.trackingDetails?.trackingId) ||
+  "-";
 
 const buildBilling = (order = {}) => ({
   fullName:
@@ -97,8 +95,13 @@ const buildBilling = (order = {}) => ({
 
 const buildShipping = (order = {}, billing = {}) => ({
   fullName:
-    safe(order?.shippingAddressSnapshot?.fullName) || safe(billing?.fullName) || "-",
-  line1: safe(order?.shippingAddressSnapshot?.line1) || safe(billing?.line1) || "-",
+    safe(order?.shippingAddressSnapshot?.fullName) ||
+    safe(billing?.fullName) ||
+    "-",
+  line1:
+    safe(order?.shippingAddressSnapshot?.line1) ||
+    safe(billing?.line1) ||
+    "-",
   line2: safe(order?.shippingAddressSnapshot?.line2) || safe(billing?.line2),
   city: safe(order?.shippingAddressSnapshot?.city) || safe(billing?.city),
   pincode:
@@ -119,15 +122,17 @@ const normalizeInvoiceFromOrder = (order = {}) => {
           safe(it?.productSnapshot?.title) ||
           safe(it?.productId?.title) ||
           "Unnamed Product",
+
         qty: toNum(it?.quantity, 0),
         priceIncl: toNum(it?.price, 0),
         gstRate: toNum(it?.gstRate, SELLER.defaultGst) || SELLER.defaultGst,
+
         size: getItemSize(it),
         selectedSize: getItemSize(it),
+
         hsnCode:
-          safe(it?.productSnapshot?.hsnCode) ||
-          safe(it?.hsnCode) ||
-          "",
+          safe(it?.productSnapshot?.hsnCode) || safe(it?.hsnCode) || "",
+
         sku:
           safe(it?.productSnapshot?.sku) ||
           safe(it?.variant?.sku) ||
@@ -232,13 +237,6 @@ async function fetchOrdersForInvoice(filter = {}) {
    CONTROLLERS
 ============================================================ */
 
-/**
- * POST /api/orders/invoices
- * body:
- * {
- *   "orderNumbers": ["MIRAY-001056", "MIRAY-001057"]
- * }
- */
 export const getInvoicesByOrderNumbers = async (req, res) => {
   try {
     const bodyOrderNumbers = Array.isArray(req.body?.orderNumbers)
@@ -265,9 +263,7 @@ export const getInvoicesByOrderNumbers = async (req, res) => {
       orderNumber: { $in: orderNumbers },
     });
 
-    const byOrderNumber = new Map(
-      orders.map((o) => [safe(o?.orderNumber), o])
-    );
+    const byOrderNumber = new Map(orders.map((o) => [safe(o?.orderNumber), o]));
 
     const invoices = orderNumbers
       .map((orderNumber) => {
@@ -301,9 +297,6 @@ export const getInvoicesByOrderNumbers = async (req, res) => {
   }
 };
 
-/**
- * GET /api/orders/:id/invoice
- */
 export const getInvoiceById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -341,9 +334,6 @@ export const getInvoiceById = async (req, res) => {
   }
 };
 
-/**
- * GET /api/orders/by-number/:orderNumber/invoice
- */
 export const getInvoiceByOrderNumber = async (req, res) => {
   try {
     const orderNumber = safe(req.params?.orderNumber);
