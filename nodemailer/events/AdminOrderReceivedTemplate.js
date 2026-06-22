@@ -123,22 +123,24 @@ ${hasValidCta ? `Open Order: ${ctaUrl}` : ""}
 body{
   margin:0;
   padding:0;
-  background:#f6f6f6;
+  background:#f2f2f2;
   color:#111111;
   font-family:Poppins,Arial,sans-serif;
   text-transform:uppercase;
 }
 
 .oat-bg{
-  padding:36px 16px;
-  background:#f6f6f6;
+  padding:24px 12px;
+  background:#f2f2f2;
 }
 
 .oat-shell{
   max-width:720px;
   margin:0 auto;
   background:#ffffff;
-  border:1px solid #e5e5e5;
+  border-radius:22px;
+  overflow:hidden;
+  box-shadow:0 24px 60px rgba(34,24,18,0.14);
 }
 
 .oat-top{
@@ -152,13 +154,14 @@ body{
 }
 
 .oat-header{
-  padding:30px 28px 26px;
+  padding:24px 24px 18px;
   text-align:center;
-  border-bottom:1px solid #e5e5e5;
 }
 
 .oat-logo-text{
   margin:0;
+  display:block;
+  text-align:center;
   font-family:"Space Grotesk",Arial,sans-serif;
   font-size:34px;
   line-height:1;
@@ -172,7 +175,7 @@ body{
   font-size:10px;
   font-weight:800;
   letter-spacing:.26em;
-  color:#555555;
+  color:#5e5e5e;
 }
 
 .oat-title{
@@ -188,11 +191,11 @@ body{
   margin:12px 0 0;
   font-size:13px;
   line-height:1.7;
-  color:#555555;
+  color:#5e5e5e;
 }
 
 .oat-body{
-  padding:30px 28px 34px;
+  padding:6px 24px 24px;
 }
 
 .oat-grid{
@@ -202,9 +205,10 @@ body{
 }
 
 .oat-info{
-  border:1px solid #e5e5e5;
-  background:#fafafa;
+  background:#f7f7f7;
   padding:14px;
+  border-radius:18px;
+  box-shadow:inset 0 0 0 1px rgba(32,26,23,0.05);
 }
 
 .oat-info-label{
@@ -212,7 +216,7 @@ body{
   font-size:10px;
   font-weight:800;
   letter-spacing:.16em;
-  color:#777777;
+  color:#666666;
 }
 
 .oat-info-value{
@@ -223,11 +227,11 @@ body{
 }
 
 .oat-section{
-  margin-top:28px;
+  margin-top:18px;
 }
 
 .oat-section-title{
-  margin:0 0 12px;
+  margin:0 0 8px;
   font-size:10px;
   font-weight:800;
   letter-spacing:.2em;
@@ -235,9 +239,10 @@ body{
 }
 
 .oat-card{
-  border:1px solid #e5e5e5;
-  background:#ffffff;
-  padding:18px;
+  background:#fafafa;
+  padding:14px;
+  border-radius:16px;
+  box-shadow:inset 0 0 0 1px rgba(32,26,23,0.05);
 }
 
 .oat-name{
@@ -252,17 +257,17 @@ body{
   margin:10px 0 0;
   font-size:13px;
   line-height:1.8;
-  color:#555555;
+  color:#4a4a4a;
 }
 
 .oat-row{
   display:flex;
   justify-content:space-between;
   gap:16px;
-  padding:8px 0;
-  border-bottom:1px solid #eeeeee;
+  padding:7px 0;
+  border-bottom:1px solid rgba(32,26,23,0.08);
   font-size:13px;
-  color:#555555;
+  color:#4a4a4a;
 }
 
 .oat-row:last-child{
@@ -275,8 +280,8 @@ body{
 
 .oat-divider{
   height:1px;
-  background:#e5e5e5;
-  margin:14px 0;
+  background:rgba(32,26,23,0.12);
+  margin:10px 0;
 }
 
 .oat-total{
@@ -286,7 +291,7 @@ body{
 }
 
 .oat-btn-wrap{
-  margin-top:30px;
+  margin-top:18px;
   text-align:center;
 }
 
@@ -299,12 +304,14 @@ body{
   font-size:12px;
   font-weight:800;
   letter-spacing:.14em;
+  border-radius:999px;
+  box-shadow:0 12px 24px rgba(17,17,17,0.16);
 }
 
 .oat-note{
   margin:26px 0 0;
   font-size:11px;
-  color:#777777;
+  color:#666666;
   line-height:1.8;
 }
 
@@ -470,14 +477,14 @@ function renderItemRow(it, currency) {
   const img = getItemImage(it);
 
   return `
-  <div class="oat-card" style="display:flex;gap:14px;margin-bottom:14px;align-items:flex-start;">
+  <div class="oat-card" style="display:flex;gap:12px;margin-bottom:10px;align-items:flex-start;">
     ${
       img
         ? `
     <img
       src="${escapeAttr(img)}"
       alt="${escapeAttr(title)}"
-      style="width:76px;height:92px;object-fit:cover;border:1px solid #e5e5e5;"
+      style="width:76px;height:92px;object-fit:cover;border-radius:16px;"
     />`
         : ""
     }

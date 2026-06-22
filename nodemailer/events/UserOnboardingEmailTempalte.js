@@ -51,22 +51,24 @@ Team OATCLUB
 body{
   margin:0;
   padding:0;
-  background:#ffffff;
+  background:#f2f2f2;
   color:#111111;
   font-family:Inter,Arial,sans-serif;
   text-transform:uppercase;
 }
 
 .oat-bg{
-  padding:34px 14px;
-  background:#ffffff;
+  padding:24px 12px;
+  background:#f2f2f2;
 }
 
 .oat-shell{
   max-width:680px;
   margin:0 auto;
   background:#ffffff;
-  border:1px solid #111111;
+  border-radius:22px;
+  overflow:hidden;
+  box-shadow:0 24px 60px rgba(34,24,18,0.14);
 }
 
 .oat-top{
@@ -80,29 +82,30 @@ body{
 }
 
 .oat-header{
-  padding:30px 26px 26px;
+  padding:24px 24px 18px;
   text-align:center;
-  border-bottom:1px solid #111111;
 }
 
 .oat-logo{
   width:112px;
   max-width:160px;
   height:auto;
+  display:block;
+  margin:0 auto;
   object-fit:contain;
 }
 
 .oat-kicker{
-  margin:20px 0 8px;
+  margin:14px 0 6px;
   font-size:10px;
   font-weight:900;
   letter-spacing:.26em;
-  color:#111111;
+  color:#5e5e5e;
 }
 
 .oat-title{
   margin:0;
-  font-size:28px;
+  font-size:24px;
   line-height:1.08;
   font-weight:900;
   letter-spacing:-.04em;
@@ -110,19 +113,19 @@ body{
 }
 
 .oat-subtitle{
-  margin:12px 0 0;
+  margin:8px 0 0;
   font-size:13px;
   line-height:1.7;
-  color:#555555;
+  color:#5e5e5e;
 }
 
 .oat-body{
-  padding:30px 26px 34px;
+  padding:6px 24px 24px;
 }
 
 .oat-greeting{
   margin:0;
-  font-size:24px;
+  font-size:20px;
   line-height:1.15;
   font-weight:900;
   letter-spacing:-.03em;
@@ -130,18 +133,18 @@ body{
 }
 
 .oat-copy{
-  margin:14px 0 0;
+  margin:10px 0 0;
   font-size:14px;
-  line-height:1.85;
-  color:#444444;
+  line-height:1.7;
+  color:#4a4a4a;
 }
 
 .oat-section{
-  margin-top:28px;
+  margin-top:18px;
 }
 
 .oat-section-title{
-  margin:0 0 12px;
+  margin:0 0 8px;
   font-size:10px;
   font-weight:900;
   letter-spacing:.2em;
@@ -149,9 +152,10 @@ body{
 }
 
 .oat-card{
-  border:1px solid #111111;
-  background:#ffffff;
-  padding:18px;
+  background:#fafafa;
+  padding:14px;
+  border-radius:16px;
+  box-shadow:inset 0 0 0 1px rgba(32,26,23,0.05);
 }
 
 .oat-feature{
@@ -170,6 +174,7 @@ body{
   min-width:9px;
   margin-top:7px;
   background:#111111;
+  border-radius:999px;
 }
 
 .oat-feature-title{
@@ -187,7 +192,7 @@ body{
 }
 
 .oat-btn-wrap{
-  margin-top:30px;
+  margin-top:18px;
   text-align:center;
 }
 
@@ -196,10 +201,12 @@ body{
   background:#111111;
   color:#ffffff !important;
   text-decoration:none;
-  padding:15px 24px;
+  padding:12px 20px;
   font-size:11px;
   font-weight:900;
   letter-spacing:.16em;
+  border-radius:999px;
+  box-shadow:0 12px 24px rgba(17,17,17,0.16);
 }
 
 .oat-note{
@@ -217,10 +224,11 @@ body{
 }
 
 .oat-note-card{
-  margin-top:34px;
-  border:1px solid #111111;
-  background:#fafafa;
-  padding:18px;
+  margin-top:18px;
+  background:#f6f6f6;
+  padding:14px;
+  border-radius:16px;
+  box-shadow:inset 0 0 0 1px rgba(32,26,23,0.04);
 }
 
 .oat-footer{
@@ -337,7 +345,7 @@ body{
         </p>
       </div>
 
-      <p class="oat-copy" style="margin-top:34px;">
+      <p class="oat-copy" style="margin-top:18px;">
         With regards,<br/>
         <b>Team OATCLUB</b>
       </p>
