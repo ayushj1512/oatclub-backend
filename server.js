@@ -123,6 +123,9 @@ const ALLOWED_ORIGINS = [
 
   // Backend Domain
   "https://studio.oatclub.in",
+
+  "https://oatclub-vendor-vdsc.vercel.app",
+  "http://vendor.oatclub.in",
 ];
 
 // ✅ Shiprocket webhook CORS bypass
@@ -131,7 +134,7 @@ app.use("/api/shiprocket/webhook", (req, res, next) => {
   res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.header(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, x-api-key, x-shiprocket-token, x-webhook-token"
+    "Content-Type, Authorization, x-api-key, x-shiprocket-token, x-webhook-token",
   );
 
   if (req.method === "OPTIONS") return res.sendStatus(200);
@@ -158,7 +161,7 @@ app.use(
       "x-shiprocket-token",
       "x-webhook-token",
     ],
-  })
+  }),
 );
 
 app.use((req, res, next) => {
@@ -175,12 +178,12 @@ app.use(morgan("dev"));
 app.post(
   "/api/razorpay/webhook",
   express.raw({ type: "application/json" }),
-  razorpayWebhook
+  razorpayWebhook,
 );
 
 app.use(
   "/api/whatsapp-confirmation-message",
-  whatsappConfirmationMessageRoutes
+  whatsappConfirmationMessageRoutes,
 );
 
 app.use(express.json({ limit: "10mb" }));
@@ -241,7 +244,6 @@ app.use("/api/coming-soon", commingSoonRoutes);
 app.use("/api/marketing", marketingSpendRoutes);
 app.use("/api/commerce-manager", commerceManagerRoutes);
 app.use("/api/commerce-feed", commerceFeed);
-
 
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/tickets", ticketRoutes);
@@ -341,5 +343,8 @@ app.listen(PORT, () => {
   console.log("SMTP HOST:", process.env.MAIL_HOST);
   console.log("SMTP PORT:", process.env.MAIL_PORT);
   console.log("SMTP USER:", process.env.MAIL_USER);
-  console.log("SMTP PASS:", process.env.MAIL_PASS ? "✅ present" : "❌ missing");
+  console.log(
+    "SMTP PASS:",
+    process.env.MAIL_PASS ? "✅ present" : "❌ missing",
+  );
 });
