@@ -25,7 +25,9 @@ const parseIntSafe = (v, d) => {
 };
 
 const parseBool = (v) => {
-  const s = String(v ?? "").trim().toLowerCase();
+  const s = String(v ?? "")
+    .trim()
+    .toLowerCase();
   return s === "1" || s === "true" || s === "yes" || s === "y";
 };
 
@@ -491,153 +493,71 @@ export const getProductionJobList = async (req, res) => {
 ============================================================ */
 export const exportProductionJobListExcel = async (req, res) => {
   try {
-    const {
-      q = "",
-      from,
-      to,
-      sort = "qty_desc",
-    } = req.query;
+    const { q = "", from, to, sort = "qty_desc" } = req.query;
 
     const search = String(q || "").trim();
     const sortStage = buildProductionJobSort(sort);
 
-    const [jobRows, rawRows] = await Promise.all([
-      InventoryReservation.aggregate([
-        ...getProductionJobsBasePipeline({ search, from, to }),
-        { $sort: sortStage },
-      ]),
-      InventoryReservation.aggregate([
-        ...getRawReservationsPipeline({ search, from, to }),
-        { $sort: { sku: 1, createdAt: 1 } },
-      ]),
+    const jobRows = await InventoryReservation.aggregate([
+      ...getProductionJobsBasePipeline({ search, from, to }),
+      { $sort: sortStage },
     ]);
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = "OpenAI";
+    workbook.creator = "OATCLUB";
     workbook.created = new Date();
     workbook.modified = new Date();
 
-    const jobsSheet = workbook.addWorksheet("Job_List", {
+    const sheet = workbook.addWorksheet("Production_List", {
       views: [{ state: "frozen", ySplit: 1 }],
     });
 
-    const rawSheet = workbook.addWorksheet("Raw_Reservations", {
-      views: [{ state: "frozen", ySplit: 1 }],
+    sheet.columns = [
+      { header: "Product Image", key: "image", width: 16 },
+      { header: "Product Name", key: "productName", width: 38 },
+      { header: "Product Code", key: "productCode", width: 18 },
+      { header: "XS", key: "XS", width: 10 },
+      { header: "S", key: "S", width: 10 },
+      { header: "M", key: "M", width: 10 },
+      { header: "L", key: "L", width: 10 },
+      { header: "XL", key: "XL", width: 10 },
+    ];
+
+    const header = sheet.getRow(1);
+    header.font = { bold: true };
+    header.height = 24;
+    header.alignment = { vertical: "middle", horizontal: "center" };
+
+    header.eachCell((cell) => {
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
     });
-
-    jobsSheet.columns = [
-      { header: "Image", key: "image", width: 16 },
-      { header: "Image URL", key: "productImage", width: 45 },
-      { header: "SKU", key: "sku", width: 24 },
-      { header: "Product Code", key: "productCode", width: 18 },
-      { header: "Product Title", key: "productTitle", width: 34 },
-      { header: "Total Qty To Produce", key: "totalQty", width: 18 },
-      { header: "Orders Count", key: "ordersCount", width: 14 },
-      { header: "Reservations Count", key: "reservationsCount", width: 16 },
-      { header: "Sizes", key: "sizesText", width: 26 },
-      { header: "Colors", key: "colorsText", width: 26 },
-      { header: "Order Numbers", key: "orderNumbersText", width: 40 },
-      { header: "Latest Confirmed At", key: "latestConfirmedAt", width: 22 },
-      { header: "Latest Reservation At", key: "latestCreatedAt", width: 22 },
-    ];
-
-    rawSheet.columns = [
-      { header: "Image URL", key: "productImage", width: 45 },
-      { header: "Order Number", key: "orderNumber", width: 18 },
-      { header: "SKU", key: "sku", width: 24 },
-      { header: "Variant SKU", key: "variantSku", width: 24 },
-      { header: "Product Code", key: "productCode", width: 18 },
-      { header: "Product Title", key: "productTitle", width: 34 },
-      { header: "Size", key: "selectedSize", width: 12 },
-      { header: "Color", key: "selectedColor", width: 14 },
-      { header: "Qty", key: "qty", width: 10 },
-      { header: "Reservation Status", key: "reservationStatus", width: 18 },
-      { header: "Order Confirmed", key: "isOrderConfirmed", width: 16 },
-      { header: "Confirmed At", key: "confirmedAt", width: 22 },
-      { header: "Reservation Created At", key: "createdAt", width: 22 },
-    ];
-
-    const styleHeader = (sheet) => {
-      const row = sheet.getRow(1);
-      row.font = { bold: true };
-      row.alignment = { vertical: "middle", horizontal: "center" };
-      row.height = 22;
-
-      row.eachCell((cell) => {
-        cell.border = {
-          top: { style: "thin" },
-          left: { style: "thin" },
-          bottom: { style: "thin" },
-          right: { style: "thin" },
-        };
-      });
-    };
-
-    styleHeader(jobsSheet);
-    styleHeader(rawSheet);
 
     for (const item of jobRows) {
-      jobsSheet.addRow({
+      const sizeMap = buildSizeMap(item.sizes);
+
+      sheet.addRow({
         image: "",
-        productImage: item.productImage || "",
-        sku: item.sku || "",
+        productName: item.productTitle || "",
         productCode: item.productCode || "",
-        productTitle: item.productTitle || "",
-        totalQty: Number(item.totalQty || 0),
-        ordersCount: Number(item.ordersCount || 0),
-        reservationsCount: Number(item.reservationsCount || 0),
-        sizesText: summarizePairs(item.sizes, "size"),
-        colorsText: summarizePairs(item.colors, "color"),
-        orderNumbersText: Array.isArray(item.orderNumbers)
-          ? item.orderNumbers.join(", ")
-          : "",
-        latestConfirmedAt: item.latestConfirmedAt
-          ? new Date(item.latestConfirmedAt)
-          : "",
-        latestCreatedAt: item.latestCreatedAt
-          ? new Date(item.latestCreatedAt)
-          : "",
+        XS: sizeMap.XS,
+        S: sizeMap.S,
+        M: sizeMap.M,
+        L: sizeMap.L,
+        XL: sizeMap.XL,
       });
     }
 
-    for (const item of rawRows) {
-      rawSheet.addRow({
-        productImage: item.productImage || "",
-        orderNumber: item.orderNumber || "",
-        sku: item.sku || "",
-        variantSku: item.variantSku || "",
-        productCode: item.productCode || "",
-        productTitle: item.productTitle || "",
-        selectedSize: item.selectedSize || "",
-        selectedColor: item.selectedColor || "",
-        qty: Number(item.qty || 0),
-        reservationStatus: item.reservationStatus || "",
-        isOrderConfirmed: item.isOrderConfirmed ? "Yes" : "No",
-        confirmedAt: item.confirmedAt ? new Date(item.confirmedAt) : "",
-        createdAt: item.createdAt ? new Date(item.createdAt) : "",
-      });
-    }
-
-    for (let i = 2; i <= jobsSheet.rowCount; i++) {
-      const cell = jobsSheet.getCell(`B${i}`);
-      if (typeof cell.value === "string" && /^https?:\/\//i.test(cell.value)) {
-        cell.value = { text: cell.value, hyperlink: cell.value };
-        cell.font = { color: { argb: "FF0563C1" }, underline: true };
-      }
-    }
-
-    for (let i = 2; i <= rawSheet.rowCount; i++) {
-      const cell = rawSheet.getCell(`A${i}`);
-      if (typeof cell.value === "string" && /^https?:\/\//i.test(cell.value)) {
-        cell.value = { text: cell.value, hyperlink: cell.value };
-        cell.font = { color: { argb: "FF0563C1" }, underline: true };
-      }
-    }
-
-    // optional thumbnail embed
     for (let i = 0; i < jobRows.length; i++) {
       const rowNumber = i + 2;
       const imageUrl = String(jobRows[i]?.productImage || "").trim();
+
+      sheet.getRow(rowNumber).height = 48;
+
       if (!/^https?:\/\//i.test(imageUrl)) continue;
 
       try {
@@ -646,20 +566,22 @@ export const exportProductionJobListExcel = async (req, res) => {
           timeout: 8000,
         });
 
-        const contentType = String(response.headers["content-type"] || "").toLowerCase();
+        const contentType = String(
+          response.headers["content-type"] || "",
+        ).toLowerCase();
+
         let extension = "png";
-        if (contentType.includes("jpeg") || contentType.includes("jpg")) extension = "jpeg";
-        else if (contentType.includes("png")) extension = "png";
+        if (contentType.includes("jpeg") || contentType.includes("jpg")) {
+          extension = "jpeg";
+        }
 
         const imageId = workbook.addImage({
           buffer: Buffer.from(response.data),
           extension,
         });
 
-        jobsSheet.getRow(rowNumber).height = 44;
-
-        jobsSheet.addImage(imageId, {
-          tl: { col: 0.15, row: rowNumber - 0.85 },
+        sheet.addImage(imageId, {
+          tl: { col: 0.2, row: rowNumber - 0.85 },
           ext: { width: 52, height: 52 },
         });
       } catch (_) {
@@ -667,26 +589,38 @@ export const exportProductionJobListExcel = async (req, res) => {
       }
     }
 
-    [jobsSheet, rawSheet].forEach((sheet) => {
-      sheet.eachRow((row, rowNumber) => {
-        if (rowNumber === 1) return;
-        row.eachCell((cell) => {
-          cell.alignment = { vertical: "middle", wrapText: true };
-          cell.border = {
-            top: { style: "thin" },
-            left: { style: "thin" },
-            bottom: { style: "thin" },
-            right: { style: "thin" },
-          };
-        });
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+
+      row.eachCell((cell) => {
+        cell.alignment = {
+          vertical: "middle",
+          horizontal: "center",
+          wrapText: true,
+        };
+
+        cell.border = {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        };
       });
+
+      row.getCell("B").alignment = {
+        vertical: "middle",
+        horizontal: "left",
+        wrapText: true,
+      };
     });
 
-    const fileName = `production-job-list-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const fileName = `oatclub-production-list-${new Date()
+      .toISOString()
+      .slice(0, 10)}.xlsx`;
 
     res.setHeader(
       "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
 
@@ -700,6 +634,29 @@ export const exportProductionJobListExcel = async (req, res) => {
       error: error.message,
     });
   }
+};
+
+const buildSizeMap = (sizes = []) => {
+  const map = {
+    XS: 0,
+    S: 0,
+    M: 0,
+    L: 0,
+    XL: 0,
+  };
+
+  for (const item of Array.isArray(sizes) ? sizes : []) {
+    const size = String(item?.size || "")
+      .trim()
+      .toUpperCase();
+    const qty = Number(item?.qty || 0);
+
+    if (Object.prototype.hasOwnProperty.call(map, size)) {
+      map[size] += qty;
+    }
+  }
+
+  return map;
 };
 
 /* ============================================================
@@ -770,11 +727,15 @@ export const getProductionQueue = async (req, res) => {
       ];
     }
 
-    const safePackability = String(packability || "all").trim().toLowerCase();
+    const safePackability = String(packability || "all")
+      .trim()
+      .toLowerCase();
 
     if (["packable", "true", "1", "yes", "y"].includes(safePackability)) {
       filters.isPackable = true;
-    } else if (["unpackable", "false", "0", "no", "n"].includes(safePackability)) {
+    } else if (
+      ["unpackable", "false", "0", "no", "n"].includes(safePackability)
+    ) {
       filters.isPackable = false;
     }
 
@@ -815,10 +776,11 @@ export const getProductionQueue = async (req, res) => {
         to: to || "",
         sort: sortObj,
         packability: safePackability,
-        isPackable:
-          ["packable", "true", "1", "yes", "y"].includes(safePackability)
-            ? true
-            : ["unpackable", "false", "0", "no", "n"].includes(safePackability)
+        isPackable: ["packable", "true", "1", "yes", "y"].includes(
+          safePackability,
+        )
+          ? true
+          : ["unpackable", "false", "0", "no", "n"].includes(safePackability)
             ? false
             : "all",
       },
@@ -876,7 +838,9 @@ export const markOrderShippedFromProduction = async (req, res) => {
       const current = String(order.fulfillmentStatus || "").toLowerCase();
 
       if (!["packed", "picked", "shipped"].includes(current)) {
-        throw new Error("Only packed/picked orders can be marked shipped from production");
+        throw new Error(
+          "Only packed/picked orders can be marked shipped from production",
+        );
       }
 
       if (current === "shipped") {
@@ -976,7 +940,7 @@ export const markAllPackedOrdersShipped = async (req, res) => {
             updatedAt: now,
           },
         },
-        { session }
+        { session },
       );
 
       responsePayload = {
@@ -1045,24 +1009,40 @@ export const getProductionSummary = async (req, res) => {
           },
           return_requested: {
             $sum: {
-              $cond: [{ $eq: ["$fulfillmentStatus", "return_requested"] }, 1, 0],
+              $cond: [
+                { $eq: ["$fulfillmentStatus", "return_requested"] },
+                1,
+                0,
+              ],
             },
           },
           exchange_requested: {
             $sum: {
-              $cond: [{ $eq: ["$fulfillmentStatus", "exchange_requested"] }, 1, 0],
+              $cond: [
+                { $eq: ["$fulfillmentStatus", "exchange_requested"] },
+                1,
+                0,
+              ],
             },
           },
           pickup_initiated: {
             $sum: {
-              $cond: [{ $eq: ["$fulfillmentStatus", "pickup_initiated"] }, 1, 0],
+              $cond: [
+                { $eq: ["$fulfillmentStatus", "pickup_initiated"] },
+                1,
+                0,
+              ],
             },
           },
           returned: {
-            $sum: { $cond: [{ $eq: ["$fulfillmentStatus", "returned"] }, 1, 0] },
+            $sum: {
+              $cond: [{ $eq: ["$fulfillmentStatus", "returned"] }, 1, 0],
+            },
           },
           refunded: {
-            $sum: { $cond: [{ $eq: ["$fulfillmentStatus", "refunded"] }, 1, 0] },
+            $sum: {
+              $cond: [{ $eq: ["$fulfillmentStatus", "refunded"] }, 1, 0],
+            },
           },
           exchanged: {
             $sum: {
@@ -1099,7 +1079,6 @@ export const getProductionSummary = async (req, res) => {
     });
   }
 };
-
 
 /* ============================================================
    ✅ PROCESSING ORDER PRODUCT LIST
@@ -1144,8 +1123,18 @@ export const getProcessingOrderProductList = async (req, res) => {
             $match: {
               $or: [
                 { orderNumber: new RegExp(escapeRegex(search), "i") },
-                { "items.productSnapshot.productCode": new RegExp(escapeRegex(search), "i") },
-                { "items.productSnapshot.title": new RegExp(escapeRegex(search), "i") },
+                {
+                  "items.productSnapshot.productCode": new RegExp(
+                    escapeRegex(search),
+                    "i",
+                  ),
+                },
+                {
+                  "items.productSnapshot.title": new RegExp(
+                    escapeRegex(search),
+                    "i",
+                  ),
+                },
                 { "items.variant.sku": new RegExp(escapeRegex(search), "i") },
                 { "items.selectedSize": new RegExp(escapeRegex(search), "i") },
                 { "items.selectedColor": new RegExp(escapeRegex(search), "i") },
@@ -1223,7 +1212,12 @@ export const getProcessingOrderProductList = async (req, res) => {
           productImage: { $ifNull: ["$items.productSnapshot.thumbnail", ""] },
           sku: {
             $cond: [
-              { $gt: [{ $strLenCP: { $ifNull: ["$items.variant.sku", ""] } }, 0] },
+              {
+                $gt: [
+                  { $strLenCP: { $ifNull: ["$items.variant.sku", ""] } },
+                  0,
+                ],
+              },
               "$items.variant.sku",
               "$items.productSnapshot.productCode",
             ],

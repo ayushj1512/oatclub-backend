@@ -81,6 +81,8 @@ import fabriclogRoutes from "./FabricLog/FabricLogRouter.js";
 
 import orderRefundRoutes from "./Orders/order.refunds/orderRefundRoutes.js";
 import marketingcampaignroutes from "./MarketingCampaign/marketingCampaignRoutes.js";
+import vendorUserRoutes from "./VendorUser/vendorUserRoutes.js";
+import cuttingBatchRoutes from "./cuttingbatch/cuttingbatchroute.js";
 
 // --------------------------------------------------
 // APP CONFIG
@@ -108,6 +110,7 @@ const ALLOWED_ORIGINS = [
   "http://localhost:3000",
   "http://localhost:3001",
   "http://localhost:3002",
+  "http://localhost:4000",
   "http://192.168.29.74:3000",
   // OATCLUB Store
   "https://oatclub.in",
@@ -217,6 +220,7 @@ app.use("/api/credits", creditRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/offers", offerRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/cutting-batches", cuttingBatchRoutes);
 app.use("/api/order-refunds", orderRefundRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/queries", queryRoutes);
@@ -226,6 +230,7 @@ app.use("/api/fabrics", fabricRoutes);
 app.use("/api/fabric-logs", fabriclogRoutes);
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/admin-users", adminUserRoutes);
+app.use("/api/vendor-users", vendorUserRoutes);
 app.use("/api", emailRoutes);
 app.use("/api/collaborations", collaborationRoutes);
 app.use("/api", bestsellerRoutes);

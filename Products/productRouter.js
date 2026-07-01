@@ -1,7 +1,6 @@
 import express from "express";
 import multer from "multer";
 
-/* ---------------- PRODUCT CONTROLLERS ---------------- */
 import {
   createProduct,
   getAllProducts,
@@ -40,7 +39,14 @@ import {
 
 import { searchProductsForCard } from "./product.search.controller.js";
 
-/* ---------------- INVENTORY CONTROLLERS ---------------- */
+import {
+  getVendorSamplingProducts,
+  updateVendorSamplingStatus,
+  addVendorSamplingRemark,
+  getVendorPatternProducts,
+  updateVendorPatternStatus,
+} from "./product.vendor.controller.js";
+
 import {
   getInventoryAdminProducts,
   getInventoryAdminCategories,
@@ -48,63 +54,52 @@ import {
   updateSingleInventoryAdminProduct,
 } from "./inventory.product.controller.js";
 
-/* ---------------- BULK CONTROLLERS ---------------- */
 import {
   bulkPreviewProducts,
   bulkCreateDraftProducts,
 } from "./BulkproductController.js";
 
-/* ---------------- SETUP ---------------- */
 const router = express.Router();
 const uploadCsv = multer({ dest: "uploads/csv" });
 const uploadSwatches = multer({ dest: "uploads/swatch" });
 
-/* =========================================================
-   PUBLIC + SHARED ROUTES
-   (static/specific routes always before dynamic ones)
-========================================================= */
-
-// inventory admin
+/* ---------------- ADMIN INVENTORY ---------------- */
 router.get("/admin/inventory/categories", getInventoryAdminCategories);
 router.get("/admin/inventory/:id", getSingleInventoryAdminProduct);
 router.patch("/admin/inventory/:id", updateSingleInventoryAdminProduct);
 router.get("/admin/inventory", getInventoryAdminProducts);
 
-// product listing / search
+/* ---------------- VENDOR ROUTES ---------------- */
+router.get("/vendor-sampling", getVendorSamplingProducts);
+router.patch("/vendor-sampling/:id/status", updateVendorSamplingStatus);
+router.patch("/vendor-sampling/:id/remark", addVendorSamplingRemark);
+
+router.get("/vendor-patterns", getVendorPatternProducts);
+router.patch("/vendor-patterns/:id/status", updateVendorPatternStatus);
+
+/* ---------------- PRODUCT LISTING / SEARCH ---------------- */
 router.get("/cards", getProductCards);
 router.get("/card-search", searchProductsForCard);
-
 router.get("/by-tag", getProductsByTag);
 router.get("/by-category/:category", getProductsByCategory);
 router.get("/by-collection/:collection", getProductsByCollection);
-
 router.get("/fetch-by-category/:category", fetchProductsByCategory);
 router.get("/fetch-by-category", fetchProductsByCategory);
 
 router.post("/by-ids", getProductsByIds);
-
 router.get("/by-codes", getProductsByCodes);
 router.post("/by-codes", getProductsByCodes);
-
-// commerce manager selected codes
 router.get("/selected-codes", getProductsBySelectedCodes);
 router.post("/selected-codes", getProductsBySelectedCodes);
 
-// lookup routes
 router.get("/sku/:sku", getProductBySKU);
 router.get("/code/:code", getProductByCode);
 router.get("/details/:id", getProductByIdOrSlug);
-
-// product media library
 router.get("/media/all", getAllProductMedia);
 
-// all products
 router.get("/", getAllProducts);
 
-/* =========================================================
-   BULK ROUTES
-========================================================= */
-
+/* ---------------- BULK ---------------- */
 router.post("/bulk/preview", uploadCsv.single("file"), bulkPreviewProducts);
 router.post("/bulk/create-draft", bulkCreateDraftProducts);
 router.post("/bulk/delete", bulkDeleteProducts);
@@ -115,28 +110,18 @@ router.patch("/bulk/variant-stock/zero-all", zeroAllVariantStock);
 router.patch("/bulk/collections/sync", bulkSyncCollectionOnProducts);
 router.patch("/bulk/trending/by-codes", bulkMarkTrendingByCodes);
 
-// ✅ important: frontend is calling /api/products/primary-status
-router.patch("/primary-status", updatePrimaryProductStatus);
-
-/* =========================================================
-   CREATE ROUTE
-========================================================= */
-
+/* ---------------- CREATE ---------------- */
 router.post("/", createProduct);
 
-/* =========================================================
-   SINGLE PRODUCT ACTION ROUTES
-   (keep before generic /:id routes)
-========================================================= */
+/* ---------------- PRODUCT ACTIONS ---------------- */
+router.patch("/primary-status", updatePrimaryProductStatus);
 
 router.post("/:id/update-ratings", updateProductRatings);
 router.patch("/:id/analytics", incrementProductAnalytics);
-
 router.patch("/:id/stock", updateProductStock);
 router.patch("/:id/variant-stock", updateVariantStock);
 router.patch("/:id/fabrics", updateProductFabrics);
 router.patch("/:id/variant-pattern", updateVariantPatternNumber);
-
 router.patch("/:id/mark-pattern-ready", markPatternReady);
 router.patch("/:id/best-seller", toggleBestSeller);
 router.patch("/:id/trending", toggleTrending);
@@ -148,19 +133,10 @@ router.patch(
   updateProductColors
 );
 
-/* =========================================================
-   GENERIC SINGLE PRODUCT CRUD
-========================================================= */
-
+/* ---------------- CRUD + FALLBACK ---------------- */
 router.patch("/:id", updateProduct);
 router.put("/:id", updateProduct);
 router.delete("/:id", deleteProduct);
-
-/* =========================================================
-   FALLBACK — KEEP LAST
-   this catches id OR slug
-========================================================= */
-
 router.get("/:id", getProductByIdOrSlug);
 
 export default router;
