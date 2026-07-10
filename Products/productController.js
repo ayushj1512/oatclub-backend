@@ -1777,6 +1777,124 @@ export const updateVariantPatternNumber = async (req, res) => {
   }
 };
 
+/* ============================================================
+   SYNC PRODUCT ASSOCIATION GROUP
+   - All selected products become cross-sells of each other
+   - Same pattern number is applied to all variants
+============================================================ */
+export const syncProductAssociationGroup = async (req, res) => {
+  try {
+    const sourceId = String(req.params.id || "").trim();
+
+    const rawIds =
+      req.body?.productIds ??
+      req.body?.crossSellProducts ??
+      req.body?.associatedProductIds ??
+      [];
+
+    const patternNumber = String(req.body?.patternNumber || "").trim();
+
+    if (!mongoose.Types.ObjectId.isValid(sourceId)) {
+      return res.status(400).json({
+        message: "Invalid source product ID",
+      });
+    }
+
+    const selectedIds = (
+      Array.isArray(rawIds)
+        ? rawIds
+        : String(rawIds || "")
+            .split(",")
+            .map((id) => id.trim())
+    )
+      .map((item) =>
+        item && typeof item === "object" && item._id
+          ? String(item._id)
+          : String(item || "").trim()
+      )
+      .filter(
+        (id) =>
+          mongoose.Types.ObjectId.isValid(id) &&
+          String(id) !== String(sourceId)
+      );
+
+    const groupIds = Array.from(new Set([sourceId, ...selectedIds]));
+
+    if (groupIds.length < 2) {
+      return res.status(400).json({
+        message: "Select at least one product to associate",
+      });
+    }
+
+    const products = await Product.find({
+      _id: { $in: groupIds },
+    }).select("_id title productCode variants crossSellProducts");
+
+    if (products.length !== groupIds.length) {
+      const foundIds = new Set(
+        products.map((product) => String(product._id))
+      );
+
+      const missingIds = groupIds.filter(
+        (id) => !foundIds.has(String(id))
+      );
+
+      return res.status(404).json({
+        message: "Some selected products were not found",
+        missingIds,
+      });
+    }
+
+    const operations = products.map((product) => {
+      const productId = String(product._id);
+
+      const crossSellProducts = groupIds.filter(
+        (id) => String(id) !== productId
+      );
+
+      return {
+        updateOne: {
+          filter: { _id: product._id },
+          update: {
+            $set: {
+              crossSellProducts,
+              "variants.$[].patternNumber": patternNumber,
+              isPatternReady: Boolean(patternNumber),
+            },
+          },
+        },
+      };
+    });
+
+    await Product.bulkWrite(operations);
+
+    const updatedProducts = await Product.find({
+      _id: { $in: groupIds },
+    })
+      .select(
+        "title slug productCode thumbnail price compareAtPrice variants crossSellProducts isPatternReady"
+      )
+      .populate({
+        path: "crossSellProducts",
+        select:
+          "title slug productCode thumbnail price compareAtPrice isActive",
+      });
+
+    return res.json({
+      message: "Products associated successfully",
+      patternNumber,
+      totalProducts: updatedProducts.length,
+      products: updatedProducts.map(applyStockFromVariants),
+    });
+  } catch (e) {
+    console.error("❌ syncProductAssociationGroup:", e);
+
+    return res.status(500).json({
+      message: e.message || "Unable to associate products",
+    });
+  }
+};
+
 
 
 
@@ -3845,3 +3963,5 @@ export const getAllProductMedia = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
+
+
