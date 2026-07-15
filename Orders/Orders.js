@@ -206,18 +206,274 @@ const rmaSchema = new mongoose.Schema(
     },
 
     // Shiprocket reverse pickup / tracking
-    reverseShipment: {
-      provider: { type: String, default: "shiprocket" },
-      orderId: { type: String, default: "" },
-      shipmentId: { type: String, default: "" },
-      awb: { type: String, default: "" },
-      courierName: { type: String, default: "" },
-      trackingUrl: { type: String, default: "" },
+    // ========================================================================
+// SHIPROCKET REVERSE PICKUP / RETURN TRACKING
+// ========================================================================
+reverseShipment: {
+  provider: {
+    type: String,
+    enum: ["shiprocket", "manual"],
+    default: "shiprocket",
+  },
 
-      pickupScheduledAt: Date,
-      pickedAt: Date,
-      receivedAt: Date,
+  // Shiprocket return-order identifiers
+  orderId: {
+    type: String,
+    default: "",
+  },
+
+  shipmentId: {
+    type: String,
+    default: "",
+  },
+
+  // Selected courier details
+  courierId: {
+    type: Number,
+    default: null,
+  },
+
+  courierName: {
+    type: String,
+    default: "",
+  },
+
+  courierRating: {
+    type: Number,
+    default: 0,
+  },
+
+  freightCharge: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+
+  estimatedDays: {
+    type: String,
+    default: "",
+  },
+
+  // AWB and customer tracking
+  awb: {
+    type: String,
+    default: "",
+  },
+
+  trackingUrl: {
+    type: String,
+    default: "",
+  },
+
+  labelUrl: {
+    type: String,
+    default: "",
+  },
+
+  // Internal reverse-booking lifecycle
+  status: {
+    type: String,
+    enum: [
+      "not_booked",
+      "checking_serviceability",
+      "return_order_created",
+      "awb_assigned",
+      "pickup_scheduled",
+      "picked",
+      "in_transit",
+      "received",
+      "cancelled",
+      "booking_failed",
+    ],
+    default: "not_booked",
+  },
+
+  rawStatus: {
+    type: String,
+    default: "",
+  },
+
+  statusCode: {
+    type: String,
+    default: "",
+  },
+
+  // Package details sent to Shiprocket
+  package: {
+    weight: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
+
+    length: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    breadth: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    height: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    declaredValue: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+  },
+
+  // Pickup and movement dates
+  pickupScheduledAt: {
+    type: Date,
+    default: null,
+  },
+
+  expectedPickupAt: {
+    type: Date,
+    default: null,
+  },
+
+  pickedAt: {
+    type: Date,
+    default: null,
+  },
+
+  inTransitAt: {
+    type: Date,
+    default: null,
+  },
+
+  receivedAt: {
+    type: Date,
+    default: null,
+  },
+
+  cancelledAt: {
+    type: Date,
+    default: null,
+  },
+
+  // Failure-safe retry information
+  bookingError: {
+    step: {
+      type: String,
+      enum: [
+        "",
+        "serviceability",
+        "create_return_order",
+        "assign_awb",
+        "generate_pickup",
+        "database_update",
+        "customer_notification",
+      ],
+      default: "",
+    },
+
+    message: {
+      type: String,
+      default: "",
+    },
+
+    occurredAt: {
+      type: Date,
+      default: null,
+    },
+  },
+
+  // Customer communication
+  customerNotification: {
+    emailSent: {
+      type: Boolean,
+      default: false,
+    },
+
+    emailSentAt: {
+      type: Date,
+      default: null,
+    },
+
+    emailError: {
+      type: String,
+      default: "",
+    },
+
+    whatsappSent: {
+      type: Boolean,
+      default: false,
+    },
+
+    whatsappSentAt: {
+      type: Date,
+      default: null,
+    },
+
+    whatsappError: {
+      type: String,
+      default: "",
+    },
+  },
+
+  // Sync timestamps
+  awbAssignedAt: {
+    type: Date,
+    default: null,
+  },
+
+  lastSyncedAt: {
+    type: Date,
+    default: null,
+  },
+
+  lastWebhookAt: {
+    type: Date,
+    default: null,
+  },
+
+  lastTrackAt: {
+    type: Date,
+    default: null,
+  },
+
+  // Raw Shiprocket responses for debugging
+  rawServiceabilityResponse: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
+
+  rawCreateResponse: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
+
+  rawAwbResponse: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
+
+  rawPickupResponse: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
+
+  lastWebhook: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
+
+  lastTrack: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
+},
   },
   { timestamps: true }
 );
@@ -1526,8 +1782,19 @@ orderSchema.index({ "rmas.rmaNumber": 1 });
 orderSchema.index({ "rmas.status": 1 });
 orderSchema.index({ "rmas.items.orderLineId": 1 });
 orderSchema.index({ "rmas.fee.status": 1 });
-orderSchema.index({ "rmas.reverseShipment.awb": 1 });
+
+orderSchema.index({ "rmas.reverseShipment.orderId": 1 });
 orderSchema.index({ "rmas.reverseShipment.shipmentId": 1 });
+orderSchema.index({ "rmas.reverseShipment.awb": 1 });
+orderSchema.index({ "rmas.reverseShipment.courierId": 1 });
+orderSchema.index({
+  "rmas.reverseShipment.status": 1,
+  createdAt: -1,
+});
+orderSchema.index({
+  "rmas.reverseShipment.customerNotification.emailSent": 1,
+  createdAt: -1,
+});
 
 // Xpressbees
 orderSchema.index({ "shipment.xpressbees.awb": 1 });

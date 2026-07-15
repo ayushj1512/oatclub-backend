@@ -1,6 +1,8 @@
 import { Router } from "express";
+
 import {
   createBarcodeItem,
+  createBarcodeBatch,
   listBarcodeItems,
   getBarcodeItemById,
   getBarcodeItemByBarcode,
@@ -8,31 +10,88 @@ import {
   updateBarcodeItem,
   deleteBarcodeItem,
   barcodePngById,
-  generateBarcodePngNoSave
+  generateBarcodePngNoSave,
 } from "../BarcodeItem/barcodeItem.controller.js";
 
 const router = Router();
 
-// Health (optional, but useful)
-router.get("/health", (req, res) => res.json({ ok: true }));
+/* =========================================================
+   HEALTH
+========================================================= */
 
-// Create + list
+router.get("/health", (req, res) => {
+  return res.json({
+    ok: true,
+    service: "barcode-service",
+  });
+});
+
+/* =========================================================
+   CREATE AND LIST
+========================================================= */
+
+// Create one physical barcode item
 router.post("/barcodes", createBarcodeItem);
+
+// Create multiple physical barcode items with unique serials
+router.post("/barcodes/batch", createBarcodeBatch);
+
+// List/search barcode items
 router.get("/barcodes", listBarcodeItems);
 
-// Scan (barcodeText) + fetch by exact barcode text
+/* =========================================================
+   SCAN AND LOOKUP
+========================================================= */
+
+// Scan exact barcode text
 router.post("/barcodes/scan", scanBarcode);
-router.get("/barcodes/by-barcode/:barcodeText", getBarcodeItemByBarcode);
 
-// Generate PNG without saving in DB
-router.get("/barcodes/generate.png", generateBarcodePngNoSave);
+// Fetch saved item using exact barcode text
+router.get(
+  "/barcodes/by-barcode/:barcodeText",
+  getBarcodeItemByBarcode
+);
 
-// CRUD by Mongo _id
+/* =========================================================
+   BARCODE PNG PREVIEW
+========================================================= */
+
+/**
+ * Preview an already-known barcode without saving.
+ *
+ * Example:
+ * /barcodes/generate.png
+ * ?productId=1081
+ * &size=XS
+ * &price=1499
+ * &serialNumber=1
+ */
+router.get(
+  "/barcodes/generate.png",
+  generateBarcodePngNoSave
+);
+
+/* =========================================================
+   CRUD BY MONGO ID
+========================================================= */
+
+// Fetch one saved barcode item
 router.get("/barcodes/:id", getBarcodeItemById);
+
+// Barcode identity fields are immutable
 router.patch("/barcodes/:id", updateBarcodeItem);
+
+// Delete unused barcode item
 router.delete("/barcodes/:id", deleteBarcodeItem);
 
-// Generate PNG for a saved item
-router.get("/barcodes/:id/barcode.png", barcodePngById);
+/* =========================================================
+   SAVED BARCODE PNG
+========================================================= */
+
+// Generate barcode PNG for a saved item
+router.get(
+  "/barcodes/:id/barcode.png",
+  barcodePngById
+);
 
 export default router;
