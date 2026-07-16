@@ -232,7 +232,12 @@ const productSchema = new mongoose.Schema(
 
     isBestSeller: { type: Boolean, default: false, index: true },
     isTrending: { type: Boolean, default: false, index: true },
-
+// ✅ Collaboration
+availableForCollab: {
+  type: Boolean,
+  default: false,
+  index: true,
+},
     // ✅ NEW: Pattern ready flag (product level)
     isPatternReady: { type: Boolean, default: false, index: true },
 

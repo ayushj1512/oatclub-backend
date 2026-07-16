@@ -714,7 +714,11 @@ export const createProduct = async (req, res) => {
       data.isBestSeller !== undefined ? toBool(data.isBestSeller) : false;
     data.isTrending =
       data.isTrending !== undefined ? toBool(data.isTrending) : false;
-
+// ✅ Available for collaboration
+data.availableForCollab =
+  data.availableForCollab !== undefined
+    ? toBool(data.availableForCollab)
+    : false;
     // ✅ fabrics
     try {
       data.fabrics = data.fabrics !== undefined ? normFabrics(data.fabrics) : [];
@@ -867,6 +871,8 @@ export const createProduct = async (req, res) => {
       specifications: Array.isArray(data.specifications) ? data.specifications : [],
       isBestSeller: !!data.isBestSeller,
       isTrending: !!data.isTrending,
+        availableForCollab: !!data.availableForCollab,
+
       isPatternReady: !!data.isPatternReady,
       isPrimaryProduct: !!data.isPrimaryProduct,
       originalProductLink: data.originalProductLink || "",
@@ -1278,6 +1284,334 @@ export const getAllProducts = async (req, res) => {
 };
 
 
+/* ============================================================
+   GET PRODUCTS AVAILABLE FOR COLLAB
+
+   GET /api/products/available-for-collab
+
+   Query params:
+   - page
+   - limit
+   - search
+   - category
+   - sort
+============================================================ */
+export const getAvailableForCollabProducts = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 24,
+      search = "",
+      category = "",
+      sort = "newest",
+    } = req.query;
+
+    const safePage = Math.max(1, Number(page) || 1);
+    const safeLimit = Math.min(100, Math.max(1, Number(limit) || 24));
+    const skip = (safePage - 1) * safeLimit;
+
+    const filters = {
+      availableForCollab: true,
+      isActive: true,
+      isDraft: false,
+    };
+
+    /* ---------------- category ---------------- */
+    const categoryValue = String(category || "").trim();
+
+    if (categoryValue) {
+      filters.categories = categoryValue;
+    }
+
+    /* ---------------- search ---------------- */
+    const searchValue = String(search || "").trim();
+
+    if (searchValue) {
+      const escapedSearch = escapeRegex(searchValue);
+
+      filters.$or = [
+        {
+          title: {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+        {
+          productCode: {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+        {
+          slug: {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+        {
+          tags: {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+        {
+          categories: {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+    /* ---------------- sorting ---------------- */
+    const sortMap = {
+      newest: { createdAt: -1 },
+      oldest: { createdAt: 1 },
+      price_asc: { price: 1 },
+      price_desc: { price: -1 },
+      title_asc: { title: 1 },
+      title_desc: { title: -1 },
+      trending: { isTrending: -1, createdAt: -1 },
+      bestseller: { isBestSeller: -1, createdAt: -1 },
+    };
+
+    const sortObj = sortMap[sort] || sortMap.newest;
+
+    /*
+     * ProductCard requires:
+     * - identity/link fields
+     * - images
+     * - price
+     * - badge flags
+     * - attributes/variants for size selection and add-to-cart
+     *
+     * Heavy fields such as description, reviews, analytics,
+     * fabrics, specifications and cross-sells are excluded.
+     */
+    const cardFields = [
+      "_id",
+      "title",
+      "slug",
+      "productCode",
+      "categories",
+      "thumbnail",
+      "images",
+      "price",
+      "compareAtPrice",
+      "currency",
+      "attributes",
+      "variants._id",
+      "variants.attributes",
+      "variants.sku",
+      "variants.stock",
+      "variants.reservedStock",
+      "variants.isInStock",
+      "sku",
+      "stock",
+      "reservedStock",
+      "isInStock",
+      "productType",
+      "isBestSeller",
+      "isTrending",
+      "availableForCollab",
+    ].join(" ");
+
+    const [docs, total] = await Promise.all([
+      Product.find(filters)
+        .select(cardFields)
+        .sort(sortObj)
+        .skip(skip)
+        .limit(safeLimit)
+        .lean(),
+
+      Product.countDocuments(filters),
+    ]);
+
+    const products = docs.map((product) => {
+      const image =
+        product.thumbnail ||
+        (Array.isArray(product.images) ? product.images[0] : "") ||
+        "";
+
+      const hoverImage =
+        Array.isArray(product.images) && product.images.length > 1
+          ? product.images[1]
+          : null;
+
+      return {
+        _id: product._id,
+        title: product.title,
+        slug: product.slug,
+        productCode: product.productCode,
+        categories: product.categories || [],
+
+        thumbnail: image,
+        image,
+        hoverImage,
+        images: product.images || [],
+
+        price: Number(product.price || 0),
+        compareAtPrice:
+          product.compareAtPrice !== null &&
+          product.compareAtPrice !== undefined
+            ? Number(product.compareAtPrice)
+            : null,
+
+        currency: product.currency || "INR",
+
+        sku: product.sku || "",
+        productType: product.productType || "simple",
+
+        stock: Number(product.stock || 0),
+        reservedStock: Number(product.reservedStock || 0),
+        isInStock: !!product.isInStock,
+
+        attributes: product.attributes || [],
+        variants: product.variants || [],
+
+        isBestSeller: !!product.isBestSeller,
+        isTrending: !!product.isTrending,
+        availableForCollab: true,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      pages: Math.ceil(total / safeLimit),
+      hasNextPage: safePage * safeLimit < total,
+      hasPreviousPage: safePage > 1,
+      products,
+    });
+  } catch (error) {
+    console.error("❌ Get Available For Collab Products Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to fetch products available for collaboration",
+    });
+  }
+};
+
+
+/* ============================================================
+   UPDATE COLLAB READY STATUS
+   Supports single + bulk
+
+   Single:
+   PATCH /api/products/:id/collab-ready
+   body: { availableForCollab: true }
+
+   Bulk:
+   PATCH /api/products/bulk/collab-ready
+   body: {
+     ids: ["productId1", "productId2"],
+     availableForCollab: false
+   }
+============================================================ */
+export const updateCollabReadyStatus = async (req, res) => {
+  try {
+    const rawStatus =
+      req.body?.availableForCollab ??
+      req.body?.collabReady ??
+      req.body?.status;
+
+    if (rawStatus === undefined || rawStatus === null) {
+      return res.status(400).json({
+        success: false,
+        message: "availableForCollab is required",
+      });
+    }
+
+    const availableForCollab =
+      typeof rawStatus === "boolean"
+        ? rawStatus
+        : ["true", "1", "yes"].includes(
+            String(rawStatus).trim().toLowerCase()
+          );
+
+    const rawIds = req.params?.id
+      ? [req.params.id]
+      : req.body?.ids ?? req.body?.productIds ?? [];
+
+    const ids = (
+      Array.isArray(rawIds)
+        ? rawIds
+        : String(rawIds || "").split(",")
+    )
+      .map((item) =>
+        item && typeof item === "object" && item._id
+          ? String(item._id)
+          : String(item || "").trim()
+      )
+      .filter(Boolean);
+
+    const uniqueIds = [...new Set(ids)];
+
+    if (!uniqueIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one product ID is required",
+      });
+    }
+
+    const invalidIds = uniqueIds.filter(
+      (id) => !mongoose.Types.ObjectId.isValid(id)
+    );
+
+    if (invalidIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Some product IDs are invalid",
+        invalidIds,
+      });
+    }
+
+    const result = await Product.updateMany(
+      {
+        _id: { $in: uniqueIds },
+      },
+      {
+        $set: {
+          availableForCollab,
+        },
+      }
+    );
+
+    const updatedProducts = await Product.find({
+      _id: { $in: uniqueIds },
+    })
+      .select(
+        "_id title slug productCode thumbnail availableForCollab"
+      )
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      message: availableForCollab
+        ? `${result.modifiedCount} product(s) marked collab ready`
+        : `${result.modifiedCount} product(s) removed from collab ready`,
+
+      requestedCount: uniqueIds.length,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+      availableForCollab,
+      products: updatedProducts,
+    });
+  } catch (error) {
+    console.error("❌ Update Collab Ready Status Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error.message || "Failed to update collab ready status",
+    });
+  }
+};
 
 
 /* ============================================================
@@ -1547,7 +1881,9 @@ export const updateProduct = async (req, res) => {
     if (data.isSamplingDone !== undefined) data.isSamplingDone = toBool(data.isSamplingDone);
     if (data.isBestSeller !== undefined) data.isBestSeller = toBool(data.isBestSeller);
     if (data.isTrending !== undefined) data.isTrending = toBool(data.isTrending);
-
+if (data.availableForCollab !== undefined) {
+  data.availableForCollab = toBool(data.availableForCollab);
+}
     // ✅ NEW
     if (data.isPrimaryProduct !== undefined) {
       data.isPrimaryProduct = toBool(data.isPrimaryProduct);
@@ -1701,6 +2037,7 @@ export const updateProduct = async (req, res) => {
       "isSamplingDone",
       "isBestSeller",
       "isTrending",
+      "availableForCollab",
       "isPatternReady",
       "isPrimaryProduct",
       "originalProductLink",

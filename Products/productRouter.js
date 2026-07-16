@@ -5,6 +5,7 @@ import {
   createProduct,
   getAllProducts,
   getProductCards,
+  getAvailableForCollabProducts,
   getProductsByTag,
   getProductsByCategory,
   fetchProductsByCategory,
@@ -36,6 +37,7 @@ import {
   updatePrimaryProductStatus,
   getAllProductMedia,
   syncProductAssociationGroup,
+  updateCollabReadyStatus,
 } from "./productController.js";
 
 import { searchProductsForCard } from "./product.search.controller.js";
@@ -73,6 +75,7 @@ const uploadSwatches = multer({
 /* ============================================================
    ADMIN INVENTORY
 ============================================================ */
+
 router.get("/admin/inventory/categories", getInventoryAdminCategories);
 router.get("/admin/inventory/:id", getSingleInventoryAdminProduct);
 router.patch("/admin/inventory/:id", updateSingleInventoryAdminProduct);
@@ -81,6 +84,7 @@ router.get("/admin/inventory", getInventoryAdminProducts);
 /* ============================================================
    VENDOR
 ============================================================ */
+
 router.get("/vendor-sampling", getVendorSamplingProducts);
 router.patch("/vendor-sampling/:id/status", updateVendorSamplingStatus);
 router.patch("/vendor-sampling/:id/remark", addVendorSamplingRemark);
@@ -91,8 +95,35 @@ router.patch("/vendor-patterns/:id/status", updateVendorPatternStatus);
 /* ============================================================
    PRODUCT LISTING / SEARCH
 ============================================================ */
+
 router.get("/cards", getProductCards);
 router.get("/card-search", searchProductsForCard);
+
+/**
+ * GET /api/products/available-for-collab
+ *
+ * Supports:
+ * ?page=1
+ * ?limit=24
+ * ?search=dress
+ * ?category=dresses
+ * ?sort=newest
+ */
+router.get(
+  "/available-for-collab",
+  getAvailableForCollabProducts
+);
+
+
+router.patch(
+  "/bulk/collab-ready",
+  updateCollabReadyStatus
+);
+
+router.patch(
+  "/:id/collab-ready",
+  updateCollabReadyStatus
+);
 
 router.get("/by-tag", getProductsByTag);
 router.get("/by-category/:category", getProductsByCategory);
@@ -119,6 +150,7 @@ router.get("/", getAllProducts);
 /* ============================================================
    BULK ACTIONS
 ============================================================ */
+
 router.post(
   "/bulk/preview",
   uploadCsv.single("file"),
@@ -137,11 +169,13 @@ router.patch("/bulk/trending/by-codes", bulkMarkTrendingByCodes);
 /* ============================================================
    CREATE PRODUCT
 ============================================================ */
+
 router.post("/", createProduct);
 
 /* ============================================================
    PRODUCT ACTIONS
 ============================================================ */
+
 router.patch("/primary-status", updatePrimaryProductStatus);
 
 router.patch(
@@ -176,8 +210,9 @@ router.patch(
 
 /* ============================================================
    CRUD / FALLBACK
-   Keep these routes at the bottom
+   Keep dynamic routes at the bottom
 ============================================================ */
+
 router.patch("/:id", updateProduct);
 router.put("/:id", updateProduct);
 router.delete("/:id", deleteProduct);
