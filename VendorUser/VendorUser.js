@@ -44,6 +44,27 @@ const vendorUserSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    assignedProducts: [
+  {
+    product: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Product",
+      required: true,
+    },
+
+    modules: {
+      sampling: { type: Boolean, default: false },
+      pattern: { type: Boolean, default: false },
+      production: { type: Boolean, default: false },
+      cuttingList: { type: Boolean, default: false },
+    },
+
+    assignedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+],
   },
   { timestamps: true }
 );
