@@ -92,6 +92,13 @@ import {
 
 import { sendReviewWhatsappManually } from "./orders.review.controller.js";
 
+import {
+  getVendorProductionJobs,
+  exportVendorProductionJobs,
+} from "./order.vendor.production.controller.js";
+
+import { protectVendor } from "../VendorUser/vendorAuth.js";
+
 const router = express.Router();
 
 /* Orders */
@@ -140,6 +147,31 @@ router.get("/reports/cancellations", getCancellationAnalyticsReport);
 router.post("/invoices", getInvoicesByOrderNumbers);
 router.get("/by-number/:orderNumber/invoice", getInvoiceByOrderNumber);
 router.get("/:id/invoice", getInvoiceById);
+
+/* Vendor Production */
+router.get(
+  "/vendor/production/jobs",
+  protectVendor,
+  getVendorProductionJobs
+);
+
+router.get(
+  "/vendor/production/jobs/export",
+  protectVendor,
+  exportVendorProductionJobs
+);
+
+/* Admin Production */
+router.get("/production/summary", getProductionSummary);
+router.get("/production/queue", getProductionQueue);
+router.get("/production/jobs", getProductionJobList);
+router.get("/production/jobs/export", exportProductionJobListExcel);
+router.get("/production/processing-products", getProcessingOrderProductList);
+router.post("/production/:id/shipped", markOrderShippedFromProduction);
+router.patch(
+  "/production/packed/mark-all-shipped",
+  markAllPackedOrdersShipped
+);
 
 /* Production */
 router.get("/production/summary", getProductionSummary);
