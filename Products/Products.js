@@ -32,7 +32,7 @@ const variantSchema = new mongoose.Schema(
 
     weight: { type: Number, default: 0 },
   },
-  { _id: true, timestamps: false }
+  { _id: true, timestamps: false },
 );
 
 /* ------------------------------------------------------------------
@@ -44,7 +44,7 @@ const specRowSchema = new mongoose.Schema(
     key: { type: String, trim: true, required: true }, // e.g. "Color"
     value: { type: String, trim: true, default: "" }, // e.g. "Red"
   },
-  { _id: false, timestamps: false }
+  { _id: false, timestamps: false },
 );
 
 /* ------------------------------------------------------------------
@@ -172,6 +172,11 @@ const productSchema = new mongoose.Schema(
     images: [{ type: String }],
     thumbnail: { type: String, default: "" },
     video: { type: String, default: "" },
+    /* PRODUCT SPOTLIGHT MEDIA */
+    productSpotlight: {
+      type: [{ type: String, trim: true }],
+      default: [],
+    },
 
     /* SHIPPING */
     weight: { type: Number, default: 0 },
@@ -232,12 +237,12 @@ const productSchema = new mongoose.Schema(
 
     isBestSeller: { type: Boolean, default: false, index: true },
     isTrending: { type: Boolean, default: false, index: true },
-// ✅ Collaboration
-availableForCollab: {
-  type: Boolean,
-  default: false,
-  index: true,
-},
+    // ✅ Collaboration
+    availableForCollab: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     // ✅ NEW: Pattern ready flag (product level)
     isPatternReady: { type: Boolean, default: false, index: true },
 
@@ -309,9 +314,13 @@ function computeColors(doc) {
     Array.from(
       new Set(
         (arr || [])
-          .map((c) => String(c || "").trim().toLowerCase())
-          .filter(Boolean)
-      )
+          .map((c) =>
+            String(c || "")
+              .trim()
+              .toLowerCase(),
+          )
+          .filter(Boolean),
+      ),
     );
 
   if (Array.isArray(doc.colors) && doc.colors.length > 0) {
@@ -329,8 +338,8 @@ function computeColors(doc) {
   (doc.variants || []).forEach((v) => {
     const attrs = Array.isArray(v.attributes) ? v.attributes : [];
     const color =
-      attrs.find((a) => String(a?.key || "").toLowerCase() === "color")?.value ||
-      "";
+      attrs.find((a) => String(a?.key || "").toLowerCase() === "color")
+        ?.value || "";
     if (color) set.add(String(color).trim().toLowerCase());
   });
 
@@ -357,7 +366,7 @@ productSchema.pre("validate", async function (next) {
       const counter = await Counter.findOneAndUpdate(
         { name: "product" },
         { $inc: { seq: 1 } },
-        { new: true, upsert: true, setDefaultsOnInsert: true }
+        { new: true, upsert: true, setDefaultsOnInsert: true },
       );
       this.productCode = String(counter.seq).padStart(5, "0");
     }
@@ -411,7 +420,7 @@ productSchema.pre("validate", function (next) {
     const hasPattern =
       Array.isArray(this.variants) &&
       this.variants.some(
-        (v) => v?.patternNumber && String(v.patternNumber).trim() !== ""
+        (v) => v?.patternNumber && String(v.patternNumber).trim() !== "",
       );
 
     this.isPatternReady = !!hasPattern;
@@ -433,7 +442,7 @@ const hasPositionalVariantUpdate = (obj = {}) =>
     (k) =>
       k.includes("variants.$.") ||
       k.includes("variants.$[") ||
-      k.startsWith("variants.$")
+      k.startsWith("variants.$"),
   );
 
 async function applyInventoryToUpdateQuery(next) {
@@ -460,15 +469,15 @@ async function applyInventoryToUpdateQuery(next) {
       "reservedStock" in $set ||
       Object.keys($set).some(
         (k) =>
-          k.startsWith("variants.") || k === "stock" || k === "reservedStock"
+          k.startsWith("variants.") || k === "stock" || k === "reservedStock",
       ) ||
       Object.keys($inc).some(
         (k) =>
-          k.startsWith("variants.") || k === "stock" || k === "reservedStock"
+          k.startsWith("variants.") || k === "stock" || k === "reservedStock",
       ) ||
       Object.keys($unset).some(
         (k) =>
-          k.startsWith("variants.") || k === "stock" || k === "reservedStock"
+          k.startsWith("variants.") || k === "stock" || k === "reservedStock",
       );
 
     const touchesColors =
@@ -589,4 +598,5 @@ productSchema.index({ isPatternReady: 1 });
 productSchema.index({ originalProductLink: 1 });
 productSchema.index({ isTrending: 1 });
 
-export default mongoose.models.Product || mongoose.model("Product", productSchema);
+export default mongoose.models.Product ||
+  mongoose.model("Product", productSchema);

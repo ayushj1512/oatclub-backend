@@ -10,7 +10,13 @@ import Category from "../Category/Category.js";
 import Collection from "../Collection/Collection.js";
 import { reconcileBackordersForVariant } from "../inventoryUtility/reconcileBackordersForVariant.js";
 
-const SYSTEM_CATEGORIES = new Set(["all-clothing", "new-arrivals","best-sellers","featured","party-wear"]);
+const SYSTEM_CATEGORIES = new Set([
+  "all-clothing",
+  "new-arrivals",
+  "best-sellers",
+  "featured",
+  "party-wear",
+]);
 
 /* ---------------- tiny helpers ---------------- */
 const arr = (v) =>
@@ -27,7 +33,11 @@ const arr = (v) =>
 const VARIANT_KEYS = ["size"];
 const tagsNorm = (v) =>
   arr(v)
-    .map((t) => String(t || "").trim().toLowerCase())
+    .map((t) =>
+      String(t || "")
+        .trim()
+        .toLowerCase(),
+    )
     .filter(Boolean);
 
 const json = (v, fb) => {
@@ -56,8 +66,6 @@ const pop = (q) => {
     });
 };
 
-   
-
 const uploadFile = async (file, folder = "products") => {
   if (!file) return null;
   const r = await uploadToCloudinary(file, folder);
@@ -72,9 +80,6 @@ const extractVariantKeys = (variant) => {
     attrs.find((a) => String(a?.key || "").toLowerCase() === key)?.value || "";
   return { size: pick("size") };
 };
-
-
-
 
 const applyStockFromVariants = (doc) => {
   const p = doc?.toObject ? doc.toObject() : doc;
@@ -91,7 +96,7 @@ const applyStockFromVariants = (doc) => {
 
     return {
       ...p,
-      stock,                 // physical
+      stock, // physical
       reservedStock: reserved,
       availableStock: available,
       isInStock: available > 0,
@@ -102,7 +107,7 @@ const applyStockFromVariants = (doc) => {
   const physicalTotal = variants.reduce((s, v) => s + Number(v?.stock ?? 0), 0);
   const reservedTotal = variants.reduce(
     (s, v) => s + Number(v?.reservedStock ?? 0),
-    0
+    0,
   );
 
   const anyAvailable = variants.some((v) => {
@@ -113,17 +118,12 @@ const applyStockFromVariants = (doc) => {
 
   return {
     ...p,
-    stock: physicalTotal,           // physical total
-    reservedStock: reservedTotal,   // total reserved (computed)
+    stock: physicalTotal, // physical total
+    reservedStock: reservedTotal, // total reserved (computed)
     availableStock: Math.max(0, physicalTotal - reservedTotal),
     isInStock: anyAvailable,
   };
 };
-
-
-
-
-
 
 const skuSafe = (v) =>
   String(v || "")
@@ -145,7 +145,7 @@ const ensureSKUs = async (data) => {
 
   // ✅ category code = first 3 letters only (alphanumeric-safe)
   const onlyLetters = skuSafe(mainCat).replace(/[^A-Z]/g, "");
-const categoryCode = (onlyLetters.slice(0, 3) || "CAT");
+  const categoryCode = onlyLetters.slice(0, 3) || "CAT";
 
   // ✅ productCode must exist (you are creating first, then calling ensureSKUs)
   const productCode = skuSafe(data.productCode || "00000");
@@ -183,9 +183,6 @@ const categoryCode = (onlyLetters.slice(0, 3) || "CAT");
   return data;
 };
 
-
-
-
 const validateAttributes = async (attributes = []) => {
   if (!Array.isArray(attributes) || !attributes.length) return;
   for (const a of attributes) {
@@ -207,7 +204,9 @@ const mergeUploads = async (req, existing = {}) => {
 
   if (req.files && !Array.isArray(req.files)) {
     const imgs = Array.isArray(req.files.images) ? req.files.images : [];
-    const thumbs = Array.isArray(req.files.thumbnail) ? req.files.thumbnail : [];
+    const thumbs = Array.isArray(req.files.thumbnail)
+      ? req.files.thumbnail
+      : [];
 
     for (const f of imgs) uploadedImages.push(await uploadFile(f, "products"));
     if (thumbs[0]) uploadedThumbnail = await uploadFile(thumbs[0], "products");
@@ -225,13 +224,17 @@ const mergeUploads = async (req, existing = {}) => {
         : [];
 
   const images = [...arr(base), ...uploadedImages].filter(Boolean);
-  const incomingThumb = typeof existing.thumbnail === "string" ? existing.thumbnail : "";
+  const incomingThumb =
+    typeof existing.thumbnail === "string" ? existing.thumbnail : "";
   const thumbnail =
-    uploadedThumbnail || incomingThumb || existing._existingThumb || images[0] || "";
+    uploadedThumbnail ||
+    incomingThumb ||
+    existing._existingThumb ||
+    images[0] ||
+    "";
 
   return { images, thumbnail };
 };
-
 
 const escapeRegex = (s = "") =>
   String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -246,7 +249,9 @@ const normalizeCode = (digits, padTo) => {
 };
 
 const buildCodeCandidates = (raw) => {
-  const digits = String(raw ?? "").trim().replace(/[^\d]/g, "");
+  const digits = String(raw ?? "")
+    .trim()
+    .replace(/[^\d]/g, "");
   if (!digits) return [];
   const set = new Set();
 
@@ -287,7 +292,6 @@ const getCardCategorySlug = (categories = []) => {
   return slugifySafe(preferred);
 };
 
-
 const resolveCollectionFilter = async (collection) => {
   const rawCollections = Array.isArray(collection)
     ? collection
@@ -299,18 +303,18 @@ const resolveCollectionFilter = async (collection) => {
   if (!rawCollections.length) return null;
 
   const objectIds = rawCollections.filter((c) =>
-    mongoose.Types.ObjectId.isValid(c)
+    mongoose.Types.ObjectId.isValid(c),
   );
 
   const nonIds = rawCollections.filter(
-    (c) => !mongoose.Types.ObjectId.isValid(c)
+    (c) => !mongoose.Types.ObjectId.isValid(c),
   );
 
   let matchedIds = [...objectIds];
 
   if (nonIds.length) {
     const escaped = nonIds.map((s) =>
-      String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
     );
 
     const docs = await Collection.find({
@@ -367,8 +371,6 @@ const mapProductCard = (p) => {
   };
 };
 
-
-
 /**
  * Adds code-search filter to `filters` when query has:
  * productCode / code / q / title (digits)
@@ -382,7 +384,7 @@ const applyProductCodeFilter = (filters, query) => {
     query.code ??
     query.q ??
     query.title ??
-    query.search ??   // ✅ add this
+    query.search ?? // ✅ add this
     "";
 
   const s = String(raw ?? "").trim();
@@ -402,8 +404,6 @@ const applyProductCodeFilter = (filters, query) => {
   }
 };
 
-
-
 /* ============================================================
    ✅ NEW: GET PRODUCTS BY TAG(S)
    GET /api/products/by-tag?tag=sale
@@ -416,8 +416,8 @@ export const getProductsByTag = async (req, res) => {
       page = 1,
       limit = 20,
       tag,
-      tags,          // comma-separated
-      category,      // comma-separated category slugs/names
+      tags, // comma-separated
+      category, // comma-separated category slugs/names
       collection,
       minPrice,
       maxPrice,
@@ -461,10 +461,7 @@ export const getProductsByTag = async (req, res) => {
 
     /* ---------------- SKU ---------------- */
     if (sku) {
-      filters.$or = [
-        { sku: String(sku) },
-        { "variants.sku": String(sku) },
-      ];
+      filters.$or = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
     }
 
     /* ---------------- price ---------------- */
@@ -513,7 +510,6 @@ export const getProductsByTag = async (req, res) => {
   }
 };
 
-
 /* helpers already in your file */
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
@@ -529,10 +525,10 @@ const getVariantSize = (variant) => {
 
   const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
   return (
-    attrs.find((a) => String(a?.key || "").toLowerCase() === "size")?.value || ""
+    attrs.find((a) => String(a?.key || "").toLowerCase() === "size")?.value ||
+    ""
   );
 };
-
 
 const keepOnlySizeVariants = (variants = []) => {
   const out = [];
@@ -546,7 +542,7 @@ const keepOnlySizeVariants = (variants = []) => {
     // remove color attribute if present
     const attrs = Array.isArray(v?.attributes) ? v.attributes : [];
     const cleanedAttrs = attrs.filter(
-      (a) => String(a?.key || "").toLowerCase() !== "color"
+      (a) => String(a?.key || "").toLowerCase() !== "color",
     );
 
     out.push({ ...v, attributes: cleanedAttrs });
@@ -555,7 +551,6 @@ const keepOnlySizeVariants = (variants = []) => {
 
   return out;
 };
-
 
 // controllers/productController.js
 export const createProduct = async (req, res) => {
@@ -566,7 +561,9 @@ export const createProduct = async (req, res) => {
     /* ---------------- helpers ---------------- */
     const s = (v) => String(v ?? "").trim();
     const toBool = (v) =>
-      typeof v === "boolean" ? v : ["true", "1", "yes"].includes(s(v).toLowerCase());
+      typeof v === "boolean"
+        ? v
+        : ["true", "1", "yes"].includes(s(v).toLowerCase());
 
     const normSpecs = (v) => {
       const out = [];
@@ -594,9 +591,10 @@ export const createProduct = async (req, res) => {
         }
       }
 
-      if (Array.isArray(v)) return v.forEach((r) => r && push(r.key, r.value)), out;
+      if (Array.isArray(v))
+        return (v.forEach((r) => r && push(r.key, r.value)), out);
       if (v && typeof v === "object")
-        return Object.entries(v).forEach(([k, val]) => push(k, val)), out;
+        return (Object.entries(v).forEach(([k, val]) => push(k, val)), out);
 
       return [];
     };
@@ -629,7 +627,12 @@ export const createProduct = async (req, res) => {
         const roleRaw = s(row.role || "main").toLowerCase();
         const role = ROLES.has(roleRaw) ? roleRaw : "main";
 
-        const hasAny = !!(fabricName || fabricCode || fabricColor || s(row.role));
+        const hasAny = !!(
+          fabricName ||
+          fabricCode ||
+          fabricColor ||
+          s(row.role)
+        );
         if (!hasAny) return;
 
         const finalName = fabricName || fabricCode;
@@ -650,13 +653,13 @@ export const createProduct = async (req, res) => {
           v = JSON.parse(t);
         } catch {
           (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) =>
-            push(String(p || ""))
+            push(String(p || "")),
           );
           return out;
         }
       }
 
-      if (Array.isArray(v)) return v.forEach(push), out;
+      if (Array.isArray(v)) return (v.forEach(push), out);
 
       if (v && typeof v === "object") {
         const looksSingle =
@@ -665,10 +668,10 @@ export const createProduct = async (req, res) => {
           "fabricColor" in v ||
           "role" in v;
 
-        if (looksSingle) return push(v), out;
+        if (looksSingle) return (push(v), out);
 
         Object.entries(v).forEach(([role, name]) =>
-          push({ role, fabricName: name })
+          push({ role, fabricName: name }),
         );
         return out;
       }
@@ -687,8 +690,8 @@ export const createProduct = async (req, res) => {
       data.keyFeatures !== undefined
         ? json(data.keyFeatures, [])
         : data.highlights !== undefined
-        ? json(data.highlights, [])
-        : [];
+          ? json(data.highlights, [])
+          : [];
     delete data.highlights;
 
     data.specifications = normSpecs(data.specifications ?? data.specs);
@@ -697,6 +700,7 @@ export const createProduct = async (req, res) => {
     data.keywords = arr(data.keywords);
     data.tags = tagsNorm(data.tags);
     data.collections = arr(data.collections);
+    data.productSpotlight = json(data.productSpotlight, []);
 
     // ✅ extra schema fields
     data.isPatternReady =
@@ -707,33 +711,42 @@ export const createProduct = async (req, res) => {
 
     // ✅ NEW: primary product flag
     data.isPrimaryProduct =
-      data.isPrimaryProduct !== undefined ? toBool(data.isPrimaryProduct) : true;
+      data.isPrimaryProduct !== undefined
+        ? toBool(data.isPrimaryProduct)
+        : true;
 
     // ✅ trending + bestseller
     data.isBestSeller =
       data.isBestSeller !== undefined ? toBool(data.isBestSeller) : false;
     data.isTrending =
       data.isTrending !== undefined ? toBool(data.isTrending) : false;
-// ✅ Available for collaboration
-data.availableForCollab =
-  data.availableForCollab !== undefined
-    ? toBool(data.availableForCollab)
-    : false;
+    // ✅ Available for collaboration
+    data.availableForCollab =
+      data.availableForCollab !== undefined
+        ? toBool(data.availableForCollab)
+        : false;
     // ✅ fabrics
     try {
-      data.fabrics = data.fabrics !== undefined ? normFabrics(data.fabrics) : [];
+      data.fabrics =
+        data.fabrics !== undefined ? normFabrics(data.fabrics) : [];
     } catch (err) {
-      return res.status(400).json({ message: err.message || "Invalid fabrics" });
+      return res
+        .status(400)
+        .json({ message: err.message || "Invalid fabrics" });
     }
 
     data.avgFabricConsumption = json(
       data.avgFabricConsumption,
-      data.avgFabricConsumption
+      data.avgFabricConsumption,
     );
 
     if (data.colors !== undefined) {
       data.colors = Array.from(
-        new Set(arr(data.colors).map((c) => s(c).toLowerCase()).filter(Boolean))
+        new Set(
+          arr(data.colors)
+            .map((c) => s(c).toLowerCase())
+            .filter(Boolean),
+        ),
       );
     }
 
@@ -757,15 +770,18 @@ data.availableForCollab =
     data.categories = Array.isArray(data.categories)
       ? data.categories
       : typeof data.categories === "string"
-      ? data.categories.split(",").map((c) => s(c)).filter(Boolean)
-      : [];
+        ? data.categories
+            .split(",")
+            .map((c) => s(c))
+            .filter(Boolean)
+        : [];
 
     const hadNewArrivals = data.categories.some(
-      (c) => String(c).toLowerCase() === "new-arrivals"
+      (c) => String(c).toLowerCase() === "new-arrivals",
     );
 
     data.categories = data.categories.filter(
-      (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase())
+      (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase()),
     );
 
     if (hadNewArrivals) {
@@ -800,7 +816,7 @@ data.availableForCollab =
           productAttributes: data.attributes,
           existingVariants: [],
           variantKeys: VARIANT_KEYS,
-        })
+        }),
       );
 
       data.productType = data.variants.length ? "variable" : "simple";
@@ -817,7 +833,7 @@ data.availableForCollab =
     data.isPatternReady =
       Array.isArray(data.variants) &&
       data.variants.some(
-        (v) => v?.patternNumber && String(v.patternNumber).trim()
+        (v) => v?.patternNumber && String(v.patternNumber).trim(),
       );
 
     /* ---------------- cross-sell ---------------- */
@@ -825,8 +841,8 @@ data.availableForCollab =
       Array.isArray(data.crossSellProducts)
         ? data.crossSellProducts
         : typeof data.crossSellProducts === "string"
-        ? data.crossSellProducts.split(",").map((id) => s(id))
-        : []
+          ? data.crossSellProducts.split(",").map((id) => s(id))
+          : []
     ).filter(isValidObjectId);
 
     /* ---------------- uploads ---------------- */
@@ -837,6 +853,10 @@ data.availableForCollab =
 
     data.images = images;
     data.thumbnail = thumbnail;
+
+    if (!Array.isArray(data.productSpotlight)) {
+      data.productSpotlight = [];
+    }
 
     if (!isBulk && (!data.images || !data.images.length)) {
       return res
@@ -864,14 +884,19 @@ data.availableForCollab =
       variants: skuPayload.variants,
       productType: skuPayload.productType,
       colors: Array.isArray(data.colors) ? data.colors : [],
+      productSpotlight: Array.isArray(data.productSpotlight)
+        ? data.productSpotlight
+        : [],
       shortDescription: data.shortDescription || "",
       howToStyle: data.howToStyle || "",
       fabricDetails: data.fabricDetails || "",
       keyFeatures: Array.isArray(data.keyFeatures) ? data.keyFeatures : [],
-      specifications: Array.isArray(data.specifications) ? data.specifications : [],
+      specifications: Array.isArray(data.specifications)
+        ? data.specifications
+        : [],
       isBestSeller: !!data.isBestSeller,
       isTrending: !!data.isTrending,
-        availableForCollab: !!data.availableForCollab,
+      availableForCollab: !!data.availableForCollab,
 
       isPatternReady: !!data.isPatternReady,
       isPrimaryProduct: !!data.isPrimaryProduct,
@@ -887,8 +912,8 @@ data.availableForCollab =
       "howToStyle",
       "fabricDetails",
       "specifications",
+      "productSpotlight",
     ].forEach((k) => created.markModified(k));
-
     [
       "isBestSeller",
       "isTrending",
@@ -901,13 +926,15 @@ data.availableForCollab =
 
     await Product.updateOne(
       { _id: created._id },
-      { $pull: { crossSellProducts: created._id } }
+      { $pull: { crossSellProducts: created._id } },
     );
 
     const full = await pop(Product.findById(created._id));
 
     return res.status(201).json({
-      message: isBulk ? "Bulk draft product created" : "Product created successfully",
+      message: isBulk
+        ? "Bulk draft product created"
+        : "Product created successfully",
       product: applyStockFromVariants(full),
     });
   } catch (e) {
@@ -915,7 +942,6 @@ data.availableForCollab =
     return res.status(400).json({ message: e.message });
   }
 };
-
 
 /* ============================================================
    ✅ GET ALL (supports category/subcategory = slug OR id)
@@ -1010,7 +1036,8 @@ export const getAllProducts = async (req, res) => {
       return Number.isFinite(n) ? n : null;
     };
     const toBool = (v) => String(v).trim().toLowerCase() === "true";
-    const hasVal = (v) => v !== undefined && v !== null && String(v).trim() !== "";
+    const hasVal = (v) =>
+      v !== undefined && v !== null && String(v).trim() !== "";
 
     const toArray = (v) => {
       if (Array.isArray(v)) {
@@ -1063,7 +1090,8 @@ export const getAllProducts = async (req, res) => {
     if (hasVal(collection)) {
       const collections = toArray(collection);
       if (collections.length === 1) filters.collections = collections[0];
-      else if (collections.length > 1) filters.collections = { $in: collections };
+      else if (collections.length > 1)
+        filters.collections = { $in: collections };
     }
 
     /* ---------------- tags ---------------- */
@@ -1077,7 +1105,8 @@ export const getAllProducts = async (req, res) => {
     if (hasVal(isDraft)) filters.isDraft = toBool(isDraft);
     if (hasVal(isBestSeller)) filters.isBestSeller = toBool(isBestSeller);
     if (hasVal(isTrending)) filters.isTrending = toBool(isTrending);
-    if (hasVal(isPrimaryProduct)) filters.isPrimaryProduct = toBool(isPrimaryProduct);
+    if (hasVal(isPrimaryProduct))
+      filters.isPrimaryProduct = toBool(isPrimaryProduct);
     if (hasVal(isFeatured)) filters.isFeatured = toBool(isFeatured);
     if (hasVal(isPatternReady)) filters.isPatternReady = toBool(isPatternReady);
     if (hasVal(isSamplingDone)) filters.isSamplingDone = toBool(isSamplingDone);
@@ -1090,25 +1119,37 @@ export const getAllProducts = async (req, res) => {
     if (hasVal(slug)) filters.slug = toStr(slug).toLowerCase();
     if (hasVal(hsnCode)) filters.hsnCode = toStr(hsnCode).replace(/[^\d]/g, "");
     if (hasVal(externalURL)) filters.externalURL = toStr(externalURL);
-    if (hasVal(originalProductLink)) filters.originalProductLink = toStr(originalProductLink);
+    if (hasVal(originalProductLink))
+      filters.originalProductLink = toStr(originalProductLink);
     if (hasVal(wordpressId) && toNum(wordpressId) !== null) {
       filters.wordpressId = toNum(wordpressId);
     }
 
     /* ---------------- arrays / nested string filters ---------------- */
-    const colorList = [...toArray(colors), ...toArray(color)].map((x) => x.toLowerCase());
+    const colorList = [...toArray(colors), ...toArray(color)].map((x) =>
+      x.toLowerCase(),
+    );
     if (colorList.length) filters.colors = { $in: [...new Set(colorList)] };
 
     if (hasVal(fabricName)) {
-      filters["fabrics.fabricName"] = { $regex: escapeRegex(toStr(fabricName)), $options: "i" };
+      filters["fabrics.fabricName"] = {
+        $regex: escapeRegex(toStr(fabricName)),
+        $options: "i",
+      };
     }
 
     if (hasVal(fabricCode)) {
-      filters["fabrics.fabricCode"] = { $regex: escapeRegex(toStr(fabricCode)), $options: "i" };
+      filters["fabrics.fabricCode"] = {
+        $regex: escapeRegex(toStr(fabricCode)),
+        $options: "i",
+      };
     }
 
     if (hasVal(fabricColor)) {
-      filters["fabrics.fabricColor"] = { $regex: escapeRegex(toStr(fabricColor)), $options: "i" };
+      filters["fabrics.fabricColor"] = {
+        $regex: escapeRegex(toStr(fabricColor)),
+        $options: "i",
+      };
     }
 
     if (hasVal(role)) {
@@ -1133,7 +1174,10 @@ export const getAllProducts = async (req, res) => {
 
     /* ---------------- exact title ---------------- */
     if (hasVal(titleExact)) {
-      filters.title = { $regex: `^${escapeRegex(toStr(titleExact))}$`, $options: "i" };
+      filters.title = {
+        $regex: `^${escapeRegex(toStr(titleExact))}$`,
+        $options: "i",
+      };
     }
 
     /* ---------------- price / stock / analytics ranges ---------------- */
@@ -1146,7 +1190,11 @@ export const getAllProducts = async (req, res) => {
     addRange("analytics.purchases", minPurchases, maxPurchases);
     addRange("analytics.cartAdds", minCartAdds, maxCartAdds);
     addRange("analytics.wishlistCount", minWishlistCount, maxWishlistCount);
-    addRange("analytics.searchAppearances", minSearchAppearances, maxSearchAppearances);
+    addRange(
+      "analytics.searchAppearances",
+      minSearchAppearances,
+      maxSearchAppearances,
+    );
 
     /* ---------------- date ranges ---------------- */
     addDateRange("createdAt", createdFrom, createdTo);
@@ -1282,7 +1330,6 @@ export const getAllProducts = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
 
 /* ============================================================
    GET PRODUCTS AVAILABLE FOR COLLAB
@@ -1491,12 +1538,10 @@ export const getAvailableForCollabProducts = async (req, res) => {
     return res.status(500).json({
       success: false,
       message:
-        error.message ||
-        "Failed to fetch products available for collaboration",
+        error.message || "Failed to fetch products available for collaboration",
     });
   }
 };
-
 
 /* ============================================================
    UPDATE COLLAB READY STATUS
@@ -1516,9 +1561,7 @@ export const getAvailableForCollabProducts = async (req, res) => {
 export const updateCollabReadyStatus = async (req, res) => {
   try {
     const rawStatus =
-      req.body?.availableForCollab ??
-      req.body?.collabReady ??
-      req.body?.status;
+      req.body?.availableForCollab ?? req.body?.collabReady ?? req.body?.status;
 
     if (rawStatus === undefined || rawStatus === null) {
       return res.status(400).json({
@@ -1530,23 +1573,19 @@ export const updateCollabReadyStatus = async (req, res) => {
     const availableForCollab =
       typeof rawStatus === "boolean"
         ? rawStatus
-        : ["true", "1", "yes"].includes(
-            String(rawStatus).trim().toLowerCase()
-          );
+        : ["true", "1", "yes"].includes(String(rawStatus).trim().toLowerCase());
 
     const rawIds = req.params?.id
       ? [req.params.id]
-      : req.body?.ids ?? req.body?.productIds ?? [];
+      : (req.body?.ids ?? req.body?.productIds ?? []);
 
     const ids = (
-      Array.isArray(rawIds)
-        ? rawIds
-        : String(rawIds || "").split(",")
+      Array.isArray(rawIds) ? rawIds : String(rawIds || "").split(",")
     )
       .map((item) =>
         item && typeof item === "object" && item._id
           ? String(item._id)
-          : String(item || "").trim()
+          : String(item || "").trim(),
       )
       .filter(Boolean);
 
@@ -1560,7 +1599,7 @@ export const updateCollabReadyStatus = async (req, res) => {
     }
 
     const invalidIds = uniqueIds.filter(
-      (id) => !mongoose.Types.ObjectId.isValid(id)
+      (id) => !mongoose.Types.ObjectId.isValid(id),
     );
 
     if (invalidIds.length) {
@@ -1579,15 +1618,13 @@ export const updateCollabReadyStatus = async (req, res) => {
         $set: {
           availableForCollab,
         },
-      }
+      },
     );
 
     const updatedProducts = await Product.find({
       _id: { $in: uniqueIds },
     })
-      .select(
-        "_id title slug productCode thumbnail availableForCollab"
-      )
+      .select("_id title slug productCode thumbnail availableForCollab")
       .lean();
 
     return res.status(200).json({
@@ -1607,12 +1644,10 @@ export const updateCollabReadyStatus = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message:
-        error.message || "Failed to update collab ready status",
+      message: error.message || "Failed to update collab ready status",
     });
   }
 };
-
 
 /* ============================================================
    GET BY ID OR SLUG
@@ -1644,7 +1679,9 @@ export const getProductByIdOrSlug = async (req, res) => {
     let doc = null;
 
     // 1) slug
-    doc = await pop(Product.findOne({ slug: param }).populate(crossSellPopulate));
+    doc = await pop(
+      Product.findOne({ slug: param }).populate(crossSellPopulate),
+    );
 
     // 2) objectId
     if (!doc && mongoose.Types.ObjectId.isValid(param)) {
@@ -1657,7 +1694,9 @@ export const getProductByIdOrSlug = async (req, res) => {
       const codes = buildCodeCandidates(param);
 
       doc = await pop(
-        Product.findOne({ productCode: { $in: codes } }).populate(crossSellPopulate)
+        Product.findOne({ productCode: { $in: codes } }).populate(
+          crossSellPopulate,
+        ),
       );
     }
 
@@ -1669,9 +1708,6 @@ export const getProductByIdOrSlug = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
-
-
 
 /* ============================================================
    GET BY SKU
@@ -1687,7 +1723,7 @@ export const getProductBySKU = async (req, res) => {
         path: "crossSellProducts",
         select: "title slug price compareAtPrice thumbnail isActive",
         match: { isActive: true },
-      })
+      }),
     );
 
     if (!doc) {
@@ -1696,8 +1732,7 @@ export const getProductBySKU = async (req, res) => {
 
     const product = applyStockFromVariants(doc);
 
-    const matchedVariant =
-      product.variants?.find((v) => v.sku === sku) || null;
+    const matchedVariant = product.variants?.find((v) => v.sku === sku) || null;
 
     res.json({
       product,
@@ -1709,26 +1744,28 @@ export const getProductBySKU = async (req, res) => {
   }
 };
 
-
 /* ============================================================
    UPDATE
 ============================================================ */
 export const updateProduct = async (req, res) => {
   try {
     const data = { ...req.body };
+    data.productSpotlight = json(data.productSpotlight, []);
 
     /* ---------------- helpers ---------------- */
     const s = (v) => String(v ?? "").trim();
     const toBool = (v) =>
-      typeof v === "boolean" ? v : ["true", "1", "yes"].includes(s(v).toLowerCase());
+      typeof v === "boolean"
+        ? v
+        : ["true", "1", "yes"].includes(s(v).toLowerCase());
 
     const normColors = (v) =>
       Array.from(
         new Set(
           (Array.isArray(v) ? v : String(v || "").split(","))
             .map((c) => s(c).toLowerCase())
-            .filter(Boolean)
-        )
+            .filter(Boolean),
+        ),
       );
 
     const normSpecs = (v) => {
@@ -1757,9 +1794,10 @@ export const updateProduct = async (req, res) => {
         }
       }
 
-      if (Array.isArray(v)) return v.forEach((r) => r && push(r.key, r.value)), out;
+      if (Array.isArray(v))
+        return (v.forEach((r) => r && push(r.key, r.value)), out);
       if (v && typeof v === "object")
-        return Object.entries(v).forEach(([k, val]) => push(k, val)), out;
+        return (Object.entries(v).forEach(([k, val]) => push(k, val)), out);
 
       return [];
     };
@@ -1792,7 +1830,12 @@ export const updateProduct = async (req, res) => {
         const roleRaw = s(row.role || "main").toLowerCase();
         const role = ROLES.has(roleRaw) ? roleRaw : "main";
 
-        const hasAny = !!(fabricName || fabricCode || fabricColor || s(row.role));
+        const hasAny = !!(
+          fabricName ||
+          fabricCode ||
+          fabricColor ||
+          s(row.role)
+        );
         if (!hasAny) return;
 
         const finalName = fabricName || fabricCode;
@@ -1813,22 +1856,25 @@ export const updateProduct = async (req, res) => {
           v = JSON.parse(t);
         } catch {
           (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) =>
-            push(String(p || ""))
+            push(String(p || "")),
           );
           return out;
         }
       }
 
-      if (Array.isArray(v)) return v.forEach(push), out;
+      if (Array.isArray(v)) return (v.forEach(push), out);
 
       if (v && typeof v === "object") {
         const looksSingle =
-          "fabricName" in v || "fabricCode" in v || "fabricColor" in v || "role" in v;
+          "fabricName" in v ||
+          "fabricCode" in v ||
+          "fabricColor" in v ||
+          "role" in v;
 
-        if (looksSingle) return push(v), out;
+        if (looksSingle) return (push(v), out);
 
         Object.entries(v).forEach(([role, name]) =>
-          push({ role, fabricName: name })
+          push({ role, fabricName: name }),
         );
         return out;
       }
@@ -1837,14 +1883,19 @@ export const updateProduct = async (req, res) => {
     };
 
     /* ---------------- normalize (only if provided) ---------------- */
-    if (data.attributes !== undefined) data.attributes = json(data.attributes, data.attributes);
+    if (data.attributes !== undefined)
+      data.attributes = json(data.attributes, data.attributes);
 
-    if (data.shortDescription !== undefined) data.shortDescription = s(data.shortDescription);
+    if (data.shortDescription !== undefined)
+      data.shortDescription = s(data.shortDescription);
     if (data.howToStyle !== undefined) data.howToStyle = s(data.howToStyle);
-    if (data.fabricDetails !== undefined) data.fabricDetails = s(data.fabricDetails);
+    if (data.fabricDetails !== undefined)
+      data.fabricDetails = s(data.fabricDetails);
 
-    if (data.keyFeatures !== undefined) data.keyFeatures = json(data.keyFeatures, []);
-    else if (data.highlights !== undefined) data.keyFeatures = json(data.highlights, []);
+    if (data.keyFeatures !== undefined)
+      data.keyFeatures = json(data.keyFeatures, []);
+    else if (data.highlights !== undefined)
+      data.keyFeatures = json(data.highlights, []);
     if (data.highlights !== undefined) delete data.highlights;
 
     if (data.specifications !== undefined || data.specs !== undefined) {
@@ -1854,36 +1905,50 @@ export const updateProduct = async (req, res) => {
 
     if (data.keywords !== undefined) data.keywords = arr(data.keywords);
     if (data.tags !== undefined) data.tags = tagsNorm(data.tags);
-    if (data.collections !== undefined) data.collections = arr(data.collections);
+    if (data.collections !== undefined)
+      data.collections = arr(data.collections);
 
     if (data.fabrics !== undefined) {
       try {
         data.fabrics = normFabrics(json(data.fabrics, data.fabrics));
       } catch (err) {
-        return res.status(400).json({ message: err.message || "Invalid fabrics" });
+        return res
+          .status(400)
+          .json({ message: err.message || "Invalid fabrics" });
       }
     }
 
     if (data.avgFabricConsumption !== undefined) {
-      data.avgFabricConsumption = json(data.avgFabricConsumption, data.avgFabricConsumption);
+      data.avgFabricConsumption = json(
+        data.avgFabricConsumption,
+        data.avgFabricConsumption,
+      );
     }
 
     // ✅ NEW fields
-    if (data.originalProductLink !== undefined) data.originalProductLink = s(data.originalProductLink);
-    if (data.productLink !== undefined && data.originalProductLink === undefined) {
+    if (data.originalProductLink !== undefined)
+      data.originalProductLink = s(data.originalProductLink);
+    if (
+      data.productLink !== undefined &&
+      data.originalProductLink === undefined
+    ) {
       data.originalProductLink = s(data.productLink);
       delete data.productLink;
     }
 
     // allow manual set, but we will recompute if variants provided
-    if (data.isPatternReady !== undefined) data.isPatternReady = toBool(data.isPatternReady);
+    if (data.isPatternReady !== undefined)
+      data.isPatternReady = toBool(data.isPatternReady);
 
-    if (data.isSamplingDone !== undefined) data.isSamplingDone = toBool(data.isSamplingDone);
-    if (data.isBestSeller !== undefined) data.isBestSeller = toBool(data.isBestSeller);
-    if (data.isTrending !== undefined) data.isTrending = toBool(data.isTrending);
-if (data.availableForCollab !== undefined) {
-  data.availableForCollab = toBool(data.availableForCollab);
-}
+    if (data.isSamplingDone !== undefined)
+      data.isSamplingDone = toBool(data.isSamplingDone);
+    if (data.isBestSeller !== undefined)
+      data.isBestSeller = toBool(data.isBestSeller);
+    if (data.isTrending !== undefined)
+      data.isTrending = toBool(data.isTrending);
+    if (data.availableForCollab !== undefined) {
+      data.availableForCollab = toBool(data.availableForCollab);
+    }
     // ✅ NEW
     if (data.isPrimaryProduct !== undefined) {
       data.isPrimaryProduct = toBool(data.isPrimaryProduct);
@@ -1894,21 +1959,31 @@ if (data.availableForCollab !== undefined) {
     if (data.hsnCode !== undefined) {
       const hsn = s(data.hsnCode);
       if (hsn && !/^\d+$/.test(hsn)) {
-        return res.status(400).json({ message: "HSN code must contain digits only" });
+        return res
+          .status(400)
+          .json({ message: "HSN code must contain digits only" });
       }
       data.hsnCode = hsn;
     }
 
     /* ---------------- fetch existing ---------------- */
     const existing = await Product.findById(req.params.id);
-    if (!existing) return res.status(404).json({ message: "Product not found" });
+    if (!existing)
+      return res.status(404).json({ message: "Product not found" });
 
     /* ---------------- slug ---------------- */
     if (data.slug || data.title) {
-      const nextSlug = slugify(String(data.slug || data.title || existing.title), { lower: true });
+      const nextSlug = slugify(
+        String(data.slug || data.title || existing.title),
+        { lower: true },
+      );
       if (nextSlug !== existing.slug) {
-        const clash = await Product.exists({ slug: nextSlug, _id: { $ne: existing._id } });
-        if (clash) return res.status(400).json({ message: "Slug already exists" });
+        const clash = await Product.exists({
+          slug: nextSlug,
+          _id: { $ne: existing._id },
+        });
+        if (clash)
+          return res.status(400).json({ message: "Slug already exists" });
         data.slug = nextSlug;
       }
     }
@@ -1918,11 +1993,18 @@ if (data.availableForCollab !== undefined) {
       const raw = Array.isArray(data.categories)
         ? data.categories
         : typeof data.categories === "string"
-        ? data.categories.split(",").map((c) => s(c)).filter(Boolean)
-        : [];
+          ? data.categories
+              .split(",")
+              .map((c) => s(c))
+              .filter(Boolean)
+          : [];
 
-      const hadNewArrivals = raw.some((c) => String(c).toLowerCase() === "new-arrivals");
-      const filtered = raw.filter((c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase()));
+      const hadNewArrivals = raw.some(
+        (c) => String(c).toLowerCase() === "new-arrivals",
+      );
+      const filtered = raw.filter(
+        (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase()),
+      );
 
       if (!filtered.length) {
         return res.status(400).json({
@@ -1942,7 +2024,8 @@ if (data.availableForCollab !== undefined) {
     /* ---------------- validate attributes ---------------- */
     await validateAttributes(data.attributes ?? existing.attributes);
 
-    if (Array.isArray(data.variants)) data.variants = data.variants.map(({ image, ...v }) => v);
+    if (Array.isArray(data.variants))
+      data.variants = data.variants.map(({ image, ...v }) => v);
 
     // ✅ never accept product stock update here
     delete data.stock;
@@ -1950,7 +2033,9 @@ if (data.availableForCollab !== undefined) {
 
     /* ---------------- variants (preserve inventory) ---------------- */
     if (Array.isArray(data.variants)) {
-      const existingById = new Map((existing.variants || []).map((v) => [String(v._id), v]));
+      const existingById = new Map(
+        (existing.variants || []).map((v) => [String(v._id), v]),
+      );
 
       data.variants = keepOnlySizeVariants(
         data.variants.map((v) => {
@@ -1966,14 +2051,14 @@ if (data.availableForCollab !== undefined) {
             isInStock: prev?.isInStock ?? false,
             attributes: Array.isArray(v.attributes) ? v.attributes : [],
           };
-        })
+        }),
       );
 
       data.productType = data.variants.length ? "variable" : "simple";
 
       // ✅ AUTO set isPatternReady if variants changed
       data.isPatternReady = data.variants.some(
-        (v) => v?.patternNumber && String(v.patternNumber).trim()
+        (v) => v?.patternNumber && String(v.patternNumber).trim(),
       );
     } else {
       delete data.variants;
@@ -1984,8 +2069,8 @@ if (data.availableForCollab !== undefined) {
       const raw = Array.isArray(data.crossSellProducts)
         ? data.crossSellProducts
         : typeof data.crossSellProducts === "string"
-        ? data.crossSellProducts.split(",").map((id) => s(id))
-        : [];
+          ? data.crossSellProducts.split(",").map((id) => s(id))
+          : [];
 
       data.crossSellProducts = raw
         .filter(isValidObjectId)
@@ -2009,7 +2094,9 @@ if (data.availableForCollab !== undefined) {
     const skuData = {
       ...existing.toObject(),
       ...data,
-      variants: Array.isArray(data.variants) ? data.variants : existing.variants,
+      variants: Array.isArray(data.variants)
+        ? data.variants
+        : existing.variants,
     };
 
     await ensureSKUs(skuData);
@@ -2017,12 +2104,17 @@ if (data.availableForCollab !== undefined) {
     if (Array.isArray(data.variants)) data.variants = skuData.variants;
 
     // ✅ FINAL SAFETY: compute pattern ready from final variants (if variable)
-    const finalVariants = Array.isArray(data.variants) ? data.variants : existing.variants;
+    const finalVariants = Array.isArray(data.variants)
+      ? data.variants
+      : existing.variants;
     const finalIsPatternReady =
       Array.isArray(finalVariants) &&
-      finalVariants.some((v) => v?.patternNumber && String(v.patternNumber).trim());
+      finalVariants.some(
+        (v) => v?.patternNumber && String(v.patternNumber).trim(),
+      );
 
-    if (data.isPatternReady === undefined) data.isPatternReady = !!finalIsPatternReady;
+    if (data.isPatternReady === undefined)
+      data.isPatternReady = !!finalIsPatternReady;
 
     /* ---------------- apply + save ---------------- */
     existing.set(data);
@@ -2084,14 +2176,15 @@ export const updateVariantPatternNumber = async (req, res) => {
   try {
     const { variantId, patternNumber } = req.body;
 
-    if (!variantId) return res.status(400).json({ message: "variantId required" });
+    if (!variantId)
+      return res.status(400).json({ message: "variantId required" });
 
     const pn = String(patternNumber || "").trim();
 
     const updated = await Product.findOneAndUpdate(
       { _id: req.params.id, "variants._id": variantId },
       { $set: { "variants.$.patternNumber": pn } },
-      { new: true }
+      { new: true },
     ).populate([
       { path: "collections" },
       { path: "offer" },
@@ -2102,7 +2195,8 @@ export const updateVariantPatternNumber = async (req, res) => {
       { path: "variants.attributes.attribute" },
     ]);
 
-    if (!updated) return res.status(404).json({ message: "Product/Variant not found" });
+    if (!updated)
+      return res.status(404).json({ message: "Product/Variant not found" });
 
     return res.json({
       message: "Variant pattern updated",
@@ -2147,12 +2241,12 @@ export const syncProductAssociationGroup = async (req, res) => {
       .map((item) =>
         item && typeof item === "object" && item._id
           ? String(item._id)
-          : String(item || "").trim()
+          : String(item || "").trim(),
       )
       .filter(
         (id) =>
           mongoose.Types.ObjectId.isValid(id) &&
-          String(id) !== String(sourceId)
+          String(id) !== String(sourceId),
       );
 
     const groupIds = Array.from(new Set([sourceId, ...selectedIds]));
@@ -2168,13 +2262,9 @@ export const syncProductAssociationGroup = async (req, res) => {
     }).select("_id title productCode variants crossSellProducts");
 
     if (products.length !== groupIds.length) {
-      const foundIds = new Set(
-        products.map((product) => String(product._id))
-      );
+      const foundIds = new Set(products.map((product) => String(product._id)));
 
-      const missingIds = groupIds.filter(
-        (id) => !foundIds.has(String(id))
-      );
+      const missingIds = groupIds.filter((id) => !foundIds.has(String(id)));
 
       return res.status(404).json({
         message: "Some selected products were not found",
@@ -2186,7 +2276,7 @@ export const syncProductAssociationGroup = async (req, res) => {
       const productId = String(product._id);
 
       const crossSellProducts = groupIds.filter(
-        (id) => String(id) !== productId
+        (id) => String(id) !== productId,
       );
 
       return {
@@ -2209,7 +2299,7 @@ export const syncProductAssociationGroup = async (req, res) => {
       _id: { $in: groupIds },
     })
       .select(
-        "title slug productCode thumbnail price compareAtPrice variants crossSellProducts isPatternReady"
+        "title slug productCode thumbnail price compareAtPrice variants crossSellProducts isPatternReady",
       )
       .populate({
         path: "crossSellProducts",
@@ -2232,12 +2322,6 @@ export const syncProductAssociationGroup = async (req, res) => {
   }
 };
 
-
-
-
-
-
-
 /* ============================================================
    DELETE / BULK / ANALYTICS / VARIANT STOCK / RATINGS / IMPORT
 ============================================================ */
@@ -2255,7 +2339,8 @@ export const deleteProduct = async (req, res) => {
 export const bulkDeleteProducts = async (req, res) => {
   try {
     const { ids } = req.body;
-    if (!ids?.length) return res.status(400).json({ message: "No IDs provided" });
+    if (!ids?.length)
+      return res.status(400).json({ message: "No IDs provided" });
     await Product.deleteMany({ _id: { $in: ids } });
     res.json({ message: "Products deleted successfully" });
   } catch (e) {
@@ -2267,13 +2352,20 @@ export const bulkDeleteProducts = async (req, res) => {
 export const incrementProductAnalytics = async (req, res) => {
   try {
     const { type } = req.body;
-    const valid = ["views", "purchases", "wishlistCount", "cartAdds", "searchAppearances"];
-    if (!valid.includes(type)) return res.status(400).json({ message: "Invalid analytics type" });
+    const valid = [
+      "views",
+      "purchases",
+      "wishlistCount",
+      "cartAdds",
+      "searchAppearances",
+    ];
+    if (!valid.includes(type))
+      return res.status(400).json({ message: "Invalid analytics type" });
 
     const product = await Product.findByIdAndUpdate(
       req.params.id,
       { $inc: { [`analytics.${type}`]: 1 } },
-      { new: true }
+      { new: true },
     );
 
     res.json(applyStockFromVariants(product));
@@ -2321,7 +2413,7 @@ export const updateVariantStock = async (req, res) => {
 
     const variant =
       (product.variants || []).find(
-        (v) => normalizeSize(getVariantSize(v)) === targetSize
+        (v) => normalizeSize(getVariantSize(v)) === targetSize,
       ) || null;
 
     if (!variant) {
@@ -2341,7 +2433,7 @@ export const updateVariantStock = async (req, res) => {
     // ✅ recompute product totals (physical totals)
     const totalStock = (product.variants || []).reduce(
       (sum, v) => sum + Number(v?.stock ?? 0),
-      0
+      0,
     );
 
     product.stock = totalStock;
@@ -2358,7 +2450,7 @@ export const updateVariantStock = async (req, res) => {
     } catch (reErr) {
       console.error(
         "⚠️ reconcileBackordersForVariant failed:",
-        reErr?.message || reErr
+        reErr?.message || reErr,
       );
     }
 
@@ -2387,17 +2479,30 @@ export const updateProductColors = async (req, res) => {
     const raw = req.body?.colorsJson;
     const parsed =
       typeof raw === "string"
-        ? (() => { try { return JSON.parse(raw); } catch { return null; } })()
+        ? (() => {
+            try {
+              return JSON.parse(raw);
+            } catch {
+              return null;
+            }
+          })()
         : raw;
 
     if (!Array.isArray(parsed)) {
-      return res.status(400).json({ message: "colorsJson must be a JSON array" });
+      return res
+        .status(400)
+        .json({ message: "colorsJson must be a JSON array" });
     }
 
     // multer files (array)
-    const files = Array.isArray(req.files?.swatchImages) ? req.files.swatchImages : [];
+    const files = Array.isArray(req.files?.swatchImages)
+      ? req.files.swatchImages
+      : [];
 
-    const normalizeName = (v) => String(v || "").trim().toLowerCase();
+    const normalizeName = (v) =>
+      String(v || "")
+        .trim()
+        .toLowerCase();
     const normalizeHex = (v) => {
       const s = String(v || "").trim();
       if (!s) return "";
@@ -2450,9 +2555,6 @@ export const updateProductColors = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
-
-
 
 export const updateProductRatings = async (req, res) => {
   try {
@@ -2525,7 +2627,10 @@ export const bulkUpdatePricing = async (req, res) => {
         update: {
           ...(u.price !== undefined ? { price: Number(u.price) } : {}),
           ...(u.compareAtPrice !== undefined
-            ? { compareAtPrice: u.compareAtPrice === "" ? null : Number(u.compareAtPrice) }
+            ? {
+                compareAtPrice:
+                  u.compareAtPrice === "" ? null : Number(u.compareAtPrice),
+              }
             : {}),
         },
       },
@@ -2586,7 +2691,9 @@ export const getProductsByCategory = async (req, res) => {
       catDoc = await Category.findOne({
         $or: [
           { slug: categoryParam.toLowerCase() },
-          { name: { $regex: `^${escapeRegex(categoryParam)}$`, $options: "i" } },
+          {
+            name: { $regex: `^${escapeRegex(categoryParam)}$`, $options: "i" },
+          },
         ],
       }).lean();
     }
@@ -2670,12 +2777,12 @@ export const getProductsByCategory = async (req, res) => {
     const total = await Product.countDocuments(filters);
 
     const useCard = ["1", "true", "yes"].includes(
-      String(card || "").toLowerCase()
+      String(card || "").toLowerCase(),
     );
 
     const products = useCard
       ? (docs || []).map((doc) =>
-          mapProductCard(doc?.toObject ? doc.toObject() : doc)
+          mapProductCard(doc?.toObject ? doc.toObject() : doc),
         )
       : (docs || []).map(applyStockFromVariants);
 
@@ -2695,8 +2802,6 @@ export const getProductsByCategory = async (req, res) => {
   }
 };
 
-
-
 /* ============================================================
    ✅ GET PRODUCTS BY MULTIPLE IDS (single fetch)
    POST /api/products/by-ids
@@ -2710,7 +2815,10 @@ export const getProductsByIds = async (req, res) => {
     ids = Array.isArray(ids)
       ? ids
       : typeof ids === "string"
-        ? ids.split(",").map((x) => x.trim()).filter(Boolean)
+        ? ids
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean)
         : [];
 
     if (!ids.length) {
@@ -2718,12 +2826,18 @@ export const getProductsByIds = async (req, res) => {
     }
 
     // ✅ split into objectIds + productCodes
-    const validObjectIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
-    const productCodes = ids.filter((id) => !mongoose.Types.ObjectId.isValid(id)); 
+    const validObjectIds = ids.filter((id) =>
+      mongoose.Types.ObjectId.isValid(id),
+    );
+    const productCodes = ids.filter(
+      (id) => !mongoose.Types.ObjectId.isValid(id),
+    );
     // (jo ObjectId valid nahi wo productCode consider)
 
     if (!validObjectIds.length && !productCodes.length) {
-      return res.status(400).json({ message: "No valid ids or product codes found" });
+      return res
+        .status(400)
+        .json({ message: "No valid ids or product codes found" });
     }
 
     // ✅ fetch using $or
@@ -2731,9 +2845,11 @@ export const getProductsByIds = async (req, res) => {
       Product.find({
         $or: [
           ...(validObjectIds.length ? [{ _id: { $in: validObjectIds } }] : []),
-          ...(productCodes.length ? [{ productCode: { $in: productCodes } }] : []),
+          ...(productCodes.length
+            ? [{ productCode: { $in: productCodes } }]
+            : []),
         ],
-      })
+      }),
     );
 
     // ✅ map for ordering (both keys)
@@ -2760,17 +2876,22 @@ export const getProductsByIds = async (req, res) => {
   }
 };
 
-
 export const bulkSyncCollectionOnProducts = async (req, res) => {
   try {
     const { collectionId, addIds, removeIds } = req.body;
 
     if (!collectionId || !mongoose.Types.ObjectId.isValid(collectionId)) {
-      return res.status(400).json({ message: "Valid collectionId is required" });
+      return res
+        .status(400)
+        .json({ message: "Valid collectionId is required" });
     }
 
-    const add = [...new Set(arr(addIds))].filter(mongoose.Types.ObjectId.isValid);
-    const remove = [...new Set(arr(removeIds))].filter(mongoose.Types.ObjectId.isValid);
+    const add = [...new Set(arr(addIds))].filter(
+      mongoose.Types.ObjectId.isValid,
+    );
+    const remove = [...new Set(arr(removeIds))].filter(
+      mongoose.Types.ObjectId.isValid,
+    );
 
     if (!add.length && !remove.length) {
       return res.status(400).json({ message: "addIds or removeIds required" });
@@ -2783,7 +2904,11 @@ export const bulkSyncCollectionOnProducts = async (req, res) => {
       ops.push({
         updateMany: {
           filter: { _id: { $in: add } },
-          update: { $addToSet: { collections: new mongoose.Types.ObjectId(collectionId) } },
+          update: {
+            $addToSet: {
+              collections: new mongoose.Types.ObjectId(collectionId),
+            },
+          },
         },
       });
     }
@@ -2793,7 +2918,9 @@ export const bulkSyncCollectionOnProducts = async (req, res) => {
       ops.push({
         updateMany: {
           filter: { _id: { $in: remove } },
-          update: { $pull: { collections: new mongoose.Types.ObjectId(collectionId) } },
+          update: {
+            $pull: { collections: new mongoose.Types.ObjectId(collectionId) },
+          },
         },
       });
     }
@@ -2813,7 +2940,6 @@ export const bulkSyncCollectionOnProducts = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
 
 /* ============================================================
    ✅ FETCH PRODUCTS BY CATEGORY
@@ -2890,10 +3016,7 @@ export const fetchProductsByCategory = async (req, res) => {
 
     /* ---------------- SKU (exact) ---------------- */
     if (sku) {
-      filters.$or = [
-        { sku: String(sku) },
-        { "variants.sku": String(sku) },
-      ];
+      filters.$or = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
     }
 
     /* ---------------- ✅ PRODUCT CODE SEARCH (NEW) ----------------
@@ -2963,8 +3086,6 @@ export const fetchProductsByCategory = async (req, res) => {
   }
 };
 
-
-
 // PATCH /api/products/:id/fabrics
 export const updateProductFabrics = async (req, res) => {
   try {
@@ -2976,7 +3097,11 @@ export const updateProductFabrics = async (req, res) => {
     const fabrics =
       typeof fabricsRaw === "string"
         ? (() => {
-            try { return JSON.parse(fabricsRaw); } catch { return null; }
+            try {
+              return JSON.parse(fabricsRaw);
+            } catch {
+              return null;
+            }
           })()
         : fabricsRaw;
 
@@ -3025,7 +3150,9 @@ export const updateProductFabrics = async (req, res) => {
       if (seen.has(key)) {
         return res
           .status(400)
-          .json({ message: `Duplicate fabric entry: ${f.fabricCode} (${f.role})` });
+          .json({
+            message: `Duplicate fabric entry: ${f.fabricCode} (${f.role})`,
+          });
       }
       seen.add(key);
     }
@@ -3034,8 +3161,8 @@ export const updateProductFabrics = async (req, res) => {
       Product.findByIdAndUpdate(
         id,
         { $set: { fabrics: normalized } },
-        { new: true, runValidators: true }
-      )
+        { new: true, runValidators: true },
+      ),
     );
 
     if (!updated) return res.status(404).json({ message: "Product not found" });
@@ -3049,7 +3176,6 @@ export const updateProductFabrics = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
 
 /* ============================================================
    ✅ GET PRODUCTS BY COLLECTION - OPTIMIZED FOR PRODUCT CARD
@@ -3102,7 +3228,8 @@ export const getProductsByCollection = async (req, res) => {
     const toBool = (v) => String(v).trim().toLowerCase() === "true";
 
     const toArray = (v) => {
-      if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+      if (Array.isArray(v))
+        return v.map((x) => String(x).trim()).filter(Boolean);
 
       return String(v ?? "")
         .split(",")
@@ -3242,9 +3369,6 @@ export const getProductsByCollection = async (req, res) => {
   }
 };
 
-
-
-
 /* ============================================================
    ✅ GET BY PRODUCT CODE
    GET /api/products/code/:code
@@ -3253,7 +3377,8 @@ export const getProductsByCollection = async (req, res) => {
 export const getProductByCode = async (req, res) => {
   try {
     const code = String(req.params.code || "").trim();
-    if (!code) return res.status(400).json({ message: "productCode is required" });
+    if (!code)
+      return res.status(400).json({ message: "productCode is required" });
 
     // productCode stored as string in DB (like "00229")
     const doc = await pop(
@@ -3261,7 +3386,7 @@ export const getProductByCode = async (req, res) => {
         path: "crossSellProducts",
         select: "title slug price compareAtPrice thumbnail isActive",
         match: { isActive: true },
-      })
+      }),
     );
 
     if (!doc) return res.status(404).json({ message: "Product not found" });
@@ -3273,12 +3398,13 @@ export const getProductByCode = async (req, res) => {
   }
 };
 
-
-
 export const getProductsBySelectedCodes = async (req, res) => {
   try {
     const normalizeCode = (value) => {
-      const raw = String(value ?? "").trim().toUpperCase().replace(/\s+/g, "");
+      const raw = String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, "");
       if (!raw) return "";
       if (/^\d+$/.test(raw)) return raw.padStart(5, "0");
       return raw;
@@ -3312,7 +3438,7 @@ export const getProductsBySelectedCodes = async (req, res) => {
     const docs = await pop(
       Product.find({
         productCode: { $in: normalizedCodes },
-      })
+      }),
     ).lean();
 
     const productMap = new Map();
@@ -3327,7 +3453,9 @@ export const getProductsBySelectedCodes = async (req, res) => {
       .map((code) => productMap.get(code))
       .filter(Boolean);
 
-    const missingCodes = normalizedCodes.filter((code) => !productMap.has(code));
+    const missingCodes = normalizedCodes.filter(
+      (code) => !productMap.has(code),
+    );
 
     return res.json({
       success: true,
@@ -3346,7 +3474,6 @@ export const getProductsBySelectedCodes = async (req, res) => {
   }
 };
 
-
 // GET /api/products/by-codes?codes=00229,00230,00231
 // OR POST /api/products/by-codes  body: { codes: ["00229","00230"] } or { codes: "00229,00230" }
 
@@ -3359,7 +3486,10 @@ export const getProductsByCodes = async (req, res) => {
     codes = Array.isArray(codes)
       ? codes
       : typeof codes === "string"
-        ? codes.split(",").map((x) => String(x).trim()).filter(Boolean)
+        ? codes
+            .split(",")
+            .map((x) => String(x).trim())
+            .filter(Boolean)
         : [];
 
     if (!codes.length) {
@@ -3367,9 +3497,7 @@ export const getProductsByCodes = async (req, res) => {
     }
 
     // productCode stored as string (e.g. "00229"), so keep as string
-    const docs = await pop(
-      Product.find({ productCode: { $in: codes } })
-    );
+    const docs = await pop(Product.find({ productCode: { $in: codes } }));
 
     // ✅ keep same order as input
     const map = new Map();
@@ -3387,7 +3515,6 @@ export const getProductsByCodes = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
 
 // PATCH /api/products/:id/stock  { stock: number }
 // ✅ Only for SIMPLE products
@@ -3443,8 +3570,6 @@ export const updateProductStock = async (req, res) => {
   }
 };
 
-
-
 // PATCH /api/products/:id/best-seller
 // Body optional:
 // - { isBestSeller: true/false } -> direct set
@@ -3455,7 +3580,9 @@ export const toggleBestSeller = async (req, res) => {
 
     const toBool = (v) => {
       if (typeof v === "boolean") return v;
-      const s = String(v ?? "").trim().toLowerCase();
+      const s = String(v ?? "")
+        .trim()
+        .toLowerCase();
       return s === "true" || s === "1" || s === "yes";
     };
 
@@ -3463,7 +3590,10 @@ export const toggleBestSeller = async (req, res) => {
     if (!exists) return res.status(404).json({ message: "Product not found" });
 
     let nextVal;
-    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "isBestSeller")) {
+    if (
+      req.body &&
+      Object.prototype.hasOwnProperty.call(req.body, "isBestSeller")
+    ) {
       nextVal = toBool(req.body.isBestSeller);
     } else {
       nextVal = !Boolean(exists.isBestSeller);
@@ -3473,8 +3603,8 @@ export const toggleBestSeller = async (req, res) => {
       Product.findByIdAndUpdate(
         id,
         { $set: { isBestSeller: nextVal } },
-        { new: true, runValidators: true }
-      )
+        { new: true, runValidators: true },
+      ),
     );
 
     return res.json({
@@ -3487,7 +3617,6 @@ export const toggleBestSeller = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
 
 // Mark Product Pattern Ready (Manual Override)
 export const markPatternReady = async (req, res) => {
@@ -3513,8 +3642,6 @@ export const markPatternReady = async (req, res) => {
   }
 };
 
-
-
 // controllers/productController.js
 
 // PATCH /api/products/inventory/zero-all
@@ -3526,7 +3653,9 @@ export const zeroAllVariantStock = async (req, res) => {
   try {
     const clearReservedStock =
       req.body?.clearReservedStock === true ||
-      String(req.body?.clearReservedStock || "").trim().toLowerCase() === "true";
+      String(req.body?.clearReservedStock || "")
+        .trim()
+        .toLowerCase() === "true";
 
     const BATCH_SIZE = 500;
 
@@ -3544,7 +3673,7 @@ export const zeroAllVariantStock = async (req, res) => {
         isInStock: 1,
         variants: 1,
         productType: 1,
-      }
+      },
     )
       .lean()
       .cursor();
@@ -3610,7 +3739,6 @@ export const zeroAllVariantStock = async (req, res) => {
   }
 };
 
-
 // PATCH /api/products/:id/trending
 // Body optional:
 // - { isTrending: true/false } -> direct set
@@ -3621,7 +3749,9 @@ export const toggleTrending = async (req, res) => {
 
     const toBool = (v) => {
       if (typeof v === "boolean") return v;
-      const s = String(v ?? "").trim().toLowerCase();
+      const s = String(v ?? "")
+        .trim()
+        .toLowerCase();
       return s === "true" || s === "1" || s === "yes";
     };
 
@@ -3629,7 +3759,10 @@ export const toggleTrending = async (req, res) => {
     if (!exists) return res.status(404).json({ message: "Product not found" });
 
     let nextVal;
-    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "isTrending")) {
+    if (
+      req.body &&
+      Object.prototype.hasOwnProperty.call(req.body, "isTrending")
+    ) {
       nextVal = toBool(req.body.isTrending);
     } else {
       nextVal = !Boolean(exists.isTrending);
@@ -3639,8 +3772,8 @@ export const toggleTrending = async (req, res) => {
       Product.findByIdAndUpdate(
         id,
         { $set: { isTrending: nextVal } },
-        { new: true, runValidators: true }
-      )
+        { new: true, runValidators: true },
+      ),
     );
 
     return res.json({
@@ -3653,9 +3786,6 @@ export const toggleTrending = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
-
-
 
 // PATCH /api/products/bulk/trending/by-codes
 // Body:
@@ -3673,7 +3803,9 @@ export const bulkMarkTrendingByCodes = async (req, res) => {
   try {
     const toBool = (v) => {
       if (typeof v === "boolean") return v;
-      const s = String(v ?? "").trim().toLowerCase();
+      const s = String(v ?? "")
+        .trim()
+        .toLowerCase();
       return s === "true" || s === "1" || s === "yes";
     };
 
@@ -3682,7 +3814,10 @@ export const bulkMarkTrendingByCodes = async (req, res) => {
     codes = Array.isArray(codes)
       ? codes
       : typeof codes === "string"
-        ? codes.split(",").map((x) => String(x).trim()).filter(Boolean)
+        ? codes
+            .split(",")
+            .map((x) => String(x).trim())
+            .filter(Boolean)
         : [];
 
     codes = [...new Set(codes.map((c) => String(c).trim()).filter(Boolean))];
@@ -3699,7 +3834,7 @@ export const bulkMarkTrendingByCodes = async (req, res) => {
 
     const existing = await Product.find(
       { productCode: { $in: codes } },
-      { _id: 1, productCode: 1, title: 1, isTrending: 1 }
+      { _id: 1, productCode: 1, title: 1, isTrending: 1 },
     ).lean();
 
     const foundCodes = existing.map((p) => String(p.productCode));
@@ -3707,15 +3842,17 @@ export const bulkMarkTrendingByCodes = async (req, res) => {
 
     const result = await Product.updateMany(
       { productCode: { $in: codes } },
-      { $set: { isTrending: nextVal } }
+      { $set: { isTrending: nextVal } },
     );
 
     const updatedProducts = await pop(
-      Product.find({ productCode: { $in: foundCodes } }).sort({ createdAt: -1 })
+      Product.find({ productCode: { $in: foundCodes } }).sort({
+        createdAt: -1,
+      }),
     );
 
     const orderMap = new Map(
-      updatedProducts.map((p) => [String(p.productCode), p])
+      updatedProducts.map((p) => [String(p.productCode), p]),
     );
 
     const orderedProducts = foundCodes
@@ -3740,8 +3877,6 @@ export const bulkMarkTrendingByCodes = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
-
 
 export const updatePrimaryProductStatus = async (req, res) => {
   try {
@@ -3786,7 +3921,7 @@ export const updatePrimaryProductStatus = async (req, res) => {
     const result = await Product.updateMany(
       filter,
       { $set: { isPrimaryProduct: nextValue } },
-      { runValidators: true }
+      { runValidators: true },
     );
 
     const products = await Product.find(filter);
@@ -3806,7 +3941,6 @@ export const updatePrimaryProductStatus = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
 
 /* ============================================================
    ✅ GET PRODUCT CARDS (LIGHTWEIGHT)
@@ -3847,7 +3981,10 @@ export const getProductCards = async (req, res) => {
     const idList = Array.isArray(ids)
       ? ids
       : typeof ids === "string"
-        ? ids.split(",").map((x) => x.trim()).filter(Boolean)
+        ? ids
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean)
         : [];
 
     if (idList.length) {
@@ -3901,18 +4038,18 @@ export const getProductCards = async (req, res) => {
 
       if (rawCollections.length) {
         const objectIds = rawCollections.filter((c) =>
-          mongoose.Types.ObjectId.isValid(c)
+          mongoose.Types.ObjectId.isValid(c),
         );
 
         const nonIds = rawCollections.filter(
-          (c) => !mongoose.Types.ObjectId.isValid(c)
+          (c) => !mongoose.Types.ObjectId.isValid(c),
         );
 
         let matchedCollectionIds = [...objectIds];
 
         if (nonIds.length) {
           const escaped = nonIds.map((s) =>
-            String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+            String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
           );
 
           const matchedCollections = await Collection.find({
@@ -3926,12 +4063,12 @@ export const getProductCards = async (req, res) => {
             .lean();
 
           matchedCollectionIds.push(
-            ...matchedCollections.map((c) => String(c._id))
+            ...matchedCollections.map((c) => String(c._id)),
           );
         }
 
         matchedCollectionIds = Array.from(
-          new Set(matchedCollectionIds.map((x) => String(x)))
+          new Set(matchedCollectionIds.map((x) => String(x))),
         ).filter(Boolean);
 
         if (!matchedCollectionIds.length) {
@@ -3981,10 +4118,7 @@ export const getProductCards = async (req, res) => {
 
     /* ---------------- SKU exact ---------------- */
     if (sku) {
-      const skuOr = [
-        { sku: String(sku) },
-        { "variants.sku": String(sku) },
-      ];
+      const skuOr = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
 
       if (Array.isArray(filters.$or) && filters.$or.length) {
         filters.$and = [{ $or: filters.$or }, { $or: skuOr }];
@@ -4059,7 +4193,7 @@ export const getProductCards = async (req, res) => {
             "isTrending",
             "isPrimaryProduct",
             "createdAt",
-          ].join(" ")
+          ].join(" "),
         )
         .sort(sortObj)
         .skip(skip)
@@ -4300,5 +4434,3 @@ export const getAllProductMedia = async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 };
-
-
