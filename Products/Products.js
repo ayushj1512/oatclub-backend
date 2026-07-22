@@ -237,6 +237,11 @@ const productSchema = new mongoose.Schema(
 
     isBestSeller: { type: Boolean, default: false, index: true },
     isTrending: { type: Boolean, default: false, index: true },
+    isDispatchReady: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     // ✅ Collaboration
     availableForCollab: {
       type: Boolean,

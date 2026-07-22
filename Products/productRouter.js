@@ -38,6 +38,10 @@ import {
   getAllProductMedia,
   syncProductAssociationGroup,
   updateCollabReadyStatus,
+   // NEW
+  updateDispatchReadyStatus,
+  previewBulkProductMetadata,
+  confirmBulkProductMetadata,
 } from "./productController.js";
 
 import { searchProductsForCard } from "./product.search.controller.js";
@@ -224,6 +228,21 @@ router.patch(
 );
 
 router.patch(
+  "/bulk/dispatch-ready",
+  updateDispatchReadyStatus,
+);
+
+router.post(
+  "/bulk/metadata/preview",
+  previewBulkProductMetadata,
+);
+
+router.patch(
+  "/bulk/metadata/confirm",
+  confirmBulkProductMetadata,
+);
+
+router.patch(
   "/bulk/variant-stock/zero-all",
   zeroAllVariantStock
 );
@@ -311,6 +330,11 @@ router.patch(
 router.patch(
   "/:id/collab-ready",
   updateCollabReadyStatus
+);
+
+router.patch(
+  "/:id/dispatch-ready",
+  updateDispatchReadyStatus,
 );
 
 router.patch(

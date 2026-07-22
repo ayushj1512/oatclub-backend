@@ -53,6 +53,52 @@ const json = (v, fb) => {
   }
 };
 
+/* =========================================================
+   BULK METADATA HELPERS
+========================================================= */
+
+const cleanMetaText = (value) => String(value ?? "").trim();
+
+const normalizeMetaKeywords = (value) => {
+  const list = Array.isArray(value) ? value : String(value ?? "").split(",");
+
+  return Array.from(
+    new Set(
+      list
+        .map((item) =>
+          String(item ?? "")
+            .trim()
+            .toLowerCase(),
+        )
+        .filter(Boolean),
+    ),
+  );
+};
+
+const normalizeMetaProductCode = (value) => {
+  const digits = String(value ?? "")
+    .trim()
+    .replace(/\D/g, "");
+
+  if (!digits) return "";
+
+  return digits.padStart(5, "0");
+};
+
+const metaKeywordsEqual = (first, second) =>
+  JSON.stringify(normalizeMetaKeywords(first)) ===
+  JSON.stringify(normalizeMetaKeywords(second));
+
+const normalizeBooleanValue = (value) => {
+  if (typeof value === "boolean") return value;
+
+  return ["true", "1", "yes", "y"].includes(
+    String(value ?? "")
+      .trim()
+      .toLowerCase(),
+  );
+};
+
 const oid = (v) => (v && typeof v === "object" && v._id ? v._id : v);
 
 const pop = (q) => {
@@ -969,6 +1015,7 @@ export const getAllProducts = async (req, res) => {
       isBestSeller,
       isTrending,
       isPrimaryProduct,
+      isDispatchReady,
       isFeatured,
       isPatternReady,
       isSamplingDone,
@@ -1645,6 +1692,484 @@ export const updateCollabReadyStatus = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || "Failed to update collab ready status",
+    });
+  }
+};
+
+/* ============================================================
+   UPDATE DISPATCH READY STATUS
+   Supports single + bulk
+
+   Single:
+   PATCH /api/products/:id/dispatch-ready
+   body: {
+     "isDispatchReady": true
+   }
+
+   Bulk:
+   PATCH /api/products/bulk/dispatch-ready
+   body: {
+     "ids": ["productId1", "productId2"],
+     "isDispatchReady": false
+   }
+============================================================ */
+
+export const updateDispatchReadyStatus = async (req, res) => {
+  try {
+    const rawStatus =
+      req.body?.isDispatchReady ?? req.body?.dispatchReady ?? req.body?.status;
+
+    if (rawStatus === undefined || rawStatus === null) {
+      return res.status(400).json({
+        success: false,
+        message: "isDispatchReady is required",
+      });
+    }
+
+    const isDispatchReady = normalizeBooleanValue(rawStatus);
+
+    const rawIds = req.params?.id
+      ? [req.params.id]
+      : (req.body?.ids ?? req.body?.productIds ?? []);
+
+    const ids = (
+      Array.isArray(rawIds) ? rawIds : String(rawIds || "").split(",")
+    )
+      .map((item) =>
+        item && typeof item === "object" && item._id
+          ? String(item._id)
+          : String(item || "").trim(),
+      )
+      .filter(Boolean);
+
+    const uniqueIds = [...new Set(ids)];
+
+    if (!uniqueIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one product ID is required",
+      });
+    }
+
+    const invalidIds = uniqueIds.filter(
+      (id) => !mongoose.Types.ObjectId.isValid(id),
+    );
+
+    if (invalidIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Some product IDs are invalid",
+        invalidIds,
+      });
+    }
+
+    const result = await Product.updateMany(
+      {
+        _id: {
+          $in: uniqueIds,
+        },
+      },
+      {
+        $set: {
+          isDispatchReady,
+        },
+      },
+    );
+
+    const updatedProducts = await Product.find({
+      _id: {
+        $in: uniqueIds,
+      },
+    })
+      .select("_id title slug productCode thumbnail isDispatchReady")
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+
+      message: isDispatchReady
+        ? `${result.modifiedCount} product(s) marked dispatch ready`
+        : `${result.modifiedCount} product(s) removed from dispatch ready`,
+
+      requestedCount: uniqueIds.length,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+
+      isDispatchReady,
+      products: updatedProducts,
+    });
+  } catch (error) {
+    console.error("❌ Update Dispatch Ready Status Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update dispatch ready status",
+    });
+  }
+};
+
+/* ============================================================
+   PREVIEW BULK PRODUCT METADATA
+
+   POST /api/products/bulk/metadata/preview
+
+   Body:
+   {
+     "products": [
+       {
+         "productCode": "00001",
+         "metaTitle": "New title",
+         "metaDescription": "New description",
+         "keywords": "dress, women, party"
+       }
+     ]
+   }
+============================================================ */
+
+export const previewBulkProductMetadata = async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.products)
+      ? req.body.products
+      : Array.isArray(req.body?.changes)
+        ? req.body.changes
+        : [];
+
+    if (!rows.length) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one product row is required",
+      });
+    }
+
+    if (rows.length > 5000) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 5000 products can be previewed",
+      });
+    }
+
+    const normalizedRows = rows
+      .map((row) => ({
+        productCode: normalizeMetaProductCode(row.productCode),
+
+        metaTitle: cleanMetaText(row.metaTitle),
+
+        metaDescription: cleanMetaText(row.metaDescription),
+
+        keywords: normalizeMetaKeywords(row.keywords),
+      }))
+      .filter((row) => row.productCode);
+
+    const codes = normalizedRows.map((row) => row.productCode);
+
+    const duplicateCodes = codes.filter(
+      (code, index) => codes.indexOf(code) !== index,
+    );
+
+    if (duplicateCodes.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Duplicate product codes found",
+        duplicateCodes: [...new Set(duplicateCodes)],
+      });
+    }
+
+    const products = await Product.find({
+      productCode: {
+        $in: codes,
+      },
+    })
+      .select("_id productCode title slug metaTitle metaDescription keywords")
+      .lean();
+
+    const productMap = new Map(
+      products.map((product) => [String(product.productCode), product]),
+    );
+
+    const changes = [];
+    const unchanged = [];
+    const notFound = [];
+
+    for (const incoming of normalizedRows) {
+      const product = productMap.get(incoming.productCode);
+
+      if (!product) {
+        notFound.push({
+          productCode: incoming.productCode,
+          reason: "Product not found",
+        });
+
+        continue;
+      }
+
+      const current = {
+        metaTitle: cleanMetaText(product.metaTitle),
+
+        metaDescription: cleanMetaText(product.metaDescription),
+
+        keywords: normalizeMetaKeywords(product.keywords),
+      };
+
+      const changedFields = [];
+
+      if (current.metaTitle !== incoming.metaTitle) {
+        changedFields.push("metaTitle");
+      }
+
+      if (current.metaDescription !== incoming.metaDescription) {
+        changedFields.push("metaDescription");
+      }
+
+      if (!metaKeywordsEqual(current.keywords, incoming.keywords)) {
+        changedFields.push("keywords");
+      }
+
+      const preview = {
+        productId: product._id,
+        productCode: product.productCode,
+        title: product.title || "",
+        slug: product.slug || "",
+
+        current,
+
+        incoming: {
+          metaTitle: incoming.metaTitle,
+
+          metaDescription: incoming.metaDescription,
+
+          keywords: incoming.keywords,
+        },
+
+        changedFields,
+        hasChanges: changedFields.length > 0,
+      };
+
+      if (changedFields.length) {
+        changes.push(preview);
+      } else {
+        unchanged.push(preview);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Metadata preview generated",
+
+      summary: {
+        uploadedRows: normalizedRows.length,
+
+        productsFound: products.length,
+
+        changedProducts: changes.length,
+
+        unchangedProducts: unchanged.length,
+
+        notFoundProducts: notFound.length,
+      },
+
+      changes,
+      unchanged,
+      notFound,
+    });
+  } catch (error) {
+    console.error("❌ Preview Bulk Metadata Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to preview product metadata",
+    });
+  }
+};
+
+/* ============================================================
+   CONFIRM BULK PRODUCT METADATA
+
+   PATCH /api/products/bulk/metadata/confirm
+
+   Body:
+   {
+     "changes": [
+       {
+         "productCode": "00001",
+         "metaTitle": "New title",
+         "metaDescription": "New description",
+         "keywords": ["dress", "women"]
+       }
+     ]
+   }
+============================================================ */
+
+export const confirmBulkProductMetadata = async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.changes) ? req.body.changes : [];
+
+    if (!rows.length) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one metadata change is required",
+      });
+    }
+
+    if (rows.length > 5000) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 5000 products can be updated",
+      });
+    }
+
+    const normalizedRows = rows
+      .map((row) => ({
+        productCode: normalizeMetaProductCode(row.productCode),
+
+        metaTitle: cleanMetaText(row.metaTitle),
+
+        metaDescription: cleanMetaText(row.metaDescription),
+
+        keywords: normalizeMetaKeywords(row.keywords),
+      }))
+      .filter((row) => row.productCode);
+
+    const codes = normalizedRows.map((row) => row.productCode);
+
+    const duplicateCodes = codes.filter(
+      (code, index) => codes.indexOf(code) !== index,
+    );
+
+    if (duplicateCodes.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Duplicate product codes found",
+        duplicateCodes: [...new Set(duplicateCodes)],
+      });
+    }
+
+    /*
+     * Fresh DB read before update.
+     * Preview response is not blindly trusted.
+     */
+    const products = await Product.find({
+      productCode: {
+        $in: codes,
+      },
+    })
+      .select("_id productCode title metaTitle metaDescription keywords")
+      .lean();
+
+    const productMap = new Map(
+      products.map((product) => [String(product.productCode), product]),
+    );
+
+    const operations = [];
+    const updated = [];
+    const skipped = [];
+    const notFound = [];
+
+    for (const incoming of normalizedRows) {
+      const product = productMap.get(incoming.productCode);
+
+      if (!product) {
+        notFound.push({
+          productCode: incoming.productCode,
+          reason: "Product not found",
+        });
+
+        continue;
+      }
+
+      const $set = {};
+      const changedFields = [];
+
+      if (cleanMetaText(product.metaTitle) !== incoming.metaTitle) {
+        $set.metaTitle = incoming.metaTitle;
+
+        changedFields.push("metaTitle");
+      }
+
+      if (cleanMetaText(product.metaDescription) !== incoming.metaDescription) {
+        $set.metaDescription = incoming.metaDescription;
+
+        changedFields.push("metaDescription");
+      }
+
+      if (!metaKeywordsEqual(product.keywords, incoming.keywords)) {
+        $set.keywords = incoming.keywords;
+
+        changedFields.push("keywords");
+      }
+
+      if (!changedFields.length) {
+        skipped.push({
+          productCode: product.productCode,
+
+          title: product.title || "",
+
+          reason: "No metadata changes detected",
+        });
+
+        continue;
+      }
+
+      operations.push({
+        updateOne: {
+          filter: {
+            _id: product._id,
+          },
+
+          update: {
+            $set,
+          },
+        },
+      });
+
+      updated.push({
+        productCode: product.productCode,
+
+        title: product.title || "",
+
+        changedFields,
+
+        values: $set,
+      });
+    }
+
+    let result = {
+      matchedCount: 0,
+      modifiedCount: 0,
+    };
+
+    if (operations.length) {
+      result = await Product.bulkWrite(operations, {
+        ordered: false,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+
+      message: `${result.modifiedCount || 0} product metadata record(s) updated`,
+
+      summary: {
+        requested: normalizedRows.length,
+
+        matched: result.matchedCount || 0,
+
+        modified: result.modifiedCount || 0,
+
+        skipped: skipped.length,
+
+        notFound: notFound.length,
+      },
+
+      updated,
+      skipped,
+      notFound,
+    });
+  } catch (error) {
+    console.error("❌ Confirm Bulk Metadata Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update product metadata",
     });
   }
 };
@@ -3148,11 +3673,9 @@ export const updateProductFabrics = async (req, res) => {
     for (const f of normalized) {
       const key = `${f.fabricCode}__${f.role}`;
       if (seen.has(key)) {
-        return res
-          .status(400)
-          .json({
-            message: `Duplicate fabric entry: ${f.fabricCode} (${f.role})`,
-          });
+        return res.status(400).json({
+          message: `Duplicate fabric entry: ${f.fabricCode} (${f.role})`,
+        });
       }
       seen.add(key);
     }
@@ -4107,6 +4630,9 @@ export const getProductCards = async (req, res) => {
 
     if (isTrending !== undefined && String(isTrending).trim() !== "") {
       filters.isTrending = toBool(isTrending);
+    }
+    if (hasVal(isDispatchReady)) {
+      filters.isDispatchReady = toBool(isDispatchReady);
     }
 
     if (
