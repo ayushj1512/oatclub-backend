@@ -349,3 +349,67 @@ export async function trackReelEvent(req, res) {
     return res.status(500).json({ message: "Failed to track event" });
   }
 }
+
+/* =========================================================
+   REORDER REELS
+   PATCH /api/reels/reorder
+========================================================= */
+export async function reorderReels(req, res) {
+  try {
+    const items = Array.isArray(req.body?.reels)
+      ? req.body.reels
+      : [];
+
+    if (!items.length) {
+      return res.status(400).json({
+        message: "Reels array is required",
+      });
+    }
+
+    const normalized = items.map((item, index) => {
+      const id = item?._id || item?.id || item?.reelId;
+
+      if (!isObjectId(id)) {
+        throw new Error(`Invalid reel id: ${id || "missing"}`);
+      }
+
+      return {
+        id: String(id),
+        priority: Number.isFinite(Number(item.priority))
+          ? Number(item.priority)
+          : items.length - index,
+      };
+    });
+
+    await Reel.bulkWrite(
+      normalized.map(({ id, priority }) => ({
+        updateOne: {
+          filter: { _id: id },
+          update: {
+            $set: {
+              priority,
+              updatedBy: req.user?._id || null,
+            },
+          },
+        },
+      }))
+    );
+
+    const reels = await Reel.find({
+      _id: { $in: normalized.map((item) => item.id) },
+    })
+      .sort({ priority: -1, createdAt: -1 })
+      .lean();
+
+    return res.json({
+      message: "Reel order updated successfully",
+      reels,
+    });
+  } catch (err) {
+    console.error("❌ reorderReels error:", err);
+
+    return res.status(400).json({
+      message: err.message || "Failed to reorder reels",
+    });
+  }
+}

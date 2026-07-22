@@ -1,5 +1,6 @@
-// src/routes/reels/reel.controller.js
+// src/routes/reels/reel.routes.js
 import { Router } from "express";
+
 import {
   createReel,
   listReels,
@@ -8,44 +9,32 @@ import {
   toggleReelActive,
   deleteReel,
   trackReelEvent,
+  reorderReels,
 } from "./reel.controller.js";
 
 const router = Router();
 
-/**
- * Base: /api/reels
- *
- * Public (recommended):
- *  - GET /            -> list reels (supports filters)
- *  - GET /:idOrSlug   -> single reel
- *  - POST /:id/events -> analytics events
- *
- * Admin (protect with auth middleware in your app):
- *  - POST /           -> create
- *  - PATCH /:id       -> update
- *  - PATCH /:id/toggle-> toggle active
- *  - DELETE /:id      -> delete
- */
+/* =========================================================
+   COLLECTION ROUTES
+========================================================= */
 
-// LIST
 router.get("/", listReels);
-
-// GET ONE (by _id or slug)
-router.get("/:idOrSlug", getReel);
-
-// CREATE
 router.post("/", createReel);
 
-// UPDATE
-router.patch("/:id", updateReel);
+/*
+ * Must stay before PATCH /:id.
+ * Otherwise "reorder" is treated as a reel ID.
+ */
+router.patch("/reorder", reorderReels);
 
-// TOGGLE ACTIVE
+/* =========================================================
+   SINGLE REEL ROUTES
+========================================================= */
+
+router.get("/:idOrSlug", getReel);
 router.patch("/:id/toggle", toggleReelActive);
-
-// DELETE
-router.delete("/:id", deleteReel);
-
-// EVENTS (views/clicks/likes/shares)
 router.post("/:id/events", trackReelEvent);
+router.patch("/:id", updateReel);
+router.delete("/:id", deleteReel);
 
 export default router;
