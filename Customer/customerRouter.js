@@ -10,7 +10,7 @@ import {
   checkCustomerExists,
   getCustomerByCustomerId,
   getCustomerByFirebaseUID,
-
+  lookupCustomerByEmail,
   // Analytics
   updateCustomerAnalytics,
   syncCustomerAnalytics,
@@ -46,6 +46,11 @@ router.get("/", getAllCustomers);
 router.get("/exists", checkCustomerExists);
 router.get("/by-customer-id/:customerId", getCustomerByCustomerId);
 router.get("/by-firebase/:firebaseUID", getCustomerByFirebaseUID);
+
+/* =========================
+   Authentication Lookup
+========================= */
+router.post("/auth/email-lookup", lookupCustomerByEmail);
 
 /* =========================
    Search

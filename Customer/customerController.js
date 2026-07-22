@@ -1920,3 +1920,34 @@ export const getCustomerCreditSummary = async (req, res) => {
     });
   }
 };
+
+export const lookupCustomerByEmail = async (req, res) => {
+  try {
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        exists: false,
+        message: "Email is required",
+      });
+    }
+
+    const exists = await Customer.exists({ email });
+
+    return res.status(200).json({
+      success: true,
+      exists: Boolean(exists),
+    });
+  } catch (error) {
+    console.error("Lookup Customer Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      exists: false,
+      message: "Server error",
+    });
+  }
+};

@@ -84,6 +84,7 @@ import orderRefundRoutes from "./Orders/order.refunds/orderRefundRoutes.js";
 import marketingcampaignroutes from "./MarketingCampaign/marketingCampaignRoutes.js";
 import vendorUserRoutes from "./VendorUser/vendorUserRoutes.js";
 import cuttingBatchRoutes from "./cuttingbatch/cuttingbatchroute.js";
+import otpRoutes from "./otp/otp.routes.js";
 
 // --------------------------------------------------
 // APP CONFIG
@@ -258,7 +259,7 @@ app.use("/media-user", mediaAuthRoutes);
 app.use("/api/tailors", tailorroutes);
 
 app.use("/api", shiprocketRoutes);
-
+app.use("/api/otp", otpRoutes);
 app.use("/api/analytics", productViewAnalyticsRoutes);
 app.use("/api/reels", reelsRoutes);
 app.use("/api/support", customerTicketRoutes);
