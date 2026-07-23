@@ -1,22 +1,53 @@
 import mongoose from "mongoose";
 
+/* =========================================================
+   HERO BANNER
+========================================================= */
+
 const heroBannerSchema = new mongoose.Schema(
   {
-    desktopImage: { type: String, required: true, trim: true }, // Desktop banner
-    mobileImage: { type: String, required: true, trim: true }, // Mobile banner
+    image: {
+      type: String,
+      required: true,
+      trim: true,
+    },
 
-    link: { type: String, trim: true, default: "" },
-    title: { type: String, trim: true, default: "" },
+    link: {
+      type: String,
+      trim: true,
+      default: "",
+    },
 
-    isActive: { type: Boolean, default: true },
-    sortOrder: { type: Number, default: 0 },
+    title: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+
+    sortOrder: {
+      type: Number,
+      default: 0,
+    },
   },
-  { _id: false }
+  { _id: true }
 );
+
+/* =========================================================
+   CATEGORY ROW ITEM
+========================================================= */
 
 const categoryRowItemSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, trim: true },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
 
     navigationType: {
       type: String,
@@ -25,48 +56,179 @@ const categoryRowItemSchema = new mongoose.Schema(
       default: "category",
     },
 
-    slug: { type: String, trim: true, default: "" },
-    customRoute: { type: String, trim: true, default: "" },
-    tag: { type: String, trim: true, default: "" },
+    slug: {
+      type: String,
+      trim: true,
+      default: "",
+    },
 
-    image: { type: String, trim: true, default: "" },
-    video: { type: String, trim: true, default: "" },
+    customRoute: {
+      type: String,
+      trim: true,
+      default: "",
+    },
 
-    isActive: { type: Boolean, default: true },
-    sortOrder: { type: Number, default: 0 },
+    tag: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    image: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    video: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+
+    sortOrder: {
+      type: Number,
+      default: 0,
+    },
   },
-  { _id: false }
+  { _id: true }
 );
+
+/* =========================================================
+   CATEGORY BANNER
+========================================================= */
 
 const categoryBannerSchema = new mongoose.Schema(
   {
-    categoryName: { type: String, required: true, trim: true },
-    categorySlug: { type: String, required: true, trim: true },
+    categoryName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
 
-    title: { type: String, trim: true, default: "" },
-    subtitle: { type: String, trim: true, default: "" },
+    categorySlug: {
+      type: String,
+      required: true,
+      trim: true,
+    },
 
-    image: { type: String, required: true, trim: true }, // single banner only
+    title: {
+      type: String,
+      trim: true,
+      default: "",
+    },
 
-    link: { type: String, trim: true, default: "" },
-    isActive: { type: Boolean, default: true },
-    sortOrder: { type: Number, default: 0 },
+    subtitle: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    image: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    link: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+
+    sortOrder: {
+      type: Number,
+      default: 0,
+    },
   },
-  { _id: false }
+  { _id: true }
 );
+
+/* =========================================================
+   HOMEPAGE SETTINGS
+========================================================= */
 
 const homepageSettingsSchema = new mongoose.Schema(
   {
-    key: { type: String, default: "default", unique: true },
+    key: {
+      type: String,
+      default: "default",
+      unique: true,
+      trim: true,
+    },
 
-    heroBanners: { type: [heroBannerSchema], default: [] },
-    categoryRow: { type: [categoryRowItemSchema], default: [] },
-    categoryBanners: { type: [categoryBannerSchema], default: [] },
+    /**
+     * Desktop and mobile banners are stored separately.
+     *
+     * Example:
+     * desktopHeroBanners: 3 banners
+     * mobileHeroBanners: 4 banners
+     */
+    desktopHeroBanners: {
+      type: [heroBannerSchema],
+      default: [],
+    },
 
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    mobileHeroBanners: {
+      type: [heroBannerSchema],
+      default: [],
+    },
+
+    categoryRow: {
+      type: [categoryRowItemSchema],
+      default: [],
+    },
+
+    categoryBanners: {
+      type: [categoryBannerSchema],
+      default: [],
+    },
+
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-export default mongoose.models.HomepageSettings ||
+/* =========================================================
+   NORMALIZE SORT ORDER
+========================================================= */
+
+homepageSettingsSchema.pre("save", function () {
+  const sortItems = (items = []) =>
+    items.sort(
+      (firstItem, secondItem) =>
+        Number(firstItem.sortOrder || 0) -
+        Number(secondItem.sortOrder || 0)
+    );
+
+  this.desktopHeroBanners = sortItems(this.desktopHeroBanners);
+  this.mobileHeroBanners = sortItems(this.mobileHeroBanners);
+  this.categoryRow = sortItems(this.categoryRow);
+  this.categoryBanners = sortItems(this.categoryBanners);
+});
+
+/* =========================================================
+   MODEL
+========================================================= */
+
+const HomepageSettings =
+  mongoose.models.HomepageSettings ||
   mongoose.model("HomepageSettings", homepageSettingsSchema);
+
+export default HomepageSettings;

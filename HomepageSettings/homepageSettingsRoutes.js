@@ -1,39 +1,78 @@
 import express from "express";
+
 import {
-  getCategoryBanners,
   getHomepageSettings,
   updateHomepageSettings,
+
+  getHeroBanners,
   updateHeroBanners,
+  updateDesktopHeroBanners,
+  updateMobileHeroBanners,
+
+  getCategoryBanners,
   updateCategoryBanners,
+
+  getCategoryRow,
   updateCategoryRow,
 } from "./homepageSettingsController.js";
 
 const router = express.Router();
 
-/* ================= HOMEPAGE SETTINGS ROUTES ================= */
+/* =========================================================
+   HOMEPAGE SETTINGS
+========================================================= */
 
-// Get full homepage settings
+// Get complete homepage settings
 router.get("/", getHomepageSettings);
 
-// Update full homepage settings
+// Update complete homepage settings
 // Supports:
-// - heroBanners: desktopImage + mobileImage
+// - desktopHeroBanners
+// - mobileHeroBanners
 // - categoryRow
-// - categoryBanners: single image only
+// - categoryBanners
 router.put("/", updateHomepageSettings);
 
-// Update only hero banners
-// Each hero banner requires desktopImage + mobileImage
+/* =========================================================
+   HERO BANNERS
+========================================================= */
+
+// Get active desktop and mobile hero banners
+router.get("/hero-banners", getHeroBanners);
+
+// Update desktop and/or mobile hero banners
 router.put("/hero-banners", updateHeroBanners);
 
-// Get only homepage category banners
+// Update desktop hero banners only
+router.put(
+  "/hero-banners/desktop",
+  updateDesktopHeroBanners
+);
+
+// Update mobile hero banners only
+router.put(
+  "/hero-banners/mobile",
+  updateMobileHeroBanners
+);
+
+/* =========================================================
+   CATEGORY BANNERS
+========================================================= */
+
+// Get active homepage category banners
 router.get("/category-banners", getCategoryBanners);
 
-// Update only homepage category banners
-// Each category banner requires only image
+// Update homepage category banners
 router.put("/category-banners", updateCategoryBanners);
 
-// Update only category row
+/* =========================================================
+   CATEGORY ROW
+========================================================= */
+
+// Get active homepage category row
+router.get("/category-row", getCategoryRow);
+
+// Update homepage category row
 router.put("/category-row", updateCategoryRow);
 
 export default router;

@@ -1,22 +1,48 @@
 import HomepageSettings from "./HomepageSettings.js";
 
 /* =========================================================
-   Helpers
+   CONSTANTS
 ========================================================= */
 
 const ALLOWED_NAVIGATION_TYPES = ["collection", "category", "custom"];
 
+/* =========================================================
+   COMMON HELPERS
+========================================================= */
+
+const isProvided = (value) => value !== undefined;
+
+const sortByOrder = (items = []) =>
+  [...items].sort(
+    (firstItem, secondItem) =>
+      Number(firstItem?.sortOrder || 0) -
+      Number(secondItem?.sortOrder || 0)
+  );
+
+const getActiveItems = (items = []) =>
+  sortByOrder(items.filter((item) => item?.isActive !== false));
+
+/* =========================================================
+   VALIDATION HELPERS
+========================================================= */
+
 const validateCategoryRow = (items = []) => {
-  if (!Array.isArray(items)) return "categoryRow must be an array";
+  if (!Array.isArray(items)) {
+    return "categoryRow must be an array";
+  }
 
   for (const item of items) {
-    if (!item?.name?.trim()) return "Each categoryRow item must have a name";
+    if (!item?.name?.trim()) {
+      return "Each categoryRow item must have a name";
+    }
 
-    if (!item?.navigationType)
+    if (!item?.navigationType) {
       return "Each categoryRow item must have navigationType";
+    }
 
-    if (!ALLOWED_NAVIGATION_TYPES.includes(item.navigationType))
+    if (!ALLOWED_NAVIGATION_TYPES.includes(item.navigationType)) {
       return "navigationType must be collection, category or custom";
+    }
 
     if (
       ["collection", "category"].includes(item.navigationType) &&
@@ -37,35 +63,45 @@ const validateCategoryRow = (items = []) => {
   return null;
 };
 
-const validateHeroBanners = (banners = []) => {
-  if (!Array.isArray(banners)) return "heroBanners must be an array";
+const validateHeroBanners = (banners = [], fieldName = "heroBanners") => {
+  if (!Array.isArray(banners)) {
+    return `${fieldName} must be an array`;
+  }
 
-  for (const b of banners) {
-    if (!b?.desktopImage?.trim())
-      return "Each hero banner must have a desktopImage";
-
-    if (!b?.mobileImage?.trim())
-      return "Each hero banner must have a mobileImage";
+  for (const banner of banners) {
+    if (!banner?.image?.trim()) {
+      return `Each ${fieldName} item must have an image`;
+    }
   }
 
   return null;
 };
 
 const validateCategoryBanners = (banners = []) => {
-  if (!Array.isArray(banners)) return "categoryBanners must be an array";
+  if (!Array.isArray(banners)) {
+    return "categoryBanners must be an array";
+  }
 
-  for (const b of banners) {
-    if (!b?.categoryName?.trim())
+  for (const banner of banners) {
+    if (!banner?.categoryName?.trim()) {
       return "Each category banner must have a categoryName";
+    }
 
-    if (!b?.categorySlug?.trim())
+    if (!banner?.categorySlug?.trim()) {
       return "Each category banner must have a categorySlug";
+    }
 
-    if (!b?.image?.trim()) return "Each category banner must have an image";
+    if (!banner?.image?.trim()) {
+      return "Each category banner must have an image";
+    }
   }
 
   return null;
 };
+
+/* =========================================================
+   NORMALIZATION HELPERS
+========================================================= */
 
 const normalizeCategoryRow = (items = []) =>
   items.map((item, index) => {
@@ -74,221 +110,641 @@ const normalizeCategoryRow = (items = []) =>
     return {
       name: item?.name?.trim() || "",
       navigationType,
-      slug:
-        navigationType === "collection" || navigationType === "category"
-          ? item?.slug?.trim() || ""
-          : "",
+
+      slug: ["collection", "category"].includes(navigationType)
+        ? item?.slug?.trim() || ""
+        : "",
+
       customRoute:
-        navigationType === "custom" ? item?.customRoute?.trim() || "" : "",
+        navigationType === "custom"
+          ? item?.customRoute?.trim() || ""
+          : "",
+
       tag: item?.tag?.trim() || "",
       image: item?.image?.trim() || "",
       video: item?.video?.trim() || "",
+
       isActive: item?.isActive !== false,
-      sortOrder: typeof item?.sortOrder === "number" ? item.sortOrder : index,
+
+      sortOrder: Number.isFinite(Number(item?.sortOrder))
+        ? Number(item.sortOrder)
+        : index,
     };
   });
 
 const normalizeHeroBanners = (banners = []) =>
-  banners.map((b, index) => ({
-    desktopImage: b?.desktopImage?.trim() || "",
-    mobileImage: b?.mobileImage?.trim() || "",
-    link: b?.link?.trim() || "",
-    title: b?.title?.trim() || "",
-    isActive: b?.isActive !== false,
-    sortOrder: typeof b?.sortOrder === "number" ? b.sortOrder : index,
+  banners.map((banner, index) => ({
+    image: banner?.image?.trim() || "",
+    link: banner?.link?.trim() || "",
+    title: banner?.title?.trim() || "",
+
+    isActive: banner?.isActive !== false,
+
+    sortOrder: Number.isFinite(Number(banner?.sortOrder))
+      ? Number(banner.sortOrder)
+      : index,
   }));
 
 const normalizeCategoryBanners = (banners = []) =>
-  banners.map((b, index) => {
-    const categorySlug = b?.categorySlug?.trim() || "";
+  banners.map((banner, index) => {
+    const categoryName = banner?.categoryName?.trim() || "";
+    const categorySlug = banner?.categorySlug?.trim() || "";
 
     return {
-      categoryName: b?.categoryName?.trim() || "",
+      categoryName,
       categorySlug,
-      title: b?.title?.trim() || b?.categoryName?.trim() || "",
-      subtitle: b?.subtitle?.trim() || "",
-      image: b?.image?.trim() || "",
-      link: b?.link?.trim() || (categorySlug ? `/category/${categorySlug}` : ""),
-      isActive: b?.isActive !== false,
-      sortOrder: typeof b?.sortOrder === "number" ? b.sortOrder : index,
+
+      title: banner?.title?.trim() || categoryName,
+      subtitle: banner?.subtitle?.trim() || "",
+
+      image: banner?.image?.trim() || "",
+
+      link:
+        banner?.link?.trim() ||
+        (categorySlug ? `/category/${categorySlug}` : ""),
+
+      isActive: banner?.isActive !== false,
+
+      sortOrder: Number.isFinite(Number(banner?.sortOrder))
+        ? Number(banner.sortOrder)
+        : index,
     };
   });
 
-const getOrCreateDefaultSettings = async () => {
-  let doc = await HomepageSettings.findOne({ key: "default" });
+/* =========================================================
+   DEFAULT SETTINGS
+========================================================= */
 
-  if (!doc) {
-    doc = await HomepageSettings.create({
+const getOrCreateDefaultSettings = async () => {
+  let settings = await HomepageSettings.findOne({
+    key: "default",
+  });
+
+  if (!settings) {
+    settings = await HomepageSettings.create({
       key: "default",
-      heroBanners: [],
+      desktopHeroBanners: [],
+      mobileHeroBanners: [],
       categoryRow: [],
       categoryBanners: [],
     });
   }
 
-  return doc;
+  return settings;
+};
+
+/* =========================================================
+   FORMAT SETTINGS RESPONSE
+========================================================= */
+
+const formatSettingsResponse = (
+  settings,
+  { activeOnly = false } = {}
+) => {
+  const plainSettings =
+    typeof settings?.toObject === "function"
+      ? settings.toObject()
+      : settings;
+
+  const formatItems = activeOnly ? getActiveItems : sortByOrder;
+
+  return {
+    ...plainSettings,
+
+    desktopHeroBanners: formatItems(
+      plainSettings?.desktopHeroBanners || []
+    ),
+
+    mobileHeroBanners: formatItems(
+      plainSettings?.mobileHeroBanners || []
+    ),
+
+    categoryRow: formatItems(plainSettings?.categoryRow || []),
+
+    categoryBanners: formatItems(
+      plainSettings?.categoryBanners || []
+    ),
+  };
 };
 
 /* =========================================================
    GET HOMEPAGE SETTINGS
 ========================================================= */
+
 export const getHomepageSettings = async (req, res) => {
   try {
     const settings = await getOrCreateDefaultSettings();
 
-    const heroBanners = (settings.heroBanners || [])
-      .filter((b) => b.isActive !== false)
-      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    return res.status(200).json(
+      formatSettingsResponse(settings, {
+        activeOnly: true,
+      })
+    );
+  } catch (error) {
+    console.error("getHomepageSettings error:", error);
 
-    const categoryRow = (settings.categoryRow || [])
-      .filter((c) => c.isActive !== false)
-      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-
-    const categoryBanners = (settings.categoryBanners || [])
-      .filter((c) => c.isActive !== false)
-      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-
-    res.json({
-      ...settings.toObject(),
-      heroBanners,
-      categoryRow,
-      categoryBanners,
+    return res.status(500).json({
+      message: error.message || "Failed to fetch homepage settings",
     });
-  } catch (err) {
-    console.error("getHomepageSettings error:", err);
-    res.status(500).json({ message: err.message });
   }
 };
 
 /* =========================================================
    UPDATE HOMEPAGE SETTINGS
 ========================================================= */
+
 export const updateHomepageSettings = async (req, res) => {
   try {
-    const updates = { ...req.body };
+    const updates = {};
 
-    if (updates.categoryRow) {
-      const err = validateCategoryRow(updates.categoryRow);
-      if (err) return res.status(400).json({ message: err });
-      updates.categoryRow = normalizeCategoryRow(updates.categoryRow);
+    if (isProvided(req.body?.desktopHeroBanners)) {
+      const error = validateHeroBanners(
+        req.body.desktopHeroBanners,
+        "desktopHeroBanners"
+      );
+
+      if (error) {
+        return res.status(400).json({
+          message: error,
+        });
+      }
+
+      updates.desktopHeroBanners = normalizeHeroBanners(
+        req.body.desktopHeroBanners
+      );
     }
 
-    if (updates.heroBanners) {
-      const err = validateHeroBanners(updates.heroBanners);
-      if (err) return res.status(400).json({ message: err });
-      updates.heroBanners = normalizeHeroBanners(updates.heroBanners);
+    if (isProvided(req.body?.mobileHeroBanners)) {
+      const error = validateHeroBanners(
+        req.body.mobileHeroBanners,
+        "mobileHeroBanners"
+      );
+
+      if (error) {
+        return res.status(400).json({
+          message: error,
+        });
+      }
+
+      updates.mobileHeroBanners = normalizeHeroBanners(
+        req.body.mobileHeroBanners
+      );
     }
 
-    if (updates.categoryBanners) {
-      const err = validateCategoryBanners(updates.categoryBanners);
-      if (err) return res.status(400).json({ message: err });
-      updates.categoryBanners = normalizeCategoryBanners(updates.categoryBanners);
+    if (isProvided(req.body?.categoryRow)) {
+      const error = validateCategoryRow(req.body.categoryRow);
+
+      if (error) {
+        return res.status(400).json({
+          message: error,
+        });
+      }
+
+      updates.categoryRow = normalizeCategoryRow(
+        req.body.categoryRow
+      );
+    }
+
+    if (isProvided(req.body?.categoryBanners)) {
+      const error = validateCategoryBanners(
+        req.body.categoryBanners
+      );
+
+      if (error) {
+        return res.status(400).json({
+          message: error,
+        });
+      }
+
+      updates.categoryBanners = normalizeCategoryBanners(
+        req.body.categoryBanners
+      );
+    }
+
+    if (req.user?._id) {
+      updates.updatedBy = req.user._id;
     }
 
     await getOrCreateDefaultSettings();
 
-    const updated = await HomepageSettings.findOneAndUpdate(
-      { key: "default" },
-      { ...updates, key: "default" },
-      { new: true, runValidators: true }
+    const updatedSettings =
+      await HomepageSettings.findOneAndUpdate(
+        {
+          key: "default",
+        },
+        {
+          $set: {
+            ...updates,
+            key: "default",
+          },
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+    return res.status(200).json(
+      formatSettingsResponse(updatedSettings)
+    );
+  } catch (error) {
+    console.error("updateHomepageSettings error:", error);
+
+    return res.status(500).json({
+      message: error.message || "Failed to update homepage settings",
+    });
+  }
+};
+
+/* =========================================================
+   GET HERO BANNERS ONLY
+========================================================= */
+
+export const getHeroBanners = async (req, res) => {
+  try {
+    const settings = await getOrCreateDefaultSettings();
+
+    return res.status(200).json({
+      desktopHeroBanners: getActiveItems(
+        settings.desktopHeroBanners || []
+      ),
+
+      mobileHeroBanners: getActiveItems(
+        settings.mobileHeroBanners || []
+      ),
+    });
+  } catch (error) {
+    console.error("getHeroBanners error:", error);
+
+    return res.status(500).json({
+      message: error.message || "Failed to fetch hero banners",
+    });
+  }
+};
+
+/* =========================================================
+   UPDATE ALL HERO BANNERS
+========================================================= */
+
+export const updateHeroBanners = async (req, res) => {
+  try {
+    const {
+      desktopHeroBanners,
+      mobileHeroBanners,
+    } = req.body;
+
+    if (
+      !isProvided(desktopHeroBanners) &&
+      !isProvided(mobileHeroBanners)
+    ) {
+      return res.status(400).json({
+        message:
+          "desktopHeroBanners or mobileHeroBanners is required",
+      });
+    }
+
+    const updates = {};
+
+    if (isProvided(desktopHeroBanners)) {
+      const error = validateHeroBanners(
+        desktopHeroBanners,
+        "desktopHeroBanners"
+      );
+
+      if (error) {
+        return res.status(400).json({
+          message: error,
+        });
+      }
+
+      updates.desktopHeroBanners = normalizeHeroBanners(
+        desktopHeroBanners
+      );
+    }
+
+    if (isProvided(mobileHeroBanners)) {
+      const error = validateHeroBanners(
+        mobileHeroBanners,
+        "mobileHeroBanners"
+      );
+
+      if (error) {
+        return res.status(400).json({
+          message: error,
+        });
+      }
+
+      updates.mobileHeroBanners = normalizeHeroBanners(
+        mobileHeroBanners
+      );
+    }
+
+    if (req.user?._id) {
+      updates.updatedBy = req.user._id;
+    }
+
+    await getOrCreateDefaultSettings();
+
+    const updatedSettings =
+      await HomepageSettings.findOneAndUpdate(
+        {
+          key: "default",
+        },
+        {
+          $set: updates,
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+    return res.status(200).json({
+      desktopHeroBanners: sortByOrder(
+        updatedSettings.desktopHeroBanners || []
+      ),
+
+      mobileHeroBanners: sortByOrder(
+        updatedSettings.mobileHeroBanners || []
+      ),
+    });
+  } catch (error) {
+    console.error("updateHeroBanners error:", error);
+
+    return res.status(500).json({
+      message: error.message || "Failed to update hero banners",
+    });
+  }
+};
+
+/* =========================================================
+   UPDATE DESKTOP HERO BANNERS ONLY
+========================================================= */
+
+export const updateDesktopHeroBanners = async (req, res) => {
+  try {
+    const { desktopHeroBanners } = req.body;
+
+    const error = validateHeroBanners(
+      desktopHeroBanners,
+      "desktopHeroBanners"
     );
 
-    res.json(updated);
-  } catch (err) {
-    console.error("updateHomepageSettings error:", err);
-    res.status(500).json({ message: err.message });
+    if (error) {
+      return res.status(400).json({
+        message: error,
+      });
+    }
+
+    await getOrCreateDefaultSettings();
+
+    const updateData = {
+      desktopHeroBanners: normalizeHeroBanners(
+        desktopHeroBanners
+      ),
+    };
+
+    if (req.user?._id) {
+      updateData.updatedBy = req.user._id;
+    }
+
+    const updatedSettings =
+      await HomepageSettings.findOneAndUpdate(
+        {
+          key: "default",
+        },
+        {
+          $set: updateData,
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+    return res.status(200).json({
+      desktopHeroBanners: sortByOrder(
+        updatedSettings.desktopHeroBanners || []
+      ),
+    });
+  } catch (error) {
+    console.error("updateDesktopHeroBanners error:", error);
+
+    return res.status(500).json({
+      message:
+        error.message || "Failed to update desktop hero banners",
+    });
+  }
+};
+
+/* =========================================================
+   UPDATE MOBILE HERO BANNERS ONLY
+========================================================= */
+
+export const updateMobileHeroBanners = async (req, res) => {
+  try {
+    const { mobileHeroBanners } = req.body;
+
+    const error = validateHeroBanners(
+      mobileHeroBanners,
+      "mobileHeroBanners"
+    );
+
+    if (error) {
+      return res.status(400).json({
+        message: error,
+      });
+    }
+
+    await getOrCreateDefaultSettings();
+
+    const updateData = {
+      mobileHeroBanners: normalizeHeroBanners(
+        mobileHeroBanners
+      ),
+    };
+
+    if (req.user?._id) {
+      updateData.updatedBy = req.user._id;
+    }
+
+    const updatedSettings =
+      await HomepageSettings.findOneAndUpdate(
+        {
+          key: "default",
+        },
+        {
+          $set: updateData,
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+    return res.status(200).json({
+      mobileHeroBanners: sortByOrder(
+        updatedSettings.mobileHeroBanners || []
+      ),
+    });
+  } catch (error) {
+    console.error("updateMobileHeroBanners error:", error);
+
+    return res.status(500).json({
+      message:
+        error.message || "Failed to update mobile hero banners",
+    });
   }
 };
 
 /* =========================================================
    GET CATEGORY BANNERS ONLY
 ========================================================= */
+
 export const getCategoryBanners = async (req, res) => {
   try {
     const settings = await getOrCreateDefaultSettings();
 
-    const categoryBanners = (settings.categoryBanners || [])
-      .filter((c) => c.isActive !== false)
-      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    return res.status(200).json({
+      categoryBanners: getActiveItems(
+        settings.categoryBanners || []
+      ),
+    });
+  } catch (error) {
+    console.error("getCategoryBanners error:", error);
 
-    res.json({ categoryBanners });
-  } catch (err) {
-    console.error("getCategoryBanners error:", err);
-    res.status(500).json({ message: err.message });
+    return res.status(500).json({
+      message: error.message || "Failed to fetch category banners",
+    });
   }
 };
 
 /* =========================================================
    UPDATE CATEGORY BANNERS ONLY
 ========================================================= */
+
 export const updateCategoryBanners = async (req, res) => {
   try {
     const { categoryBanners } = req.body;
 
-    const err = validateCategoryBanners(categoryBanners);
-    if (err) return res.status(400).json({ message: err });
+    const error = validateCategoryBanners(categoryBanners);
+
+    if (error) {
+      return res.status(400).json({
+        message: error,
+      });
+    }
 
     await getOrCreateDefaultSettings();
 
-    const updated = await HomepageSettings.findOneAndUpdate(
-      { key: "default" },
-      { categoryBanners: normalizeCategoryBanners(categoryBanners) },
-      { new: true, runValidators: true }
-    );
+    const updateData = {
+      categoryBanners:
+        normalizeCategoryBanners(categoryBanners),
+    };
 
-    res.json(updated);
-  } catch (err) {
-    console.error("updateCategoryBanners error:", err);
-    res.status(500).json({ message: err.message });
+    if (req.user?._id) {
+      updateData.updatedBy = req.user._id;
+    }
+
+    const updatedSettings =
+      await HomepageSettings.findOneAndUpdate(
+        {
+          key: "default",
+        },
+        {
+          $set: updateData,
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+    return res.status(200).json({
+      categoryBanners: sortByOrder(
+        updatedSettings.categoryBanners || []
+      ),
+    });
+  } catch (error) {
+    console.error("updateCategoryBanners error:", error);
+
+    return res.status(500).json({
+      message:
+        error.message || "Failed to update category banners",
+    });
   }
 };
 
 /* =========================================================
-   UPDATE HERO BANNERS ONLY
+   GET CATEGORY ROW ONLY
 ========================================================= */
-export const updateHeroBanners = async (req, res) => {
+
+export const getCategoryRow = async (req, res) => {
   try {
-    const { heroBanners } = req.body;
+    const settings = await getOrCreateDefaultSettings();
 
-    const err = validateHeroBanners(heroBanners);
-    if (err) return res.status(400).json({ message: err });
+    return res.status(200).json({
+      categoryRow: getActiveItems(settings.categoryRow || []),
+    });
+  } catch (error) {
+    console.error("getCategoryRow error:", error);
 
-    await getOrCreateDefaultSettings();
-
-    const updated = await HomepageSettings.findOneAndUpdate(
-      { key: "default" },
-      { heroBanners: normalizeHeroBanners(heroBanners) },
-      { new: true, runValidators: true }
-    );
-
-    res.json(updated);
-  } catch (err) {
-    console.error("updateHeroBanners error:", err);
-    res.status(500).json({ message: err.message });
+    return res.status(500).json({
+      message: error.message || "Failed to fetch category row",
+    });
   }
 };
 
 /* =========================================================
    UPDATE CATEGORY ROW ONLY
 ========================================================= */
+
 export const updateCategoryRow = async (req, res) => {
   try {
     const { categoryRow } = req.body;
 
-    const err = validateCategoryRow(categoryRow);
-    if (err) return res.status(400).json({ message: err });
+    const error = validateCategoryRow(categoryRow);
+
+    if (error) {
+      return res.status(400).json({
+        message: error,
+      });
+    }
 
     await getOrCreateDefaultSettings();
 
-    const updated = await HomepageSettings.findOneAndUpdate(
-      { key: "default" },
-      { categoryRow: normalizeCategoryRow(categoryRow) },
-      { new: true, runValidators: true }
-    );
+    const updateData = {
+      categoryRow: normalizeCategoryRow(categoryRow),
+    };
 
-    res.json(updated);
-  } catch (err) {
-    console.error("updateCategoryRow error:", err);
-    res.status(500).json({ message: err.message });
+    if (req.user?._id) {
+      updateData.updatedBy = req.user._id;
+    }
+
+    const updatedSettings =
+      await HomepageSettings.findOneAndUpdate(
+        {
+          key: "default",
+        },
+        {
+          $set: updateData,
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+    return res.status(200).json({
+      categoryRow: sortByOrder(
+        updatedSettings.categoryRow || []
+      ),
+    });
+  } catch (error) {
+    console.error("updateCategoryRow error:", error);
+
+    return res.status(500).json({
+      message: error.message || "Failed to update category row",
+    });
   }
 };

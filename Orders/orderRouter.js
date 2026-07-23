@@ -24,7 +24,7 @@ import {
   getDuplicateOrderAlerts,
   markDuplicateOrderAlertsController,
   getOrderConfirmationDetails,
-  getOrdersDashboard, // ✅ ADD THIS
+  getOrdersDashboard,
 } from "./orderController.js";
 
 import {
@@ -36,6 +36,7 @@ import {
   getInvoicesByOrderNumbers,
   getInvoiceById,
   getInvoiceByOrderNumber,
+  getRecentInvoices,
 } from "./order.invoice.controller.js";
 
 import {
@@ -60,7 +61,7 @@ import {
 import {
   getCustomerSupportOrders,
   getCustomerSupportOrderDetail,
-} from "../Orders/customerSupportOrderController.js";
+} from "./customerSupportOrderController.js";
 
 import {
   createRma,
@@ -101,54 +102,212 @@ import { protectVendor } from "../VendorUser/vendorAuth.js";
 
 const router = express.Router();
 
-/* Orders */
+/* ============================================================
+   ORDERS ROOT
+============================================================ */
+
 router.post("/", createOrder);
 router.get("/", getAllOrders);
 
-/* ✅ Dashboard - keep before any /:id route */
+/* ============================================================
+   DASHBOARD
+   Keep before dynamic /:id routes
+============================================================ */
+
 router.get("/dashboard", getOrdersDashboard);
 
-/* WhatsApp Webhooks */
-router.get("/whatsapp/webhook", verifyWhatsappWebhook);
-router.post("/whatsapp/webhook/order-confirm", whatsappConfirmOrderWebhook);
-router.post("/whatsapp/webhook/order-cancel", whatsappCancelOrderWebhook);
+/* ============================================================
+   WHATSAPP WEBHOOKS
+============================================================ */
 
-/* Search / Lookup / Analytics */
+router.get("/whatsapp/webhook", verifyWhatsappWebhook);
+
+router.post(
+  "/whatsapp/webhook/order-confirm",
+  whatsappConfirmOrderWebhook
+);
+
+router.post(
+  "/whatsapp/webhook/order-cancel",
+  whatsappCancelOrderWebhook
+);
+
+/* ============================================================
+   SEARCH / LOOKUP / ANALYTICS
+============================================================ */
+
 router.get("/lookup", lookupOrdersByIdentity);
+
 router.get("/product-order-count", getProductOrderCount);
 router.get("/product-order-search", searchProductOrderNumbers);
+
 router.get("/customer-support", getCustomerSupportOrders);
 router.get("/customer-support/:id", getCustomerSupportOrderDetail);
+
 router.get("/analytics/summary", getOrderAnalytics);
+
 router.get("/duplicate-alerts", getDuplicateOrderAlerts);
-router.post("/duplicate-alerts/mark", markDuplicateOrderAlertsController);
+
+router.post(
+  "/duplicate-alerts/mark",
+  markDuplicateOrderAlertsController
+);
+
 router.get("/location/search", findOrdersByStateAndPincode);
 
-/* Refund / Escalation */
-router.get("/refund-pending-candidates", getRefundPendingCandidates);
-router.get("/eligible-unrefunded", getEligibleUnrefundedOrders);
+/* ============================================================
+   CONFIRMED / NOT CONFIRMED LISTS
+   Keep before /:id
+============================================================ */
 
-/* Accounts / Reports */
+router.get("/confirmed", (req, res) => {
+  req.query.confirmFilter = "confirmed";
+  return getAllOrders(req, res);
+});
+
+router.get("/not-confirmed", (req, res) => {
+  req.query.confirmFilter = "not_confirmed";
+  return getAllOrders(req, res);
+});
+
+/* ============================================================
+   REFUND / ESCALATION
+============================================================ */
+
+router.get(
+  "/refund-pending-candidates",
+  getRefundPendingCandidates
+);
+
+router.get(
+  "/eligible-unrefunded",
+  getEligibleUnrefundedOrders
+);
+
+/* ============================================================
+   ACCOUNTS / REPORTS
+============================================================ */
+
 router.get("/accounts/sales-report", getSalesReport);
 router.get("/accounts/gst-report", getGSTReport);
-router.get("/accounts/sales-ledger", getSalesLedgerReport);
-router.get("/accounts/sales-ledger/csv", downloadSalesLedgerCsv);
-router.get("/accounts/sales-report/products", getProductSalesReport);
-router.get("/accounts/sales-report/products/low-selling", getLowSellingProducts);
-router.get("/accounts/sales-report/products/unsold", getUnsoldProducts);
-router.get("/accounts/revenue-report", getRevenueReport);
-router.get("/accounts/business-overview", getOrderBusinessOverview);
+
+router.get(
+  "/accounts/sales-ledger",
+  getSalesLedgerReport
+);
+
+router.get(
+  "/accounts/sales-ledger/csv",
+  downloadSalesLedgerCsv
+);
+
+router.get(
+  "/accounts/sales-report/products",
+  getProductSalesReport
+);
+
+router.get(
+  "/accounts/sales-report/products/low-selling",
+  getLowSellingProducts
+);
+
+router.get(
+  "/accounts/sales-report/products/unsold",
+  getUnsoldProducts
+);
+
+router.get(
+  "/accounts/revenue-report",
+  getRevenueReport
+);
+
+router.get(
+  "/accounts/business-overview",
+  getOrderBusinessOverview
+);
+
 router.get("/reports/roas", getROASReport);
-router.get("/reports/operations-status", getOperationsStatusReport);
-router.get("/reports/final-payable-by-status", getFinalPayableByStatus);
-router.get("/reports/cancellations", getCancellationAnalyticsReport);
 
-/* Invoices */
-router.post("/invoices", getInvoicesByOrderNumbers);
-router.get("/by-number/:orderNumber/invoice", getInvoiceByOrderNumber);
-router.get("/:id/invoice", getInvoiceById);
+router.get(
+  "/reports/operations-status",
+  getOperationsStatusReport
+);
 
-/* Vendor Production */
+router.get(
+  "/reports/final-payable-by-status",
+  getFinalPayableByStatus
+);
+
+router.get(
+  "/reports/cancellations",
+  getCancellationAnalyticsReport
+);
+
+/* ============================================================
+   INVOICES
+   Static invoice routes must stay before /:id/invoice
+============================================================ */
+
+/**
+ * Bulk invoices through request body:
+ *
+ * POST /api/orders/invoices
+ *
+ * {
+ *   "orderNumbers": ["000001", "000002"]
+ * }
+ */
+router.post(
+  "/invoices",
+  getInvoicesByOrderNumbers
+);
+
+/**
+ * Bulk invoices through query:
+ *
+ * GET /api/orders/invoices?orderNumbers=000001,000002
+ */
+router.get(
+  "/invoices",
+  getInvoicesByOrderNumbers
+);
+
+/**
+ * Filtered recent invoices:
+ *
+ * GET /api/orders/invoices/recent
+ * GET /api/orders/invoices/recent?limit=50
+ * GET /api/orders/invoices/recent?fulfillmentStatus=packed
+ */
+router.get(
+  "/invoices/recent",
+  getRecentInvoices
+);
+
+/**
+ * Single invoice using order number:
+ *
+ * GET /api/orders/by-number/000001/invoice
+ */
+router.get(
+  "/by-number/:orderNumber/invoice",
+  getInvoiceByOrderNumber
+);
+
+/**
+ * Single invoice using MongoDB order ID:
+ *
+ * GET /api/orders/:id/invoice
+ */
+router.get(
+  "/:id/invoice",
+  getInvoiceById
+);
+
+/* ============================================================
+   VENDOR PRODUCTION
+============================================================ */
+
 router.get(
   "/vendor/production/jobs",
   protectVendor,
@@ -161,70 +320,186 @@ router.get(
   exportVendorProductionJobs
 );
 
-/* Admin Production */
-router.get("/production/summary", getProductionSummary);
-router.get("/production/queue", getProductionQueue);
-router.get("/production/jobs", getProductionJobList);
-router.get("/production/jobs/export", exportProductionJobListExcel);
-router.get("/production/processing-products", getProcessingOrderProductList);
-router.post("/production/:id/shipped", markOrderShippedFromProduction);
+/* ============================================================
+   ADMIN PRODUCTION
+   Duplicate production route block removed
+============================================================ */
+
+router.get(
+  "/production/summary",
+  getProductionSummary
+);
+
+router.get(
+  "/production/queue",
+  getProductionQueue
+);
+
+router.get(
+  "/production/jobs",
+  getProductionJobList
+);
+
+router.get(
+  "/production/jobs/export",
+  exportProductionJobListExcel
+);
+
+router.get(
+  "/production/processing-products",
+  getProcessingOrderProductList
+);
+
 router.patch(
   "/production/packed/mark-all-shipped",
   markAllPackedOrdersShipped
 );
 
-/* Production */
-router.get("/production/summary", getProductionSummary);
-router.get("/production/queue", getProductionQueue);
-router.get("/production/jobs", getProductionJobList);
-router.get("/production/jobs/export", exportProductionJobListExcel);
-router.get("/production/processing-products", getProcessingOrderProductList);
-router.post("/production/:id/shipped", markOrderShippedFromProduction);
-router.patch("/production/packed/mark-all-shipped", markAllPackedOrdersShipped);
+router.post(
+  "/production/:id/shipped",
+  markOrderShippedFromProduction
+);
 
-/* Customer / Order Lookups */
-router.get("/customer/:customerId", getOrdersByCustomer);
-router.get("/by-number/:orderNumber", getOrderByOrderNumber);
+/* ============================================================
+   CUSTOMER / ORDER NUMBER LOOKUPS
+============================================================ */
 
-/* RMA */
-router.get("/rma", getAllRmasAdmin);
-router.get("/rma/grouped-by-product-code", getRmaReasonsGroupedByProductCode);
-router.post("/:id/rma", createRma);
-router.get("/:id/rma", getRmasByOrder);
-router.get("/:id/rma/:rmaNumber", getRmaByNumber);
-router.patch("/:id/rma/:rmaNumber", updateRma);
+router.get(
+  "/customer/:customerId",
+  getOrdersByCustomer
+);
 
-/* Actions */
+router.get(
+  "/by-number/:orderNumber",
+  getOrderByOrderNumber
+);
+
+/* ============================================================
+   RMA STATIC ROUTES
+   Keep before /:id/rma
+============================================================ */
+
+router.get(
+  "/rma",
+  getAllRmasAdmin
+);
+
+router.get(
+  "/rma/grouped-by-product-code",
+  getRmaReasonsGroupedByProductCode
+);
+
+/* ============================================================
+   ORDER ACTIONS
+============================================================ */
+
 router.post(
   "/:orderIdOrNumber/review-whatsapp/send",
   sendReviewWhatsappManually
 );
 
-router.post("/:id/shiprocket/book", adminBookShiprocketIfMissing);
-router.post("/:id/ship", bookWithShiprocket);
-router.post("/:id/cancel", cancelOrder);
-router.post("/:orderId/duplicate-exchange", duplicateExchangeOrder);
-router.post("/:id/confirm", confirmOrder);
-router.post("/:id/split", splitOrderIntoShipments);
+router.post(
+  "/:id/shiprocket/book",
+  adminBookShiprocketIfMissing
+);
 
-/* Order by ID */
-router.patch("/:id/status", updateOrderStatus);
-router.patch("/:id/payment-status", updateOrderPaymentStatus);
-router.patch("/:id/tracking", updateTracking);
-router.patch("/:id/address", updateOrderAddress);
-router.patch("/:id", updateOrder);
-router.put("/:id", updateOrder);
-router.get("/:id/confirmation-details", getOrderConfirmationDetails);
-/* Confirmed / Not Confirmed Orders */
-router.get("/confirmed", (req, res) => {
-  req.query.confirmFilter = "confirmed";
-  return getAllOrders(req, res);
-});
+router.post(
+  "/:id/ship",
+  bookWithShiprocket
+);
 
-router.get("/not-confirmed", (req, res) => {
-  req.query.confirmFilter = "not_confirmed";
-  return getAllOrders(req, res);
-});
-router.get("/:id", getOrderById);
+router.post(
+  "/:id/cancel",
+  cancelOrder
+);
+
+router.post(
+  "/:orderId/duplicate-exchange",
+  duplicateExchangeOrder
+);
+
+router.post(
+  "/:id/confirm",
+  confirmOrder
+);
+
+router.post(
+  "/:id/split",
+  splitOrderIntoShipments
+);
+
+/* ============================================================
+   ORDER RMA BY ID
+============================================================ */
+
+router.post(
+  "/:id/rma",
+  createRma
+);
+
+router.get(
+  "/:id/rma",
+  getRmasByOrder
+);
+
+router.get(
+  "/:id/rma/:rmaNumber",
+  getRmaByNumber
+);
+
+router.patch(
+  "/:id/rma/:rmaNumber",
+  updateRma
+);
+
+/* ============================================================
+   ORDER UPDATE ROUTES
+============================================================ */
+
+router.patch(
+  "/:id/status",
+  updateOrderStatus
+);
+
+router.patch(
+  "/:id/payment-status",
+  updateOrderPaymentStatus
+);
+
+router.patch(
+  "/:id/tracking",
+  updateTracking
+);
+
+router.patch(
+  "/:id/address",
+  updateOrderAddress
+);
+
+router.get(
+  "/:id/confirmation-details",
+  getOrderConfirmationDetails
+);
+
+router.patch(
+  "/:id",
+  updateOrder
+);
+
+router.put(
+  "/:id",
+  updateOrder
+);
+
+/* ============================================================
+   ORDER BY ID
+   Always keep last
+============================================================ */
+
+router.get(
+  "/:id",
+  getOrderById
+);
 
 export default router;
+
