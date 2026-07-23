@@ -42,6 +42,8 @@ import {
   updateDispatchReadyStatus,
   previewBulkProductMetadata,
   confirmBulkProductMetadata,
+    getProductExcelColumns,
+  exportProductsExcel,
 } from "./productController.js";
 
 import { searchProductsForCard } from "./product.search.controller.js";
@@ -196,6 +198,20 @@ router.get(
 router.get("/media/all", getAllProductMedia);
 
 router.get("/", getAllProducts);
+
+/* =========================================================
+   PRODUCT EXCEL EXPORT
+========================================================= */
+
+router.get(
+  "/export/excel/columns",
+  getProductExcelColumns,
+);
+
+router.post(
+  "/export/excel",
+  exportProductsExcel,
+);
 
 /* =========================================================
    BULK ACTIONS

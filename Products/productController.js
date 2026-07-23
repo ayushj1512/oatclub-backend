@@ -9,6 +9,7 @@ import { generateVariants } from "../utility/variants.js";
 import Category from "../Category/Category.js";
 import Collection from "../Collection/Collection.js";
 import { reconcileBackordersForVariant } from "../inventoryUtility/reconcileBackordersForVariant.js";
+import ExcelJS from "exceljs";
 
 const SYSTEM_CATEGORIES = new Set([
   "all-clothing",
@@ -4958,5 +4959,942 @@ export const getAllProductMedia = async (req, res) => {
   } catch (e) {
     console.error("❌ Get Product Media Error:", e);
     return res.status(500).json({ message: e.message });
+  }
+};
+/* ============================================================
+   DYNAMIC PRODUCT EXCEL EXPORT
+
+   POST /api/products/export/excel
+
+   Body:
+   {
+     "columns": ["productCode", "title", "price", "stock"],
+     "productIds": [],
+     "filters": {
+       "search": "",
+       "category": "",
+       "isActive": true
+     },
+     "variantMode": "single_row",
+     "fileName": "oatclub-products"
+   }
+
+   variantMode:
+   - "single_row": one row per product
+   - "separate_rows": one row per variant
+============================================================ */
+
+const PRODUCT_EXCEL_COLUMNS = {
+  productCode: {
+    header: "Product Code",
+    width: 16,
+    value: ({ product }) => product.productCode || "",
+  },
+
+  title: {
+    header: "Product Title",
+    width: 34,
+    value: ({ product }) => product.title || "",
+  },
+
+  slug: {
+    header: "Slug",
+    width: 30,
+    value: ({ product }) => product.slug || "",
+  },
+
+  productType: {
+    header: "Product Type",
+    width: 16,
+    value: ({ product }) => product.productType || "",
+  },
+
+  sku: {
+    header: "Product SKU",
+    width: 22,
+    value: ({ product }) => product.sku || "",
+  },
+
+  variantSku: {
+    header: "Variant SKU",
+    width: 24,
+    value: ({ product, variant }) =>
+      variant?.sku ||
+      (product.variants || [])
+        .map((item) => item?.sku)
+        .filter(Boolean)
+        .join(", "),
+  },
+
+  variantBarcode: {
+    header: "Variant Barcode",
+    width: 24,
+    value: ({ product, variant }) =>
+      variant?.barcode ||
+      (product.variants || [])
+        .map((item) => item?.barcode)
+        .filter(Boolean)
+        .join(", "),
+  },
+
+  variantSize: {
+    header: "Size",
+    width: 14,
+    value: ({ product, variant }) => {
+      const getSize = (item) =>
+        (item?.attributes || []).find(
+          (attribute) =>
+            String(attribute?.key || "")
+              .trim()
+              .toLowerCase() === "size",
+        )?.value || "";
+
+      if (variant) {
+        return getSize(variant);
+      }
+
+      return (product.variants || [])
+        .map(getSize)
+        .filter(Boolean)
+        .join(", ");
+    },
+  },
+
+  patternNumber: {
+    header: "Pattern Number",
+    width: 20,
+    value: ({ product, variant }) =>
+      variant?.patternNumber ||
+      (product.variants || [])
+        .map((item) => item?.patternNumber)
+        .filter(Boolean)
+        .join(", "),
+  },
+
+  price: {
+    header: "Price",
+    width: 14,
+    value: ({ product }) => Number(product.price || 0),
+    format: "₹#,##0.00",
+  },
+
+  compareAtPrice: {
+    header: "Compare At Price",
+    width: 18,
+    value: ({ product }) =>
+      product.compareAtPrice === null ||
+      product.compareAtPrice === undefined
+        ? ""
+        : Number(product.compareAtPrice),
+    format: "₹#,##0.00",
+  },
+
+  currency: {
+    header: "Currency",
+    width: 12,
+    value: ({ product }) => product.currency || "INR",
+  },
+
+  stock: {
+    header: "Product Stock",
+    width: 16,
+    value: ({ product }) => Number(product.stock || 0),
+  },
+
+  reservedStock: {
+    header: "Product Reserved Stock",
+    width: 22,
+    value: ({ product }) => Number(product.reservedStock || 0),
+  },
+
+  availableStock: {
+    header: "Product Available Stock",
+    width: 22,
+    value: ({ product }) =>
+      Math.max(
+        0,
+        Number(product.stock || 0) -
+          Number(product.reservedStock || 0),
+      ),
+  },
+
+  variantStock: {
+    header: "Variant Stock",
+    width: 18,
+    value: ({ product, variant }) =>
+      variant
+        ? Number(variant.stock || 0)
+        : (product.variants || [])
+            .map((item) => Number(item?.stock || 0))
+            .join(", "),
+  },
+
+  variantReservedStock: {
+    header: "Variant Reserved Stock",
+    width: 22,
+    value: ({ product, variant }) =>
+      variant
+        ? Number(variant.reservedStock || 0)
+        : (product.variants || [])
+            .map((item) => Number(item?.reservedStock || 0))
+            .join(", "),
+  },
+
+  variantAvailableStock: {
+    header: "Variant Available Stock",
+    width: 22,
+    value: ({ product, variant }) => {
+      const getAvailable = (item) =>
+        Math.max(
+          0,
+          Number(item?.stock || 0) -
+            Number(item?.reservedStock || 0),
+        );
+
+      if (variant) {
+        return getAvailable(variant);
+      }
+
+      return (product.variants || [])
+        .map(getAvailable)
+        .join(", ");
+    },
+  },
+
+  isInStock: {
+    header: "In Stock",
+    width: 12,
+    value: ({ product, variant }) =>
+      (variant ? variant.isInStock : product.isInStock)
+        ? "Yes"
+        : "No",
+  },
+
+  categories: {
+    header: "Categories",
+    width: 30,
+    value: ({ product }) =>
+      (product.categories || []).join(", "),
+  },
+
+  collections: {
+    header: "Collections",
+    width: 30,
+    value: ({ product }) =>
+      (product.collections || [])
+        .map((collection) => {
+          if (typeof collection !== "object") {
+            return collection;
+          }
+
+          return (
+            collection.name ||
+            collection.title ||
+            collection.slug ||
+            collection._id?.toString() ||
+            ""
+          );
+        })
+        .filter(Boolean)
+        .join(", "),
+  },
+
+  tags: {
+    header: "Tags",
+    width: 30,
+    value: ({ product }) =>
+      (product.tags || []).join(", "),
+  },
+
+  colors: {
+    header: "Colors",
+    width: 24,
+    value: ({ product }) =>
+      (product.colors || []).join(", "),
+  },
+
+  hsnCode: {
+    header: "HSN Code",
+    width: 16,
+    value: ({ product }) => product.hsnCode || "",
+  },
+
+  fabricNames: {
+    header: "Fabric Names",
+    width: 28,
+    value: ({ product }) =>
+      (product.fabrics || [])
+        .map((fabric) => fabric?.fabricName)
+        .filter(Boolean)
+        .join(", "),
+  },
+
+  fabricCodes: {
+    header: "Fabric Codes",
+    width: 24,
+    value: ({ product }) =>
+      (product.fabrics || [])
+        .map((fabric) => fabric?.fabricCode)
+        .filter(Boolean)
+        .join(", "),
+  },
+
+  fabricColors: {
+    header: "Fabric Colors",
+    width: 24,
+    value: ({ product }) =>
+      (product.fabrics || [])
+        .map((fabric) => fabric?.fabricColor)
+        .filter(Boolean)
+        .join(", "),
+  },
+
+  fabricRoles: {
+    header: "Fabric Roles",
+    width: 22,
+    value: ({ product }) =>
+      (product.fabrics || [])
+        .map((fabric) => fabric?.role)
+        .filter(Boolean)
+        .join(", "),
+  },
+
+  avgFabricConsumption: {
+    header: "Avg. Fabric Consumption",
+    width: 25,
+    value: ({ product }) => {
+      const value = Number(
+        product.avgFabricConsumption?.value || 0,
+      );
+
+      const unit =
+        product.avgFabricConsumption?.unit || "meter";
+
+      return `${value} ${unit}`;
+    },
+  },
+
+  weight: {
+    header: "Weight",
+    width: 14,
+    value: ({ product, variant }) =>
+      Number(variant?.weight ?? product.weight ?? 0),
+  },
+
+  dimensions: {
+    header: "Dimensions",
+    width: 24,
+    value: ({ product }) => {
+      const dimensions = product.dimensions || {};
+
+      return `${Number(dimensions.length || 0)} x ${Number(
+        dimensions.width || 0,
+      )} x ${Number(dimensions.height || 0)} ${
+        dimensions.unit || "cm"
+      }`;
+    },
+  },
+
+  averageRating: {
+    header: "Average Rating",
+    width: 16,
+    value: ({ product }) =>
+      Number(product.averageRating || 0),
+  },
+
+  totalReviews: {
+    header: "Total Reviews",
+    width: 16,
+    value: ({ product }) =>
+      Number(product.totalReviews || 0),
+  },
+
+  views: {
+    header: "Views",
+    width: 14,
+    value: ({ product }) =>
+      Number(product.analytics?.views || 0),
+  },
+
+  purchases: {
+    header: "Purchases",
+    width: 14,
+    value: ({ product }) =>
+      Number(product.analytics?.purchases || 0),
+  },
+
+  wishlistCount: {
+    header: "Wishlist Count",
+    width: 18,
+    value: ({ product }) =>
+      Number(product.analytics?.wishlistCount || 0),
+  },
+
+  cartAdds: {
+    header: "Cart Adds",
+    width: 14,
+    value: ({ product }) =>
+      Number(product.analytics?.cartAdds || 0),
+  },
+
+  searchAppearances: {
+    header: "Search Appearances",
+    width: 20,
+    value: ({ product }) =>
+      Number(product.analytics?.searchAppearances || 0),
+  },
+
+  isActive: {
+    header: "Active",
+    width: 12,
+    value: ({ product }) =>
+      product.isActive ? "Yes" : "No",
+  },
+
+  isDraft: {
+    header: "Draft",
+    width: 12,
+    value: ({ product }) =>
+      product.isDraft ? "Yes" : "No",
+  },
+
+  isFeatured: {
+    header: "Featured",
+    width: 12,
+    value: ({ product }) =>
+      product.isFeatured ? "Yes" : "No",
+  },
+
+  isBestSeller: {
+    header: "Best Seller",
+    width: 14,
+    value: ({ product }) =>
+      product.isBestSeller ? "Yes" : "No",
+  },
+
+  isTrending: {
+    header: "Trending",
+    width: 14,
+    value: ({ product }) =>
+      product.isTrending ? "Yes" : "No",
+  },
+
+  isDispatchReady: {
+    header: "Dispatch Ready",
+    width: 18,
+    value: ({ product }) =>
+      product.isDispatchReady ? "Yes" : "No",
+  },
+
+  availableForCollab: {
+    header: "Collab Ready",
+    width: 16,
+    value: ({ product }) =>
+      product.availableForCollab ? "Yes" : "No",
+  },
+
+  isPatternReady: {
+    header: "Pattern Ready",
+    width: 16,
+    value: ({ product }) =>
+      product.isPatternReady ? "Yes" : "No",
+  },
+
+  isSamplingDone: {
+    header: "Sampling Done",
+    width: 16,
+    value: ({ product }) =>
+      product.isSamplingDone ? "Yes" : "No",
+  },
+
+  isPrimaryProduct: {
+    header: "Primary Product",
+    width: 18,
+    value: ({ product }) =>
+      product.isPrimaryProduct ? "Yes" : "No",
+  },
+
+  wordpressId: {
+    header: "WordPress ID",
+    width: 16,
+    value: ({ product }) =>
+      product.wordpressId ?? "",
+  },
+
+  originalProductLink: {
+    header: "Original Product Link",
+    width: 40,
+    value: ({ product }) =>
+      product.originalProductLink || "",
+  },
+
+  metaTitle: {
+    header: "Meta Title",
+    width: 34,
+    value: ({ product }) =>
+      product.metaTitle || "",
+  },
+
+  metaDescription: {
+    header: "Meta Description",
+    width: 50,
+    value: ({ product }) =>
+      product.metaDescription || "",
+  },
+
+  keywords: {
+    header: "Keywords",
+    width: 34,
+    value: ({ product }) =>
+      (product.keywords || []).join(", "),
+  },
+
+  createdAt: {
+    header: "Created At",
+    width: 22,
+    value: ({ product }) =>
+      product.createdAt || "",
+    format: "dd-mmm-yyyy hh:mm",
+  },
+
+  updatedAt: {
+    header: "Updated At",
+    width: 22,
+    value: ({ product }) =>
+      product.updatedAt || "",
+    format: "dd-mmm-yyyy hh:mm",
+  },
+
+  publishAt: {
+    header: "Publish At",
+    width: 22,
+    value: ({ product }) =>
+      product.publishAt || "",
+    format: "dd-mmm-yyyy hh:mm",
+  },
+};
+
+/* ============================================================
+   GET AVAILABLE EXCEL COLUMNS
+
+   GET /api/products/export/excel/columns
+============================================================ */
+
+export const getProductExcelColumns = async (_req, res) => {
+  return res.status(200).json({
+    success: true,
+
+    columns: Object.entries(PRODUCT_EXCEL_COLUMNS).map(
+      ([key, config]) => ({
+        key,
+        label: config.header,
+      }),
+    ),
+  });
+};
+
+/* ============================================================
+   BUILD EXPORT FILTER
+============================================================ */
+
+const buildProductExcelFilter = (
+  filters = {},
+  productIds = [],
+) => {
+  const query = {};
+  const andFilters = [];
+
+  const hasValue = (value) =>
+    value !== undefined &&
+    value !== null &&
+    String(value).trim() !== "";
+
+  const asArray = (value) =>
+    Array.isArray(value)
+      ? value
+          .map(String)
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : String(value || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+
+  const asBoolean = (value) =>
+    typeof value === "boolean"
+      ? value
+      : ["true", "1", "yes"].includes(
+          String(value).trim().toLowerCase(),
+        );
+
+  const validIds = asArray(productIds).filter((id) =>
+    mongoose.Types.ObjectId.isValid(id),
+  );
+
+  if (validIds.length) {
+    query._id = {
+      $in: validIds,
+    };
+  }
+
+  if (hasValue(filters.category)) {
+    query.categories = {
+      $in: asArray(filters.category),
+    };
+  }
+
+  if (hasValue(filters.tags)) {
+    query.tags = {
+      $in: tagsNorm(filters.tags),
+    };
+  }
+
+  if (hasValue(filters.colors)) {
+    query.colors = {
+      $in: asArray(filters.colors).map((color) =>
+        color.toLowerCase(),
+      ),
+    };
+  }
+
+  [
+    "isActive",
+    "isDraft",
+    "isBestSeller",
+    "isTrending",
+    "isPrimaryProduct",
+    "isDispatchReady",
+    "isFeatured",
+    "isPatternReady",
+    "isSamplingDone",
+    "isInStock",
+    "availableForCollab",
+  ].forEach((key) => {
+    if (hasValue(filters[key])) {
+      query[key] = asBoolean(filters[key]);
+    }
+  });
+
+  [
+    "productType",
+    "currency",
+    "taxClass",
+    "hsnCode",
+    "slug",
+  ].forEach((key) => {
+    if (hasValue(filters[key])) {
+      query[key] = String(filters[key]).trim();
+    }
+  });
+
+  if (
+    hasValue(filters.minPrice) ||
+    hasValue(filters.maxPrice)
+  ) {
+    query.price = {};
+
+    if (hasValue(filters.minPrice)) {
+      query.price.$gte = Number(filters.minPrice);
+    }
+
+    if (hasValue(filters.maxPrice)) {
+      query.price.$lte = Number(filters.maxPrice);
+    }
+  }
+
+  if (hasValue(filters.search)) {
+    const rx = new RegExp(
+      escapeRegex(String(filters.search).trim()),
+      "i",
+    );
+
+    andFilters.push({
+      $or: [
+        { title: rx },
+        { slug: rx },
+        { productCode: rx },
+        { sku: rx },
+        { "variants.sku": rx },
+        { "variants.barcode": rx },
+        { "variants.patternNumber": rx },
+        { categories: rx },
+        { tags: rx },
+        { colors: rx },
+        { "fabrics.fabricName": rx },
+        { "fabrics.fabricCode": rx },
+      ],
+    });
+  }
+
+  if (andFilters.length) {
+    query.$and = andFilters;
+  }
+
+  return query;
+};
+
+/* ============================================================
+   EXPORT PRODUCTS EXCEL
+
+   POST /api/products/export/excel
+============================================================ */
+
+export const exportProductsExcel = async (req, res) => {
+  try {
+    const {
+      columns = [],
+      productIds = [],
+      filters = {},
+      variantMode = "single_row",
+      fileName = "products-export",
+    } = req.body || {};
+
+    const incomingColumns = Array.isArray(columns)
+      ? columns
+      : String(columns || "").split(",");
+
+    const requestedColumns = Array.from(
+      new Set(
+        incomingColumns
+          .map((column) => String(column).trim())
+          .filter(
+            (column) => PRODUCT_EXCEL_COLUMNS[column],
+          ),
+      ),
+    );
+
+    if (!requestedColumns.length) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Select at least one valid export column",
+        allowedColumns: Object.keys(
+          PRODUCT_EXCEL_COLUMNS,
+        ),
+      });
+    }
+
+    if (
+      !["single_row", "separate_rows"].includes(
+        variantMode,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "variantMode must be single_row or separate_rows",
+      });
+    }
+
+    const query = buildProductExcelFilter(
+      filters,
+      productIds,
+    );
+
+    const products = await Product.find(query)
+      .populate("collections", "name title slug")
+      .sort({
+        createdAt: -1,
+      })
+      .lean();
+
+    if (!products.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No products found for export",
+      });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+
+    workbook.creator = "OATCLUB Admin";
+    workbook.created = new Date();
+
+    const worksheet = workbook.addWorksheet(
+      "Products",
+      {
+        views: [
+          {
+            state: "frozen",
+            ySplit: 1,
+          },
+        ],
+        properties: {
+          defaultRowHeight: 20,
+        },
+      },
+    );
+
+    worksheet.columns = requestedColumns.map((key) => ({
+      header: PRODUCT_EXCEL_COLUMNS[key].header,
+      key,
+      width:
+        PRODUCT_EXCEL_COLUMNS[key].width || 18,
+    }));
+
+    const headerRow = worksheet.getRow(1);
+
+    headerRow.font = {
+      bold: true,
+      color: {
+        argb: "FFFFFFFF",
+      },
+    };
+
+    headerRow.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: {
+        argb: "FF111111",
+      },
+    };
+
+    headerRow.alignment = {
+      vertical: "middle",
+      horizontal: "center",
+    };
+
+    headerRow.height = 25;
+
+    worksheet.autoFilter = {
+      from: {
+        row: 1,
+        column: 1,
+      },
+      to: {
+        row: 1,
+        column: requestedColumns.length,
+      },
+    };
+
+    const addExcelRow = (
+      product,
+      variant = null,
+    ) => {
+      const rowData = {};
+
+      requestedColumns.forEach((key) => {
+        rowData[key] =
+          PRODUCT_EXCEL_COLUMNS[key].value({
+            product,
+            variant,
+          });
+      });
+
+      const row = worksheet.addRow(rowData);
+
+      row.alignment = {
+        vertical: "top",
+        wrapText: true,
+      };
+
+      requestedColumns.forEach((key, index) => {
+        const format =
+          PRODUCT_EXCEL_COLUMNS[key].format;
+
+        if (format) {
+          row.getCell(index + 1).numFmt = format;
+        }
+      });
+    };
+
+    products.forEach((product) => {
+      const variants = Array.isArray(
+        product.variants,
+      )
+        ? product.variants
+        : [];
+
+      if (
+        variantMode === "separate_rows" &&
+        variants.length
+      ) {
+        variants.forEach((variant) => {
+          addExcelRow(product, variant);
+        });
+
+        return;
+      }
+
+      addExcelRow(product, null);
+    });
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+
+      row.eachCell((cell) => {
+        cell.border = {
+          top: {
+            style: "thin",
+            color: {
+              argb: "FFE5E5E5",
+            },
+          },
+          left: {
+            style: "thin",
+            color: {
+              argb: "FFE5E5E5",
+            },
+          },
+          bottom: {
+            style: "thin",
+            color: {
+              argb: "FFE5E5E5",
+            },
+          },
+          right: {
+            style: "thin",
+            color: {
+              argb: "FFE5E5E5",
+            },
+          },
+        };
+      });
+    });
+
+    const safeFileName =
+      String(fileName || "products-export")
+        .trim()
+        .replace(/[^a-zA-Z0-9-_]/g, "-") ||
+      "products-export";
+
+    const datedFileName = `${safeFileName}-${new Date()
+      .toISOString()
+      .slice(0, 10)}.xlsx`;
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${datedFileName}"`,
+    );
+
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      "Content-Disposition",
+    );
+
+    await workbook.xlsx.write(res);
+
+    return res.end();
+  } catch (error) {
+    console.error(
+      "❌ Product Excel Export Error:",
+      error,
+    );
+
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message:
+          error.message ||
+          "Failed to export products Excel",
+      });
+    }
+
+    return res.end();
   }
 };

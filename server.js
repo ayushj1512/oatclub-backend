@@ -85,7 +85,8 @@ import marketingcampaignroutes from "./MarketingCampaign/marketingCampaignRoutes
 import vendorUserRoutes from "./VendorUser/vendorUserRoutes.js";
 import cuttingBatchRoutes from "./cuttingbatch/cuttingbatchroute.js";
 import otpRoutes from "./otp/otp.routes.js";
-
+import fabricPriceLogRoutes from "./FabricPriceLog/FabricPriceLogRoutes.js";
+import fabricLogRoutes from "./FabricLog/FabricLogRouter.js";
 // --------------------------------------------------
 // APP CONFIG
 // --------------------------------------------------
@@ -274,7 +275,8 @@ app.use("/superadmin", superadminRoutes);
 app.use("/api/home-collections", homeCollectionsRoutes);
 app.use("/api", marqueeRoutes);
 app.use("/api/marketing-campaigns", marketingcampaignroutes);
-
+app.use("/fabric-price-logs", fabricPriceLogRoutes);
+app.use("/fabric-logs", fabricLogRoutes);
 // --------------------------------------------------
 // ROOT + FEEDS
 // --------------------------------------------------

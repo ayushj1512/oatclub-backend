@@ -11,7 +11,7 @@ import {
   deleteBarcodeItem,
   barcodePngById,
   generateBarcodePngNoSave,
-} from "../BarcodeItem/barcodeItem.controller.js";
+} from "./barcodeItem.controller.js";
 
 const router = Router();
 
@@ -23,6 +23,9 @@ router.get("/health", (req, res) => {
   return res.json({
     ok: true,
     service: "barcode-service",
+    barcodeFormat:
+      "PRODUCTCODE-SIZE-UNIQUEID",
+    example: "00034-M-00000029",
   });
 });
 
@@ -30,23 +33,59 @@ router.get("/health", (req, res) => {
    CREATE AND LIST
 ========================================================= */
 
-// Create one physical barcode item
-router.post("/barcodes", createBarcodeItem);
+/**
+ * Create one physical inventory piece.
+ *
+ * POST /api/barcodes
+ */
+router.post(
+  "/barcodes",
+  createBarcodeItem
+);
 
-// Create multiple physical barcode items with unique serials
-router.post("/barcodes/batch", createBarcodeBatch);
+/**
+ * Create multiple individually traceable pieces.
+ *
+ * POST /api/barcodes/batch
+ */
+router.post(
+  "/barcodes/batch",
+  createBarcodeBatch
+);
 
-// List/search barcode items
-router.get("/barcodes", listBarcodeItems);
+/**
+ * Search and list physical pieces.
+ *
+ * GET /api/barcodes
+ */
+router.get(
+  "/barcodes",
+  listBarcodeItems
+);
 
 /* =========================================================
    SCAN AND LOOKUP
 ========================================================= */
 
-// Scan exact barcode text
-router.post("/barcodes/scan", scanBarcode);
+/**
+ * Scan exact piece barcode.
+ *
+ * POST /api/barcodes/scan
+ *
+ * {
+ *   "barcodeText": "00034-M-00000029"
+ * }
+ */
+router.post(
+  "/barcodes/scan",
+  scanBarcode
+);
 
-// Fetch saved item using exact barcode text
+/**
+ * Find saved physical item by exact barcode.
+ *
+ * GET /api/barcodes/by-barcode/00034-M-00000029
+ */
 router.get(
   "/barcodes/by-barcode/:barcodeText",
   getBarcodeItemByBarcode
@@ -57,14 +96,15 @@ router.get(
 ========================================================= */
 
 /**
- * Preview an already-known barcode without saving.
+ * Generate preview without saving.
  *
- * Example:
- * /barcodes/generate.png
- * ?productId=1081
- * &size=XS
- * &price=1499
- * &serialNumber=1
+ * GET /api/barcodes/generate.png
+ * ?productCode=00034
+ * &size=M
+ * &uniqueId=00000029
+ *
+ * This endpoint does not reserve a unique ID.
+ * It only previews an already-known ID.
  */
 router.get(
   "/barcodes/generate.png",
@@ -75,20 +115,41 @@ router.get(
    CRUD BY MONGO ID
 ========================================================= */
 
-// Fetch one saved barcode item
-router.get("/barcodes/:id", getBarcodeItemById);
+/**
+ * GET /api/barcodes/:id
+ */
+router.get(
+  "/barcodes/:id",
+  getBarcodeItemById
+);
 
-// Barcode identity fields are immutable
-router.patch("/barcodes/:id", updateBarcodeItem);
+/**
+ * PATCH /api/barcodes/:id
+ *
+ * Barcode identity fields remain immutable.
+ */
+router.patch(
+  "/barcodes/:id",
+  updateBarcodeItem
+);
 
-// Delete unused barcode item
-router.delete("/barcodes/:id", deleteBarcodeItem);
+/**
+ * DELETE /api/barcodes/:id
+ *
+ * Only completely unused items can be deleted.
+ */
+router.delete(
+  "/barcodes/:id",
+  deleteBarcodeItem
+);
 
 /* =========================================================
    SAVED BARCODE PNG
 ========================================================= */
 
-// Generate barcode PNG for a saved item
+/**
+ * GET /api/barcodes/:id/barcode.png
+ */
 router.get(
   "/barcodes/:id/barcode.png",
   barcodePngById

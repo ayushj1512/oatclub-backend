@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import Counter from "../models/Counter.js";
 
 const { Schema } = mongoose;
 
@@ -19,42 +20,74 @@ const ALLOWED_SIZES = [
   "FREE",
 ];
 
-const BRAND = "OATCLUB";
-const COUNTER_KEY = "oatclub-global-barcode-counter";
-const SERIAL_PADDING = 8;
+const INVENTORY_STATUSES = [
+  "available",
+  "reserved",
+  "allocated",
+  "packed",
+  "shipped",
+  "delivered",
+  "returned",
+  "damaged",
+  "lost",
+  "removed",
+];
+
+const INVENTORY_SOURCES = [
+  "production",
+  "vendor",
+  "return",
+  "manual",
+  "opening-stock",
+  "other",
+];
+
+const COUNTER_NAME = "barcode-item";
 const MAX_BATCH_SIZE = 5000;
 
 /* =========================================================
    NORMALIZERS
 ========================================================= */
 
-function normalizeText(value) {
+function normalizeText(value = "") {
   return String(value ?? "").trim();
 }
 
-function normalizeProductId(value) {
+function normalizeUppercase(value = "") {
   return normalizeText(value).toUpperCase();
 }
 
-function normalizeSize(value) {
-  return normalizeText(value).toUpperCase();
-}
+function normalizeProductCode(value = "") {
+  const productCode = normalizeUppercase(value);
 
-function normalizePrice(value) {
-  const price = Number(value);
-
-  if (!Number.isFinite(price)) {
-    throw new Error("price must be a valid number");
+  if (!productCode) {
+    throw new Error("productCode is required");
   }
 
-  if (price < 0) {
-    throw new Error("price must be greater than or equal to 0");
+  if (productCode.includes("-")) {
+    throw new Error("productCode must not contain '-'");
   }
 
-  return price;
+  return productCode;
 }
 
-function normalizeQuantity(value) {
+function normalizeSize(value = "") {
+  const size = normalizeUppercase(value);
+
+  if (!size) {
+    throw new Error("size is required");
+  }
+
+  if (!ALLOWED_SIZES.includes(size)) {
+    throw new Error(
+      `size must be one of: ${ALLOWED_SIZES.join(", ")}`
+    );
+  }
+
+  return size;
+}
+
+function normalizeQuantity(value = 1) {
   const quantity = Number(value);
 
   if (!Number.isSafeInteger(quantity) || quantity <= 0) {
@@ -63,76 +96,63 @@ function normalizeQuantity(value) {
 
   if (quantity > MAX_BATCH_SIZE) {
     throw new Error(
-      `Maximum ${MAX_BATCH_SIZE} barcodes can be generated at once`
+      `Maximum ${MAX_BATCH_SIZE} barcode items can be created at once`
     );
   }
 
   return quantity;
 }
 
-/* =========================================================
-   SERIAL HELPERS
-========================================================= */
-
-function formatSerialNumber(serialNumber) {
-  const serial = Number(serialNumber);
-
-  if (!Number.isSafeInteger(serial) || serial <= 0) {
-    throw new Error("serialNumber must be a positive integer");
+function normalizeOptionalNumber(value) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return null;
   }
 
-  return String(serial).padStart(SERIAL_PADDING, "0");
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number < 0) {
+    throw new Error(
+      "Snapshot value must be a valid number greater than or equal to 0"
+    );
+  }
+
+  return number;
 }
 
 /* =========================================================
-   COUNTER MODEL
+   UNIQUE ID HELPERS
 ========================================================= */
 
-const BarcodeCounterSchema = new Schema(
-  {
-    key: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-    },
+function formatUniqueId(sequence) {
+  const number = Number(sequence);
 
-    sequence: {
-      type: Number,
-      required: true,
-      default: 0,
-      min: 0,
-    },
-  },
-  {
-    timestamps: true,
-    versionKey: false,
+  if (
+    !Number.isSafeInteger(number) ||
+    number <= 0
+  ) {
+    throw new Error(
+      "sequence must be a positive integer"
+    );
   }
-);
 
-BarcodeCounterSchema.index({ key: 1 }, { unique: true });
+  return String(number);
+}
 
-const BarcodeCounter =
-  mongoose.models.BarcodeCounter ||
-  mongoose.model("BarcodeCounter", BarcodeCounterSchema);
-
-/**
- * Generates one globally unique serial number.
- *
- * MongoDB $inc is atomic, so simultaneous requests
- * cannot receive the same serial number.
- */
-async function getNextSerialNumber() {
-  const counter = await BarcodeCounter.findOneAndUpdate(
+async function getNextBarcodeSequence() {
+  const counter = await Counter.findOneAndUpdate(
     {
-      key: COUNTER_KEY,
+      name: COUNTER_NAME,
     },
     {
       $inc: {
-        sequence: 1,
+        seq: 1,
       },
       $setOnInsert: {
-        key: COUNTER_KEY,
+        name: COUNTER_NAME,
       },
     },
     {
@@ -142,34 +162,32 @@ async function getNextSerialNumber() {
     }
   ).lean();
 
-  if (!counter?.sequence) {
-    throw new Error("Unable to generate barcode serial number");
+  if (
+    !counter ||
+    !Number.isSafeInteger(counter.seq) ||
+    counter.seq <= 0
+  ) {
+    throw new Error(
+      "Unable to generate barcode unique ID"
+    );
   }
 
-  return counter.sequence;
+  return counter.seq;
 }
 
-/**
- * Atomically reserves a range of serial numbers.
- *
- * Example:
- * Current sequence: 100
- * Requested quantity: 5
- * Returned: [101, 102, 103, 104, 105]
- */
-async function getNextSerialNumbers(quantity = 1) {
+async function getNextBarcodeSequences(quantity = 1) {
   const count = normalizeQuantity(quantity);
 
-  const counter = await BarcodeCounter.findOneAndUpdate(
+  const counter = await Counter.findOneAndUpdate(
     {
-      key: COUNTER_KEY,
+      name: COUNTER_NAME,
     },
     {
       $inc: {
-        sequence: count,
+        seq: count,
       },
       $setOnInsert: {
-        key: COUNTER_KEY,
+        name: COUNTER_NAME,
       },
     },
     {
@@ -179,188 +197,243 @@ async function getNextSerialNumbers(quantity = 1) {
     }
   ).lean();
 
-  if (!counter?.sequence) {
-    throw new Error("Unable to generate barcode serial numbers");
+  if (
+    !counter ||
+    !Number.isSafeInteger(counter.seq) ||
+    counter.seq <= 0
+  ) {
+    throw new Error(
+      "Unable to generate barcode unique IDs"
+    );
   }
 
-  const endSerial = counter.sequence;
-  const startSerial = endSerial - count + 1;
+  const endSequence = counter.seq;
+  const startSequence =
+    endSequence - count + 1;
 
   return Array.from(
     {
       length: count,
     },
-    (_, index) => startSerial + index
+    (_, index) => startSequence + index
   );
 }
 
 /* =========================================================
-   BARCODE HELPERS
+   SKU / BARCODE HELPERS
 ========================================================= */
 
 /**
- * Barcode format:
+ * Variant SKU:
  *
- * OATCLUB-productId-size-price-serial
- *
- * Example:
- * OATCLUB-1081-XS-1499-00000001
+ * 00034-M
  */
-function makeBarcode({
-  productId,
+function makeVariantSku({ productCode, size }) {
+  return `${normalizeProductCode(
+    productCode
+  )}-${normalizeSize(size)}`;
+}
+
+/**
+ * Physical piece barcode:
+ *
+ * 00034-M-00000029
+ */
+function makePieceSku({
+  productCode,
   size,
-  price,
-  serialNumber,
+  sequence,
+  uniqueId,
 }) {
-  const pid = normalizeProductId(productId);
-  const normalizedSize = normalizeSize(size);
-  const normalizedPrice = normalizePrice(price);
-  const serialCode = formatSerialNumber(serialNumber);
+  const variantSku = makeVariantSku({
+    productCode,
+    size,
+  });
 
-  if (!pid) {
-    throw new Error("productId is required");
-  }
+  const numericUniqueId = Number(
+    uniqueId ?? sequence
+  );
 
-  if (!normalizedSize) {
-    throw new Error("size is required");
-  }
-
-  if (pid.includes("-")) {
-    throw new Error("productId must not contain '-'");
-  }
-
-  if (normalizedSize.includes("-")) {
-    throw new Error("size must not contain '-'");
-  }
-
-  if (!ALLOWED_SIZES.includes(normalizedSize)) {
+  if (
+    !Number.isSafeInteger(numericUniqueId) ||
+    numericUniqueId <= 0
+  ) {
     throw new Error(
-      `size must be one of: ${ALLOWED_SIZES.join(", ")}`
+      "uniqueId must be a positive integer"
     );
   }
 
-  return [
-    BRAND,
-    pid,
-    normalizedSize,
-    normalizedPrice,
-    serialCode,
-  ].join("-");
+  return `${variantSku}-${numericUniqueId}`;
 }
 
 /**
  * Parses:
  *
- * OATCLUB-1081-XS-1499-00000001
+ * 00034-M-00000029
  */
-function parseBarcode(barcode) {
-  const text = normalizeText(barcode).toUpperCase();
-  const parts = text.split("-");
+function parseBarcode(barcodeText) {
+  const barcode =
+    normalizeUppercase(barcodeText);
 
-  if (parts.length !== 5) {
+  const parts = barcode.split("-");
+
+  if (parts.length !== 3) {
     throw new Error(
-      `Invalid barcode format. Expected ${BRAND}-productId-size-price-serial`
+      "Invalid barcode format. Expected productCode-size-uniqueId"
     );
   }
 
   const [
-    brand,
-    productId,
+    productCode,
     size,
-    priceText,
-    serialText,
+    uniqueIdText,
   ] = parts;
 
-  if (brand !== BRAND) {
+  const normalizedProductCode =
+    normalizeProductCode(productCode);
+
+  const normalizedSize =
+    normalizeSize(size);
+
+  if (!/^\d+$/.test(uniqueIdText)) {
     throw new Error(
-      `Invalid brand prefix. Expected ${BRAND}`
+      "Barcode uniqueId must contain digits only"
     );
   }
 
-  if (!productId) {
-    throw new Error("productId is missing in barcode");
-  }
-
-  if (!ALLOWED_SIZES.includes(size)) {
-    throw new Error(
-      `Invalid size. Expected one of: ${ALLOWED_SIZES.join(", ")}`
-    );
-  }
-
-  if (!/^\d+$/.test(serialText)) {
-    throw new Error("Serial number in barcode is invalid");
-  }
-
-  const price = Number(priceText);
-  const serialNumber = Number(serialText);
-
-  if (!Number.isFinite(price) || price < 0) {
-    throw new Error("Price in barcode is not a valid number");
-  }
+  const sequence =
+    Number(uniqueIdText);
 
   if (
-    !Number.isSafeInteger(serialNumber) ||
-    serialNumber <= 0
+    !Number.isSafeInteger(sequence) ||
+    sequence <= 0
   ) {
-    throw new Error("Serial number in barcode is invalid");
+    throw new Error(
+      "Barcode uniqueId must be a positive integer"
+    );
   }
 
+  const uniqueId = String(sequence);
+
+  const variantSku = makeVariantSku({
+    productCode:
+      normalizedProductCode,
+    size: normalizedSize,
+  });
+
+  const pieceSku = makePieceSku({
+    productCode:
+      normalizedProductCode,
+    size: normalizedSize,
+    uniqueId,
+  });
+
   return {
-    brand,
-    productId,
-    size,
-    price,
-    serialNumber,
-    serialCode: formatSerialNumber(serialNumber),
-    barcode: text,
+    productCode:
+      normalizedProductCode,
+    size: normalizedSize,
+    sequence,
+    uniqueId,
+    variantSku,
+    pieceSku,
+    barcode: pieceSku,
   };
 }
+
+/* =========================================================
+   ASSIGNMENT HISTORY
+========================================================= */
+
+const assignmentHistorySchema = new Schema(
+  {
+    order: {
+      type: Schema.Types.ObjectId,
+      ref: "Order",
+      default: null,
+    },
+
+    orderNumber: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+      index: true,
+    },
+
+    action: {
+      type: String,
+      required: true,
+      enum: [
+        "reserved",
+        "allocated",
+        "packed",
+        "shipped",
+        "delivered",
+        "released",
+        "returned",
+        "damaged",
+        "lost",
+      ],
+    },
+
+    note: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    performedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "AdminUser",
+      default: null,
+    },
+
+    performedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  {
+    _id: true,
+    timestamps: false,
+  }
+);
 
 /* =========================================================
    BARCODE ITEM SCHEMA
 ========================================================= */
 
-const BarcodeItemSchema = new Schema(
+const barcodeItemSchema = new Schema(
   {
-    /**
-     * Global numeric serial:
-     *
-     * 1
-     * 2
-     * 3
-     */
-    serialNumber: {
-      type: Number,
-      required: true,
-      unique: true,
-      immutable: true,
-      min: 1,
+    product: {
+      type: Schema.Types.ObjectId,
+      ref: "Product",
+      default: null,
+      index: true,
     },
 
-    /**
-     * Display-friendly serial:
-     *
-     * 00000001
-     * 00000002
-     */
-    serialCode: {
-      type: String,
-      required: true,
-      unique: true,
-      immutable: true,
-      trim: true,
+    variantId: {
+      type: Schema.Types.ObjectId,
+      default: null,
+      index: true,
     },
 
-    productId: {
+    productCode: {
       type: String,
       required: true,
       uppercase: true,
       trim: true,
+      immutable: true,
       index: true,
       validate: {
-        validator: (value) =>
-          !String(value).includes("-"),
-        message: "productId must not contain '-'",
+        validator(value) {
+          return (
+            Boolean(value) &&
+            !String(value).includes("-")
+          );
+        },
+        message:
+          "productCode is required and must not contain '-'",
       },
     },
 
@@ -369,28 +442,157 @@ const BarcodeItemSchema = new Schema(
       required: true,
       uppercase: true,
       trim: true,
+      immutable: true,
       enum: ALLOWED_SIZES,
       index: true,
     },
 
-    price: {
-      type: Number,
+    variantSku: {
+      type: String,
       required: true,
-      min: 0,
+      uppercase: true,
+      trim: true,
+      immutable: true,
+      index: true,
     },
 
-    /**
-     * Example:
-     *
-     * OATCLUB-1081-XS-1499-00000001
-     */
-    barcode: {
+    sequence: {
+      type: Number,
+      required: true,
+      unique: true,
+      immutable: true,
+      min: 1,
+    },
+
+    uniqueId: {
       type: String,
       required: true,
       unique: true,
       immutable: true,
+      trim: true,
+      index: true,
+      validate: {
+        validator(value) {
+          return /^\d+$/.test(
+            String(value || "")
+          );
+        },
+        message:
+          "uniqueId must contain digits only",
+      },
+    },
+
+    pieceSku: {
+      type: String,
+      required: true,
+      unique: true,
       uppercase: true,
       trim: true,
+      immutable: true,
+      index: true,
+    },
+
+    barcode: {
+      type: String,
+      required: true,
+      unique: true,
+      uppercase: true,
+      trim: true,
+      immutable: true,
+      index: true,
+    },
+
+    priceSnapshot: {
+      type: Number,
+      min: 0,
+      default: null,
+    },
+
+    mrpSnapshot: {
+      type: Number,
+      min: 0,
+      default: null,
+    },
+
+    status: {
+      type: String,
+      enum: INVENTORY_STATUSES,
+      default: "available",
+      index: true,
+    },
+
+    assignedOrder: {
+      type: Schema.Types.ObjectId,
+      ref: "Order",
+      default: null,
+      index: true,
+    },
+
+    assignedOrderNumber: {
+      type: String,
+      uppercase: true,
+      trim: true,
+      default: "",
+      index: true,
+    },
+
+    assignedAt: {
+      type: Date,
+      default: null,
+    },
+
+    packedAt: {
+      type: Date,
+      default: null,
+    },
+
+    shippedAt: {
+      type: Date,
+      default: null,
+    },
+
+    deliveredAt: {
+      type: Date,
+      default: null,
+    },
+
+    assignmentHistory: {
+      type: [assignmentHistorySchema],
+      default: [],
+    },
+
+    inwardBatchCode: {
+      type: String,
+      uppercase: true,
+      trim: true,
+      default: "",
+      index: true,
+    },
+
+    inwardAt: {
+      type: Date,
+      default: Date.now,
+      index: true,
+    },
+
+    vendor: {
+      type: Schema.Types.ObjectId,
+      ref: "VendorUser",
+      default: null,
+      index: true,
+    },
+
+    source: {
+      type: String,
+      enum: INVENTORY_SOURCES,
+      default: "production",
+      index: true,
+    },
+
+    notes: {
+      type: String,
+      trim: true,
+      default: "",
     },
   },
   {
@@ -403,179 +605,329 @@ const BarcodeItemSchema = new Schema(
    DOCUMENT MIDDLEWARE
 ========================================================= */
 
-/**
- * Automatically generates a global serial number and barcode
- * whenever BarcodeItem.create() or document.save() is used.
- */
-BarcodeItemSchema.pre("validate", async function () {
-  this.productId = normalizeProductId(this.productId);
-  this.size = normalizeSize(this.size);
-  this.price = normalizePrice(this.price);
+barcodeItemSchema.pre(
+  "validate",
+  async function () {
+    this.productCode =
+      normalizeProductCode(this.productCode);
 
-  if (!this.isNew) {
-    return;
+    this.size = normalizeSize(this.size);
+
+    this.priceSnapshot =
+      normalizeOptionalNumber(
+        this.priceSnapshot
+      );
+
+    this.mrpSnapshot =
+      normalizeOptionalNumber(
+        this.mrpSnapshot
+      );
+
+    if (!this.isNew) {
+      return;
+    }
+
+    if (!this.sequence) {
+      this.sequence =
+        await getNextBarcodeSequence();
+    }
+
+    this.uniqueId =
+      formatUniqueId(this.sequence);
+
+    this.variantSku = makeVariantSku({
+      productCode: this.productCode,
+      size: this.size,
+    });
+
+    this.pieceSku = makePieceSku({
+      productCode: this.productCode,
+      size: this.size,
+      uniqueId: this.uniqueId,
+    });
+
+    this.barcode = this.pieceSku;
   }
+);
 
-  if (!this.serialNumber) {
-    this.serialNumber = await getNextSerialNumber();
-  }
+/* =========================================================
+   INSTANCE METHODS
+========================================================= */
 
-  this.serialCode = formatSerialNumber(
-    this.serialNumber
-  );
+barcodeItemSchema.methods.assignToOrder =
+  async function ({
+    orderId = null,
+    orderNumber,
+    status = "allocated",
+    performedBy = null,
+    note = "",
+  }) {
+    const normalizedOrderNumber =
+      normalizeUppercase(orderNumber);
 
-  this.barcode = makeBarcode({
-    productId: this.productId,
-    size: this.size,
-    price: this.price,
-    serialNumber: this.serialNumber,
-  });
-});
+    if (!normalizedOrderNumber) {
+      throw new Error(
+        "orderNumber is required"
+      );
+    }
+
+    if (
+      !["reserved", "allocated"].includes(
+        status
+      )
+    ) {
+      throw new Error(
+        "Assignment status must be reserved or allocated"
+      );
+    }
+
+    if (
+      this.assignedOrderNumber &&
+      this.assignedOrderNumber !==
+        normalizedOrderNumber
+    ) {
+      throw new Error(
+        `Piece ${this.pieceSku} is already assigned to ${this.assignedOrderNumber}`
+      );
+    }
+
+    if (
+      [
+        "packed",
+        "shipped",
+        "delivered",
+        "damaged",
+        "lost",
+        "removed",
+      ].includes(this.status)
+    ) {
+      throw new Error(
+        `Piece cannot be assigned while status is ${this.status}`
+      );
+    }
+
+    this.assignedOrder = orderId || null;
+    this.assignedOrderNumber =
+      normalizedOrderNumber;
+    this.assignedAt =
+      this.assignedAt || new Date();
+    this.status = status;
+
+    this.assignmentHistory.push({
+      order: orderId || null,
+      orderNumber: normalizedOrderNumber,
+      action: status,
+      note,
+      performedBy,
+      performedAt: new Date(),
+    });
+
+    return this.save();
+  };
+
+barcodeItemSchema.methods.releaseFromOrder =
+  async function ({
+    performedBy = null,
+    note = "",
+  } = {}) {
+    if (!this.assignedOrderNumber) {
+      return this;
+    }
+
+    if (
+      ["shipped", "delivered"].includes(
+        this.status
+      )
+    ) {
+      throw new Error(
+        `Cannot release a piece with status ${this.status}`
+      );
+    }
+
+    const previousOrder =
+      this.assignedOrder;
+
+    const previousOrderNumber =
+      this.assignedOrderNumber;
+
+    this.assignmentHistory.push({
+      order: previousOrder,
+      orderNumber: previousOrderNumber,
+      action: "released",
+      note,
+      performedBy,
+      performedAt: new Date(),
+    });
+
+    this.assignedOrder = null;
+    this.assignedOrderNumber = "";
+    this.assignedAt = null;
+    this.packedAt = null;
+    this.status = "available";
+
+    return this.save();
+  };
 
 /* =========================================================
    STATIC METHODS
 ========================================================= */
 
-/**
- * Parses a scanned barcode.
- *
- * BarcodeItem.fromScannedBarcode(
- *   "OATCLUB-1081-XS-1499-00000001"
- * );
- */
-BarcodeItemSchema.statics.fromScannedBarcode = function (
-  barcodeText
-) {
-  return parseBarcode(barcodeText);
-};
+barcodeItemSchema.statics.parseScan =
+  function (barcodeText) {
+    return parseBarcode(barcodeText);
+  };
 
-/**
- * Finds an existing physical item by scanned barcode.
- */
-BarcodeItemSchema.statics.findByScannedBarcode = function (
-  barcodeText
-) {
-  const parsed = parseBarcode(barcodeText);
+barcodeItemSchema.statics.findByScan =
+  function (barcodeText) {
+    const parsed =
+      parseBarcode(barcodeText);
 
-  return this.findOne({
-    barcode: parsed.barcode,
-  });
-};
+    return this.findOne({
+      barcode: parsed.barcode,
+    });
+  };
 
-/**
- * Creates multiple physical pieces of the same variant.
- *
- * Example:
- *
- * await BarcodeItem.createBatch({
- *   productId: "1081",
- *   size: "XS",
- *   price: 1499,
- *   quantity: 50
- * });
- */
-BarcodeItemSchema.statics.createBatch = async function ({
-  productId,
-  size,
-  price,
-  quantity,
-}) {
-  const count = normalizeQuantity(quantity);
-  const pid = normalizeProductId(productId);
-  const normalizedSize = normalizeSize(size);
-  const normalizedPrice = normalizePrice(price);
+barcodeItemSchema.statics.createBatch =
+  async function ({
+    product = null,
+    variantId = null,
+    productCode,
+    size,
+    quantity,
+    priceSnapshot = null,
+    mrpSnapshot = null,
+    inwardBatchCode = "",
+    vendor = null,
+    source = "production",
+    notes = "",
+  }) {
+    const count =
+      normalizeQuantity(quantity);
 
-  if (!pid) {
-    throw new Error("productId is required");
-  }
+    const normalizedProductCode =
+      normalizeProductCode(productCode);
 
-  if (pid.includes("-")) {
-    throw new Error("productId must not contain '-'");
-  }
+    const normalizedSize =
+      normalizeSize(size);
 
-  if (!ALLOWED_SIZES.includes(normalizedSize)) {
-    throw new Error(
-      `size must be one of: ${ALLOWED_SIZES.join(", ")}`
-    );
-  }
+    const normalizedPrice =
+      normalizeOptionalNumber(
+        priceSnapshot
+      );
 
-  const serialNumbers =
-    await getNextSerialNumbers(count);
+    const normalizedMrp =
+      normalizeOptionalNumber(
+        mrpSnapshot
+      );
 
-  const documents = serialNumbers.map(
-    (serialNumber) => {
-      const serialCode =
-        formatSerialNumber(serialNumber);
+    const normalizedSource =
+      normalizeText(source).toLowerCase();
 
-      return {
-        serialNumber,
-        serialCode,
-        productId: pid,
-        size: normalizedSize,
-        price: normalizedPrice,
-        barcode: makeBarcode({
-          productId: pid,
-          size: normalizedSize,
-          price: normalizedPrice,
-          serialNumber,
-        }),
-      };
+    if (
+      !INVENTORY_SOURCES.includes(
+        normalizedSource
+      )
+    ) {
+      throw new Error(
+        `source must be one of: ${INVENTORY_SOURCES.join(
+          ", "
+        )}`
+      );
     }
-  );
 
-  /*
-   * insertMany does not run document pre-save middleware.
-   * Therefore serial and barcode are generated above.
-   */
-  return this.insertMany(documents, {
-    ordered: true,
-  });
-};
+    const variantSku = makeVariantSku({
+      productCode: normalizedProductCode,
+      size: normalizedSize,
+    });
+
+    const sequences =
+      await getNextBarcodeSequences(count);
+
+    const now = new Date();
+
+    const documents = sequences.map(
+      (sequence) => {
+        const uniqueId =
+          formatUniqueId(sequence);
+
+        const pieceSku = makePieceSku({
+          productCode:
+            normalizedProductCode,
+          size: normalizedSize,
+          uniqueId,
+        });
+
+        return {
+          product,
+          variantId,
+          productCode:
+            normalizedProductCode,
+          size: normalizedSize,
+          variantSku,
+          sequence,
+          uniqueId,
+          pieceSku,
+          barcode: pieceSku,
+          priceSnapshot:
+            normalizedPrice,
+          mrpSnapshot: normalizedMrp,
+          status: "available",
+          assignedOrder: null,
+          assignedOrderNumber: "",
+          assignmentHistory: [],
+          inwardBatchCode:
+            normalizeUppercase(
+              inwardBatchCode
+            ),
+          inwardAt: now,
+          vendor,
+          source: normalizedSource,
+          notes: normalizeText(notes),
+        };
+      }
+    );
+
+    return this.insertMany(documents, {
+      ordered: true,
+    });
+  };
 
 /* =========================================================
    INDEXES
 ========================================================= */
 
-BarcodeItemSchema.index(
-  {
-    serialNumber: 1,
-  },
-  {
-    unique: true,
-  }
-);
-
-BarcodeItemSchema.index(
-  {
-    serialCode: 1,
-  },
-  {
-    unique: true,
-  }
-);
-
-BarcodeItemSchema.index(
-  {
-    barcode: 1,
-  },
-  {
-    unique: true,
-  }
-);
-
-/**
- * Not unique because the same product variant can have
- * multiple individual physical pieces.
- */
-BarcodeItemSchema.index({
-  productId: 1,
+barcodeItemSchema.index({
+  productCode: 1,
   size: 1,
-  price: 1,
+  status: 1,
+  inwardAt: 1,
+  sequence: 1,
 });
 
-BarcodeItemSchema.index({
+barcodeItemSchema.index({
+  assignedOrderNumber: 1,
+  status: 1,
+});
+
+barcodeItemSchema.index({
+  assignedOrder: 1,
+  status: 1,
+});
+
+barcodeItemSchema.index({
+  variantSku: 1,
+  status: 1,
+});
+
+barcodeItemSchema.index({
+  product: 1,
+  variantId: 1,
+  status: 1,
+});
+
+barcodeItemSchema.index({
+  inwardBatchCode: 1,
   createdAt: -1,
-  serialNumber: -1,
 });
 
 /* =========================================================
@@ -586,16 +938,21 @@ const BarcodeItem =
   mongoose.models.BarcodeItem ||
   mongoose.model(
     "BarcodeItem",
-    BarcodeItemSchema
+    barcodeItemSchema
   );
 
 export {
   BarcodeItem,
-  BarcodeCounter,
-  makeBarcode,
-  parseBarcode,
-  formatSerialNumber,
-  getNextSerialNumber,
-  getNextSerialNumbers,
   ALLOWED_SIZES,
+  INVENTORY_STATUSES,
+  INVENTORY_SOURCES,
+  MAX_BATCH_SIZE,
+  formatUniqueId,
+  makeVariantSku,
+  makePieceSku,
+  parseBarcode,
+  getNextBarcodeSequence,
+  getNextBarcodeSequences,
 };
+
+export default BarcodeItem;

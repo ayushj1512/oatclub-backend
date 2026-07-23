@@ -2,9 +2,6 @@ import mongoose from "mongoose";
 
 const FabricLogSchema = new mongoose.Schema(
   {
-    /* -------------------------------
-       FABRIC REFERENCE
-    -------------------------------- */
     fabric: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Fabric",
@@ -32,9 +29,6 @@ const FabricLogSchema = new mongoose.Schema(
       required: true,
     },
 
-    /* -------------------------------
-       ACTION + ENTRY TYPE
-    -------------------------------- */
     action: {
       type: String,
       required: true,
@@ -46,7 +40,7 @@ const FabricLogSchema = new mongoose.Schema(
         "product_codes_added",
         "product_codes_removed",
         "activated",
-        "deleted",
+        "deactivated",
         "stock_added",
         "stock_subtracted",
         "stock_adjusted",
@@ -62,37 +56,27 @@ const FabricLogSchema = new mongoose.Schema(
       index: true,
     },
 
-    /* -------------------------------
-       STOCK MOVEMENT
-    -------------------------------- */
     quantity: {
       type: Number,
-      required: true,
       min: 0,
       default: 0,
     },
 
     previousStock: {
       type: Number,
-      required: true,
       min: 0,
       default: 0,
     },
 
     newStock: {
       type: Number,
-      required: true,
       min: 0,
       default: 0,
     },
 
-    /* -------------------------------
-       DESCRIPTION + NOTES
-    -------------------------------- */
     description: {
       type: String,
       trim: true,
-      required: true,
       default: "",
     },
 
@@ -108,26 +92,17 @@ const FabricLogSchema = new mongoose.Schema(
       default: "",
     },
 
-    /* -------------------------------
-       CUSTOM LOG DATE
-    -------------------------------- */
     logDate: {
       type: Date,
       default: Date.now,
       index: true,
     },
 
-    /* -------------------------------
-       FLEXIBLE EXTRA META
-    -------------------------------- */
     meta: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
 
-    /* -------------------------------
-       USER TRACKING
-    -------------------------------- */
     createdBy: {
       type: String,
       trim: true,
@@ -139,13 +114,18 @@ const FabricLogSchema = new mongoose.Schema(
   }
 );
 
-/* -------------------------------
-   PRE-SAVE SAFETY
--------------------------------- */
 FabricLogSchema.pre("validate", function (next) {
   try {
+    if (this.previousStock < 0) {
+      return next(new Error("previousStock cannot be negative"));
+    }
+
     if (this.newStock < 0) {
       return next(new Error("newStock cannot be negative"));
+    }
+
+    if (this.quantity < 0) {
+      return next(new Error("quantity cannot be negative"));
     }
 
     if (!this.description) {
@@ -170,13 +150,11 @@ FabricLogSchema.pre("validate", function (next) {
   }
 });
 
-/* -------------------------------
-   INDEXES
--------------------------------- */
 FabricLogSchema.index({ fabricCode: 1, logDate: -1 });
 FabricLogSchema.index({ fabric: 1, logDate: -1 });
 FabricLogSchema.index({ action: 1, logDate: -1 });
 FabricLogSchema.index({ type: 1, logDate: -1 });
+FabricLogSchema.index({ createdBy: 1, logDate: -1 });
 FabricLogSchema.index({ createdAt: -1 });
 
 export default mongoose.models.FabricLog ||

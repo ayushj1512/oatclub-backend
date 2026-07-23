@@ -1,11 +1,15 @@
+import mongoose from "mongoose";
 import bwipjs from "bwip-js";
 
 import {
   BarcodeItem,
   ALLOWED_SIZES,
-  makeBarcode,
+  INVENTORY_STATUSES,
+  INVENTORY_SOURCES,
+  MAX_BATCH_SIZE,
+  makePieceSku,
   parseBarcode,
-  formatSerialNumber,
+  formatUniqueId,
 } from "./BarcodeItem.js";
 
 /* =========================================================
@@ -14,10 +18,21 @@ import {
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
-const MAX_BATCH_SIZE = 5000;
+
+const IMMUTABLE_FIELDS = [
+  "product",
+  "variantId",
+  "productCode",
+  "size",
+  "variantSku",
+  "sequence",
+  "uniqueId",
+  "pieceSku",
+  "barcode",
+];
 
 /* =========================================================
-   HELPERS
+   RESPONSE HELPERS
 ========================================================= */
 
 function sendError(
@@ -29,40 +44,58 @@ function sendError(
   return res.status(status).json({
     ok: false,
     message,
-    ...(details !== undefined ? { details } : {}),
+    ...(details !== undefined
+      ? { details }
+      : {}),
   });
 }
 
-function normalizeText(value) {
+function sendSuccess(
+  res,
+  {
+    status = 200,
+    message,
+    data,
+    ...extra
+  }
+) {
+  return res.status(status).json({
+    ok: true,
+    ...(message ? { message } : {}),
+    ...(data !== undefined
+      ? { data }
+      : {}),
+    ...extra,
+  });
+}
+
+/* =========================================================
+   NORMALIZERS
+========================================================= */
+
+function normalizeText(value = "") {
   return String(value ?? "").trim();
 }
 
-function normalizeProductId(value) {
+function normalizeUppercase(value = "") {
   return normalizeText(value).toUpperCase();
 }
 
-function normalizeSize(value) {
-  return normalizeText(value).toUpperCase();
+function normalizeProductCode(value = "") {
+  return normalizeUppercase(value);
 }
 
-function normalizePrice(value) {
-  const price = Number(value);
-
-  if (!Number.isFinite(price)) {
-    throw new Error("price must be a valid number");
-  }
-
-  if (price < 0) {
-    throw new Error(
-      "price must be greater than or equal to 0"
-    );
-  }
-
-  return price;
+function normalizeSize(value = "") {
+  return normalizeUppercase(value);
 }
 
-function normalizeQuantity(value, fallback = 1) {
-  const quantity = Number(value ?? fallback);
+function normalizeQuantity(
+  value,
+  fallback = 1
+) {
+  const quantity = Number(
+    value ?? fallback
+  );
 
   if (
     !Number.isSafeInteger(quantity) ||
@@ -75,18 +108,147 @@ function normalizeQuantity(value, fallback = 1) {
 
   if (quantity > MAX_BATCH_SIZE) {
     throw new Error(
-      `Maximum ${MAX_BATCH_SIZE} barcodes can be generated at once`
+      `Maximum ${MAX_BATCH_SIZE} barcode items can be created at once`
     );
   }
 
   return quantity;
 }
 
-function escapeRegex(value) {
+function normalizeOptionalNumber(value) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number < 0) {
+    throw new Error(
+      "Value must be a valid number greater than or equal to 0"
+    );
+  }
+
+  return number;
+}
+
+function normalizeBoolean(
+  value,
+  fallback = false
+) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return fallback;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  return ["true", "1", "yes"].includes(
+    String(value).toLowerCase()
+  );
+}
+
+function escapeRegex(value = "") {
   return String(value).replace(
     /[.*+?^${}()|[\]\\]/g,
     "\\$&"
   );
+}
+
+/* =========================================================
+   VALIDATION HELPERS
+========================================================= */
+
+function isValidObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(
+    value
+  );
+}
+
+function validateOptionalObjectId(
+  value,
+  fieldName
+) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  if (!isValidObjectId(value)) {
+    throw new Error(
+      `${fieldName} must be a valid MongoDB ObjectId`
+    );
+  }
+
+  return value;
+}
+
+function validateSize(size) {
+  const normalizedSize =
+    normalizeSize(size);
+
+  if (
+    !ALLOWED_SIZES.includes(
+      normalizedSize
+    )
+  ) {
+    throw new Error(
+      `size must be one of: ${ALLOWED_SIZES.join(
+        ", "
+      )}`
+    );
+  }
+
+  return normalizedSize;
+}
+
+function validateStatus(status) {
+  const normalizedStatus =
+    normalizeText(status).toLowerCase();
+
+  if (
+    !INVENTORY_STATUSES.includes(
+      normalizedStatus
+    )
+  ) {
+    throw new Error(
+      `status must be one of: ${INVENTORY_STATUSES.join(
+        ", "
+      )}`
+    );
+  }
+
+  return normalizedStatus;
+}
+
+function validateSource(source) {
+  const normalizedSource =
+    normalizeText(source).toLowerCase();
+
+  if (
+    !INVENTORY_SOURCES.includes(
+      normalizedSource
+    )
+  ) {
+    throw new Error(
+      `source must be one of: ${INVENTORY_SOURCES.join(
+        ", "
+      )}`
+    );
+  }
+
+  return normalizedSource;
 }
 
 function parsePagination(query = {}) {
@@ -99,8 +261,10 @@ function parsePagination(query = {}) {
     MAX_LIMIT,
     Math.max(
       1,
-      Number.parseInt(query.limit, 10) ||
-        DEFAULT_LIMIT
+      Number.parseInt(
+        query.limit,
+        10
+      ) || DEFAULT_LIMIT
     )
   );
 
@@ -124,16 +288,24 @@ function getDuplicateMessage(error) {
     return "Barcode already exists";
   }
 
-  if (fields.includes("serialNumber")) {
-    return "Serial number already exists";
+  if (fields.includes("pieceSku")) {
+    return "Piece SKU already exists";
   }
 
-  if (fields.includes("serialCode")) {
-    return "Serial code already exists";
+  if (fields.includes("uniqueId")) {
+    return "Unique piece ID already exists";
+  }
+
+  if (fields.includes("sequence")) {
+    return "Barcode sequence already exists";
   }
 
   return "Duplicate barcode item";
 }
+
+/* =========================================================
+   BARCODE PNG HELPER
+========================================================= */
 
 async function createBarcodeBuffer(
   barcodeText,
@@ -159,8 +331,37 @@ async function createBarcodeBuffer(
   });
 }
 
+function getPngOptions(query = {}) {
+  const displayValue = normalizeBoolean(
+    query.displayValue,
+    true
+  );
+
+  const scale = Math.min(
+    6,
+    Math.max(
+      1,
+      Number(query.scale) || 3
+    )
+  );
+
+  const height = Math.min(
+    40,
+    Math.max(
+      5,
+      Number(query.height) || 12
+    )
+  );
+
+  return {
+    displayValue,
+    scale,
+    height,
+  };
+}
+
 /* =========================================================
-   CREATE SINGLE BARCODE
+   CREATE SINGLE ITEM
 ========================================================= */
 
 /**
@@ -168,30 +369,84 @@ async function createBarcodeBuffer(
  *
  * Body:
  * {
- *   "productId": "1081",
- *   "size": "XS",
- *   "price": 1499
+ *   "product": "mongo-product-id",
+ *   "variantId": "embedded-variant-id",
+ *   "productCode": "00034",
+ *   "size": "M",
+ *   "priceSnapshot": 1499,
+ *   "mrpSnapshot": 2199,
+ *   "inwardBatchCode": "BATCH-001",
+ *   "source": "production"
  * }
- *
- * Serial number is generated automatically.
  */
-export async function createBarcodeItem(req, res) {
+export async function createBarcodeItem(
+  req,
+  res
+) {
   try {
     const {
-      productId,
+      product = null,
+      variantId = null,
+      productCode,
       size,
-      price,
+      priceSnapshot = null,
+      mrpSnapshot = null,
+      inwardBatchCode = "",
+      vendor = null,
+      source = "production",
+      notes = "",
     } = req.body ?? {};
 
+    if (!normalizeProductCode(productCode)) {
+      return sendError(
+        res,
+        400,
+        "productCode is required"
+      );
+    }
+
+    const normalizedSize =
+      validateSize(size);
+
+    const normalizedSource =
+      validateSource(source);
+
     const item = await BarcodeItem.create({
-      productId,
-      size,
-      price,
+      product: validateOptionalObjectId(
+        product,
+        "product"
+      ),
+      variantId: validateOptionalObjectId(
+        variantId,
+        "variantId"
+      ),
+      productCode:
+        normalizeProductCode(productCode),
+      size: normalizedSize,
+      priceSnapshot:
+        normalizeOptionalNumber(
+          priceSnapshot
+        ),
+      mrpSnapshot:
+        normalizeOptionalNumber(
+          mrpSnapshot
+        ),
+      inwardBatchCode:
+        normalizeUppercase(
+          inwardBatchCode
+        ),
+      vendor: validateOptionalObjectId(
+        vendor,
+        "vendor"
+      ),
+      source: normalizedSource,
+      notes: normalizeText(notes),
     });
 
-    return res.status(201).json({
-      ok: true,
-      message: "Barcode item created",
+    return sendSuccess(res, {
+      status: 201,
+      message:
+        "Physical barcode item created",
       data: item,
     });
   } catch (error) {
@@ -214,7 +469,7 @@ export async function createBarcodeItem(req, res) {
 }
 
 /* =========================================================
-   CREATE BARCODE BATCH
+   CREATE BATCH
 ========================================================= */
 
 /**
@@ -222,33 +477,95 @@ export async function createBarcodeItem(req, res) {
  *
  * Body:
  * {
- *   "productId": "1081",
- *   "size": "XS",
- *   "price": 1499,
- *   "quantity": 50
+ *   "productCode": "00034",
+ *   "size": "M",
+ *   "quantity": 50,
+ *   "product": "mongo-product-id",
+ *   "variantId": "embedded-variant-id",
+ *   "priceSnapshot": 1499,
+ *   "mrpSnapshot": 2199,
+ *   "inwardBatchCode": "BATCH-001",
+ *   "source": "production"
  * }
  */
-export async function createBarcodeBatch(req, res) {
+export async function createBarcodeBatch(
+  req,
+  res
+) {
   try {
     const {
-      productId,
+      product = null,
+      variantId = null,
+      productCode,
       size,
-      price,
       quantity,
+      priceSnapshot = null,
+      mrpSnapshot = null,
+      inwardBatchCode = "",
+      vendor = null,
+      source = "production",
+      notes = "",
     } = req.body ?? {};
 
-    const count = normalizeQuantity(quantity);
+    if (!normalizeProductCode(productCode)) {
+      return sendError(
+        res,
+        400,
+        "productCode is required"
+      );
+    }
 
-    const items = await BarcodeItem.createBatch({
-      productId,
-      size,
-      price,
-      quantity: count,
-    });
+    const count =
+      normalizeQuantity(quantity);
 
-    return res.status(201).json({
-      ok: true,
-      message: `${items.length} barcode items created`,
+    const normalizedSize =
+      validateSize(size);
+
+    const normalizedSource =
+      validateSource(source);
+
+    const items =
+      await BarcodeItem.createBatch({
+        product:
+          validateOptionalObjectId(
+            product,
+            "product"
+          ),
+        variantId:
+          validateOptionalObjectId(
+            variantId,
+            "variantId"
+          ),
+        productCode:
+          normalizeProductCode(
+            productCode
+          ),
+        size: normalizedSize,
+        quantity: count,
+        priceSnapshot:
+          normalizeOptionalNumber(
+            priceSnapshot
+          ),
+        mrpSnapshot:
+          normalizeOptionalNumber(
+            mrpSnapshot
+          ),
+        inwardBatchCode:
+          normalizeUppercase(
+            inwardBatchCode
+          ),
+        vendor:
+          validateOptionalObjectId(
+            vendor,
+            "vendor"
+          ),
+        source: normalizedSource,
+        notes: normalizeText(notes),
+      });
+
+    return sendSuccess(res, {
+      status: 201,
+      message: `${items.length} physical barcode items created`,
       count: items.length,
       data: items,
     });
@@ -272,30 +589,49 @@ export async function createBarcodeBatch(req, res) {
 }
 
 /* =========================================================
-   LIST BARCODE ITEMS
+   LIST / SEARCH
 ========================================================= */
 
 /**
  * GET /api/barcodes
  *
- * Supported queries:
- *
- * ?q=1081
- * ?productId=1081
- * ?size=XS
- * ?price=1499
- * ?serialNumber=12
+ * Queries:
+ * ?q=00034-M
+ * ?productCode=00034
+ * ?size=M
+ * ?uniqueId=00000029
+ * ?sequence=29
+ * ?variantSku=00034-M
+ * ?pieceSku=00034-M-00000029
+ * ?status=available
+ * ?source=production
+ * ?assignedOrderNumber=SHOP-1234
+ * ?inwardBatchCode=BATCH-001
  * ?page=1
  * ?limit=50
  */
-export async function listBarcodeItems(req, res) {
+export async function listBarcodeItems(
+  req,
+  res
+) {
   try {
     const {
       q,
-      productId,
+      productCode,
       size,
-      price,
-      serialNumber,
+      uniqueId,
+      sequence,
+      variantSku,
+      pieceSku,
+      barcode,
+      status,
+      source,
+      assignedOrderNumber,
+      inwardBatchCode,
+      product,
+      variantId,
+      vendor,
+      sort = "newest",
     } = req.query ?? {};
 
     const {
@@ -308,131 +644,271 @@ export async function listBarcodeItems(req, res) {
 
     if (q) {
       const search = normalizeText(q);
-      const escapedSearch =
+      const escaped =
         escapeRegex(search);
 
-      const numericSearch = Number(search);
+      const numericSearch =
+        Number(search);
 
       filter.$or = [
         {
           barcode: {
-            $regex: escapedSearch,
+            $regex: escaped,
             $options: "i",
           },
         },
         {
-          productId: {
-            $regex: escapedSearch,
+          pieceSku: {
+            $regex: escaped,
             $options: "i",
           },
         },
         {
-          size: {
-            $regex: escapedSearch,
+          variantSku: {
+            $regex: escaped,
             $options: "i",
           },
         },
         {
-          serialCode: {
-            $regex: escapedSearch,
+          productCode: {
+            $regex: escaped,
+            $options: "i",
+          },
+        },
+        {
+          uniqueId: {
+            $regex: escaped,
+            $options: "i",
+          },
+        },
+        {
+          assignedOrderNumber: {
+            $regex: escaped,
+            $options: "i",
+          },
+        },
+        {
+          inwardBatchCode: {
+            $regex: escaped,
             $options: "i",
           },
         },
       ];
 
       if (
-        Number.isSafeInteger(numericSearch) &&
+        Number.isSafeInteger(
+          numericSearch
+        ) &&
         numericSearch > 0
       ) {
         filter.$or.push({
-          serialNumber: numericSearch,
+          sequence: numericSearch,
         });
       }
     }
 
-    if (productId) {
-      filter.productId =
-        normalizeProductId(productId);
+    if (productCode) {
+      filter.productCode =
+        normalizeProductCode(
+          productCode
+        );
     }
 
     if (size) {
-      const normalizedSize =
-        normalizeSize(size);
+      filter.size = validateSize(size);
+    }
+
+    if (uniqueId) {
+      const numericUniqueId =
+        Number(uniqueId);
 
       if (
-        !ALLOWED_SIZES.includes(
-          normalizedSize
-        )
+        !Number.isSafeInteger(
+          numericUniqueId
+        ) ||
+        numericUniqueId <= 0
       ) {
         return sendError(
           res,
           400,
-          `size must be one of: ${ALLOWED_SIZES.join(
-            ", "
-          )}`
+          "uniqueId must be a positive numeric value"
         );
       }
 
-      filter.size = normalizedSize;
+      filter.uniqueId =
+        formatUniqueId(
+          numericUniqueId
+        );
     }
 
     if (
-      price !== undefined &&
-      price !== ""
+      sequence !== undefined &&
+      sequence !== ""
     ) {
-      filter.price = normalizePrice(price);
-    }
-
-    if (
-      serialNumber !== undefined &&
-      serialNumber !== ""
-    ) {
-      const serial = Number(serialNumber);
+      const numericSequence =
+        Number(sequence);
 
       if (
-        !Number.isSafeInteger(serial) ||
-        serial <= 0
+        !Number.isSafeInteger(
+          numericSequence
+        ) ||
+        numericSequence <= 0
       ) {
         return sendError(
           res,
           400,
-          "serialNumber must be a positive integer"
+          "sequence must be a positive integer"
         );
       }
 
-      filter.serialNumber = serial;
+      filter.sequence =
+        numericSequence;
     }
+
+    if (variantSku) {
+      filter.variantSku =
+        normalizeUppercase(variantSku);
+    }
+
+    if (pieceSku) {
+      filter.pieceSku =
+        normalizeUppercase(pieceSku);
+    }
+
+    if (barcode) {
+      filter.barcode =
+        normalizeUppercase(barcode);
+    }
+
+    if (status) {
+      filter.status =
+        validateStatus(status);
+    }
+
+    if (source) {
+      filter.source =
+        validateSource(source);
+    }
+
+    if (assignedOrderNumber) {
+      filter.assignedOrderNumber =
+        normalizeUppercase(
+          assignedOrderNumber
+        );
+    }
+
+    if (inwardBatchCode) {
+      filter.inwardBatchCode =
+        normalizeUppercase(
+          inwardBatchCode
+        );
+    }
+
+    if (product) {
+      filter.product =
+        validateOptionalObjectId(
+          product,
+          "product"
+        );
+    }
+
+    if (variantId) {
+      filter.variantId =
+        validateOptionalObjectId(
+          variantId,
+          "variantId"
+        );
+    }
+
+    if (vendor) {
+      filter.vendor =
+        validateOptionalObjectId(
+          vendor,
+          "vendor"
+        );
+    }
+
+    const sortOptions = {
+      newest: {
+        createdAt: -1,
+        sequence: -1,
+      },
+      oldest: {
+        createdAt: 1,
+        sequence: 1,
+      },
+      sequence_asc: {
+        sequence: 1,
+      },
+      sequence_desc: {
+        sequence: -1,
+      },
+      inward_oldest: {
+        inwardAt: 1,
+        sequence: 1,
+      },
+      inward_newest: {
+        inwardAt: -1,
+        sequence: -1,
+      },
+    };
+
+    const selectedSort =
+      sortOptions[sort] ||
+      sortOptions.newest;
 
     const [items, total] =
       await Promise.all([
         BarcodeItem.find(filter)
-          .sort({
-            createdAt: -1,
-            serialNumber: -1,
-          })
+          .populate(
+            "product",
+            "productCode title slug thumbnail"
+          )
+          .populate(
+            "assignedOrder",
+            "orderNumber status"
+          )
+          .populate(
+            "vendor",
+            "name username phone"
+          )
+          .sort(selectedSort)
           .skip(skip)
           .limit(limit)
           .lean(),
 
-        BarcodeItem.countDocuments(filter),
+        BarcodeItem.countDocuments(
+          filter
+        ),
       ]);
 
-    return res.json({
-      ok: true,
+    return sendSuccess(res, {
       data: items,
       pagination: {
         page,
         limit,
         total,
-        pages: Math.ceil(total / limit),
-        hasNextPage: page * limit < total,
+        pages: Math.ceil(
+          total / limit
+        ),
+        hasNextPage:
+          page * limit < total,
         hasPreviousPage: page > 1,
+      },
+      filters: {
+        q: q || "",
+        productCode:
+          productCode || "",
+        size: size || "",
+        status: status || "",
+        source: source || "",
+        sort,
       },
     });
   } catch (error) {
     return sendError(
       res,
-      500,
+      400,
       error?.message ||
         "Failed to list barcode items"
     );
@@ -440,20 +916,43 @@ export async function listBarcodeItems(req, res) {
 }
 
 /* =========================================================
-   GET ITEM BY MONGO ID
+   GET BY MONGO ID
 ========================================================= */
 
-/**
- * GET /api/barcodes/:id
- */
 export async function getBarcodeItemById(
   req,
   res
 ) {
   try {
-    const item = await BarcodeItem.findById(
-      req.params.id
-    ).lean();
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(
+        res,
+        400,
+        "Invalid barcode item id"
+      );
+    }
+
+    const item =
+      await BarcodeItem.findById(
+        req.params.id
+      )
+        .populate(
+          "product",
+          "productCode title slug thumbnail price compareAtPrice variants"
+        )
+        .populate(
+          "assignedOrder",
+          "orderNumber status customer"
+        )
+        .populate(
+          "vendor",
+          "name username phone"
+        )
+        .populate(
+          "assignmentHistory.performedBy",
+          "name email username"
+        )
+        .lean();
 
     if (!item) {
       return sendError(
@@ -463,8 +962,7 @@ export async function getBarcodeItemById(
       );
     }
 
-    return res.json({
-      ok: true,
+    return sendSuccess(res, {
       data: item,
     });
   } catch (error) {
@@ -472,28 +970,26 @@ export async function getBarcodeItemById(
       res,
       400,
       error?.message ||
-        "Invalid barcode item id"
+        "Failed to fetch barcode item"
     );
   }
 }
 
 /* =========================================================
-   GET ITEM BY EXACT BARCODE
+   GET BY BARCODE
 ========================================================= */
 
-/**
- * GET /api/barcodes/by-barcode/:barcodeText
- */
 export async function getBarcodeItemByBarcode(
   req,
   res
 ) {
   try {
-    const barcodeText = decodeURIComponent(
-      normalizeText(
-        req.params.barcodeText
-      )
-    ).toUpperCase();
+    const barcodeText =
+      decodeURIComponent(
+        normalizeText(
+          req.params.barcodeText
+        )
+      ).toUpperCase();
 
     if (!barcodeText) {
       return sendError(
@@ -503,26 +999,34 @@ export async function getBarcodeItemByBarcode(
       );
     }
 
-    const parsed = parseBarcode(
-      barcodeText
-    );
+    const parsed =
+      parseBarcode(barcodeText);
 
-    const item = await BarcodeItem.findOne({
-      barcode: parsed.barcode,
-    }).lean();
+    const item =
+      await BarcodeItem.findOne({
+        barcode: parsed.barcode,
+      })
+        .populate(
+          "product",
+          "productCode title slug thumbnail"
+        )
+        .populate(
+          "assignedOrder",
+          "orderNumber status"
+        )
+        .lean();
 
     if (!item) {
       return sendError(
         res,
         404,
-        "Barcode item not found"
+        "Barcode format is valid, but this physical piece is not registered"
       );
     }
 
-    return res.json({
-      ok: true,
-      parsed,
+    return sendSuccess(res, {
       data: item,
+      parsed,
     });
   } catch (error) {
     return sendError(
@@ -543,18 +1047,18 @@ export async function getBarcodeItemByBarcode(
  *
  * Body:
  * {
- *   "barcodeText":
- *   "OATCLUB-1081-XS-1499-00000001"
+ *   "barcodeText": "00034-M-00000029"
  * }
- *
- * createIfMissing is intentionally unsupported because
- * every serial must originate from the global counter.
  */
-export async function scanBarcode(req, res) {
+export async function scanBarcode(
+  req,
+  res
+) {
   try {
-    const barcodeText = normalizeText(
-      req.body?.barcodeText
-    ).toUpperCase();
+    const barcodeText =
+      normalizeUppercase(
+        req.body?.barcodeText
+      );
 
     if (!barcodeText) {
       return sendError(
@@ -567,39 +1071,66 @@ export async function scanBarcode(req, res) {
     const parsed =
       parseBarcode(barcodeText);
 
-    const item = await BarcodeItem.findOne({
-      barcode: parsed.barcode,
-    }).lean();
+    const item =
+      await BarcodeItem.findOne({
+        barcode: parsed.barcode,
+      })
+        .populate(
+          "product",
+          "productCode title slug thumbnail"
+        )
+        .populate(
+          "assignedOrder",
+          "orderNumber status"
+        );
 
     if (!item) {
       return sendError(
         res,
         404,
-        "Barcode format is valid, but this serial is not registered"
+        "Barcode format is valid, but this physical piece is not registered"
       );
     }
 
-    const dataMatchesBarcode =
-      item.productId ===
-        parsed.productId &&
+    const matches =
+      item.productCode ===
+        parsed.productCode &&
       item.size === parsed.size &&
-      item.price === parsed.price &&
-      item.serialNumber ===
-        parsed.serialNumber;
+      item.sequence ===
+        parsed.sequence &&
+      item.uniqueId ===
+        parsed.uniqueId &&
+      item.pieceSku ===
+        parsed.pieceSku &&
+      item.barcode ===
+        parsed.barcode;
 
-    if (!dataMatchesBarcode) {
+    if (!matches) {
       return sendError(
         res,
         409,
-        "Barcode data does not match the stored item"
+        "Scanned barcode data does not match the stored physical item"
       );
     }
 
-    return res.json({
-      ok: true,
-      message: "Barcode scanned successfully",
+    return sendSuccess(res, {
+      message:
+        "Physical item scanned successfully",
       parsed,
       data: item,
+      tracking: {
+        status: item.status,
+        assignedOrder:
+          item.assignedOrder,
+        assignedOrderNumber:
+          item.assignedOrderNumber,
+        assignedAt:
+          item.assignedAt,
+        packedAt: item.packedAt,
+        shippedAt: item.shippedAt,
+        deliveredAt:
+          item.deliveredAt,
+      },
     });
   } catch (error) {
     return sendError(
@@ -612,48 +1143,42 @@ export async function scanBarcode(req, res) {
 }
 
 /* =========================================================
-   UPDATE ITEM
+   UPDATE MUTABLE FIELDS
 ========================================================= */
 
 /**
  * PATCH /api/barcodes/:id
  *
- * Product, size, price and serial form the permanent
- * identity of a physical item.
+ * Allowed:
+ * status
+ * priceSnapshot
+ * mrpSnapshot
+ * inwardBatchCode
+ * inwardAt
+ * vendor
+ * source
+ * notes
  *
- * To avoid incorrect tracking, identity fields cannot
- * be changed after creation.
+ * Identity fields cannot be changed.
  */
 export async function updateBarcodeItem(
   req,
   res
 ) {
   try {
-    const item = await BarcodeItem.findById(
-      req.params.id
-    );
-
-    if (!item) {
+    if (!isValidObjectId(req.params.id)) {
       return sendError(
         res,
-        404,
-        "Barcode item not found"
+        400,
+        "Invalid barcode item id"
       );
     }
 
-    const identityFields = [
-      "productId",
-      "size",
-      "price",
-      "serialNumber",
-      "serialCode",
-      "barcode",
-    ];
-
     const requestedIdentityFields =
-      identityFields.filter(
+      IMMUTABLE_FIELDS.filter(
         (field) =>
-          req.body?.[field] !== undefined
+          req.body?.[field] !==
+          undefined
       );
 
     if (
@@ -664,14 +1189,123 @@ export async function updateBarcodeItem(
         400,
         `Barcode identity cannot be updated. Immutable fields: ${requestedIdentityFields.join(
           ", "
-        )}. Delete the unused item and generate a new barcode instead.`
+        )}`
       );
     }
 
-    return res.json({
-      ok: true,
+    const item =
+      await BarcodeItem.findById(
+        req.params.id
+      );
+
+    if (!item) {
+      return sendError(
+        res,
+        404,
+        "Barcode item not found"
+      );
+    }
+
+    const {
+      status,
+      priceSnapshot,
+      mrpSnapshot,
+      inwardBatchCode,
+      inwardAt,
+      vendor,
+      source,
+      notes,
+    } = req.body ?? {};
+
+    if (status !== undefined) {
+      const normalizedStatus =
+        validateStatus(status);
+
+      if (
+        item.assignedOrderNumber &&
+        normalizedStatus ===
+          "available"
+      ) {
+        return sendError(
+          res,
+          409,
+          "Assigned piece cannot be marked available directly. Release it from the order first."
+        );
+      }
+
+      item.status =
+        normalizedStatus;
+    }
+
+    if (
+      priceSnapshot !== undefined
+    ) {
+      item.priceSnapshot =
+        normalizeOptionalNumber(
+          priceSnapshot
+        );
+    }
+
+    if (
+      mrpSnapshot !== undefined
+    ) {
+      item.mrpSnapshot =
+        normalizeOptionalNumber(
+          mrpSnapshot
+        );
+    }
+
+    if (
+      inwardBatchCode !== undefined
+    ) {
+      item.inwardBatchCode =
+        normalizeUppercase(
+          inwardBatchCode
+        );
+    }
+
+    if (inwardAt !== undefined) {
+      const parsedDate =
+        new Date(inwardAt);
+
+      if (
+        Number.isNaN(
+          parsedDate.getTime()
+        )
+      ) {
+        return sendError(
+          res,
+          400,
+          "inwardAt must be a valid date"
+        );
+      }
+
+      item.inwardAt = parsedDate;
+    }
+
+    if (vendor !== undefined) {
+      item.vendor =
+        validateOptionalObjectId(
+          vendor,
+          "vendor"
+        );
+    }
+
+    if (source !== undefined) {
+      item.source =
+        validateSource(source);
+    }
+
+    if (notes !== undefined) {
+      item.notes =
+        normalizeText(notes);
+    }
+
+    await item.save();
+
+    return sendSuccess(res, {
       message:
-        "No editable fields were provided",
+        "Barcode item updated",
       data: item,
     });
   } catch (error) {
@@ -689,20 +1323,25 @@ export async function updateBarcodeItem(
 ========================================================= */
 
 /**
- * DELETE /api/barcodes/:id
- *
- * This is suitable only before the barcode is used for
- * order tracking.
+ * Barcode can only be deleted if it was never used.
  */
 export async function deleteBarcodeItem(
   req,
   res
 ) {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(
+        res,
+        400,
+        "Invalid barcode item id"
+      );
+    }
+
     const item =
-      await BarcodeItem.findByIdAndDelete(
+      await BarcodeItem.findById(
         req.params.id
-      ).lean();
+      );
 
     if (!item) {
       return sendError(
@@ -712,9 +1351,35 @@ export async function deleteBarcodeItem(
       );
     }
 
-    return res.json({
-      ok: true,
-      message: "Barcode item deleted",
+    const hasTrackingHistory =
+      Array.isArray(
+        item.assignmentHistory
+      ) &&
+      item.assignmentHistory.length > 0;
+
+    const isAssigned =
+      Boolean(
+        item.assignedOrder ||
+          item.assignedOrderNumber
+      );
+
+    if (
+      hasTrackingHistory ||
+      isAssigned ||
+      item.status !== "available"
+    ) {
+      return sendError(
+        res,
+        409,
+        "This physical item has inventory or order history and cannot be deleted. Mark it as removed instead."
+      );
+    }
+
+    await item.deleteOne();
+
+    return sendSuccess(res, {
+      message:
+        "Unused barcode item deleted",
       data: item,
     });
   } catch (error) {
@@ -728,22 +1393,22 @@ export async function deleteBarcodeItem(
 }
 
 /* =========================================================
-   BARCODE PNG BY SAVED ITEM
+   SAVED BARCODE PNG
 ========================================================= */
 
-/**
- * GET /api/barcodes/:id/barcode.png
- *
- * Optional:
- * ?displayValue=true
- * ?scale=3
- * ?height=12
- */
 export async function barcodePngById(
   req,
   res
 ) {
   try {
+    if (!isValidObjectId(req.params.id)) {
+      return sendError(
+        res,
+        400,
+        "Invalid barcode item id"
+      );
+    }
+
     const item =
       await BarcodeItem.findById(
         req.params.id
@@ -757,35 +1422,13 @@ export async function barcodePngById(
       );
     }
 
-    const displayValue =
-      String(
-        req.query.displayValue ?? "true"
-      ).toLowerCase() !== "false";
-
-    const scale = Math.min(
-      6,
-      Math.max(
-        1,
-        Number(req.query.scale) || 3
-      )
-    );
-
-    const height = Math.min(
-      40,
-      Math.max(
-        5,
-        Number(req.query.height) || 12
-      )
-    );
+    const options =
+      getPngOptions(req.query);
 
     const png =
       await createBarcodeBuffer(
         item.barcode,
-        {
-          displayValue,
-          scale,
-          height,
-        }
+        options
       );
 
     res.set({
@@ -793,6 +1436,13 @@ export async function barcodePngById(
       "Cache-Control":
         "private, max-age=300",
       "Content-Disposition": `inline; filename="${item.barcode}.png"`,
+      "X-Barcode-Value":
+        item.barcode,
+      "X-Product-Code":
+        item.productCode,
+      "X-Size": item.size,
+      "X-Unique-Id":
+        item.uniqueId,
     });
 
     return res.send(png);
@@ -807,136 +1457,125 @@ export async function barcodePngById(
 }
 
 /* =========================================================
-   GENERATE PNG WITHOUT SAVING
+   PNG PREVIEW WITHOUT SAVING
 ========================================================= */
 
 /**
  * GET /api/barcodes/generate.png
  *
- * Required:
- * ?productId=1081
- * &size=XS
- * &price=1499
- * &serialNumber=1
+ * ?productCode=00034
+ * &size=M
+ * &uniqueId=00000029
  *
- * Important:
- * This endpoint does not reserve or create the serial.
- * It should only be used to preview an already known serial.
+ * Or:
+ *
+ * ?productCode=00034
+ * &size=M
+ * &sequence=29
  */
 export async function generateBarcodePngNoSave(
   req,
   res
 ) {
   try {
-    const productId =
-      normalizeProductId(
-        req.query.productId
+    const productCode =
+      normalizeProductCode(
+        req.query.productCode
       );
 
     const size =
-      normalizeSize(req.query.size);
+      validateSize(req.query.size);
 
-    const priceRaw =
-      normalizeText(req.query.price);
-
-    const serialRaw =
+    const uniqueIdRaw =
       normalizeText(
-        req.query.serialNumber
+        req.query.uniqueId
       );
 
-    if (!productId) {
+    const sequenceRaw =
+      normalizeText(
+        req.query.sequence
+      );
+
+    if (!productCode) {
       return sendError(
         res,
         400,
-        "productId is required"
-      );
-    }
-
-    if (!size) {
-      return sendError(
-        res,
-        400,
-        "size is required"
+        "productCode is required"
       );
     }
 
     if (
-      !ALLOWED_SIZES.includes(size)
+      !uniqueIdRaw &&
+      !sequenceRaw
     ) {
       return sendError(
         res,
         400,
-        `size must be one of: ${ALLOWED_SIZES.join(
-          ", "
-        )}`
+        "uniqueId or sequence is required"
       );
     }
 
-    if (!priceRaw) {
-      return sendError(
-        res,
-        400,
-        "price is required"
-      );
+    let numericSequence;
+
+    if (uniqueIdRaw) {
+      numericSequence =
+        Number(uniqueIdRaw);
+    } else {
+      numericSequence =
+        Number(sequenceRaw);
     }
-
-    if (!serialRaw) {
-      return sendError(
-        res,
-        400,
-        "serialNumber is required"
-      );
-    }
-
-    const price =
-      normalizePrice(priceRaw);
-
-    const serialNumber =
-      Number(serialRaw);
 
     if (
       !Number.isSafeInteger(
-        serialNumber
+        numericSequence
       ) ||
-      serialNumber <= 0
+      numericSequence <= 0
     ) {
       return sendError(
         res,
         400,
-        "serialNumber must be a positive integer"
+        "uniqueId or sequence must be a positive integer"
       );
     }
 
+    const uniqueId =
+      formatUniqueId(
+        numericSequence
+      );
+
     const barcodeText =
-      makeBarcode({
-        productId,
+      makePieceSku({
+        productCode,
         size,
-        price,
-        serialNumber,
+        uniqueId,
       });
 
-    const displayValue =
-      String(
-        req.query.displayValue ?? "true"
-      ).toLowerCase() !== "false";
+    const parsed =
+      parseBarcode(barcodeText);
+
+    const options =
+      getPngOptions(req.query);
 
     const png =
       await createBarcodeBuffer(
         barcodeText,
-        {
-          displayValue,
-        }
+        options
       );
 
     res.set({
       "Content-Type": "image/png",
       "Cache-Control": "no-store",
       "Content-Disposition": `inline; filename="${barcodeText}.png"`,
-      "X-Barcode-Value": barcodeText,
-      "X-Serial-Code":
-        formatSerialNumber(
-          serialNumber
-        ),
+      "X-Barcode-Value":
+        barcodeText,
+      "X-Product-Code":
+        parsed.productCode,
+      "X-Size": parsed.size,
+      "X-Unique-Id":
+        parsed.uniqueId,
+      "X-Sequence": String(
+        parsed.sequence
+      ),
     });
 
     return res.send(png);
