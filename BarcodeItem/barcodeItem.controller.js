@@ -1588,3 +1588,333 @@ export async function generateBarcodePngNoSave(
     );
   }
 }
+
+/* =========================================================
+   GROUPED BARCODE INVENTORY
+========================================================= */
+
+const INVENTORY_SIZE_ORDER = [
+  "XS",
+  "S",
+  "M",
+  "L",
+  "XL",
+  "XXL",
+  "3XL",
+  "4XL",
+  "5XL",
+  "FREE",
+];
+
+/**
+ * GET /api/barcodes/inventory-summary
+ *
+ * Query:
+ * ?q=00034
+ * ?status=available
+ * ?page=1
+ * ?limit=50
+ */
+export async function getBarcodeInventorySummary(
+  req,
+  res
+) {
+  try {
+    const {
+      q = "",
+      status = "",
+      page = 1,
+      limit = 50,
+    } = req.query ?? {};
+
+    const currentPage = Math.max(
+      1,
+      Number.parseInt(page, 10) || 1
+    );
+
+    const pageLimit = Math.min(
+      200,
+      Math.max(
+        1,
+        Number.parseInt(limit, 10) || 50
+      )
+    );
+
+    const match = {};
+
+    const search = normalizeText(q);
+
+    if (search) {
+      match.$or = [
+        {
+          productCode: {
+            $regex: escapeRegex(search),
+            $options: "i",
+          },
+        },
+        {
+          variantSku: {
+            $regex: escapeRegex(search),
+            $options: "i",
+          },
+        },
+        {
+          barcode: {
+            $regex: escapeRegex(search),
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+    if (status) {
+      match.status = validateStatus(status);
+    }
+
+    /*
+     * Enable this only when vendor should see
+     * barcode items assigned to them.
+     */
+    const vendorId =
+      req.vendor?._id || req.vendor?.id;
+
+    if (vendorId) {
+      match.vendor =
+        new mongoose.Types.ObjectId(vendorId);
+    }
+
+    const skip =
+      (currentPage - 1) * pageLimit;
+
+    const [result] =
+      await BarcodeItem.aggregate([
+        {
+          $match: match,
+        },
+
+        /*
+         * First group:
+         * Product code + individual size
+         */
+        {
+          $group: {
+            _id: {
+              productCode: "$productCode",
+              size: "$size",
+            },
+
+            quantity: {
+              $sum: 1,
+            },
+
+            availableQuantity: {
+              $sum: {
+                $cond: [
+                  {
+                    $eq: [
+                      "$status",
+                      "available",
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+
+            reservedQuantity: {
+              $sum: {
+                $cond: [
+                  {
+                    $in: [
+                      "$status",
+                      [
+                        "reserved",
+                        "allocated",
+                        "packed",
+                      ],
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+          },
+        },
+
+        /*
+         * Second group:
+         * One row per product
+         */
+        {
+          $group: {
+            _id: "$_id.productCode",
+
+            sizes: {
+              $push: {
+                size: "$_id.size",
+                quantity: "$quantity",
+                availableQuantity:
+                  "$availableQuantity",
+                reservedQuantity:
+                  "$reservedQuantity",
+              },
+            },
+
+            finalQuantity: {
+              $sum: "$quantity",
+            },
+
+            availableQuantity: {
+              $sum: "$availableQuantity",
+            },
+
+            reservedQuantity: {
+              $sum: "$reservedQuantity",
+            },
+          },
+        },
+
+        /*
+         * Product image and title
+         */
+        {
+          $lookup: {
+            from: "products",
+            localField: "_id",
+            foreignField: "productCode",
+            as: "product",
+          },
+        },
+
+        {
+          $unwind: {
+            path: "$product",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+
+        {
+          $project: {
+            _id: 0,
+
+            productId: "$product._id",
+            productCode: "$_id",
+
+            title: {
+              $ifNull: [
+                "$product.title",
+                "",
+              ],
+            },
+
+            image: {
+              $ifNull: [
+                "$product.thumbnail",
+                {
+                  $arrayElemAt: [
+                    "$product.images",
+                    0,
+                  ],
+                },
+              ],
+            },
+
+            sizes: 1,
+            finalQuantity: 1,
+            availableQuantity: 1,
+            reservedQuantity: 1,
+          },
+        },
+
+        {
+          $sort: {
+            productCode: 1,
+          },
+        },
+
+        {
+          $facet: {
+            rows: [
+              {
+                $skip: skip,
+              },
+              {
+                $limit: pageLimit,
+              },
+            ],
+
+            pagination: [
+              {
+                $count: "total",
+              },
+            ],
+          },
+        },
+      ]);
+
+    const rows = (result?.rows || []).map(
+      (row) => {
+        const quantities = {};
+
+        INVENTORY_SIZE_ORDER.forEach(
+          (size) => {
+            quantities[size] = 0;
+          }
+        );
+
+        for (const sizeRow of row.sizes || []) {
+          quantities[sizeRow.size] =
+            Number(sizeRow.quantity || 0);
+        }
+
+        return {
+          productId: row.productId || null,
+          productCode: row.productCode,
+          title: row.title || "",
+          image: row.image || "",
+          quantities,
+
+          finalQuantity: Number(
+            row.finalQuantity || 0
+          ),
+
+          availableQuantity: Number(
+            row.availableQuantity || 0
+          ),
+
+          reservedQuantity: Number(
+            row.reservedQuantity || 0
+          ),
+        };
+      }
+    );
+
+    const total =
+      result?.pagination?.[0]?.total || 0;
+
+    return sendSuccess(res, {
+      data: {
+        sizes: INVENTORY_SIZE_ORDER,
+        rows,
+
+        pagination: {
+          page: currentPage,
+          limit: pageLimit,
+          total,
+          totalPages: Math.ceil(
+            total / pageLimit
+          ),
+        },
+      },
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      500,
+      error?.message ||
+        "Failed to load barcode inventory"
+    );
+  }
+}

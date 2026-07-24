@@ -31,6 +31,8 @@ import {
   // Banking / Payout
   addCustomerBankingDetails,
   getCustomerCreditSummary,
+
+  createOrFindGuestCustomer
 } from "../Customer/customerController.js";
 
 import Customer from "../Customer/Customer.js";
@@ -40,8 +42,12 @@ const router = express.Router();
 /* =========================
    Core
 ========================= */
+/* =========================
+   Core
+========================= */
 router.post("/", createCustomer);
 router.get("/", getAllCustomers);
+router.post("/guest", createOrFindGuestCustomer);
 
 router.get("/exists", checkCustomerExists);
 router.get("/by-customer-id/:customerId", getCustomerByCustomerId);

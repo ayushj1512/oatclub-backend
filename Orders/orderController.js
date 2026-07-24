@@ -35,24 +35,18 @@ import { updateOrderFulfillmentStatus } from "./order.utils.js";
 
 import { sendCodOrderConfirmationWhatsapp } from "../whatsappConfirmationMessage/whatsappConfirmationMessage.service.js";
 
-import {
-  recalculateCustomerAnalytics,
-} from "../Customer/customerAnalytics.service.js";
+import { recalculateCustomerAnalytics } from "../Customer/customerAnalytics.service.js";
 
 import Customer from "../Customer/Customer.js";
-import {
-  debitWalletForOrderInternal,
-} from "../Customer/customerCredit.service.js";// ⚠️ path tumhare project ke hisaab se adjust kar lena
+import { debitWalletForOrderInternal } from "../Customer/customerCredit.service.js"; // ⚠️ path tumhare project ke hisaab se adjust kar lena
 import { creditOrderWalletRewardInternal } from "../Customer/orderWalletReward.service.js";
 
-const isParentOrder = (order) => String(order?.orderType || "").toLowerCase() === "parent";
+const isParentOrder = (order) =>
+  String(order?.orderType || "").toLowerCase() === "parent";
 const isShipmentOrder = (order) =>
   ["shipment", "child"].includes(String(order?.orderType || "").toLowerCase()); // pick one naming
 
-
-const ADMIN_ORDER_ALERT_EMAILS = [
-  "oatclub.in@gmail.com",
-].filter(Boolean);
+const ADMIN_ORDER_ALERT_EMAILS = ["oatclub.in@gmail.com"].filter(Boolean);
 
 const RAZORPAY_DISCOUNT_PERCENT = 10;
 
@@ -80,7 +74,9 @@ const sendAdminOrderReceivedMail = async (order) => {
       "http://localhost:3000";
 
     const orderId = order?.orderId || order?.orderNumber || order?._id;
-    const ctaUrl = orderId ? `${baseAdminUrl}/admin/orders/${orderId}` : baseAdminUrl;
+    const ctaUrl = orderId
+      ? `${baseAdminUrl}/admin/orders/${orderId}`
+      : baseAdminUrl;
 
     await Mailer.sendAdminOrderReceived({
       to: recipients.join(","),
@@ -108,9 +104,6 @@ const scrubXpressbees = (order) => {
     delete order.shipment.xpressbees;
   }
 };
-
-
-
 
 /* ============================================================
    RMA POLICY (hardcoded backend)
@@ -155,7 +148,7 @@ const findVariantById = (product, variantId) => {
 
 const uniqStrings = (arr) =>
   Array.from(
-    new Set((arr || []).map((x) => String(x || "").trim()).filter(Boolean))
+    new Set((arr || []).map((x) => String(x || "").trim()).filter(Boolean)),
   );
 
 const computeCategoryBreakdown = (normalizedItems) => {
@@ -189,11 +182,14 @@ const daysDiff = (fromDate, toDate) => {
 const pickAttr = (attrs = [], keys = []) => {
   const kset = keys.map((k) => String(k).trim().toLowerCase());
   const found = (attrs || []).find((a) =>
-    kset.includes(String(a?.key || "").trim().toLowerCase())
+    kset.includes(
+      String(a?.key || "")
+        .trim()
+        .toLowerCase(),
+    ),
   );
   return found?.value ? String(found.value) : "";
 };
-
 
 const isWithinRmaWindow = (deliveredAt) => {
   if (!deliveredAt) return false;
@@ -257,7 +253,7 @@ const syncCustomerAnalyticsSafe = (customerId, context = "order") => {
     } catch (err) {
       console.error(
         `⚠️ Customer analytics sync failed | ${context} | customer=${id}:`,
-        err?.message || err
+        err?.message || err,
       );
     }
   };
@@ -271,7 +267,11 @@ const syncCustomerAnalyticsSafe = (customerId, context = "order") => {
 
 const str = (v) => (v == null ? "" : String(v));
 const normEmail = (v) => str(v).trim().toLowerCase();
-const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
+const normPhone = (v) =>
+  str(v)
+    .replace(/[^\d+]/g, "")
+    .trim()
+    .replace(/^\+/, "");
 
 const buildCouponIdentity = ({ email, phone }) => {
   const e = normEmail(email);
@@ -312,7 +312,11 @@ const computeRemainingQtyByIndex = (order) => {
 // ========================================================================================
 // ✅ EASY CONFIRM: Mark order confirmed (manual / cod / admin action)
 // ========================================================================================
-const confirmOrderById = async ({ orderId, adminId = null, session = null }) => {
+const confirmOrderById = async ({
+  orderId,
+  adminId = null,
+  session = null,
+}) => {
   const update = {
     isConfirmed: true,
     confirmedAt: new Date(),
@@ -330,12 +334,10 @@ const confirmOrderById = async ({ orderId, adminId = null, session = null }) => 
   return query;
 };
 
-
 /* ============================================================
    CREATE ORDER
   Expect each item: { productId, quantity, variantId? }
 ============================================================ */
-
 
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
@@ -347,7 +349,10 @@ export const createOrder = async (req, res) => {
 
   const normEmail = (v) => str(v).trim().toLowerCase();
   const normPhone = (v) =>
-    str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
+    str(v)
+      .replace(/[^\d+]/g, "")
+      .trim()
+      .replace(/^\+/, "");
 
   const isNumericLike = (v) => /^[0-9]+$/.test(str(v).trim());
 
@@ -371,7 +376,7 @@ export const createOrder = async (req, res) => {
   const pickAttr = (attrs = [], keys = []) => {
     const wanted = keys.map((k) => str(k).trim().toLowerCase());
     const found = (Array.isArray(attrs) ? attrs : []).find((a) =>
-      wanted.includes(str(a?.key).trim().toLowerCase())
+      wanted.includes(str(a?.key).trim().toLowerCase()),
     );
     return found?.value ? str(found.value) : "";
   };
@@ -397,7 +402,18 @@ export const createOrder = async (req, res) => {
 
   const getSizeFromSku = (sku) => {
     const parts = str(sku).toUpperCase().split("-");
-    const sizes = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+    const sizes = [
+      "XXS",
+      "XS",
+      "S",
+      "M",
+      "L",
+      "XL",
+      "XXL",
+      "3XL",
+      "4XL",
+      "5XL",
+    ];
 
     for (let i = parts.length - 1; i >= 0; i--) {
       if (sizes.includes(parts[i])) return parts[i];
@@ -410,7 +426,18 @@ export const createOrder = async (req, res) => {
     const parts = str(sku).toUpperCase().split("-");
     if (parts.length < 2) return "";
 
-    const sizes = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+    const sizes = [
+      "XXS",
+      "XS",
+      "S",
+      "M",
+      "L",
+      "XL",
+      "XXL",
+      "3XL",
+      "4XL",
+      "5XL",
+    ];
     const maybeColor = parts[parts.length - 2];
 
     if (sizes.includes(maybeColor)) return "";
@@ -431,11 +458,17 @@ export const createOrder = async (req, res) => {
 
   const isSecondaryItem = (item = {}) => !isPrimaryItem(item);
 
-  const getCouponDiscountBase = ({ couponDoc, subtotal, eligibleCouponBase }) => {
+  const getCouponDiscountBase = ({
+    couponDoc,
+    subtotal,
+    eligibleCouponBase,
+  }) => {
     if (!couponDoc) return null;
 
     const target = str(
-      couponDoc?.discountTarget || couponDoc?.cartRule?.discountTarget || "cart"
+      couponDoc?.discountTarget ||
+        couponDoc?.cartRule?.discountTarget ||
+        "cart",
     );
 
     const hasRules =
@@ -485,7 +518,7 @@ export const createOrder = async (req, res) => {
       q.utm_source,
       lastTouch.source,
       sessionAttr.source,
-      firstTouch.source
+      firstTouch.source,
     );
 
     const utmMedium = lowerPick(
@@ -494,7 +527,7 @@ export const createOrder = async (req, res) => {
       q.utm_medium,
       lastTouch.medium,
       sessionAttr.medium,
-      firstTouch.medium
+      firstTouch.medium,
     );
 
     const utmCampaign = pick(
@@ -503,7 +536,7 @@ export const createOrder = async (req, res) => {
       q.utm_campaign,
       lastTouch.campaign,
       sessionAttr.campaign,
-      firstTouch.campaign
+      firstTouch.campaign,
     );
 
     const finalSource = utmSource || "direct";
@@ -514,21 +547,21 @@ export const createOrder = async (req, res) => {
       req.headers?.referer,
       req.headers?.referrer,
       lastTouch.referrer,
-      firstTouch.referrer
+      firstTouch.referrer,
     );
 
     const landingUrl = pick(
       bodyAttr.landingUrl,
       bodyAttr.firstTouchUrl,
       firstTouch.landingUrl,
-      firstTouch.pageUrl
+      firstTouch.pageUrl,
     );
 
     const lastTouchUrl = pick(
       bodyAttr.lastTouchUrl,
       lastTouch.pageUrl,
       sessionAttr.pageUrl,
-      bodyAttr.pageUrl
+      bodyAttr.pageUrl,
     );
 
     return {
@@ -582,7 +615,7 @@ export const createOrder = async (req, res) => {
       campaignSlug: pick(
         bodyAttr.campaignSlug,
         bodyAttr.utm_campaign,
-        q.utm_campaign
+        q.utm_campaign,
       ),
 
       marketingLinkId: pick(bodyAttr.marketingLinkId, bodyAttr.mlid, q.mlid),
@@ -597,7 +630,7 @@ export const createOrder = async (req, res) => {
           bodyAttr.scClickId,
           bodyAttr.sc_click_id,
           q.scClickId,
-          q.sc_click_id
+          q.sc_click_id,
         ),
       },
 
@@ -613,12 +646,15 @@ export const createOrder = async (req, res) => {
         type: pick(bodyAttr.device?.type, bodyAttr.deviceType),
         browser: pick(bodyAttr.device?.browser, bodyAttr.browser),
         os: pick(bodyAttr.device?.os, bodyAttr.os),
-        userAgent: pick(bodyAttr.device?.userAgent, req.headers?.["user-agent"]),
+        userAgent: pick(
+          bodyAttr.device?.userAgent,
+          req.headers?.["user-agent"],
+        ),
         ip: pick(
           bodyAttr.device?.ip,
           req.headers?.["x-forwarded-for"]?.split(",")?.[0],
           req.ip,
-          req.socket?.remoteAddress
+          req.socket?.remoteAddress,
         ),
       },
 
@@ -657,7 +693,7 @@ export const createOrder = async (req, res) => {
 
     if (num(cartTotal) < num(couponDoc.minPurchase || 0)) {
       throw new Error(
-        `Minimum purchase required is ₹${num(couponDoc.minPurchase || 0)}`
+        `Minimum purchase required is ₹${num(couponDoc.minPurchase || 0)}`,
       );
     }
 
@@ -716,11 +752,60 @@ export const createOrder = async (req, res) => {
     };
   };
 
+  const normalizeCheckoutAddress = (address = {}) => {
+    const snapshot = {
+      fullName: str(address.fullName || address.name).trim(),
+
+      line1: str(address.line1 || address.addressLine1).trim(),
+
+      line2: str(address.line2 || address.addressLine2).trim(),
+
+      city: str(address.city).trim(),
+
+      state: str(address.state).trim(),
+
+      pincode: str(address.pincode || address.postalCode)
+        .replace(/\D/g, "")
+        .slice(0, 6),
+
+      phone: normPhone(address.phone).slice(-10),
+
+      email: normEmail(address.email),
+
+      country: str(address.country || "IN").trim(),
+    };
+
+    if (!snapshot.fullName) throw new Error("Full name required");
+
+    if (!snapshot.line1) throw new Error("Address required");
+
+    if (!snapshot.city) throw new Error("City required");
+
+    if (!snapshot.state) throw new Error("State required");
+
+    if (!/^\d{6}$/.test(snapshot.pincode)) {
+      throw new Error("Invalid pincode");
+    }
+
+    if (!/^\d{10}$/.test(snapshot.phone)) {
+      throw new Error("Invalid phone");
+    }
+
+    return snapshot;
+  };
+
   try {
     const {
       customerId,
+
+      // Optional saved address IDs
       shippingAddressId,
       billingAddressId,
+
+      // NEW: direct checkout snapshots
+      shippingAddressSnapshot: incomingShippingAddress = null,
+      billingAddressSnapshot: incomingBillingAddress = null,
+
       items,
       coupon,
       attribution = {},
@@ -747,12 +832,28 @@ export const createOrder = async (req, res) => {
       return res.status(400).json({ message: "Invalid customerId" });
     }
 
-    if (!isObjectId(shippingAddressId)) {
-      return res.status(400).json({ message: "Invalid shippingAddressId" });
+    const hasShippingAddressId =
+      shippingAddressId && isObjectId(shippingAddressId);
+
+    const hasBillingAddressId =
+      billingAddressId && isObjectId(billingAddressId);
+
+    if (shippingAddressId && !hasShippingAddressId) {
+      return res.status(400).json({
+        message: "Invalid shippingAddressId",
+      });
     }
 
-    if (billingAddressId && !isObjectId(billingAddressId)) {
-      return res.status(400).json({ message: "Invalid billingAddressId" });
+    if (billingAddressId && !hasBillingAddressId) {
+      return res.status(400).json({
+        message: "Invalid billingAddressId",
+      });
+    }
+
+    if (!hasShippingAddressId && !incomingShippingAddress) {
+      return res.status(400).json({
+        message: "Shipping address is required.",
+      });
     }
 
     if (!Array.isArray(items) || !items.length) {
@@ -768,18 +869,42 @@ export const createOrder = async (req, res) => {
     let createdOrderId = null;
 
     await session.withTransaction(async () => {
-      const shippingAddress = await Address.findById(shippingAddressId).session(
-        session
-      );
+      let shippingAddressSnapshot;
+      let billingAddressSnapshot;
 
-      if (!shippingAddress) throw new Error("Shipping address not found");
+      if (hasShippingAddressId) {
+        const shippingAddress =
+          await Address.findById(shippingAddressId).session(session);
 
-      const billingAddress = billingAddressId
-        ? await Address.findById(billingAddressId).session(session)
-        : shippingAddress;
+        if (!shippingAddress) {
+          throw new Error("Shipping address not found");
+        }
 
-      const shippingAddressSnapshot = buildAddressSnapshot(shippingAddress);
-      const billingAddressSnapshot = buildAddressSnapshot(billingAddress);
+        shippingAddressSnapshot = buildAddressSnapshot(shippingAddress);
+      } else {
+        shippingAddressSnapshot = normalizeCheckoutAddress(
+          incomingShippingAddress,
+        );
+      }
+
+      if (hasBillingAddressId) {
+        const billingAddress =
+          await Address.findById(billingAddressId).session(session);
+
+        if (!billingAddress) {
+          throw new Error("Billing address not found");
+        }
+
+        billingAddressSnapshot = buildAddressSnapshot(billingAddress);
+      } else if (incomingBillingAddress) {
+        billingAddressSnapshot = normalizeCheckoutAddress(
+          incomingBillingAddress,
+        );
+      } else {
+        billingAddressSnapshot = {
+          ...shippingAddressSnapshot,
+        };
+      }
 
       const identity = buildCouponIdentity({
         email: shippingAddressSnapshot?.email,
@@ -835,10 +960,10 @@ export const createOrder = async (req, res) => {
 
         const frontendPrice = num(
           item?.price ??
-          item?.itemPrice ??
-          item?.item_price ??
-          item?.salePrice ??
-          item?.productSnapshot?.price
+            item?.itemPrice ??
+            item?.item_price ??
+            item?.salePrice ??
+            item?.productSnapshot?.price,
         );
 
         const dbPrice = num(product.price);
@@ -862,7 +987,7 @@ export const createOrder = async (req, res) => {
 
         const selectedColor = sanitizeSelectedColor(
           selectedColorRaw,
-          product.productCode
+          product.productCode,
         );
 
         normalizedItems.push({
@@ -930,7 +1055,7 @@ export const createOrder = async (req, res) => {
             ? sum + num(orderItem.subtotal)
             : sum;
         },
-        0
+        0,
       );
 
       const couponDocForBase = couponCode
@@ -939,10 +1064,10 @@ export const createOrder = async (req, res) => {
 
       const discountBase = couponDocForBase
         ? getCouponDiscountBase({
-          couponDoc: couponDocForBase,
-          subtotal,
-          eligibleCouponBase,
-        })
+            couponDoc: couponDocForBase,
+            subtotal,
+            eligibleCouponBase,
+          })
         : null;
 
       console.log("🎟️ CREATE ORDER COUPON DEBUG:", {
@@ -974,7 +1099,7 @@ export const createOrder = async (req, res) => {
 
       const afterCouponPayable = Math.max(
         0,
-        totalAmount - Math.min(num(couponDiscount), totalAmount)
+        totalAmount - Math.min(num(couponDiscount), totalAmount),
       );
 
       const requestedWalletAmount =
@@ -985,24 +1110,22 @@ export const createOrder = async (req, res) => {
       const actualWalletAmount =
         requestedWalletAmount > 0 || pm === "wallet"
           ? Math.min(
-            requestedWalletAmount || afterCouponPayable,
-            afterCouponPayable
-          )
+              requestedWalletAmount || afterCouponPayable,
+              afterCouponPayable,
+            )
           : 0;
 
       const amountAfterWallet = Math.max(
         0,
-        afterCouponPayable - actualWalletAmount
+        afterCouponPayable - actualWalletAmount,
       );
 
       const razorpayExtraDiscount =
         pm === "razorpay"
           ? Math.min(
-            amountAfterWallet,
-            Math.round(
-              (amountAfterWallet * RAZORPAY_DISCOUNT_PERCENT) / 100
+              amountAfterWallet,
+              Math.round((amountAfterWallet * RAZORPAY_DISCOUNT_PERCENT) / 100),
             )
-          )
           : 0;
 
       let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
@@ -1010,10 +1133,8 @@ export const createOrder = async (req, res) => {
 
       const finalPayable = Math.max(
         0,
-        amountAfterWallet - razorpayExtraDiscount
+        amountAfterWallet - razorpayExtraDiscount,
       );
-
-
 
       const effectivePaymentMethod =
         actualWalletAmount > 0 && finalPayable === 0 ? "wallet" : pm;
@@ -1028,7 +1149,7 @@ export const createOrder = async (req, res) => {
         creditsUsed: actualWalletAmount > 0,
         categoryBreakdown: computeCategoryBreakdown(normalizedItems),
         tagsUsed: uniqStrings(
-          normalizedItems.flatMap((it) => it.productSnapshot?.tags || [])
+          normalizedItems.flatMap((it) => it.productSnapshot?.tags || []),
         ),
         onlinePaymentDiscountApplied: pm === "razorpay",
         onlinePaymentDiscountPct:
@@ -1089,7 +1210,7 @@ export const createOrder = async (req, res) => {
             rmas: [],
           },
         ],
-        { session }
+        { session },
       );
 
       if (actualWalletAmount > 0 && effectivePaymentMethod !== "razorpay") {
@@ -1108,7 +1229,12 @@ export const createOrder = async (req, res) => {
         await order.save({ session });
       }
 
-      if (couponDoc && couponSnapshot?.code && identity && effectivePaymentMethod === "cod") {
+      if (
+        couponDoc &&
+        couponSnapshot?.code &&
+        identity &&
+        effectivePaymentMethod === "cod"
+      ) {
         couponDoc.usedBy = Array.isArray(couponDoc.usedBy)
           ? couponDoc.usedBy
           : [];
@@ -1123,9 +1249,11 @@ export const createOrder = async (req, res) => {
       createdOrderId = order._id;
     });
 
-    await creditOrderWalletRewardInternal({ orderId: createdOrderId }).catch((e) => {
-      console.error("⚠️ Wallet reward credit failed:", e?.message || e);
-    });
+    await creditOrderWalletRewardInternal({ orderId: createdOrderId }).catch(
+      (e) => {
+        console.error("⚠️ Wallet reward credit failed:", e?.message || e);
+      },
+    );
 
     const finalOrder = await Order.findById(createdOrderId)
       .populate("customerId", "name email phone")
@@ -1133,7 +1261,7 @@ export const createOrder = async (req, res) => {
 
     syncCustomerAnalyticsSafe(
       finalOrder?.customerId?._id || finalOrder?.customerId,
-      "createOrder"
+      "createOrder",
     );
 
     if (
@@ -1165,8 +1293,6 @@ export const createOrder = async (req, res) => {
     session.endSession();
   }
 };
-
-
 
 /* -------------------------------------------
    ✅ Date helpers (IST-safe)
@@ -1271,7 +1397,7 @@ export const getAllOrders = async (req, res) => {
 
       filters[field] = new RegExp(
         value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-        "i"
+        "i",
       );
     };
 
@@ -1286,8 +1412,10 @@ export const getAllOrders = async (req, res) => {
     setInOrEq("fulfillmentStatus", fulfillmentStatus, (x) => toStr(x));
 
     if (confirmFilter === "confirmed") filters.isConfirmed = true;
-    else if (confirmFilter === "not_confirmed") filters.isConfirmed = { $ne: true };
-    else if (isConfirmed != null) filters.isConfirmed = toLower(isConfirmed) === "true";
+    else if (confirmFilter === "not_confirmed")
+      filters.isConfirmed = { $ne: true };
+    else if (isConfirmed != null)
+      filters.isConfirmed = toLower(isConfirmed) === "true";
 
     const allowedPriority = new Set(["normal", "medium", "high"]);
     const prClean = normalizeArrayParam(priority)
@@ -1310,7 +1438,7 @@ export const getAllOrders = async (req, res) => {
 
     if (campaignId && mongoose.Types.ObjectId.isValid(String(campaignId))) {
       filters["attribution.campaignId"] = new mongoose.Types.ObjectId(
-        String(campaignId)
+        String(campaignId),
       );
     }
 
@@ -1494,7 +1622,7 @@ export const getAllOrders = async (req, res) => {
               totalSum: { $sum: { $ifNull: ["$finalPayable", 0] } },
             },
           },
-        ])
+        ]),
       );
     }
 
@@ -1535,7 +1663,6 @@ export const getNotConfirmedOrders = async (req, res) => {
   req.query.confirmFilter = "not_confirmed";
   return getAllOrders(req, res);
 };
-
 
 /* ============================================================
    GET ORDER BY ID
@@ -1644,7 +1771,6 @@ export const updateOrder = async (req, res) => {
   }
 };
 
-
 /* ============================================================
    UPDATE ORDER STATUS
    - supports cancel / paid / confirm / packed / shipped / delivered
@@ -1658,7 +1784,10 @@ export const updateOrderStatus = async (req, res) => {
   const lower = (v) => str(v).trim().toLowerCase();
   const normEmail = (v) => str(v).trim().toLowerCase();
   const normPhone = (v) =>
-    str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
+    str(v)
+      .replace(/[^\d+]/g, "")
+      .trim()
+      .replace(/^\+/, "");
 
   const defer = (fn) =>
     typeof setImmediate === "function" ? setImmediate(fn) : setTimeout(fn, 0);
@@ -1690,7 +1819,8 @@ export const updateOrderStatus = async (req, res) => {
 
     const reason = lower(req.body?.reason);
     if (["cancelled_by_admin", "admin"].includes(reason)) return "admin";
-    if (["cancelled_by_customer", "customer"].includes(reason)) return "customer";
+    if (["cancelled_by_customer", "customer"].includes(reason))
+      return "customer";
 
     return req.user?.role === "admin" ? "admin" : "customer";
   };
@@ -1768,8 +1898,10 @@ export const updateOrderStatus = async (req, res) => {
     req.body = stripUndefinedDeep(req.body);
 
     if (req.body?.shipment) {
-      if (req.body.shipment.xpressbees == null) delete req.body.shipment.xpressbees;
-      if (req.body.shipment.shiprocket == null) delete req.body.shipment.shiprocket;
+      if (req.body.shipment.xpressbees == null)
+        delete req.body.shipment.xpressbees;
+      if (req.body.shipment.shiprocket == null)
+        delete req.body.shipment.shiprocket;
     }
 
     const orderId = req.params.id;
@@ -1822,7 +1954,8 @@ export const updateOrderStatus = async (req, res) => {
           "cancellation.isCancelled": true,
           "cancellation.cancelledAt": order.cancellation?.cancelledAt || now,
           "cancellation.cancelledBy": cancelActor,
-          "cancellation.reason": cancelReason || order.cancellation?.reason || "",
+          "cancellation.reason":
+            cancelReason || order.cancellation?.reason || "",
         };
 
         const unsetPayload = {};
@@ -1866,17 +1999,21 @@ export const updateOrderStatus = async (req, res) => {
           },
           {
             $set: setPayload,
-            ...(Object.keys(unsetPayload).length ? { $unset: unsetPayload } : {}),
+            ...(Object.keys(unsetPayload).length
+              ? { $unset: unsetPayload }
+              : {}),
           },
           {
             new: true,
             session,
             runValidators: true,
-          }
+          },
         );
 
         if (!updatedOrder) {
-          throw new Error("Order was already updated. Please refresh and try again.");
+          throw new Error(
+            "Order was already updated. Please refresh and try again.",
+          );
         }
 
         return;
@@ -1891,7 +2028,9 @@ export const updateOrderStatus = async (req, res) => {
           lower(order.paymentMethod) === "razorpay" &&
           lower(order.paymentStatus) !== "paid"
         ) {
-          throw new Error("Cannot confirm Razorpay order before payment is paid");
+          throw new Error(
+            "Cannot confirm Razorpay order before payment is paid",
+          );
         }
 
         order.isConfirmed = true;
@@ -1931,7 +2070,9 @@ export const updateOrderStatus = async (req, res) => {
           });
 
         if (couponCode && identity) {
-          const couponDoc = await Coupon.findOne({ code: couponCode }).session(session);
+          const couponDoc = await Coupon.findOne({ code: couponCode }).session(
+            session,
+          );
 
           if (couponDoc) {
             couponDoc.usedBy = Array.isArray(couponDoc.usedBy)
@@ -1961,7 +2102,8 @@ export const updateOrderStatus = async (req, res) => {
         const becomingPacked =
           fulfillmentStatus === "packed" && currentStatus !== "packed";
         const becomingShipped =
-          fulfillmentStatus === "shipped" && prevFulfillmentStatus !== "shipped";
+          fulfillmentStatus === "shipped" &&
+          prevFulfillmentStatus !== "shipped";
         const becomingDelivered =
           fulfillmentStatus === "delivered" &&
           prevFulfillmentStatus !== "delivered";
@@ -1969,7 +2111,7 @@ export const updateOrderStatus = async (req, res) => {
         if (!isReversePickup) {
           if (isParent && shippingStages.includes(fulfillmentStatus)) {
             throw new Error(
-              "Parent order cannot move to shipping stages. Update shipment orders (-A/-B) instead."
+              "Parent order cannot move to shipping stages. Update shipment orders (-A/-B) instead.",
             );
           }
 
@@ -1981,7 +2123,9 @@ export const updateOrderStatus = async (req, res) => {
         if (fulfillmentStatus === "refunded") {
           const allowedPrev = ["returned", "cancelled", "rto"];
           if (!allowedPrev.includes(currentStatus)) {
-            throw new Error("Refunded can be marked only after returned/cancelled/rto");
+            throw new Error(
+              "Refunded can be marked only after returned/cancelled/rto",
+            );
           }
           order.paymentStatus = "refunded";
         }
@@ -1991,7 +2135,9 @@ export const updateOrderStatus = async (req, res) => {
             lower(order.paymentMethod) === "razorpay" &&
             lower(order.paymentStatus) !== "paid"
           ) {
-            throw new Error("Cannot book shipment before Razorpay payment is paid");
+            throw new Error(
+              "Cannot book shipment before Razorpay payment is paid",
+            );
           }
 
           await consumeReservationsInternalByOrder({
@@ -2001,7 +2147,8 @@ export const updateOrderStatus = async (req, res) => {
           });
 
           order = await Order.findById(orderId).session(session);
-          if (!order) throw new Error("Order not found after reservation consume");
+          if (!order)
+            throw new Error("Order not found after reservation consume");
         }
 
         order.fulfillmentStatus = fulfillmentStatus;
@@ -2099,15 +2246,11 @@ export const updateOrderStatus = async (req, res) => {
   }
 };
 
-
-
 /* ============================================================
    ✅ DUPLICATE / EXCHANGE ORDER
    - paymentMethod: exchange
    - paymentStatus: not_applicable
 ============================================================ */
-
-
 
 export const duplicateExchangeOrder = async (req, res) => {
   const session = await mongoose.startSession();
@@ -2124,7 +2267,8 @@ export const duplicateExchangeOrder = async (req, res) => {
 
   const oid = (v) => new mongoose.Types.ObjectId(String(v));
 
-  const escapeRegExp = (s) => String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapeRegExp = (s) =>
+    String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   const normalizeVariantAttributes = (variant) => {
     const raw = variant?.attributes;
@@ -2137,7 +2281,10 @@ export const duplicateExchangeOrder = async (req, res) => {
     }
 
     if (raw && typeof raw === "object") {
-      return Object.entries(raw).map(([k, v]) => ({ key: str(k), value: str(v) }));
+      return Object.entries(raw).map(([k, v]) => ({
+        key: str(k),
+        value: str(v),
+      }));
     }
 
     return [];
@@ -2152,7 +2299,7 @@ export const duplicateExchangeOrder = async (req, res) => {
   const pickAttr = (attrs = [], keys = []) => {
     const wanted = keys.map((k) => str(k).trim().toLowerCase());
     const found = (Array.isArray(attrs) ? attrs : []).find((a) =>
-      wanted.includes(str(a?.key).trim().toLowerCase())
+      wanted.includes(str(a?.key).trim().toLowerCase()),
     );
     return found?.value ? str(found.value) : "";
   };
@@ -2170,7 +2317,18 @@ export const duplicateExchangeOrder = async (req, res) => {
 
   const getSizeFromSku = (sku) => {
     const parts = str(sku).toUpperCase().split("-");
-    const sizes = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+    const sizes = [
+      "XXS",
+      "XS",
+      "S",
+      "M",
+      "L",
+      "XL",
+      "XXL",
+      "3XL",
+      "4XL",
+      "5XL",
+    ];
     for (let i = parts.length - 1; i >= 0; i--) {
       if (sizes.includes(parts[i])) return parts[i];
     }
@@ -2181,7 +2339,18 @@ export const duplicateExchangeOrder = async (req, res) => {
     const parts = str(sku).toUpperCase().split("-");
     if (parts.length < 2) return "";
 
-    const sizes = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+    const sizes = [
+      "XXS",
+      "XS",
+      "S",
+      "M",
+      "L",
+      "XL",
+      "XXL",
+      "3XL",
+      "4XL",
+      "5XL",
+    ];
     const maybeColor = parts[parts.length - 2];
 
     if (sizes.includes(maybeColor)) return "";
@@ -2235,7 +2404,7 @@ export const duplicateExchangeOrder = async (req, res) => {
       const regex = new RegExp(`^${escapeRegExp(base)}-R(\\d+)$`, "i");
       const existing = await Order.find(
         { orderNumber: { $regex: regex } },
-        { orderNumber: 1 }
+        { orderNumber: 1 },
       )
         .session(session)
         .lean();
@@ -2271,7 +2440,9 @@ export const duplicateExchangeOrder = async (req, res) => {
       } else {
         // ✅ build fresh snapshots from Product
         const productIds = [
-          ...new Set(incomingItems.map((i) => str(i?.productId)).filter(Boolean)),
+          ...new Set(
+            incomingItems.map((i) => str(i?.productId)).filter(Boolean),
+          ),
         ];
         const bad = productIds.find((id) => !isObjectId(id));
         if (bad) throw new Error(`Invalid productId: ${bad}`);
@@ -2287,7 +2458,8 @@ export const duplicateExchangeOrder = async (req, res) => {
           if (!pid) throw new Error("productId missing");
 
           const qty = num(item?.quantity, 0);
-          if (!Number.isFinite(qty) || qty < 1) throw new Error("Invalid quantity");
+          if (!Number.isFinite(qty) || qty < 1)
+            throw new Error("Invalid quantity");
 
           const product = productMap.get(pid);
           if (!product) throw new Error("Product not found");
@@ -2298,14 +2470,18 @@ export const duplicateExchangeOrder = async (req, res) => {
 
           let variant = null;
           if (isVariable) {
-            if (!item.variantId) throw new Error(`${product.title} - variantId missing`);
+            if (!item.variantId)
+              throw new Error(`${product.title} - variantId missing`);
             variant = findVariantById(product, item.variantId);
-            if (!variant) throw new Error(`${product.title} - variant not found`);
+            if (!variant)
+              throw new Error(`${product.title} - variant not found`);
           }
 
           const { allocatedQty, toProduceQty } = computeAllocation({
             stock: variant ? variant.stock : product.stock,
-            reservedStock: variant ? variant.reservedStock : product.reservedStock,
+            reservedStock: variant
+              ? variant.reservedStock
+              : product.reservedStock,
             qty,
           });
 
@@ -2317,13 +2493,17 @@ export const duplicateExchangeOrder = async (req, res) => {
           const attrs = normalizeVariantAttributes(variant);
 
           const selectedSize =
-            pickAttr(attrs, ["size", "sizes", "shirt_size"]) || getSizeFromSku(variant?.sku);
+            pickAttr(attrs, ["size", "sizes", "shirt_size"]) ||
+            getSizeFromSku(variant?.sku);
 
           const selectedColorRaw =
             pickAttr(attrs, ["color", "colour", "color_name"]) ||
             getColorFromSku(variant?.sku, product.productCode);
 
-          const selectedColor = sanitizeSelectedColor(selectedColorRaw, product.productCode);
+          const selectedColor = sanitizeSelectedColor(
+            selectedColorRaw,
+            product.productCode,
+          );
 
           normalizedItems.push({
             lineId: crypto.randomUUID(),
@@ -2339,7 +2519,8 @@ export const duplicateExchangeOrder = async (req, res) => {
               thumbnail: product.thumbnail || "",
               images: Array.isArray(product.images) ? product.images : [],
               productType:
-                product.productType || (product?.variants?.length ? "variable" : "simple"),
+                product.productType ||
+                (product?.variants?.length ? "variable" : "simple"),
               sku: product.sku || "",
               tags: Array.isArray(product.tags) ? product.tags : [],
               hsnCode: str(product.hsnCode),
@@ -2442,17 +2623,21 @@ export const duplicateExchangeOrder = async (req, res) => {
             orderNumber: newOrderNumber,
           },
         ],
-        { session }
+        { session },
       );
 
       newOrderDoc = created;
     });
 
     const fresh = await Order.findById(newOrderDoc._id).lean();
-    return res.status(201).json({ message: "Exchange duplicate order created", order: fresh });
+    return res
+      .status(201)
+      .json({ message: "Exchange duplicate order created", order: fresh });
   } catch (e) {
     console.error("❌ duplicateExchangeOrder error:", e);
-    return res.status(400).json({ message: e.message || "Duplicate create failed" });
+    return res
+      .status(400)
+      .json({ message: e.message || "Duplicate create failed" });
   } finally {
     session.endSession();
   }
@@ -2536,7 +2721,10 @@ export const confirmOrder = async (req, res) => {
               debug: true,
             });
           } catch (err) {
-            console.error("❌ [INVENTORY] Reserve failed:", err?.message || err);
+            console.error(
+              "❌ [INVENTORY] Reserve failed:",
+              err?.message || err,
+            );
           }
         });
       }
@@ -2559,33 +2747,61 @@ export const confirmOrder = async (req, res) => {
   }
 };
 
-
-
-
 /* ============================================================
    UPDATE TRACKING
 ============================================================ */
 export const updateTracking = async (req, res) => {
   try {
-    const { trackingId, awb, courierName, trackingUrl, shippedAt, deliveredAt, expectedDelivery } = req.body || {};
+    const {
+      trackingId,
+      awb,
+      courierName,
+      trackingUrl,
+      shippedAt,
+      deliveredAt,
+      expectedDelivery,
+    } = req.body || {};
 
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     if (String(order?.orderType || "").toLowerCase() === "parent") {
       return res.status(400).json({
-        message: "Tracking cannot be updated on parent order. Update shipment order (-A/-B) instead.",
+        message:
+          "Tracking cannot be updated on parent order. Update shipment order (-A/-B) instead.",
         reason: "parent_order_blocked",
       });
     }
 
-    const finalAwb = String(awb ?? trackingId ?? order?.shipment?.shiprocket?.awb ?? order?.trackingDetails?.trackingId ?? "").trim();
-    const finalCourier = String(courierName ?? order?.shipment?.shiprocket?.courierName ?? order?.trackingDetails?.courierName ?? "").trim();
-    const finalUrl = String(trackingUrl ?? order?.shipment?.shiprocket?.trackingUrl ?? order?.trackingDetails?.trackingUrl ?? "").trim();
+    const finalAwb = String(
+      awb ??
+        trackingId ??
+        order?.shipment?.shiprocket?.awb ??
+        order?.trackingDetails?.trackingId ??
+        "",
+    ).trim();
+    const finalCourier = String(
+      courierName ??
+        order?.shipment?.shiprocket?.courierName ??
+        order?.trackingDetails?.courierName ??
+        "",
+    ).trim();
+    const finalUrl = String(
+      trackingUrl ??
+        order?.shipment?.shiprocket?.trackingUrl ??
+        order?.trackingDetails?.trackingUrl ??
+        "",
+    ).trim();
 
-    order.shipment = order.shipment && typeof order.shipment === "object" ? order.shipment : {};
+    order.shipment =
+      order.shipment && typeof order.shipment === "object"
+        ? order.shipment
+        : {};
     order.shipment.provider = order.shipment.provider || "shiprocket";
-    order.shipment.shiprocket = order.shipment.shiprocket && typeof order.shipment.shiprocket === "object" ? order.shipment.shiprocket : {};
+    order.shipment.shiprocket =
+      order.shipment.shiprocket && typeof order.shipment.shiprocket === "object"
+        ? order.shipment.shiprocket
+        : {};
 
     if (finalAwb) order.shipment.shiprocket.awb = finalAwb;
     if (finalCourier) order.shipment.shiprocket.courierName = finalCourier;
@@ -2598,7 +2814,8 @@ export const updateTracking = async (req, res) => {
       trackingUrl: finalUrl || order.trackingDetails?.trackingUrl,
       shippedAt: shippedAt ?? order.trackingDetails?.shippedAt,
       deliveredAt: deliveredAt ?? order.trackingDetails?.deliveredAt,
-      expectedDelivery: expectedDelivery ?? order.trackingDetails?.expectedDelivery,
+      expectedDelivery:
+        expectedDelivery ?? order.trackingDetails?.expectedDelivery,
     };
 
     const curr = String(order.fulfillmentStatus || "").toLowerCase();
@@ -2606,25 +2823,48 @@ export const updateTracking = async (req, res) => {
 
     const hasShippedSignal = Boolean(finalAwb) || shippedAt != null;
     if (hasShippedSignal) {
-      if (!terminal.includes(curr) && ["processing", "packed", "picked"].includes(curr)) order.fulfillmentStatus = "shipped";
-      if (!order.shipment.status || order.shipment.status === "pending") order.shipment.status = "shipped";
-      if (shippedAt && !order.shipment.shippedAt) order.shipment.shippedAt = new Date(shippedAt);
+      if (
+        !terminal.includes(curr) &&
+        ["processing", "packed", "picked"].includes(curr)
+      )
+        order.fulfillmentStatus = "shipped";
+      if (!order.shipment.status || order.shipment.status === "pending")
+        order.shipment.status = "shipped";
+      if (shippedAt && !order.shipment.shippedAt)
+        order.shipment.shippedAt = new Date(shippedAt);
     }
 
     if (deliveredAt) {
       if (!terminal.includes(curr)) order.fulfillmentStatus = "delivered";
       order.shipment.status = "delivered";
-      if (!order.shipment.deliveredAt) order.shipment.deliveredAt = new Date(deliveredAt);
-      if (!order.trackingDetails.deliveredAt) order.trackingDetails.deliveredAt = new Date(deliveredAt);
+      if (!order.shipment.deliveredAt)
+        order.shipment.deliveredAt = new Date(deliveredAt);
+      if (!order.trackingDetails.deliveredAt)
+        order.trackingDetails.deliveredAt = new Date(deliveredAt);
     }
 
     await order.save();
 
     try {
-      const customerEmail = order?.shippingAddressSnapshot?.email || order?.billingAddressSnapshot?.email || order?.customerId?.email || order?.email;
-      const customerName = order?.shippingAddressSnapshot?.fullName || order?.shippingAddressSnapshot?.name || order?.customerId?.name || "Customer";
+      const customerEmail =
+        order?.shippingAddressSnapshot?.email ||
+        order?.billingAddressSnapshot?.email ||
+        order?.customerId?.email ||
+        order?.email;
+      const customerName =
+        order?.shippingAddressSnapshot?.fullName ||
+        order?.shippingAddressSnapshot?.name ||
+        order?.customerId?.name ||
+        "Customer";
       if (customerEmail && (finalAwb || finalUrl)) {
-        await Mailer.sendOrderTracking({ to: customerEmail, name: customerName, awb: finalAwb, courierName: finalCourier || "—", trackingLink: finalUrl || "#", order });
+        await Mailer.sendOrderTracking({
+          to: customerEmail,
+          name: customerName,
+          awb: finalAwb,
+          courierName: finalCourier || "—",
+          trackingLink: finalUrl || "#",
+          order,
+        });
       }
     } catch (mailErr) {
       console.error("❌ Tracking mail error:", mailErr?.message || mailErr);
@@ -2633,10 +2873,11 @@ export const updateTracking = async (req, res) => {
     return res.status(200).json({ message: "Tracking updated", order });
   } catch (error) {
     console.error("❌ Tracking Update Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
-
 
 /* ============================================================
    DELETE ORDER
@@ -2803,7 +3044,7 @@ export const cancelOrder = async (req, res) => {
           } catch (err) {
             console.error(
               `${TAG} ⚠️ Shiprocket cancel failed`,
-              err?.response?.data || err
+              err?.response?.data || err,
             );
           }
         }
@@ -2820,7 +3061,8 @@ export const cancelOrder = async (req, res) => {
 
       // ✅ refetch fresh order because reservation cancellation may update same order internally
       order = await Order.findById(orderId).session(session);
-      if (!order) throw new Error("Order not found after reservation cancellation");
+      if (!order)
+        throw new Error("Order not found after reservation cancellation");
 
       if (
         norm(order.paymentMethod) === "razorpay" &&
@@ -2869,24 +3111,20 @@ export const cancelOrder = async (req, res) => {
     });
   } catch (error) {
     console.error(`${TAG} ❌ Cancel Order Error`, error);
-    return res
-      .status(400)
-      .json({ success: false, message: error.message });
+    return res.status(400).json({ success: false, message: error.message });
   } finally {
     console.log(`${TAG} Session ended`);
     session.endSession();
   }
 };
 
-
-
-
-
 async function performOrderCancellation({ orderId, reason = "", session }) {
   const order = await Order.findById(orderId).session(session);
   if (!order) throw new Error("Order not found");
 
-  const currentStatus = String(order.fulfillmentStatus || "").trim().toLowerCase();
+  const currentStatus = String(order.fulfillmentStatus || "")
+    .trim()
+    .toLowerCase();
 
   // once packed / picked / shipped, reservation may already be consumed
   const nonCancellableStatuses = [
@@ -2898,7 +3136,9 @@ async function performOrderCancellation({ orderId, reason = "", session }) {
   ];
 
   if (nonCancellableStatuses.includes(currentStatus)) {
-    throw new Error("Order cannot be cancelled after packing / pickup / shipment");
+    throw new Error(
+      "Order cannot be cancelled after packing / pickup / shipment",
+    );
   }
 
   // already cancelled -> no duplicate work
@@ -2906,7 +3146,10 @@ async function performOrderCancellation({ orderId, reason = "", session }) {
     return order;
   }
 
-  const isParent = String(order?.orderType || "").trim().toLowerCase() === "parent";
+  const isParent =
+    String(order?.orderType || "")
+      .trim()
+      .toLowerCase() === "parent";
   const cancelReason = String(reason || "Order cancelled").trim();
 
   // cancel shipment if created
@@ -2916,7 +3159,10 @@ async function performOrderCancellation({ orderId, reason = "", session }) {
       try {
         await cancelShiprocketShipment(shipmentId);
       } catch (err) {
-        console.error("⚠️ Shiprocket cancel failed:", err?.response?.data || err);
+        console.error(
+          "⚠️ Shiprocket cancel failed:",
+          err?.response?.data || err,
+        );
       }
     }
   }
@@ -2950,9 +3196,6 @@ async function performOrderCancellation({ orderId, reason = "", session }) {
   return order;
 }
 
-
-
-
 /**
  * Auto book Shiprocket once order is PACKED.
  * ✅ Fix included: prevents "shipment.xpressbees cast" from blocking shiprocket save
@@ -2962,17 +3205,27 @@ async function autoBookShiprocketForOrder(order) {
   const TAG = "🚀[AUTO-SHIPROCKET]";
 
   /* ---------------- small helpers ---------------- */
-  const low = (v) => String(v || "").trim().toLowerCase();
+  const low = (v) =>
+    String(v || "")
+      .trim()
+      .toLowerCase();
   const log = (m, o) => console.log(`${TAG} ${m}`, o || "");
   const scrubXpressbees = () => {
     // if xpressbees exists but isn't a proper object, remove it (prevents cast error)
     if (!order?.shipment || typeof order.shipment !== "object") return;
-    if (order.shipment.xpressbees === undefined) delete order.shipment.xpressbees;
-    else if (order.shipment.xpressbees != null && typeof order.shipment.xpressbees !== "object")
+    if (order.shipment.xpressbees === undefined)
+      delete order.shipment.xpressbees;
+    else if (
+      order.shipment.xpressbees != null &&
+      typeof order.shipment.xpressbees !== "object"
+    )
       delete order.shipment.xpressbees;
   };
   const ensureShipment = () => {
-    order.shipment = order.shipment && typeof order.shipment === "object" ? order.shipment : {};
+    order.shipment =
+      order.shipment && typeof order.shipment === "object"
+        ? order.shipment
+        : {};
     order.shipment.shiprocket =
       order.shipment.shiprocket && typeof order.shipment.shiprocket === "object"
         ? order.shipment.shiprocket
@@ -2986,7 +3239,9 @@ async function autoBookShiprocketForOrder(order) {
 
   /* ---------------- guards ---------------- */
   if (isParentOrder(order))
-    return log("🚫 SKIP: parent order cannot be shipped", { orderNumber: order?.orderNumber });
+    return log("🚫 SKIP: parent order cannot be shipped", {
+      orderNumber: order?.orderNumber,
+    });
 
   if (!order?.isConfirmed) return log("🚫 SKIP: not confirmed");
   if (low(order?.fulfillmentStatus) !== "packed")
@@ -3005,12 +3260,18 @@ async function autoBookShiprocketForOrder(order) {
     });
 
     // env/address guards
-    if (!order?.shippingAddressSnapshot?.pincode) return log("❌ SKIP: shipping pincode missing");
-    if (!process.env.SHIPROCKET_PICKUP_PINCODE) return log("❌ SKIP: SHIPROCKET_PICKUP_PINCODE missing");
-    if (!process.env.SHIPROCKET_PICKUP_LOCATION) return log("❌ SKIP: SHIPROCKET_PICKUP_LOCATION missing");
+    if (!order?.shippingAddressSnapshot?.pincode)
+      return log("❌ SKIP: shipping pincode missing");
+    if (!process.env.SHIPROCKET_PICKUP_PINCODE)
+      return log("❌ SKIP: SHIPROCKET_PICKUP_PINCODE missing");
+    if (!process.env.SHIPROCKET_PICKUP_LOCATION)
+      return log("❌ SKIP: SHIPROCKET_PICKUP_LOCATION missing");
 
     // prepaid guard
-    if (low(order?.paymentMethod) === "razorpay" && low(order?.paymentStatus) !== "paid")
+    if (
+      low(order?.paymentMethod) === "razorpay" &&
+      low(order?.paymentStatus) !== "paid"
+    )
       return log("⏳ SKIP: prepaid not paid yet");
 
     ensureShipment();
@@ -3020,14 +3281,19 @@ async function autoBookShiprocketForOrder(order) {
       return log("✅ SKIP: AWB exists", { awb: order.shipment.shiprocket.awb });
 
     // shipment exists but AWB missing -> assign AWB
-    const existingShipmentId = String(order?.shipment?.shiprocket?.shipmentId || "").trim();
+    const existingShipmentId = String(
+      order?.shipment?.shiprocket?.shipmentId || "",
+    ).trim();
     if (existingShipmentId) {
       log("✅ Shipment exists. Trying assign AWB...", { existingShipmentId });
 
       try {
         const assigned = await assignAwb(existingShipmentId);
         const awb = String(assigned?.awb_code || assigned?.awb || "").trim();
-        if (!awb) return log("⚠️ Assign AWB response missing awb_code", { shipmentId: existingShipmentId });
+        if (!awb)
+          return log("⚠️ Assign AWB response missing awb_code", {
+            shipmentId: existingShipmentId,
+          });
 
         ensureShipment();
         order.shipment.provider = order.shipment.provider || "shiprocket";
@@ -3051,7 +3317,10 @@ async function autoBookShiprocketForOrder(order) {
         };
 
         await saveSafe();
-        return log("✅ AWB assigned & saved", { shipmentId: existingShipmentId, awb });
+        return log("✅ AWB assigned & saved", {
+          shipmentId: existingShipmentId,
+          awb,
+        });
       } catch (e) {
         return log("⚠️ Assign AWB failed", {
           shipmentId: existingShipmentId,
@@ -3065,7 +3334,10 @@ async function autoBookShiprocketForOrder(order) {
     /* ---------------- weight ---------------- */
     const totalWeight =
       order.items?.reduce((sum, it) => {
-        const w = Number(it.variant?.weight) || Number(it.productSnapshot?.weight) || 0.5;
+        const w =
+          Number(it.variant?.weight) ||
+          Number(it.productSnapshot?.weight) ||
+          0.5;
         return sum + w * Number(it.quantity || 1);
       }, 0) || 0.5;
 
@@ -3077,7 +3349,8 @@ async function autoBookShiprocketForOrder(order) {
       weight: totalWeight,
       cod: isCOD ? 1 : 0,
     });
-    if (!Array.isArray(couriers) || couriers.length === 0) return log("⚠️ SKIP: No courier available");
+    if (!Array.isArray(couriers) || couriers.length === 0)
+      return log("⚠️ SKIP: No courier available");
 
     /* ---------------- payload ---------------- */
     const payload = buildShiprocketPayload(order);
@@ -3090,14 +3363,21 @@ async function autoBookShiprocketForOrder(order) {
     if (isCOD) {
       const expectedSubTotal = Math.max(
         0,
-        Number(order.finalPayable || 0) - Number(order.shippingFee || 0) - Number(order.tax || 0)
+        Number(order.finalPayable || 0) -
+          Number(order.shippingFee || 0) -
+          Number(order.tax || 0),
       );
-      if (Number.isFinite(expectedSubTotal) && Math.abs(Number(payload.sub_total || 0) - expectedSubTotal) >= 1) {
+      if (
+        Number.isFinite(expectedSubTotal) &&
+        Math.abs(Number(payload.sub_total || 0) - expectedSubTotal) >= 1
+      ) {
         payload.sub_total = expectedSubTotal;
 
         // quick rebalance order_items selling_price
         if (Array.isArray(payload.order_items) && payload.order_items.length) {
-          const totalUnits = payload.order_items.reduce((s, x) => s + Number(x.units || 0), 0) || 1;
+          const totalUnits =
+            payload.order_items.reduce((s, x) => s + Number(x.units || 0), 0) ||
+            1;
           const perUnit = Math.round(expectedSubTotal / totalUnits);
 
           payload.order_items = payload.order_items.map((x) => ({
@@ -3108,7 +3388,7 @@ async function autoBookShiprocketForOrder(order) {
 
           const after = payload.order_items.reduce(
             (s, x) => s + Number(x.selling_price || 0) * Number(x.units || 0),
-            0
+            0,
           );
           const delta = expectedSubTotal - after;
           const lastIdx = payload.order_items.length - 1;
@@ -3116,7 +3396,12 @@ async function autoBookShiprocketForOrder(order) {
           const lastUnits = Number(last.units || 1);
           payload.order_items[lastIdx] = {
             ...last,
-            selling_price: String(Math.max(0, Number(last.selling_price || 0) + Math.round(delta / lastUnits))),
+            selling_price: String(
+              Math.max(
+                0,
+                Number(last.selling_price || 0) + Math.round(delta / lastUnits),
+              ),
+            ),
           };
         }
       }
@@ -3130,8 +3415,12 @@ async function autoBookShiprocketForOrder(order) {
     });
 
     const shipment = await createShipment(payload);
-    const shipmentId = shipment?.shipment_id ? String(shipment.shipment_id) : "";
-    const shiprocketOrderId = shipment?.order_id ? String(shipment.order_id) : "";
+    const shipmentId = shipment?.shipment_id
+      ? String(shipment.shipment_id)
+      : "";
+    const shiprocketOrderId = shipment?.order_id
+      ? String(shipment.order_id)
+      : "";
     let awb = String(shipment?.awb_code || "").trim();
 
     if (!shipmentId) return log("❌ FAIL: shipment_id missing", { shipment });
@@ -3143,8 +3432,10 @@ async function autoBookShiprocketForOrder(order) {
 
     order.shipment.shiprocket.shipmentId = shipmentId;
     order.shipment.shiprocket.orderId = shiprocketOrderId;
-    order.shipment.shiprocket.courierName = shipment?.courier_name || order.shipment.shiprocket.courierName || "";
-    order.shipment.shiprocket.trackingUrl = shipment?.tracking_url || order.shipment.shiprocket.trackingUrl || "";
+    order.shipment.shiprocket.courierName =
+      shipment?.courier_name || order.shipment.shiprocket.courierName || "";
+    order.shipment.shiprocket.trackingUrl =
+      shipment?.tracking_url || order.shipment.shiprocket.trackingUrl || "";
     order.shipment.shiprocket.status = "processing";
     order.shipment.shiprocket.lastUpdatedAt = new Date();
 
@@ -3160,7 +3451,9 @@ async function autoBookShiprocketForOrder(order) {
           ensureShipment();
           order.shipment.shiprocket.awb = awb;
           order.shipment.shiprocket.courierName =
-            assigned?.courier_name || order.shipment.shiprocket.courierName || "";
+            assigned?.courier_name ||
+            order.shipment.shiprocket.courierName ||
+            "";
           order.shipment.shiprocket.trackingUrl =
             assigned?.tracking_url ||
             order.shipment.shiprocket.trackingUrl ||
@@ -3204,10 +3497,6 @@ async function autoBookShiprocketForOrder(order) {
   }
 }
 
-
-
-
-
 // Admin trigger: Book Shiprocket only if details missing
 // Route example: POST /admin/orders/:id/shiprocket/book
 // Admin trigger: Book Shiprocket ONLY if missing
@@ -3223,8 +3512,12 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
   // ✅ Fix: if xpressbees (unused) is present as undefined/bad type, it can block order.save()
   const scrubXpressbees = (order) => {
     if (!order?.shipment || typeof order.shipment !== "object") return;
-    if (order.shipment.xpressbees === undefined) delete order.shipment.xpressbees;
-    else if (order.shipment.xpressbees != null && typeof order.shipment.xpressbees !== "object")
+    if (order.shipment.xpressbees === undefined)
+      delete order.shipment.xpressbees;
+    else if (
+      order.shipment.xpressbees != null &&
+      typeof order.shipment.xpressbees !== "object"
+    )
       delete order.shipment.xpressbees;
   };
 
@@ -3233,20 +3526,25 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
 
     /* ---------------- validate id ---------------- */
     if (!mongoose.Types.ObjectId.isValid(orderId)) {
-      return res.status(400).json({ success: false, message: "Invalid order id" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order id" });
     }
 
     /* ---------------- load order (Mongoose doc, not lean) ---------------- */
     const order = await Order.findById(orderId);
     if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
     /* ---------------- guards ---------------- */
     if (isParentOrder(order)) {
       return res.status(400).json({
         success: false,
-        message: "Parent order cannot be shipped. Create -A/-B shipment order first.",
+        message:
+          "Parent order cannot be shipped. Create -A/-B shipment order first.",
         reason: "parent_order_blocked",
       });
     }
@@ -3268,7 +3566,10 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
       });
     }
 
-    if (low(order.paymentMethod) === "razorpay" && low(order.paymentStatus) !== "paid") {
+    if (
+      low(order.paymentMethod) === "razorpay" &&
+      low(order.paymentStatus) !== "paid"
+    ) {
       return res.status(400).json({
         success: false,
         message: "Razorpay order is not paid yet.",
@@ -3338,7 +3639,8 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Shiprocket booking triggered (only when packed and details were missing).",
+      message:
+        "Shiprocket booking triggered (only when packed and details were missing).",
       orderId: fresh?._id,
       orderNumber: fresh?.orderNumber,
       shiprocket: {
@@ -3369,9 +3671,6 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
   }
 };
 
-
-
-
 /* ============================================================
    UPDATE ADDRESS SNAPSHOT (ADMIN)
    PATCH /api/orders/:id/address
@@ -3386,10 +3685,14 @@ export const updateOrderAddress = async (req, res) => {
     }
 
     const { type, address } = req.body || {};
-    const targetType = String(type || "").trim().toLowerCase();
+    const targetType = String(type || "")
+      .trim()
+      .toLowerCase();
 
     if (!["shipping", "billing"].includes(targetType)) {
-      return res.status(400).json({ message: "Invalid type. Allowed: shipping | billing" });
+      return res
+        .status(400)
+        .json({ message: "Invalid type. Allowed: shipping | billing" });
     }
 
     if (!address || typeof address !== "object") {
@@ -3398,7 +3701,10 @@ export const updateOrderAddress = async (req, res) => {
 
     // ✅ Basic sanitizers
     const str = (v) => (v == null ? "" : String(v)).trim();
-    const cleanPhone = (v) => str(v).replace(/[^\d+]/g, "").replace(/^\+/, "");
+    const cleanPhone = (v) =>
+      str(v)
+        .replace(/[^\d+]/g, "")
+        .replace(/^\+/, "");
     const cleanPincode = (v) => str(v).replace(/[^\d]/g, "");
 
     const nextSnapshot = {
@@ -3415,8 +3721,17 @@ export const updateOrderAddress = async (req, res) => {
     };
 
     // ✅ Minimal validations
-    if (!nextSnapshot.fullName || !nextSnapshot.line1 || !nextSnapshot.city || !nextSnapshot.state || !nextSnapshot.pincode) {
-      return res.status(400).json({ message: "Required fields missing (fullName, line1, city, state, pincode)" });
+    if (
+      !nextSnapshot.fullName ||
+      !nextSnapshot.line1 ||
+      !nextSnapshot.city ||
+      !nextSnapshot.state ||
+      !nextSnapshot.pincode
+    ) {
+      return res.status(400).json({
+        message:
+          "Required fields missing (fullName, line1, city, state, pincode)",
+      });
     }
 
     // ✅ pincode sanity (India)
@@ -3428,7 +3743,13 @@ export const updateOrderAddress = async (req, res) => {
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     // 🚫 Guard: once shipped/picked/out_for_delivery/delivered -> don't allow address change
-    const blockedStatuses = ["picked", "shipped", "out_for_delivery", "delivered", "returned"];
+    const blockedStatuses = [
+      "picked",
+      "shipped",
+      "out_for_delivery",
+      "delivered",
+      "returned",
+    ];
     if (blockedStatuses.includes(order.fulfillmentStatus)) {
       return res.status(400).json({
         message: `Address cannot be updated after order is ${order.fulfillmentStatus}`,
@@ -3440,13 +3761,16 @@ export const updateOrderAddress = async (req, res) => {
     const srAwb = order?.shipment?.shiprocket?.awb;
     if (srShipmentId || srAwb) {
       return res.status(400).json({
-        message: "Shiprocket shipment already created. Address update is locked.",
+        message:
+          "Shiprocket shipment already created. Address update is locked.",
         reason: "shiprocket_locked",
       });
     }
 
     // ✅ Optional: keep history
-    order.addressEditLogs = Array.isArray(order.addressEditLogs) ? order.addressEditLogs : [];
+    order.addressEditLogs = Array.isArray(order.addressEditLogs)
+      ? order.addressEditLogs
+      : [];
     order.addressEditLogs.push({
       type: targetType,
       updatedAt: new Date(),
@@ -3466,7 +3790,9 @@ export const updateOrderAddress = async (req, res) => {
     return res.status(200).json({ message: "Address updated", order });
   } catch (error) {
     console.error("❌ Update Address Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -3481,7 +3807,9 @@ export const splitOrderIntoShipments = async (req, res) => {
       return res.status(400).json({ message: "Invalid order id" });
     }
     if (!Array.isArray(splits) || splits.length < 2) {
-      return res.status(400).json({ message: "splits must have at least 2 groups" });
+      return res
+        .status(400)
+        .json({ message: "splits must have at least 2 groups" });
     }
 
     let parentOrder;
@@ -3492,7 +3820,9 @@ export const splitOrderIntoShipments = async (req, res) => {
       if (!order) throw new Error("Order not found");
 
       // 🚫 if already split, block double split
-      const alreadyHasChildren = await Order.exists({ parentOrderId: order._id }).session(session);
+      const alreadyHasChildren = await Order.exists({
+        parentOrderId: order._id,
+      }).session(session);
       if (alreadyHasChildren) throw new Error("Order already split");
 
       const items = Array.isArray(order.items) ? order.items : [];
@@ -3505,11 +3835,13 @@ export const splitOrderIntoShipments = async (req, res) => {
       const used = new Set();
       for (const grp of splits) {
         const lines = Array.isArray(grp?.lines) ? grp.lines.map(String) : [];
-        if (!lines.length) throw new Error("Each split group must have lines[]");
+        if (!lines.length)
+          throw new Error("Each split group must have lines[]");
 
         for (const lid of lines) {
           if (!itemMap.has(lid)) throw new Error(`Invalid lineId: ${lid}`);
-          if (used.has(lid)) throw new Error(`Duplicate lineId across splits: ${lid}`);
+          if (used.has(lid))
+            throw new Error(`Duplicate lineId across splits: ${lid}`);
           used.add(lid);
         }
       }
@@ -3534,7 +3866,10 @@ export const splitOrderIntoShipments = async (req, res) => {
         const childItems = lines.map((lid) => itemMap.get(lid));
 
         // totals
-        const childSubtotal = childItems.reduce((s, it) => s + Number(it.subtotal || 0), 0);
+        const childSubtotal = childItems.reduce(
+          (s, it) => s + Number(it.subtotal || 0),
+          0,
+        );
 
         // ✅ shipping/tax distribution strategy (simple):
         // shippingFee split proportionally by subtotal (or equally if subtotal 0)
@@ -3586,7 +3921,10 @@ export const splitOrderIntoShipments = async (req, res) => {
 
               currency: order.currency,
               coupon: order.coupon, // keep same snapshot if needed
-              fulfillmentStatus: order.fulfillmentStatus === "processing" ? "processing" : order.fulfillmentStatus,
+              fulfillmentStatus:
+                order.fulfillmentStatus === "processing"
+                  ? "processing"
+                  : order.fulfillmentStatus,
               source: order.source,
               isGiftOrder: order.isGiftOrder,
               customerSupportRemark: order.customerSupportRemark || "",
@@ -3594,7 +3932,7 @@ export const splitOrderIntoShipments = async (req, res) => {
               rmas: [],
             },
           ],
-          { session }
+          { session },
         );
 
         childOrders.push(childDoc[0]);
@@ -3618,10 +3956,6 @@ export const splitOrderIntoShipments = async (req, res) => {
   }
 };
 
-
-
-
-
 /* ============================================================
    ✅ LOOKUP ORDERS BY EMAIL / PHONE  (for Customer Support)
    Route: GET /api/orders/lookup?email=&phone=
@@ -3634,7 +3968,11 @@ export const lookupOrdersByIdentity = async (req, res) => {
   try {
     const str = (v) => (v == null ? "" : String(v));
     const normEmail = (v) => str(v).trim().toLowerCase();
-    const normPhone = (v) => str(v).replace(/[^\d+]/g, "").trim().replace(/^\+/, "");
+    const normPhone = (v) =>
+      str(v)
+        .replace(/[^\d+]/g, "")
+        .trim()
+        .replace(/^\+/, "");
 
     const email = normEmail(req.query.email);
     const phone = normPhone(req.query.phone);
@@ -3649,7 +3987,8 @@ export const lookupOrdersByIdentity = async (req, res) => {
     if (phone) identities.push(`phone:${phone}`);
 
     // escape for regex contains search (fallback)
-    const escapeRegExp = (s) => String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapeRegExp = (s) =>
+      String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const rxEmail = email ? new RegExp(`^${escapeRegExp(email)}$`, "i") : null;
     const rxPhone = phone ? new RegExp(`^${escapeRegExp(phone)}$`, "i") : null;
 
@@ -3659,13 +3998,13 @@ export const lookupOrdersByIdentity = async (req, res) => {
     if (email) {
       or.push(
         { "shippingAddressSnapshot.email": rxEmail },
-        { "billingAddressSnapshot.email": rxEmail }
+        { "billingAddressSnapshot.email": rxEmail },
       );
     }
     if (phone) {
       or.push(
         { "shippingAddressSnapshot.phone": phone },
-        { "billingAddressSnapshot.phone": phone }
+        { "billingAddressSnapshot.phone": phone },
       );
     }
 
@@ -3673,7 +4012,7 @@ export const lookupOrdersByIdentity = async (req, res) => {
     if (identities.length) {
       or.push(
         { "coupon.identity": { $in: identities } },
-        { "analytics.couponIdentity": { $in: identities } }
+        { "analytics.couponIdentity": { $in: identities } },
       );
     }
 
@@ -3683,7 +4022,7 @@ export const lookupOrdersByIdentity = async (req, res) => {
       const rxDigits = new RegExp(escapeRegExp(phone.slice(-10))); // last 10
       or.push(
         { "shippingAddressSnapshot.phone": rxDigits },
-        { "billingAddressSnapshot.phone": rxDigits }
+        { "billingAddressSnapshot.phone": rxDigits },
       );
     }
 
@@ -3753,10 +4092,11 @@ export const lookupOrdersByIdentity = async (req, res) => {
     return res.status(200).json({ orders });
   } catch (error) {
     console.error("❌ lookupOrdersByIdentity Error:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
-
 
 export const getProductOrderCount = async (req, res) => {
   try {
@@ -3829,11 +4169,7 @@ export const searchProductOrderNumbers = async (req, res) => {
 
     // ✅ unique order numbers
     const orderNumbers = [
-      ...new Set(
-        orders
-          .map((o) => o.orderNumber)
-          .filter(Boolean)
-      ),
+      ...new Set(orders.map((o) => o.orderNumber).filter(Boolean)),
     ];
 
     return res.status(200).json({
@@ -3851,8 +4187,6 @@ export const searchProductOrderNumbers = async (req, res) => {
   }
 };
 
-
-
 /* ------------------------------------------------------------------
    GET /api/orders/location/search?state=Delhi&pincode=110019&page=1&limit=50
    - state only
@@ -3860,7 +4194,6 @@ export const searchProductOrderNumbers = async (req, res) => {
    - dono saath
    - shipping + billing dono me match karega
 ------------------------------------------------------------------- */
-
 
 const safe = (v) => String(v ?? "").trim();
 
@@ -3873,7 +4206,6 @@ const escapeRegex = (s = "") =>
   String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const rx = (v) => new RegExp(`^${escapeRegex(safe(v))}$`, "i");
-
 
 export const findOrdersByStateAndPincode = async (req, res) => {
   try {
@@ -4018,7 +4350,6 @@ export const findOrdersByStateAndPincode = async (req, res) => {
   }
 };
 
-
 export const getDuplicateOrderAlerts = async (req, res) => {
   try {
     const result = await detectDuplicateOrders();
@@ -4056,7 +4387,6 @@ export const markDuplicateOrderAlertsController = async (req, res) => {
     });
   }
 };
-
 
 /* ============================================================
    UPDATE ORDER PAYMENT STATUS ONLY
@@ -4133,7 +4463,6 @@ export const updateOrderPaymentStatus = async (req, res) => {
   }
 };
 
-
 /* ============================================================
    GET ORDER CONFIRMATION DETAILS
    - supports order _id OR orderNumber
@@ -4147,7 +4476,9 @@ export const getOrderConfirmationDetails = async (req, res) => {
       : { orderNumber: String(id).trim() };
 
     const order = await Order.findOne(query)
-      .select("orderNumber isConfirmed confirmedBy confirmedAt paymentMethod fulfillmentStatus cancellation")
+      .select(
+        "orderNumber isConfirmed confirmedBy confirmedAt paymentMethod fulfillmentStatus cancellation",
+      )
       .lean();
 
     if (!order) {
@@ -4159,14 +4490,14 @@ export const getOrderConfirmationDetails = async (req, res) => {
 
     const confirmedAtIST = order.confirmedAt
       ? new Date(order.confirmedAt).toLocaleString("en-IN", {
-        timeZone: "Asia/Kolkata",
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      })
+          timeZone: "Asia/Kolkata",
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true,
+        })
       : null;
 
     return res.status(200).json({
@@ -4257,11 +4588,7 @@ export const getOrdersDashboard = async (req, res) => {
       ],
     };
 
-    const [
-      summaryAgg,
-      pendingConfirmation,
-      refundPending,
-    ] = await Promise.all([
+    const [summaryAgg, pendingConfirmation, refundPending] = await Promise.all([
       Order.aggregate([
         { $match: COUNTABLE_MATCH },
         {
@@ -4393,12 +4720,20 @@ export const getOrdersDashboard = async (req, res) => {
                   },
                   delivered: {
                     $sum: {
-                      $cond: [{ $eq: ["$fulfillmentStatus", "delivered"] }, 1, 0],
+                      $cond: [
+                        { $eq: ["$fulfillmentStatus", "delivered"] },
+                        1,
+                        0,
+                      ],
                     },
                   },
                   cancelled: {
                     $sum: {
-                      $cond: [{ $eq: ["$fulfillmentStatus", "cancelled"] }, 1, 0],
+                      $cond: [
+                        { $eq: ["$fulfillmentStatus", "cancelled"] },
+                        1,
+                        0,
+                      ],
                     },
                   },
                   rto: {
@@ -4408,12 +4743,20 @@ export const getOrdersDashboard = async (req, res) => {
                   },
                   returned: {
                     $sum: {
-                      $cond: [{ $eq: ["$fulfillmentStatus", "returned"] }, 1, 0],
+                      $cond: [
+                        { $eq: ["$fulfillmentStatus", "returned"] },
+                        1,
+                        0,
+                      ],
                     },
                   },
                   refunded: {
                     $sum: {
-                      $cond: [{ $eq: ["$fulfillmentStatus", "refunded"] }, 1, 0],
+                      $cond: [
+                        { $eq: ["$fulfillmentStatus", "refunded"] },
+                        1,
+                        0,
+                      ],
                     },
                   },
                 },
@@ -4608,9 +4951,7 @@ export const getOrdersDashboard = async (req, res) => {
 
         last7Orders: last7.count || 0,
         last7Revenue: last7.revenue || 0,
-        aov7: last7.count
-          ? Math.round((last7.revenue || 0) / last7.count)
-          : 0,
+        aov7: last7.count ? Math.round((last7.revenue || 0) / last7.count) : 0,
 
         deliveryRate: totalCount
           ? Number(((delivered / totalCount) * 100).toFixed(1))
@@ -4667,6 +5008,475 @@ export const getOrdersDashboard = async (req, res) => {
       success: false,
       message: "Failed to load orders dashboard",
       error: error.message,
+    });
+  }
+};
+/* ============================================================
+   APPLY COUPON AFTER ORDER PLACED
+
+   POST /api/orders/:id/apply-coupon-after-order
+
+   Body:
+   {
+     "code": "WELCOME10"
+   }
+============================================================ */
+
+export const applyCouponAfterOrderPlaced = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  const str = (value) =>
+    value === null || value === undefined ? "" : String(value);
+
+  const num = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const normalizeCode = (value) => str(value).trim().toUpperCase();
+
+  const normalizeEmail = (value) => str(value).trim().toLowerCase();
+
+  const normalizePhone = (value) => str(value).replace(/\D/g, "");
+
+  try {
+    const code = normalizeCode(req.body?.code);
+    const idOrNumber = str(req.params.id).trim();
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        message: "Coupon code is required.",
+      });
+    }
+
+    let finalOrder = null;
+
+    await session.withTransaction(async () => {
+      const orderQuery = mongoose.Types.ObjectId.isValid(idOrNumber)
+        ? {
+            $or: [
+              { _id: idOrNumber },
+              { orderNumber: idOrNumber },
+              { orderId: idOrNumber },
+            ],
+          }
+        : {
+            $or: [{ orderNumber: idOrNumber }, { orderId: idOrNumber }],
+          };
+
+      const order = await Order.findOne(orderQuery).session(session);
+
+      if (!order) {
+        throw new Error("Order not found.");
+      }
+
+      const fulfillmentStatus = str(order.fulfillmentStatus).toLowerCase();
+
+      if (
+        ["shipped", "delivered", "cancelled", "rto", "returned"].includes(
+          fulfillmentStatus,
+        )
+      ) {
+        throw new Error(
+          `Coupon cannot be applied because order is ${fulfillmentStatus}.`,
+        );
+      }
+
+      if (
+        str(order.paymentMethod).toLowerCase() === "razorpay" &&
+        str(order.paymentStatus).toLowerCase() === "paid"
+      ) {
+        throw new Error(
+          "Paid Razorpay order cannot be adjusted directly. Create a partial refund instead.",
+        );
+      }
+
+      if (str(order.paymentMethod).toLowerCase() === "exchange") {
+        throw new Error("Coupon cannot be applied to an exchange order.");
+      }
+
+      const coupon = await Coupon.findOne({ code }).session(session);
+
+      if (!coupon) {
+        throw new Error("Invalid coupon code.");
+      }
+
+      const now = new Date();
+
+      if (!coupon.isActive) {
+        throw new Error("Coupon is not active.");
+      }
+
+      if (coupon.validFrom && now < new Date(coupon.validFrom)) {
+        throw new Error("Coupon is not active yet.");
+      }
+
+      if (coupon.validTill && now > new Date(coupon.validTill)) {
+        throw new Error("Coupon has expired.");
+      }
+
+      const subtotal = num(order.subtotal);
+
+      if (subtotal < num(coupon.minPurchase)) {
+        throw new Error(
+          `Minimum purchase required is ₹${num(coupon.minPurchase)}.`,
+        );
+      }
+
+      if (
+        num(coupon.usageLimit) > 0 &&
+        num(coupon.usedCount) >= num(coupon.usageLimit)
+      ) {
+        throw new Error("Coupon usage limit has been reached.");
+      }
+
+      const email = normalizeEmail(
+        order.shippingAddressSnapshot?.email ||
+          order.billingAddressSnapshot?.email,
+      );
+
+      const phone = normalizePhone(
+        order.shippingAddressSnapshot?.phone ||
+          order.billingAddressSnapshot?.phone,
+      );
+
+      const customerIdentity = email
+        ? `email:${email}`
+        : phone
+          ? `phone:${phone}`
+          : order.customerId
+            ? `id:${order.customerId}`
+            : "";
+
+      if (coupon.targetEmail && normalizeEmail(coupon.targetEmail) !== email) {
+        throw new Error("Coupon is not applicable for this email.");
+      }
+
+      if (coupon.targetPhone && normalizePhone(coupon.targetPhone) !== phone) {
+        throw new Error("Coupon is not applicable for this phone number.");
+      }
+
+      const usageLimitPerCustomer = num(coupon.usageLimitPerCustomer || 1);
+
+      const usedTimes = customerIdentity
+        ? (coupon.usedBy || []).filter(
+            (value) => str(value).trim() === customerIdentity,
+          ).length
+        : 0;
+
+      if (
+        customerIdentity &&
+        usageLimitPerCustomer > 0 &&
+        usedTimes >= usageLimitPerCustomer
+      ) {
+        throw new Error("Customer has already used this coupon.");
+      }
+
+      let couponDiscount = 0;
+
+      if (coupon.discountType === "percentage") {
+        couponDiscount = (subtotal * num(coupon.discountValue)) / 100;
+      } else {
+        couponDiscount = num(coupon.discountValue);
+      }
+
+      if (num(coupon.maxDiscount) > 0) {
+        couponDiscount = Math.min(couponDiscount, num(coupon.maxDiscount));
+      }
+
+      couponDiscount = Math.max(
+        0,
+        Math.round(Math.min(couponDiscount, subtotal, num(order.totalAmount))),
+      );
+
+      if (couponDiscount <= 0) {
+        throw new Error("Coupon is not applicable on this order.");
+      }
+
+      const previousCouponDiscount = num(order.coupon?.discount);
+
+      const existingDiscount = num(order.discount);
+
+      const discountWithoutOldCoupon = Math.max(
+        0,
+        existingDiscount - previousCouponDiscount,
+      );
+
+      order.discount = Math.min(
+        num(order.totalAmount),
+        discountWithoutOldCoupon + couponDiscount,
+      );
+
+      order.coupon = {
+        code: coupon.code,
+        discount: couponDiscount,
+        finalTotal: Math.max(0, num(order.totalAmount) - num(order.discount)),
+        identity: customerIdentity,
+      };
+
+      order.analytics = order.analytics || {};
+      order.analytics.couponApplied = true;
+      order.analytics.couponIdentity = customerIdentity;
+
+      /*
+       * Order model pre-validate hook automatically
+       * recalculates finalPayable.
+       */
+      await order.save({ session });
+
+      order.paymentBreakdown = order.paymentBreakdown || {};
+
+      if (order.paymentMethod === "cod") {
+        order.paymentBreakdown.codAmount = num(order.finalPayable);
+        order.paymentBreakdown.razorpayAmount = 0;
+      }
+
+      if (order.paymentMethod === "razorpay") {
+        order.paymentBreakdown.razorpayAmount = num(order.finalPayable);
+        order.paymentBreakdown.codAmount = 0;
+      }
+
+      await order.save({ session });
+
+      if (customerIdentity) {
+        coupon.usedBy = Array.isArray(coupon.usedBy) ? coupon.usedBy : [];
+
+        coupon.usedBy.push(customerIdentity);
+      }
+
+      coupon.usedCount = num(coupon.usedCount) + 1;
+
+      await coupon.save({ session });
+
+      finalOrder = order;
+    });
+
+    syncCustomerAnalyticsSafe(
+      finalOrder?.customerId,
+      "applyCouponAfterOrderPlaced",
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Coupon applied successfully.",
+      order: finalOrder,
+      pricing: {
+        subtotal: finalOrder.subtotal,
+        shippingFee: finalOrder.shippingFee,
+        tax: finalOrder.tax,
+        totalAmount: finalOrder.totalAmount,
+        discount: finalOrder.discount,
+        couponDiscount: finalOrder.coupon?.discount || 0,
+        finalPayable: finalOrder.finalPayable,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Apply Coupon After Order Error:", error);
+
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Unable to apply coupon to order.",
+    });
+  } finally {
+    await session.endSession();
+  }
+};
+/* ============================================================
+   ADMIN ADJUST FINAL PAYABLE
+
+   PATCH /api/orders/:id/adjust-final-payable
+
+   Body options:
+
+   {
+     "discountAmount": 300
+   }
+
+   OR
+
+   {
+     "additionalDiscount": 200
+   }
+
+   OR
+
+   {
+     "finalPayable": 1499
+   }
+============================================================ */
+
+export const adjustOrderFinalPayable = async (req, res) => {
+  const num = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const str = (value) =>
+    value === null || value === undefined ? "" : String(value);
+
+  try {
+    const idOrNumber = str(req.params.id).trim();
+
+    const {
+      discountAmount,
+      additionalDiscount,
+      finalPayable,
+      removeCoupon = false,
+    } = req.body;
+
+    const hasDiscountAmount =
+      discountAmount !== undefined && discountAmount !== null;
+
+    const hasAdditionalDiscount =
+      additionalDiscount !== undefined && additionalDiscount !== null;
+
+    const hasFinalPayable = finalPayable !== undefined && finalPayable !== null;
+
+    if (!hasDiscountAmount && !hasAdditionalDiscount && !hasFinalPayable) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "discountAmount, additionalDiscount or finalPayable is required.",
+      });
+    }
+
+    const orderQuery = mongoose.Types.ObjectId.isValid(idOrNumber)
+      ? {
+          $or: [
+            { _id: idOrNumber },
+            { orderNumber: idOrNumber },
+            { orderId: idOrNumber },
+          ],
+        }
+      : {
+          $or: [{ orderNumber: idOrNumber }, { orderId: idOrNumber }],
+        };
+
+    const order = await Order.findOne(orderQuery);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    const fulfillmentStatus = str(order.fulfillmentStatus).toLowerCase();
+
+    if (
+      ["shipped", "delivered", "cancelled", "rto", "returned"].includes(
+        fulfillmentStatus,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Order cannot be adjusted because it is ${fulfillmentStatus}.`,
+      });
+    }
+
+    if (
+      str(order.paymentMethod).toLowerCase() === "razorpay" &&
+      str(order.paymentStatus).toLowerCase() === "paid"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Paid Razorpay order cannot be adjusted directly. Create a partial refund instead.",
+      });
+    }
+
+    const totalAmount = num(order.totalAmount);
+
+    const walletAmount = num(
+      order.walletCredit?.amount || order.paymentBreakdown?.walletAmount,
+    );
+
+    let nextDiscount = num(order.discount);
+
+    if (hasDiscountAmount) {
+      nextDiscount = num(discountAmount);
+    }
+
+    if (hasAdditionalDiscount) {
+      nextDiscount = num(order.discount) + num(additionalDiscount);
+    }
+
+    if (hasFinalPayable) {
+      const requestedFinalPayable = num(finalPayable);
+
+      if (requestedFinalPayable < 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Final payable cannot be negative.",
+        });
+      }
+
+      if (requestedFinalPayable > Math.max(0, totalAmount - walletAmount)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Final payable cannot be greater than the current payable before discount.",
+        });
+      }
+
+      nextDiscount = totalAmount - walletAmount - requestedFinalPayable;
+    }
+
+    nextDiscount = Math.max(0, Math.min(nextDiscount, totalAmount));
+
+    order.discount = Math.round(nextDiscount);
+
+    if (removeCoupon === true) {
+      order.coupon = undefined;
+
+      order.analytics = order.analytics || {};
+      order.analytics.couponApplied = false;
+      order.analytics.couponIdentity = "";
+    }
+
+    /*
+     * Model hook recalculates:
+     * finalPayable = totalAmount - discount - walletAmount
+     */
+    await order.save();
+
+    order.paymentBreakdown = order.paymentBreakdown || {};
+
+    if (order.paymentMethod === "cod") {
+      order.paymentBreakdown.codAmount = num(order.finalPayable);
+      order.paymentBreakdown.razorpayAmount = 0;
+    }
+
+    if (order.paymentMethod === "razorpay") {
+      order.paymentBreakdown.razorpayAmount = num(order.finalPayable);
+      order.paymentBreakdown.codAmount = 0;
+    }
+
+    await order.save();
+
+    syncCustomerAnalyticsSafe(order.customerId, "adjustOrderFinalPayable");
+
+    return res.status(200).json({
+      success: true,
+      message: "Order payable adjusted successfully.",
+      order,
+      pricing: {
+        subtotal: order.subtotal,
+        shippingFee: order.shippingFee,
+        tax: order.tax,
+        totalAmount: order.totalAmount,
+        discount: order.discount,
+        walletAmount: order.walletCredit?.amount || 0,
+        finalPayable: order.finalPayable,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Adjust Order Final Payable Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to adjust order payable.",
     });
   }
 };

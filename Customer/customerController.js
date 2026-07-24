@@ -1951,3 +1951,96 @@ export const lookupCustomerByEmail = async (req, res) => {
     });
   }
 };
+
+
+export const createOrFindGuestCustomer = async (
+  req,
+  res,
+) => {
+  try {
+    const name = String(
+      req.body?.name || "",
+    ).trim();
+
+    const email = String(
+      req.body?.email || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const phone = String(
+      req.body?.phone || "",
+    )
+      .replace(/\D/g, "")
+      .slice(-10);
+
+    if (!name) {
+      return res.status(400).json({
+        message: "Name is required",
+      });
+    }
+
+    if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        email,
+      )
+    ) {
+      return res.status(400).json({
+        message: "Valid email is required",
+      });
+    }
+
+    if (!/^\d{10}$/.test(phone)) {
+      return res.status(400).json({
+        message:
+          "Valid phone number is required",
+      });
+    }
+
+    let customer = await Customer.findOne({
+      email,
+    });
+
+    if (!customer) {
+      customer = await Customer.create({
+        name,
+        email,
+        phone,
+        customerType: "guest",
+        isGuest: true,
+      });
+    } else {
+      let changed = false;
+
+      if (!customer.name && name) {
+        customer.name = name;
+        changed = true;
+      }
+
+      if (!customer.phone && phone) {
+        customer.phone = phone;
+        changed = true;
+      }
+
+      if (changed) {
+        await customer.save();
+      }
+    }
+
+    return res.status(200).json({
+      message: "Customer ready",
+      customer,
+    });
+  } catch (error) {
+    console.error(
+      "Guest customer error:",
+      error,
+    );
+
+    return res.status(500).json({
+      message:
+        error?.message ||
+        "Could not create customer",
+    });
+  }
+};
