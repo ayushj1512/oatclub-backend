@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import bwipjs from "bwip-js";
+import Product from "../Products/Products.js";
 
 import {
   BarcodeItem,
@@ -67,6 +68,362 @@ function sendSuccess(
       : {}),
     ...extra,
   });
+}
+
+/* =========================================================
+   PRODUCT INVENTORY HELPERS
+========================================================= */
+
+const INVENTORY_SCAN_MARKER =
+  "[PRODUCT-STOCK-INWARDED]";
+
+function normalizeInventoryProductCode(
+  value = ""
+) {
+  const raw = normalizeUppercase(value);
+
+  if (!raw) {
+    throw new Error(
+      "productCode is required"
+    );
+  }
+
+  if (/^\d+$/.test(raw)) {
+    return String(
+      Number.parseInt(raw, 10)
+    ).padStart(5, "0");
+  }
+
+  return raw;
+}
+
+function buildProductCodeCandidates(
+  value = ""
+) {
+  const raw =
+    normalizeInventoryProductCode(value);
+
+  const candidates = new Set([raw]);
+
+  if (/^\d+$/.test(raw)) {
+    const numericCode = String(
+      Number.parseInt(raw, 10)
+    );
+
+    candidates.add(numericCode);
+    candidates.add(
+      numericCode.padStart(5, "0")
+    );
+    candidates.add(
+      numericCode.padStart(6, "0")
+    );
+  }
+
+  return Array.from(candidates);
+}
+
+function getVariantSize(variant) {
+  const attributes = Array.isArray(
+    variant?.attributes
+  )
+    ? variant.attributes
+    : [];
+
+  return normalizeUppercase(
+    attributes.find(
+      (attribute) =>
+        normalizeText(
+          attribute?.key
+        ).toLowerCase() === "size"
+    )?.value
+  );
+}
+
+function findVariantBySize(
+  product,
+  size
+) {
+  const normalizedSize =
+    validateSize(size);
+
+  return (product?.variants || []).find(
+    (variant) =>
+      getVariantSize(variant) ===
+      normalizedSize
+  );
+}
+
+function getVendorId(req) {
+  return (
+    req.vendor?._id ||
+    req.vendor?.id ||
+    null
+  );
+}
+
+function containsInventoryMarker(
+  notes = ""
+) {
+  return normalizeText(notes).includes(
+    INVENTORY_SCAN_MARKER
+  );
+}
+
+function appendInventoryMarker(
+  notes = ""
+) {
+  const currentNotes =
+    normalizeText(notes);
+
+  if (
+    containsInventoryMarker(
+      currentNotes
+    )
+  ) {
+    return currentNotes;
+  }
+
+  return [
+    currentNotes,
+    INVENTORY_SCAN_MARKER,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function buildInventoryResponse(
+  product,
+  variant = null
+) {
+  const productObject =
+    typeof product?.toObject === "function"
+      ? product.toObject()
+      : product;
+
+  const variants = Array.isArray(
+    productObject?.variants
+  )
+    ? productObject.variants
+    : [];
+
+  const totalStock =
+    variants.length > 0
+      ? variants.reduce(
+          (total, item) =>
+            total +
+            Number(item?.stock || 0),
+          0
+        )
+      : Number(
+          productObject?.stock || 0
+        );
+
+  const totalReserved =
+    variants.length > 0
+      ? variants.reduce(
+          (total, item) =>
+            total +
+            Number(
+              item?.reservedStock || 0
+            ),
+          0
+        )
+      : Number(
+          productObject?.reservedStock || 0
+        );
+
+  return {
+    productId: productObject?._id,
+    productCode:
+      productObject?.productCode,
+    title: productObject?.title,
+    thumbnail:
+      productObject?.thumbnail ||
+      productObject?.images?.[0] ||
+      "",
+    productType:
+      productObject?.productType,
+    stock: totalStock,
+    reservedStock: totalReserved,
+    availableStock: Math.max(
+      0,
+      totalStock - totalReserved
+    ),
+    isInStock:
+      totalStock - totalReserved > 0,
+    variant: variant
+      ? {
+          variantId: variant._id,
+          size: getVariantSize(
+            variant
+          ),
+          sku: variant.sku || "",
+          stock: Number(
+            variant.stock || 0
+          ),
+          reservedStock: Number(
+            variant.reservedStock || 0
+          ),
+          availableStock: Math.max(
+            0,
+            Number(
+              variant.stock || 0
+            ) -
+              Number(
+                variant.reservedStock || 0
+              )
+          ),
+          isInStock:
+            Number(
+              variant.stock || 0
+            ) -
+              Number(
+                variant.reservedStock || 0
+              ) >
+            0,
+        }
+      : null,
+  };
+}
+
+async function findProductForInventory(
+  productCode,
+  session = null
+) {
+  const candidates =
+    buildProductCodeCandidates(
+      productCode
+    );
+
+  let query = Product.findOne({
+    productCode: {
+      $in: candidates,
+    },
+  });
+
+  if (session) {
+    query = query.session(session);
+  }
+
+  return query;
+}
+
+async function increaseProductInventory({
+  product,
+  size,
+  quantity,
+  session = null,
+}) {
+  const incrementBy = Number(quantity);
+
+  if (
+    !Number.isSafeInteger(incrementBy) ||
+    incrementBy <= 0
+  ) {
+    throw new Error(
+      "quantity must be a positive integer"
+    );
+  }
+
+  const hasVariants =
+    Array.isArray(product.variants) &&
+    product.variants.length > 0;
+
+  /*
+   * VARIABLE PRODUCT
+   */
+  if (hasVariants) {
+    const normalizedSize =
+      validateSize(size);
+
+    const variant =
+      findVariantBySize(
+        product,
+        normalizedSize
+      );
+
+    if (!variant) {
+      throw new Error(
+        `Size ${normalizedSize} variant not found for product ${product.productCode}`
+      );
+    }
+
+    variant.stock =
+      Number(variant.stock || 0) +
+      incrementBy;
+
+    const reservedStock =
+      Math.max(
+        0,
+        Number(
+          variant.reservedStock || 0
+        )
+      );
+
+    variant.isInStock =
+      variant.stock -
+        reservedStock >
+      0;
+
+    product.isInStock =
+      product.variants.some(
+        (item) =>
+          Number(item.stock || 0) -
+            Number(
+              item.reservedStock || 0
+            ) >
+          0
+      );
+
+    product.markModified(
+      "variants"
+    );
+
+    await product.save({
+      session,
+      validateBeforeSave: true,
+    });
+
+    const updatedVariant =
+      product.variants.id(
+        variant._id
+      );
+
+    return {
+      product,
+      variant: updatedVariant,
+    };
+  }
+
+  /*
+   * SIMPLE PRODUCT
+   */
+  product.stock =
+    Number(product.stock || 0) +
+    incrementBy;
+
+  const reservedStock =
+    Math.max(
+      0,
+      Number(
+        product.reservedStock || 0
+      )
+    );
+
+  product.isInStock =
+    product.stock -
+      reservedStock >
+    0;
+
+  await product.save({
+    session,
+    validateBeforeSave: true,
+  });
+
+  return {
+    product,
+    variant: null,
+  };
 }
 
 /* =========================================================
@@ -1915,6 +2272,357 @@ export async function getBarcodeInventorySummary(
       500,
       error?.message ||
         "Failed to load barcode inventory"
+    );
+  }
+}
+
+
+/* =========================================================
+   SCAN BARCODE INTO PRODUCT INVENTORY
+========================================================= */
+
+/**
+ * POST /api/barcodes/inventory/scan
+ *
+ * Body:
+ * {
+ *   "barcodeText": "00034-M-29"
+ * }
+ *
+ * Existing registered barcode verify karega.
+ * Product variant stock +1 karega.
+ * Same barcode dobara inward nahi hoga.
+ */
+export async function scanInventoryBarcode(
+  req,
+  res
+) {
+  const session =
+    await mongoose.startSession();
+
+  try {
+    const barcodeText =
+      normalizeUppercase(
+        req.body?.barcodeText
+      );
+
+    if (!barcodeText) {
+      return sendError(
+        res,
+        400,
+        "barcodeText is required"
+      );
+    }
+
+    const parsed =
+      parseBarcode(barcodeText);
+
+    let responseData = null;
+
+    await session.withTransaction(
+      async () => {
+        const item =
+          await BarcodeItem.findOne({
+            barcode: parsed.barcode,
+          }).session(session);
+
+        if (!item) {
+          const error = new Error(
+            "Barcode is valid, but this physical item is not registered"
+          );
+
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const barcodeMatches =
+          item.productCode ===
+            parsed.productCode &&
+          item.size === parsed.size &&
+          item.sequence ===
+            parsed.sequence &&
+          item.uniqueId ===
+            parsed.uniqueId &&
+          item.pieceSku ===
+            parsed.pieceSku &&
+          item.barcode ===
+            parsed.barcode;
+
+        if (!barcodeMatches) {
+          const error = new Error(
+            "Scanned barcode does not match the registered physical item"
+          );
+
+          error.statusCode = 409;
+          throw error;
+        }
+
+        /*
+         * Notes marker prevents duplicate stock increment
+         * without adding any new model field.
+         */
+        if (
+          containsInventoryMarker(
+            item.notes
+          )
+        ) {
+          const error = new Error(
+            "This barcode has already been added to product inventory"
+          );
+
+          error.statusCode = 409;
+          error.details = {
+            barcode: item.barcode,
+            productCode:
+              item.productCode,
+            size: item.size,
+          };
+
+          throw error;
+        }
+
+        let product = null;
+
+        if (item.product) {
+          product =
+            await Product.findById(
+              item.product
+            ).session(session);
+        }
+
+        if (!product) {
+          product =
+            await findProductForInventory(
+              parsed.productCode,
+              session
+            );
+        }
+
+        if (!product) {
+          const error = new Error(
+            `Product ${parsed.productCode} not found`
+          );
+
+          error.statusCode = 404;
+          throw error;
+        }
+
+        if (
+          normalizeInventoryProductCode(
+            product.productCode
+          ) !==
+          normalizeInventoryProductCode(
+            parsed.productCode
+          )
+        ) {
+          const error = new Error(
+            "Barcode product code does not match the selected product"
+          );
+
+          error.statusCode = 409;
+          throw error;
+        }
+
+        const {
+          product: updatedProduct,
+          variant,
+        } =
+          await increaseProductInventory({
+            product,
+            size: parsed.size,
+            quantity: 1,
+            session,
+          });
+
+        /*
+         * Reuse existing BarcodeItem fields.
+         * No schema changes needed.
+         */
+        item.product =
+          updatedProduct._id;
+
+        if (variant?._id) {
+          item.variantId =
+            variant._id;
+        }
+
+        const vendorId =
+          getVendorId(req);
+
+        if (vendorId) {
+          item.vendor = vendorId;
+        }
+
+        item.source = "vendor";
+        item.inwardAt = new Date();
+        item.notes =
+          appendInventoryMarker(
+            item.notes
+          );
+
+        await item.save({
+          session,
+          validateBeforeSave: true,
+        });
+
+        responseData = {
+          barcodeItem: {
+            _id: item._id,
+            barcode: item.barcode,
+            pieceSku: item.pieceSku,
+            productCode:
+              item.productCode,
+            size: item.size,
+            status: item.status,
+            source: item.source,
+            inwardAt:
+              item.inwardAt,
+          },
+          inventory:
+            buildInventoryResponse(
+              updatedProduct,
+              variant
+            ),
+          incrementedBy: 1,
+        };
+      }
+    );
+
+    return sendSuccess(res, {
+      message:
+        "Barcode scanned and inventory increased successfully",
+      data: responseData,
+    });
+  } catch (error) {
+    console.error(
+      "❌ Scan Inventory Barcode Error:",
+      error
+    );
+
+    return sendError(
+      res,
+      error?.statusCode || 400,
+      error?.message ||
+        "Failed to scan inventory barcode",
+      error?.details
+    );
+  } finally {
+    await session.endSession();
+  }
+}
+
+/* =========================================================
+   MANUAL PRODUCT INVENTORY
+========================================================= */
+
+/**
+ * POST /api/barcodes/inventory/manual
+ *
+ * Variable product:
+ * {
+ *   "productCode": "00034",
+ *   "size": "M",
+ *   "quantity": 10
+ * }
+ *
+ * Simple product:
+ * {
+ *   "productCode": "00034",
+ *   "quantity": 10
+ * }
+ *
+ * This endpoint only updates Product inventory.
+ * It does not create BarcodeItem records.
+ */
+export async function addManualProductInventory(
+  req,
+  res
+) {
+  try {
+    const {
+      productCode,
+      size = "",
+      quantity,
+    } = req.body ?? {};
+
+    const normalizedProductCode =
+      normalizeInventoryProductCode(
+        productCode
+      );
+
+    const incrementBy =
+      normalizeQuantity(quantity);
+
+    const product =
+      await findProductForInventory(
+        normalizedProductCode
+      );
+
+    if (!product) {
+      return sendError(
+        res,
+        404,
+        `Product ${normalizedProductCode} not found`
+      );
+    }
+
+    const hasVariants =
+      Array.isArray(
+        product.variants
+      ) &&
+      product.variants.length > 0;
+
+    if (
+      hasVariants &&
+      !normalizeText(size)
+    ) {
+      return sendError(
+        res,
+        400,
+        "size is required for variable products"
+      );
+    }
+
+    const {
+      product: updatedProduct,
+      variant,
+    } =
+      await increaseProductInventory({
+        product,
+        size,
+        quantity: incrementBy,
+      });
+
+    return sendSuccess(res, {
+      message: hasVariants
+        ? `${incrementBy} unit(s) added to size ${normalizeUppercase(
+            size
+          )}`
+        : `${incrementBy} unit(s) added to product inventory`,
+      data: {
+        inventory:
+          buildInventoryResponse(
+            updatedProduct,
+            variant
+          ),
+        incrementedBy:
+          incrementBy,
+        method: "manual",
+        vendorId:
+          getVendorId(req),
+      },
+    });
+  } catch (error) {
+    console.error(
+      "❌ Manual Inventory Error:",
+      error
+    );
+
+    return sendError(
+      res,
+      400,
+      error?.message ||
+        "Failed to add manual inventory"
     );
   }
 }
