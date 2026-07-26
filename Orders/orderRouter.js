@@ -27,6 +27,8 @@ import {
   getOrdersDashboard,
   applyCouponAfterOrderPlaced,
   adjustOrderFinalPayable,
+  markCodOrderAsPaid,
+  markOrderAsInfluencer,
 } from "./orderController.js";
 
 import {
@@ -326,6 +328,8 @@ router.post("/:id/confirm", confirmOrder);
 
 router.post("/:id/split", splitOrderIntoShipments);
 
+router.patch("/:id/influencer-order", markOrderAsInfluencer);
+
 /* ============================================================
    ORDER RMA BY ID
 ============================================================ */
@@ -355,6 +359,8 @@ router.get("/:id/confirmation-details", getOrderConfirmationDetails);
 router.patch("/:id", updateOrder);
 
 router.put("/:id", updateOrder);
+
+router.patch("/:id/mark-cod-paid", markCodOrderAsPaid);
 
 /* ============================================================
    ORDER BY ID

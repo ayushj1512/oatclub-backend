@@ -2,14 +2,10 @@ import mongoose from "mongoose";
 import crypto from "crypto";
 import Counter from "../models/Counter.js";
 import Coupon from "../Coupon/Coupon.js";
-import {
-  sendOrderReviewWhatsapp,
-  buildReviewLink,
-} from "../fast2sms/index.js";
-
+import { sendOrderReviewWhatsapp, buildReviewLink } from "../fast2sms/index.js";
 
 const REVIEW_WHATSAPP_START_DATE = new Date(
-  process.env.REVIEW_WHATSAPP_START_DATE || "2026-05-21T00:00:00.000Z"
+  process.env.REVIEW_WHATSAPP_START_DATE || "2026-05-21T00:00:00.000Z",
 );
 
 /**
@@ -37,7 +33,7 @@ const orderItemSchema = new mongoose.Schema(
     // ✅ production / fulfillment tracking per line
     fulfillment: {
       allocatedQty: { type: Number, default: 0, min: 0 }, // reservedStock locked
-      shippedQty: { type: Number, default: 0, min: 0 },   // shipped till now
+      shippedQty: { type: Number, default: 0, min: 0 }, // shipped till now
       toProduceQty: { type: Number, default: 0, min: 0 }, // remaining
     },
 
@@ -83,9 +79,8 @@ const orderItemSchema = new mongoose.Schema(
     compareAtPrice: { type: Number, default: null },
     subtotal: { type: Number, required: true },
   },
-  { _id: false }
+  { _id: false },
 );
-
 
 // ============================================================================
 // RMA (Return/Exchange) — Embedded inside Order (no new order)
@@ -111,7 +106,7 @@ const rmaItemSchema = new mongoose.Schema(
     title: { type: String, default: "" },
     variantSku: { type: String, default: "" },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const rmaSchema = new mongoose.Schema(
@@ -207,275 +202,275 @@ const rmaSchema = new mongoose.Schema(
 
     // Shiprocket reverse pickup / tracking
     // ========================================================================
-// SHIPROCKET REVERSE PICKUP / RETURN TRACKING
-// ========================================================================
-reverseShipment: {
-  provider: {
-    type: String,
-    enum: ["shiprocket", "manual"],
-    default: "shiprocket",
-  },
+    // SHIPROCKET REVERSE PICKUP / RETURN TRACKING
+    // ========================================================================
+    reverseShipment: {
+      provider: {
+        type: String,
+        enum: ["shiprocket", "manual"],
+        default: "shiprocket",
+      },
 
-  // Shiprocket return-order identifiers
-  orderId: {
-    type: String,
-    default: "",
-  },
+      // Shiprocket return-order identifiers
+      orderId: {
+        type: String,
+        default: "",
+      },
 
-  shipmentId: {
-    type: String,
-    default: "",
-  },
+      shipmentId: {
+        type: String,
+        default: "",
+      },
 
-  // Selected courier details
-  courierId: {
-    type: Number,
-    default: null,
-  },
+      // Selected courier details
+      courierId: {
+        type: Number,
+        default: null,
+      },
 
-  courierName: {
-    type: String,
-    default: "",
-  },
+      courierName: {
+        type: String,
+        default: "",
+      },
 
-  courierRating: {
-    type: Number,
-    default: 0,
-  },
+      courierRating: {
+        type: Number,
+        default: 0,
+      },
 
-  freightCharge: {
-    type: Number,
-    default: 0,
-    min: 0,
-  },
+      freightCharge: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
 
-  estimatedDays: {
-    type: String,
-    default: "",
-  },
+      estimatedDays: {
+        type: String,
+        default: "",
+      },
 
-  // AWB and customer tracking
-  awb: {
-    type: String,
-    default: "",
-  },
+      // AWB and customer tracking
+      awb: {
+        type: String,
+        default: "",
+      },
 
-  trackingUrl: {
-    type: String,
-    default: "",
-  },
+      trackingUrl: {
+        type: String,
+        default: "",
+      },
 
-  labelUrl: {
-    type: String,
-    default: "",
-  },
+      labelUrl: {
+        type: String,
+        default: "",
+      },
 
-  // Internal reverse-booking lifecycle
-  status: {
-    type: String,
-    enum: [
-      "not_booked",
-      "checking_serviceability",
-      "return_order_created",
-      "awb_assigned",
-      "pickup_scheduled",
-      "picked",
-      "in_transit",
-      "received",
-      "cancelled",
-      "booking_failed",
-    ],
-    default: "not_booked",
-  },
+      // Internal reverse-booking lifecycle
+      status: {
+        type: String,
+        enum: [
+          "not_booked",
+          "checking_serviceability",
+          "return_order_created",
+          "awb_assigned",
+          "pickup_scheduled",
+          "picked",
+          "in_transit",
+          "received",
+          "cancelled",
+          "booking_failed",
+        ],
+        default: "not_booked",
+      },
 
-  rawStatus: {
-    type: String,
-    default: "",
-  },
+      rawStatus: {
+        type: String,
+        default: "",
+      },
 
-  statusCode: {
-    type: String,
-    default: "",
-  },
+      statusCode: {
+        type: String,
+        default: "",
+      },
 
-  // Package details sent to Shiprocket
-  package: {
-    weight: {
-      type: Number,
-      default: 0,
-      min: 0,
+      // Package details sent to Shiprocket
+      package: {
+        weight: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+
+        length: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+
+        breadth: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+
+        height: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+
+        declaredValue: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+      },
+
+      // Pickup and movement dates
+      pickupScheduledAt: {
+        type: Date,
+        default: null,
+      },
+
+      expectedPickupAt: {
+        type: Date,
+        default: null,
+      },
+
+      pickedAt: {
+        type: Date,
+        default: null,
+      },
+
+      inTransitAt: {
+        type: Date,
+        default: null,
+      },
+
+      receivedAt: {
+        type: Date,
+        default: null,
+      },
+
+      cancelledAt: {
+        type: Date,
+        default: null,
+      },
+
+      // Failure-safe retry information
+      bookingError: {
+        step: {
+          type: String,
+          enum: [
+            "",
+            "serviceability",
+            "create_return_order",
+            "assign_awb",
+            "generate_pickup",
+            "database_update",
+            "customer_notification",
+          ],
+          default: "",
+        },
+
+        message: {
+          type: String,
+          default: "",
+        },
+
+        occurredAt: {
+          type: Date,
+          default: null,
+        },
+      },
+
+      // Customer communication
+      customerNotification: {
+        emailSent: {
+          type: Boolean,
+          default: false,
+        },
+
+        emailSentAt: {
+          type: Date,
+          default: null,
+        },
+
+        emailError: {
+          type: String,
+          default: "",
+        },
+
+        whatsappSent: {
+          type: Boolean,
+          default: false,
+        },
+
+        whatsappSentAt: {
+          type: Date,
+          default: null,
+        },
+
+        whatsappError: {
+          type: String,
+          default: "",
+        },
+      },
+
+      // Sync timestamps
+      awbAssignedAt: {
+        type: Date,
+        default: null,
+      },
+
+      lastSyncedAt: {
+        type: Date,
+        default: null,
+      },
+
+      lastWebhookAt: {
+        type: Date,
+        default: null,
+      },
+
+      lastTrackAt: {
+        type: Date,
+        default: null,
+      },
+
+      // Raw Shiprocket responses for debugging
+      rawServiceabilityResponse: {
+        type: mongoose.Schema.Types.Mixed,
+        default: null,
+      },
+
+      rawCreateResponse: {
+        type: mongoose.Schema.Types.Mixed,
+        default: null,
+      },
+
+      rawAwbResponse: {
+        type: mongoose.Schema.Types.Mixed,
+        default: null,
+      },
+
+      rawPickupResponse: {
+        type: mongoose.Schema.Types.Mixed,
+        default: null,
+      },
+
+      lastWebhook: {
+        type: mongoose.Schema.Types.Mixed,
+        default: null,
+      },
+
+      lastTrack: {
+        type: mongoose.Schema.Types.Mixed,
+        default: null,
+      },
     },
-
-    length: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    breadth: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    height: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    declaredValue: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
   },
-
-  // Pickup and movement dates
-  pickupScheduledAt: {
-    type: Date,
-    default: null,
-  },
-
-  expectedPickupAt: {
-    type: Date,
-    default: null,
-  },
-
-  pickedAt: {
-    type: Date,
-    default: null,
-  },
-
-  inTransitAt: {
-    type: Date,
-    default: null,
-  },
-
-  receivedAt: {
-    type: Date,
-    default: null,
-  },
-
-  cancelledAt: {
-    type: Date,
-    default: null,
-  },
-
-  // Failure-safe retry information
-  bookingError: {
-    step: {
-      type: String,
-      enum: [
-        "",
-        "serviceability",
-        "create_return_order",
-        "assign_awb",
-        "generate_pickup",
-        "database_update",
-        "customer_notification",
-      ],
-      default: "",
-    },
-
-    message: {
-      type: String,
-      default: "",
-    },
-
-    occurredAt: {
-      type: Date,
-      default: null,
-    },
-  },
-
-  // Customer communication
-  customerNotification: {
-    emailSent: {
-      type: Boolean,
-      default: false,
-    },
-
-    emailSentAt: {
-      type: Date,
-      default: null,
-    },
-
-    emailError: {
-      type: String,
-      default: "",
-    },
-
-    whatsappSent: {
-      type: Boolean,
-      default: false,
-    },
-
-    whatsappSentAt: {
-      type: Date,
-      default: null,
-    },
-
-    whatsappError: {
-      type: String,
-      default: "",
-    },
-  },
-
-  // Sync timestamps
-  awbAssignedAt: {
-    type: Date,
-    default: null,
-  },
-
-  lastSyncedAt: {
-    type: Date,
-    default: null,
-  },
-
-  lastWebhookAt: {
-    type: Date,
-    default: null,
-  },
-
-  lastTrackAt: {
-    type: Date,
-    default: null,
-  },
-
-  // Raw Shiprocket responses for debugging
-  rawServiceabilityResponse: {
-    type: mongoose.Schema.Types.Mixed,
-    default: null,
-  },
-
-  rawCreateResponse: {
-    type: mongoose.Schema.Types.Mixed,
-    default: null,
-  },
-
-  rawAwbResponse: {
-    type: mongoose.Schema.Types.Mixed,
-    default: null,
-  },
-
-  rawPickupResponse: {
-    type: mongoose.Schema.Types.Mixed,
-    default: null,
-  },
-
-  lastWebhook: {
-    type: mongoose.Schema.Types.Mixed,
-    default: null,
-  },
-
-  lastTrack: {
-    type: mongoose.Schema.Types.Mixed,
-    default: null,
-  },
-},
-  },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // ============================================================================
@@ -498,7 +493,7 @@ const attributionTouchSchema = new mongoose.Schema(
 
     capturedAt: { type: Date, default: null },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const orderAttributionSchema = new mongoose.Schema(
@@ -565,7 +560,7 @@ const orderAttributionSchema = new mongoose.Schema(
     capturedAt: { type: Date, default: null },
     lastUpdatedAt: { type: Date, default: null },
   },
-  { _id: false }
+  { _id: false },
 );
 
 /**
@@ -618,10 +613,19 @@ const orderSchema = new mongoose.Schema(
       finalTotal: Number,
       identity: { type: String, default: "" }, // ✅ email/phone identity store
     },
-    orderType: { type: String, enum: ["parent", "shipment"], default: "shipment", index: true },
-    parentOrderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", default: null, index: true },
+    orderType: {
+      type: String,
+      enum: ["parent", "shipment"],
+      default: "shipment",
+      index: true,
+    },
+    parentOrderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+      default: null,
+      index: true,
+    },
     splitSuffix: { type: String, default: "", index: true }, // "A","B"
-
 
     shippingFee: { type: Number, default: 0 },
     tax: { type: Number, default: 0 },
@@ -664,12 +668,17 @@ const orderSchema = new mongoose.Schema(
     },
 
     paymentMethod: {
-      type: String,
-      enum: ["cod", "razorpay", "exchange", "wallet"],
-      default: "cod",
-      index: true,
-    },
-
+  type: String,
+  enum: [
+    "cod",
+    "razorpay",
+    "exchange",
+    "wallet",
+    "manual_prepaid",
+  ],
+  default: "cod",
+  index: true,
+},
 
     // ✅ FIX: added refund_pending to prevent crashes
     paymentStatus: {
@@ -686,7 +695,6 @@ const orderSchema = new mongoose.Schema(
       default: "pending",
       index: true,
     },
-
 
     eligibleForRefund: {
       type: Boolean,
@@ -760,7 +768,6 @@ const orderSchema = new mongoose.Schema(
       failedAt: { type: Date, default: null },
       failureReason: { type: String, default: "" },
     },
-
 
     // ✅ order confirmation (separate from fulfillment)
     fulfillmentStatus: {
@@ -930,10 +937,12 @@ const orderSchema = new mongoose.Schema(
 
         lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
         lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
-        rawBookingResponse: { type: mongoose.Schema.Types.Mixed, default: null },
+        rawBookingResponse: {
+          type: mongoose.Schema.Types.Mixed,
+          default: null,
+        },
       },
     },
-
 
     trackingDetails: {
       trackingId: { type: String, default: "", index: true },
@@ -990,6 +999,11 @@ const orderSchema = new mongoose.Schema(
     },
 
     isGiftOrder: { type: Boolean, default: false },
+    isInfluencerOrder: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     // ✅ order confirmation (separate from fulfillment)
     isConfirmed: { type: Boolean, default: false, index: true },
     isPackable: {
@@ -1026,10 +1040,9 @@ const orderSchema = new mongoose.Schema(
       onlinePaymentDiscountPct: { type: Number, default: 0 },
       onlinePaymentDiscountAmount: { type: Number, default: 0 },
       couponIdentity: { type: String, default: "" },
-
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // ========================================================================================
@@ -1059,7 +1072,7 @@ orderSchema.pre("validate", async function (next) {
     const counter = await Counter.findOneAndUpdate(
       { name: "order" },
       { $inc: { seq: 1 } },
-      { new: true, upsert: true }
+      { new: true, upsert: true },
     );
 
     this.orderNumber = String(counter.seq).padStart(6, "0");
@@ -1071,7 +1084,9 @@ orderSchema.pre("validate", async function (next) {
 });
 
 const hasChildren = async (orderId) => {
-  const exists = await mongoose.model("Order").exists({ parentOrderId: orderId });
+  const exists = await mongoose
+    .model("Order")
+    .exists({ parentOrderId: orderId });
   return Boolean(exists);
 };
 
@@ -1081,14 +1096,12 @@ const hasChildren = async (orderId) => {
 orderSchema.pre("validate", function (next) {
   try {
     const isRazorpayPaid =
-      this.paymentMethod === "razorpay" &&
-      this.paymentStatus === "paid";
+      this.paymentMethod === "razorpay" && this.paymentStatus === "paid";
 
     if (isRazorpayPaid && !this.isConfirmed) {
       this.isConfirmed = true;
       this.confirmedAt = new Date();
       this.confirmedBy = "auto"; // ✅
-
     }
 
     next();
@@ -1124,7 +1137,6 @@ orderSchema.pre("validate", function (next) {
   }
 });
 
-
 // ========================================================================================
 // ⭐ AUTO-GENERATE RMA NUMBERS for any new RMA missing rmaNumber
 // ========================================================================================
@@ -1141,7 +1153,7 @@ orderSchema.pre("validate", async function (next) {
       const counter = await Counter.findOneAndUpdate(
         { name: "rma" },
         { $inc: { seq: 1 } },
-        { new: true, upsert: true }
+        { new: true, upsert: true },
       );
 
       const padded = String(counter.seq).padStart(6, "0");
@@ -1166,7 +1178,6 @@ orderSchema.pre("validate", async function (next) {
   }
 });
 
-
 // ✅ AUTO-FILL selectedSize / selectedColor from variant.attributes
 orderSchema.pre("validate", function (next) {
   try {
@@ -1178,13 +1189,17 @@ orderSchema.pre("validate", function (next) {
         : [];
 
       const size =
-        attrs.find((a) => String(a?.key || "").toLowerCase() === "size")?.value ||
-        attrs.find((a) => String(a?.key || "").toLowerCase() === "sizes")?.value ||
+        attrs.find((a) => String(a?.key || "").toLowerCase() === "size")
+          ?.value ||
+        attrs.find((a) => String(a?.key || "").toLowerCase() === "sizes")
+          ?.value ||
         "";
 
       const color =
-        attrs.find((a) => String(a?.key || "").toLowerCase() === "color")?.value ||
-        attrs.find((a) => String(a?.key || "").toLowerCase() === "colour")?.value ||
+        attrs.find((a) => String(a?.key || "").toLowerCase() === "color")
+          ?.value ||
+        attrs.find((a) => String(a?.key || "").toLowerCase() === "colour")
+          ?.value ||
         "";
 
       // ✅ store flat (clean)
@@ -1194,7 +1209,6 @@ orderSchema.pre("validate", function (next) {
       if (!String(it.selectedColor || "").trim() && color)
         it.selectedColor = String(color);
 
-
       return it;
     });
 
@@ -1203,7 +1217,6 @@ orderSchema.pre("validate", function (next) {
     next(err);
   }
 });
-
 
 // ========================================================================================
 // ✅ AUTO-CALC TOTALS
@@ -1222,7 +1235,7 @@ orderSchema.pre("validate", function (next) {
 
     const subtotal = (this.items || []).reduce(
       (sum, it) => sum + Number(it.subtotal || 0),
-      0
+      0,
     );
 
     this.subtotal = subtotal;
@@ -1255,7 +1268,7 @@ orderSchema.pre("validate", function (next) {
 
       const totalItems = (this.items || []).reduce(
         (sum, it) => sum + Number(it.quantity || 0),
-        0
+        0,
       );
 
       this.analytics.totalItems = totalItems;
@@ -1273,12 +1286,12 @@ orderSchema.pre("validate", function (next) {
     const beforeWalletPayable = Math.max(0, this.totalAmount - discount);
 
     const requestedWalletAmount = Number(
-      this.walletCredit?.amount || this.paymentBreakdown?.walletAmount || 0
+      this.walletCredit?.amount || this.paymentBreakdown?.walletAmount || 0,
     );
 
     const walletAmount = Math.min(
       Math.max(0, requestedWalletAmount),
-      beforeWalletPayable
+      beforeWalletPayable,
     );
 
     this.finalPayable = Math.max(0, beforeWalletPayable - walletAmount);
@@ -1305,7 +1318,7 @@ orderSchema.pre("validate", function (next) {
 
     const totalItems = (this.items || []).reduce(
       (sum, it) => sum + Number(it.quantity || 0),
-      0
+      0,
     );
 
     this.analytics.totalItems = totalItems;
@@ -1328,9 +1341,11 @@ orderSchema.statics.confirmOrder = async function (orderId, adminId = null) {
 
   if (adminId) update.confirmedBy = adminId;
 
-  return this.findByIdAndUpdate(orderId, update, { new: true, runValidators: true });
+  return this.findByIdAndUpdate(orderId, update, {
+    new: true,
+    runValidators: true,
+  });
 };
-
 
 // ========================================================================================
 // ✅ PATCH 4: Safety guard — prevent shipping stages unless confirmed
@@ -1338,19 +1353,32 @@ orderSchema.statics.confirmOrder = async function (orderId, adminId = null) {
 // ========================================================================================
 orderSchema.pre("validate", async function (next) {
   try {
-    const shippingStages = ["packed", "picked", "shipped", "out_for_delivery", "delivered"];
+    const shippingStages = [
+      "packed",
+      "picked",
+      "shipped",
+      "out_for_delivery",
+      "delivered",
+    ];
 
     // 1) Nothing can move to shipping unless confirmed
     if (!this.isConfirmed && shippingStages.includes(this.fulfillmentStatus)) {
       return next(new Error("Order must be confirmed before shipping stages"));
     }
 
-    if (!this.isConfirmed && this.shipment?.status && shippingStages.includes(this.shipment.status)) {
-      return next(new Error("Order must be confirmed before shipment status moves"));
+    if (
+      !this.isConfirmed &&
+      this.shipment?.status &&
+      shippingStages.includes(this.shipment.status)
+    ) {
+      return next(
+        new Error("Order must be confirmed before shipment status moves"),
+      );
     }
 
     // ✅ 2) Parent can be blocked ONLY if it actually has children
-    const isMarkedParent = String(this.orderType || "").toLowerCase() === "parent";
+    const isMarkedParent =
+      String(this.orderType || "").toLowerCase() === "parent";
     let actuallySplitParent = false;
 
     if (isMarkedParent && this._id) {
@@ -1359,8 +1387,15 @@ orderSchema.pre("validate", async function (next) {
       actuallySplitParent = Boolean(childExists);
     }
 
-    if (actuallySplitParent && shippingStages.includes(this.fulfillmentStatus)) {
-      return next(new Error("Split parent order cannot be shipped. Ship child orders (-A/-B) only."));
+    if (
+      actuallySplitParent &&
+      shippingStages.includes(this.fulfillmentStatus)
+    ) {
+      return next(
+        new Error(
+          "Split parent order cannot be shipped. Ship child orders (-A/-B) only.",
+        ),
+      );
     }
 
     if (
@@ -1368,7 +1403,11 @@ orderSchema.pre("validate", async function (next) {
       this.shipment?.status &&
       shippingStages.includes(this.shipment.status)
     ) {
-      return next(new Error("Split parent order shipment status cannot move. Ship only child orders."));
+      return next(
+        new Error(
+          "Split parent order shipment status cannot move. Ship only child orders.",
+        ),
+      );
     }
 
     next();
@@ -1436,7 +1475,6 @@ orderSchema.pre("validate", function (next) {
   }
 });
 
-
 // ========================================================================================
 // ✅ AUTO-CALC isPackable (based on fulfillment)
 // ========================================================================================
@@ -1448,7 +1486,7 @@ orderSchema.pre("validate", function (next) {
     }
 
     this.isPackable = this.items.every(
-      (item) => Number(item?.fulfillment?.toProduceQty || 0) === 0
+      (item) => Number(item?.fulfillment?.toProduceQty || 0) === 0,
     );
 
     next();
@@ -1476,7 +1514,6 @@ const FULFILLMENT_DATE_FIELD = {
   rto: "rtoAt",
   failed: "failedAt",
 };
-
 
 orderSchema.pre("validate", function (next) {
   try {
@@ -1510,7 +1547,6 @@ orderSchema.pre("validate", function (next) {
     next(err);
   }
 });
-
 
 // ========================================================================================
 // ✅ AUTO-MARK REFUND PENDING WHEN PAID RAZORPAY ORDER IS CANCELLED / RTO
@@ -1555,9 +1591,6 @@ orderSchema.pre("validate", function (next) {
     next(err);
   }
 });
-
-
-
 
 // ========================================================================================
 // ✅ AUTO-NORMALIZE UNIVERSAL ATTRIBUTION
@@ -1694,7 +1727,7 @@ orderSchema.statics.sendReviewRequestWhatsapp = async function (orderId) {
           "reviewRequest.link": reviewLink,
           "reviewRequest.error": "",
         },
-      }
+      },
     );
 
     return {
@@ -1712,7 +1745,7 @@ orderSchema.statics.sendReviewRequestWhatsapp = async function (orderId) {
           "reviewRequest.link": reviewLink,
           "reviewRequest.error": err.message || "Review WhatsApp failed",
         },
-      }
+      },
     );
 
     return {
@@ -1735,9 +1768,7 @@ orderSchema.post("save", function (doc) {
     doc.shipment?.status === "delivered";
 
   const shouldSendReview =
-    isDelivered &&
-    doc.eligibleForRma === false &&
-    !doc.reviewRequest?.sent;
+    isDelivered && doc.eligibleForRma === false && !doc.reviewRequest?.sent;
 
   if (!shouldSendReview) return;
 
@@ -1749,8 +1780,6 @@ orderSchema.post("save", function (doc) {
     }
   });
 });
-
-
 
 // Core list performance
 orderSchema.index({ createdAt: -1 });

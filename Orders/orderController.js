@@ -1340,6 +1340,7 @@ export const getAllOrders = async (req, res) => {
       paymentStatus,
       fulfillmentStatus,
       isConfirmed,
+      isInfluencerOrder,
       confirmFilter,
       priority,
 
@@ -1426,6 +1427,16 @@ export const getAllOrders = async (req, res) => {
     else if (prClean.length > 1) filters.priority = { $in: prClean };
 
     setInOrEq("paymentMethod", paymentMethod, (x) => toLower(x));
+
+    if (isInfluencerOrder != null) {
+  const value = toLower(isInfluencerOrder);
+
+  if (value === "true") {
+    filters.isInfluencerOrder = true;
+  } else if (value === "false") {
+    filters.isInfluencerOrder = { $ne: true };
+  }
+}
 
     /* ----------------------------
        ✅ Universal attribution filters
@@ -1545,7 +1556,7 @@ export const getAllOrders = async (req, res) => {
       paymentStatus: 1,
       fulfillmentStatus: 1,
       isConfirmed: 1,
-
+isInfluencerOrder: 1,
       subtotal: 1,
       discount: 1,
       shippingFee: 1,
@@ -1767,6 +1778,63 @@ export const updateOrder = async (req, res) => {
     return res.status(500).json({
       message: "Server error",
       error: error.message,
+    });
+  }
+};
+
+// ========================================================================================
+// ✅ MARK COD ORDER AS PAID
+// ========================================================================================
+export const markCodOrderAsPaid = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    if (order.paymentMethod !== "cod") {
+      return res.status(400).json({
+        success: false,
+        message: "Only COD orders are allowed.",
+      });
+    }
+
+    // ✅ Convert COD order to manually paid (Prepaid)
+    order.paymentMethod = "manual_prepaid";
+    order.paymentStatus = "paid";
+
+    order.paymentBreakdown = order.paymentBreakdown || {};
+    order.paymentBreakdown.codAmount = 0;
+    order.paymentBreakdown.razorpayAmount = Number(order.finalPayable || 0);
+
+    order.isConfirmed = true;
+    order.confirmedAt = order.confirmedAt || new Date();
+    order.confirmedBy = "admin";
+
+    // Optional
+    if (req.body?.isInfluencerOrder !== undefined) {
+      order.isInfluencerOrder = !!req.body.isInfluencerOrder;
+    }
+
+    await order.save();
+
+    return res.json({
+      success: true,
+      message: "COD order marked as paid.",
+      order,
+    });
+  } catch (err) {
+    console.error(err);
+
+    return res.status(500).json({
+      success: false,
+      message: err.message,
     });
   }
 };
@@ -5477,6 +5545,55 @@ export const adjustOrderFinalPayable = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || "Unable to adjust order payable.",
+    });
+  }
+};
+
+export const markOrderAsInfluencer = async (req, res) => {
+  try {
+    const idOrNumber = String(req.params.id || "").trim();
+    const { isInfluencerOrder } = req.body;
+
+    if (typeof isInfluencerOrder !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "isInfluencerOrder must be a boolean",
+      });
+    }
+
+    const query = mongoose.Types.ObjectId.isValid(idOrNumber)
+      ? { _id: idOrNumber }
+      : { orderNumber: idOrNumber };
+
+    const order = await Order.findOneAndUpdate(
+      query,
+      { $set: { isInfluencerOrder } },
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: isInfluencerOrder
+        ? "Order marked as influencer order"
+        : "Order removed from influencer orders",
+      order,
+    });
+  } catch (error) {
+    console.error("❌ Influencer Order Update Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Unable to update influencer order",
     });
   }
 };
