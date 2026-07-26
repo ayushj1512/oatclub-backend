@@ -516,7 +516,7 @@ body{
     </div>
 
     <div class="oat-footer">
-      <p>OATCLUB • OWN ALL TRENDS • SUPPORT@OATCLUB.IN</p>
+      <p>OATCLUB • OWN ALL TRENDS •hey@oatclub.in</p>
     </div>
 
   </div>

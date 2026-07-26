@@ -235,3 +235,43 @@ export const getAllAddresses = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+/**
+ * ---------------------------------------------------------
+ * GET ADDRESSES BY EMAIL
+ * @route GET /api/addresses/email/:email
+ * ---------------------------------------------------------
+ */
+export const getAddressesByEmail = async (req, res) => {
+  try {
+    const email = String(req.params.email || "")
+      .trim()
+      .toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const addresses = await Address.find({ email }).sort({
+      isDefaultShipping: -1,
+      isDefaultBilling: -1,
+      createdAt: -1,
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: addresses.length,
+      data: addresses,
+    });
+  } catch (error) {
+    console.error("Error fetching addresses by email:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch addresses",
+    });
+  }
+};

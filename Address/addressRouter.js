@@ -4,6 +4,7 @@ import {
   getAllAddresses,
   getAddressesByFirebaseUID,
   getAddressesByCustomer,
+  getAddressesByEmail,
   getAddressById,
   updateAddress,
   deleteAddress,
@@ -26,6 +27,14 @@ router.post("/", createAddress);
  * ---------------------------------------------------------
  */
 router.get("/", getAllAddresses);
+
+/**
+ * ---------------------------------------------------------
+ * GET ADDRESSES BY EMAIL
+ * GET /api/addresses/email/:email
+ * ---------------------------------------------------------
+ */
+router.get("/email/:email", getAddressesByEmail);
 
 /**
  * ---------------------------------------------------------
