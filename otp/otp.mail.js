@@ -8,12 +8,12 @@ import { OTP_CONFIG } from "./otp.constants.js";
 const BRAND = {
   name: "OATCLUB",
   tagline: "Own All Trends",
-  website: process.env.FRONTEND_URL || "https://www.oatclub.com",
+  website: process.env.FRONTEND_URL || "https://www.oatclub.in",
   supportEmail:
     process.env.SUPPORT_EMAIL ||
     process.env.SMTP_FROM_EMAIL ||
     process.env.SMTP_USER ||
-    "support@oatclub.com",
+    "support@oatclub.in",
 };
 
 /* =========================================================
