@@ -9,11 +9,7 @@ const BRAND = {
   name: "OATCLUB",
   tagline: "Own All Trends",
   website: process.env.FRONTEND_URL || "https://www.oatclub.in",
-  supportEmail:
-    process.env.SUPPORT_EMAIL ||
-    process.env.SMTP_FROM_EMAIL ||
-    process.env.SMTP_USER ||
-    "support@oatclub.in",
+  supportEmail: "hey@oatclub.in",
 };
 
 /* =========================================================
@@ -184,21 +180,33 @@ Own All Trends`;
       background:#000000;
     "
   >
-    <img
-      src="https://res.cloudinary.com/dpsvrt4sd/image/upload/v1781123546/odb5ckquouajjzfbxin0.webp"
-      alt="${BRAND.name}"
-      width="180"
-      style="
-        display:block;
-        margin:0 auto;
-        width:180px;
-        max-width:80%;
-        height:auto;
-        border:0;
-        outline:none;
-        text-decoration:none;
-      "
-    />
+    <div
+  style="
+    width:180px;
+    height:70px;
+    margin:0 auto;
+    overflow:hidden;
+    position:relative;
+  "
+>
+  <img
+    src="https://res.cloudinary.com/dpsvrt4sd/image/upload/v1781123546/odb5ckquouajjzfbxin0.webp"
+    alt="${BRAND.name}"
+    width="180"
+    style="
+      display:block;
+      position:absolute;
+      width:180px;
+      max-width:none;
+      height:auto;
+      top:-16px;
+      left:0;
+      border:0;
+      outline:none;
+      text-decoration:none;
+    "
+  />
+</div>
 
     <div
       style="
