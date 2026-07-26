@@ -5,8 +5,14 @@ import mongoose from "mongoose";
 BASIC HELPERS
 ------------------------------------------------------------------- */
 
-const normCode = (v) => String(v || "").trim().toUpperCase();
-const normEmail = (v) => String(v || "").trim().toLowerCase();
+const normCode = (v) =>
+  String(v || "")
+    .trim()
+    .toUpperCase();
+const normEmail = (v) =>
+  String(v || "")
+    .trim()
+    .toLowerCase();
 const normPhone = (v) => String(v || "").replace(/\D/g, "");
 const toId = (v) => String(v?._id || v || "");
 
@@ -50,7 +56,7 @@ const getItemPrice = (item) => {
       item?.finalPrice ??
       product?.price ??
       product?.salePrice ??
-      0
+      0,
   );
 };
 
@@ -70,9 +76,9 @@ const isPrimaryItem = (item) => {
   const product = getItemProduct(item);
   return Boolean(
     item?.isPrimaryProduct ??
-      item?.isPrimary ??
-      product?.isPrimaryProduct ??
-      product?.isPrimary
+    item?.isPrimary ??
+    product?.isPrimaryProduct ??
+    product?.isPrimary,
   );
 };
 
@@ -190,7 +196,7 @@ const cartPassesRules = ({ coupon, cartItems = [] }) => {
   if (!rules.length) return true;
 
   return rules.every((rule) =>
-    cartItems.some((item) => itemMatchesRule(item, rule))
+    cartItems.some((item) => itemMatchesRule(item, rule)),
   );
 };
 
@@ -207,13 +213,14 @@ const cartPassesQuantityRule = ({ coupon, cartItems = [] }) => {
 
 const itemMatchesAnyCategoryRule = (item, rules = []) =>
   rules.some(
-    (rule) => rule.ruleType === "category_required" && itemMatchesRule(item, rule)
+    (rule) =>
+      rule.ruleType === "category_required" && itemMatchesRule(item, rule),
   );
 
 const itemMatchesAnyCollectionRule = (item, rules = []) =>
   rules.some(
     (rule) =>
-      rule.ruleType === "collection_required" && itemMatchesRule(item, rule)
+      rule.ruleType === "collection_required" && itemMatchesRule(item, rule),
   );
 
 const itemMatchesAnyRule = (item, rules = []) =>
@@ -239,7 +246,9 @@ const getEligibleItems = ({ coupon, cartItems = [] }) => {
   }
 
   if (target === "collection_products") {
-    return cartItems.filter((item) => itemMatchesAnyCollectionRule(item, rules));
+    return cartItems.filter((item) =>
+      itemMatchesAnyCollectionRule(item, rules),
+    );
   }
 
   if (target === "matched_products") {
@@ -282,7 +291,13 @@ const enforceTargets = ({ coupon, email, phone, res }) => {
   return true;
 };
 
-const validateCouponBasics = ({ coupon, cartTotal, cartItems, customerKey, res }) => {
+const validateCouponBasics = ({
+  coupon,
+  cartTotal,
+  cartItems,
+  customerKey,
+  res,
+}) => {
   if (!coupon) {
     res.status(404).json({ message: "Invalid coupon code." });
     return false;
@@ -325,7 +340,7 @@ const validateCouponBasics = ({ coupon, cartTotal, cartItems, customerKey, res }
 
   if (perLimit > 0 && customerKey) {
     const usedTimes = (coupon.usedBy || []).filter(
-      (x) => String(x) === customerKey
+      (x) => String(x) === customerKey,
     ).length;
 
     if (usedTimes >= perLimit) {
@@ -353,7 +368,7 @@ const calcDiscountAmount = ({ coupon, eligibleTotal, cartTotal }) => {
 
   return Math.max(
     0,
-    Math.min(discount, Number(eligibleTotal), Number(cartTotal))
+    Math.min(discount, Number(eligibleTotal), Number(cartTotal)),
   );
 };
 
@@ -361,10 +376,15 @@ const buildDiscountBreakdown = ({ coupon, cartItems = [], discount }) => {
   const eligibleItems = getEligibleItems({ coupon, cartItems });
   const eligibleTotal = eligibleItems.reduce(
     (sum, item) => sum + getItemTotal(item),
-    0
+    0,
   );
 
-  if (!cartItems.length || !eligibleItems.length || discount <= 0 || eligibleTotal <= 0) {
+  if (
+    !cartItems.length ||
+    !eligibleItems.length ||
+    discount <= 0 ||
+    eligibleTotal <= 0
+  ) {
     return [];
   }
 
@@ -398,9 +418,7 @@ const calculateCouponDiscount = ({ coupon, cartTotal, cartItems = [] }) => {
     ? getCartTotalFromItems(cartItems)
     : Number(cartTotal || 0);
 
-  const eligibleItems = hasItems
-    ? getEligibleItems({ coupon, cartItems })
-    : [];
+  const eligibleItems = hasItems ? getEligibleItems({ coupon, cartItems }) : [];
 
   const eligibleTotal = hasItems
     ? eligibleItems.reduce((sum, item) => sum + getItemTotal(item), 0)
@@ -507,7 +525,13 @@ const getApplyContext = (body = {}) => {
   };
 };
 
-const validateApplyInput = ({ code, cartTotal, cartItems, customerKey, res }) => {
+const validateApplyInput = ({
+  code,
+  cartTotal,
+  cartItems,
+  customerKey,
+  res,
+}) => {
   if (!code || (cartTotal == null && !cartItems.length)) {
     res.status(400).json({
       message: "code and cartTotal/cartItems are required.",
@@ -533,8 +557,15 @@ export const createCoupon = async (req, res) => {
   try {
     const payload = cleanUndefined(normalizeCouponPayload(req.body));
 
-    if (!payload.code || !payload.validTill || !payload.discountType || payload.discountValue == null) {
-      return res.status(400).json({ message: "Missing required coupon fields." });
+    if (
+      !payload.code ||
+      !payload.validTill ||
+      !payload.discountType ||
+      payload.discountValue == null
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Missing required coupon fields." });
     }
 
     const existingCoupon = await Coupon.findOne({ code: payload.code });
@@ -550,7 +581,9 @@ export const createCoupon = async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating coupon:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -608,7 +641,9 @@ export const getAllCoupons = async (req, res) => {
     return res.status(200).json({ count: coupons.length, data: coupons });
   } catch (error) {
     console.error("Error fetching coupons:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -638,7 +673,9 @@ export const getCouponByIdOrCode = async (req, res) => {
     return res.status(200).json(coupon);
   } catch (error) {
     console.error("Error fetching coupon:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -653,7 +690,7 @@ export const updateCoupon = async (req, res) => {
     const coupon = await Coupon.findByIdAndUpdate(
       req.params.id,
       { $set: updates },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     )
       .populate("categories", "name slug")
       .populate("collections", "name slug");
@@ -666,7 +703,9 @@ export const updateCoupon = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating coupon:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -682,7 +721,9 @@ export const deleteCoupon = async (req, res) => {
     return res.status(200).json({ message: "Coupon deleted successfully" });
   } catch (error) {
     console.error("Error deleting coupon:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -710,7 +751,8 @@ export const applyCoupon = async (req, res) => {
       return;
     }
 
-    if (!enforceTargets({ coupon, email: ctx.email, phone: ctx.phone, res })) return;
+    if (!enforceTargets({ coupon, email: ctx.email, phone: ctx.phone, res }))
+      return;
 
     const result = calculateCouponDiscount({
       coupon,
@@ -737,7 +779,9 @@ export const applyCoupon = async (req, res) => {
     });
   } catch (error) {
     console.error("Error applying coupon:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -787,8 +831,10 @@ export const autoApplyCoupon = async (req, res) => {
       });
 
       if (!valid) continue;
-      if (coupon.targetEmail && normEmail(email) !== coupon.targetEmail) continue;
-      if (coupon.targetPhone && normPhone(phone) !== coupon.targetPhone) continue;
+      if (coupon.targetEmail && normEmail(email) !== coupon.targetEmail)
+        continue;
+      if (coupon.targetPhone && normPhone(phone) !== coupon.targetPhone)
+        continue;
 
       const result = calculateCouponDiscount({
         coupon,
@@ -797,7 +843,8 @@ export const autoApplyCoupon = async (req, res) => {
       });
 
       if (result.discount <= 0) continue;
-      if (!best || result.discount > best.discount) best = { coupon, ...result };
+      if (!best || result.discount > best.discount)
+        best = { coupon, ...result };
     }
 
     if (!best) {
@@ -825,7 +872,9 @@ export const autoApplyCoupon = async (req, res) => {
     });
   } catch (error) {
     console.error("Error auto applying coupon:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -853,7 +902,8 @@ export const redeemCoupon = async (req, res) => {
       return;
     }
 
-    if (!enforceTargets({ coupon, email: ctx.email, phone: ctx.phone, res })) return;
+    if (!enforceTargets({ coupon, email: ctx.email, phone: ctx.phone, res }))
+      return;
 
     const result = calculateCouponDiscount({
       coupon,
@@ -873,7 +923,7 @@ export const redeemCoupon = async (req, res) => {
         $push: { usedBy: ctx.customerKey },
         $inc: { usedCount: 1 },
       },
-      { new: true }
+      { new: true },
     );
 
     return res.status(200).json({
@@ -889,6 +939,87 @@ export const redeemCoupon = async (req, res) => {
     });
   } catch (error) {
     console.error("Error redeeming coupon:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
+  }
+};
+
+export const getAvailableCoupons = async (req, res) => {
+  try {
+    const { email, phone, customerId } = req.body;
+
+    const customerKey = buildCustomerKey({
+      email,
+      phone,
+      customerId,
+    });
+
+    const now = new Date();
+
+    const coupons = await Coupon.find({
+      visibility: "public",
+      isActive: true,
+      validFrom: { $lte: now },
+      validTill: { $gte: now },
+    })
+      .sort({ createdAt: -1 })
+      .populate("categories", "name slug")
+      .populate("collections", "name slug")
+      .lean();
+
+    const availableCoupons = coupons.filter((coupon) => {
+      // Global usage limit reached
+      if (
+        Number(coupon.usageLimit) > 0 &&
+        Number(coupon.usedCount) >= Number(coupon.usageLimit)
+      ) {
+        return false;
+      }
+
+      // Customer-specific coupon checks
+      if (
+        coupon.targetEmail &&
+        normEmail(email) !== normEmail(coupon.targetEmail)
+      ) {
+        return false;
+      }
+
+      if (
+        coupon.targetPhone &&
+        normPhone(phone) !== normPhone(coupon.targetPhone)
+      ) {
+        return false;
+      }
+
+      // Hide only if this customer already exhausted usage
+      const perCustomerLimit = Number(
+        coupon.usageLimitPerCustomer ?? 1
+      );
+
+      if (customerKey && perCustomerLimit > 0) {
+        const usedTimes = (coupon.usedBy || []).filter(
+          (key) => String(key) === customerKey
+        ).length;
+
+        if (usedTimes >= perCustomerLimit) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    return res.status(200).json({
+      count: availableCoupons.length,
+      data: availableCoupons,
+    });
+  } catch (error) {
+    console.error("Error fetching available coupons:", error);
+
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
   }
 };

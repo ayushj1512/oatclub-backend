@@ -8,6 +8,7 @@ import {
   applyCoupon,
   autoApplyCoupon,
   redeemCoupon,
+  getAvailableCoupons
 } from "../Coupon/couponController.js";
 
 const router = express.Router();
@@ -27,12 +28,13 @@ Keep these BEFORE "/:idOrCode"
 router.post("/apply", applyCoupon);
 router.post("/auto-apply", autoApplyCoupon);
 router.post("/redeem", redeemCoupon);
-
+router.post("/available", getAvailableCoupons);
 /* ------------------------------------------------------------------
 PUBLIC COUPON LOOKUP
 ------------------------------------------------------------------- */
 
 router.get("/:idOrCode", getCouponByIdOrCode);
+
 
 /* ------------------------------------------------------------------
 ADMIN SINGLE COUPON
