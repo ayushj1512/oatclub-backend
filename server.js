@@ -131,6 +131,7 @@ const ALLOWED_ORIGINS = [
   // Vendor
   "https://vendor.oatclub.in",
   "https://oatclub-vendor-vdsc.vercel.app",
+  "http://127.0.0.1:4000",
 ];
 
 // ✅ Shiprocket webhook CORS bypass

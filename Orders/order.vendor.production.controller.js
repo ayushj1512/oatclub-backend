@@ -10,14 +10,14 @@ const escapeRegex = (value = "") =>
 const toPositiveInt = (value, fallback) => {
   const number = Number(value);
 
-  return Number.isFinite(number) && number > 0
-    ? Math.floor(number)
-    : fallback;
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
 };
 
 const parseBoolean = (value) =>
   ["true", "1", "yes"].includes(
-    String(value || "").trim().toLowerCase()
+    String(value || "")
+      .trim()
+      .toLowerCase(),
   );
 
 const buildDateRange = (from, to) => {
@@ -72,14 +72,10 @@ const buildSort = (sort = "qty_desc") => {
 };
 
 const getProductId = (assignment) =>
-  String(
-    assignment?.product?._id ||
-      assignment?.product ||
-      ""
-  ).trim();
+  String(assignment?.product?._id || assignment?.product || "").trim();
 
 const getVendorProductionAccess = async (req) => {
-  const vendorId = req.vendor?._id;
+  const vendorId = req.vendor?._id || req.vendor?.id;
 
   if (!mongoose.Types.ObjectId.isValid(vendorId)) {
     return {
@@ -90,7 +86,7 @@ const getVendorProductionAccess = async (req) => {
   }
 
   const vendor = await VendorUser.findById(vendorId)
-    .select("isActive modules assignedProducts")
+    .select("role isActive modules assignedProducts")
     .populate({
       path: "assignedProducts.product",
       select: "productCode",
@@ -105,7 +101,9 @@ const getVendorProductionAccess = async (req) => {
     };
   }
 
-  if (vendor.modules?.production !== true) {
+  const isSuperAdmin = vendor.role === "superadmin";
+
+  if (!isSuperAdmin && vendor.modules?.production !== true) {
     return {
       success: false,
       status: 403,
@@ -113,19 +111,26 @@ const getVendorProductionAccess = async (req) => {
     };
   }
 
+  if (isSuperAdmin) {
+    return {
+      success: true,
+      vendor,
+      isSuperAdmin: true,
+      productIds: null,
+      productCodes: null,
+    };
+  }
+
   const assignments = (vendor.assignedProducts || []).filter(
     (assignment) =>
-      assignment?.modules?.production === true &&
-      assignment?.product
+      assignment?.modules?.production === true && assignment?.product,
   );
 
   const productIds = [
     ...new Set(
       assignments
         .map(getProductId)
-        .filter((id) =>
-          mongoose.Types.ObjectId.isValid(id)
-        )
+        .filter((id) => mongoose.Types.ObjectId.isValid(id)),
     ),
   ].map((id) => new mongoose.Types.ObjectId(id));
 
@@ -133,31 +138,35 @@ const getVendorProductionAccess = async (req) => {
     ...new Set(
       assignments
         .map((assignment) =>
-          String(
-            assignment?.product?.productCode || ""
-          )
+          String(assignment?.product?.productCode || "")
             .trim()
-            .toUpperCase()
+            .toUpperCase(),
         )
-        .filter(Boolean)
+        .filter(Boolean),
     ),
   ];
 
   return {
     success: true,
     vendor,
+    isSuperAdmin: false,
     productIds,
     productCodes,
   };
 };
 
 const buildVendorProductMatch = ({
-  productIds = [],
-  productCodes = [],
+  productIds,
+  productCodes,
+  isSuperAdmin = false,
 }) => {
+  if (isSuperAdmin) {
+    return {};
+  }
+
   const conditions = [];
 
-  if (productIds.length) {
+  if (Array.isArray(productIds) && productIds.length) {
     conditions.push({
       productId: {
         $in: productIds,
@@ -165,7 +174,7 @@ const buildVendorProductMatch = ({
     });
   }
 
-  if (productCodes.length) {
+  if (Array.isArray(productCodes) && productCodes.length) {
     conditions.push({
       productCode: {
         $in: productCodes,
@@ -174,26 +183,36 @@ const buildVendorProductMatch = ({
   }
 
   return conditions.length
-    ? { $or: conditions }
-    : { _id: null };
+    ? {
+        $or: conditions,
+      }
+    : {
+        _id: null,
+      };
 };
 
 const buildPipeline = ({
   productIds,
   productCodes,
+  isSuperAdmin = false,
   search = "",
   from,
   to,
 }) => {
   const dateRange = buildDateRange(from, to);
 
+  const vendorProductMatch = buildVendorProductMatch({
+    productIds,
+    productCodes,
+    isSuperAdmin,
+  });
+
   const baseMatch = {
     refType: "order",
     status: "pending",
-    ...buildVendorProductMatch({
-      productIds,
-      productCodes,
-    }),
+
+    ...vendorProductMatch,
+
     ...(dateRange
       ? {
           createdAt: dateRange,
@@ -230,20 +249,29 @@ const buildPipeline = ({
   ];
 
   if (search) {
-    const regex = new RegExp(
-      escapeRegex(search),
-      "i"
-    );
+    const regex = new RegExp(escapeRegex(search), "i");
 
     pipeline.push({
       $match: {
         $or: [
-          { variantSku: regex },
-          { productCode: regex },
-          { productTitle: regex },
-          { orderNumber: regex },
-          { selectedSize: regex },
-          { selectedColor: regex },
+          {
+            variantSku: regex,
+          },
+          {
+            productCode: regex,
+          },
+          {
+            productTitle: regex,
+          },
+          {
+            orderNumber: regex,
+          },
+          {
+            selectedSize: regex,
+          },
+          {
+            selectedColor: regex,
+          },
         ],
       },
     });
@@ -258,10 +286,7 @@ const buildPipeline = ({
               $gt: [
                 {
                   $strLenCP: {
-                    $ifNull: [
-                      "$variantSku",
-                      "",
-                    ],
+                    $ifNull: ["$variantSku", ""],
                   },
                 },
                 0,
@@ -380,18 +405,14 @@ const buildPipeline = ({
         rawReservations: 1,
         latestCreatedAt: 1,
       },
-    }
+    },
   );
 
   return pipeline;
 };
 
-const fetchVendorProductionData = async ({
-  req,
-  fetchAll = false,
-}) => {
-  const access =
-    await getVendorProductionAccess(req);
+const fetchVendorProductionData = async ({ req, fetchAll = false }) => {
+  const access = await getVendorProductionAccess(req);
 
   if (!access.success) {
     return {
@@ -399,30 +420,23 @@ const fetchVendorProductionData = async ({
     };
   }
 
-  const search = String(
-    req.query.q || ""
-  ).trim();
+  const search = String(req.query.q || "").trim();
 
-  const page = toPositiveInt(
-    req.query.page,
-    1
-  );
+  const page = toPositiveInt(req.query.page, 1);
 
-  const limit = Math.min(
-    toPositiveInt(req.query.limit, 50),
-    5000
-  );
+  const limit = Math.min(toPositiveInt(req.query.limit, 50), 5000);
 
   const wantsAll =
-    fetchAll ||
-    parseBoolean(req.query.all) ||
-    String(req.query.limit) === "0";
+    fetchAll || parseBoolean(req.query.all) || String(req.query.limit) === "0";
 
   const skip = (page - 1) * limit;
 
   const pipeline = buildPipeline({
     productIds: access.productIds,
     productCodes: access.productCodes,
+
+    isSuperAdmin: access.isSuperAdmin === true,
+
     search,
     from: req.query.from,
     to: req.query.to,
@@ -430,100 +444,75 @@ const fetchVendorProductionData = async ({
 
   const sort = buildSort(req.query.sort);
 
-  const [rows, totalResult, summaryResult] =
-    await Promise.all([
-      InventoryReservation.aggregate([
-        ...pipeline,
-        {
-          $sort: sort,
-        },
-        ...(wantsAll
-          ? []
-          : [
-              {
-                $skip: skip,
-              },
-              {
-                $limit: limit,
-              },
-            ]),
-      ]),
+  const [rows, totalResult, summaryResult] = await Promise.all([
+    InventoryReservation.aggregate([
+      ...pipeline,
+      {
+        $sort: sort,
+      },
+      ...(wantsAll
+        ? []
+        : [
+            {
+              $skip: skip,
+            },
+            {
+              $limit: limit,
+            },
+          ]),
+    ]),
 
-      InventoryReservation.aggregate([
-        ...pipeline,
-        {
-          $count: "total",
-        },
-      ]),
+    InventoryReservation.aggregate([
+      ...pipeline,
+      {
+        $count: "total",
+      },
+    ]),
 
-      InventoryReservation.aggregate([
-        ...pipeline,
-        {
-          $group: {
-            _id: null,
-            totalSkus: {
-              $sum: 1,
-            },
-            totalQtyToProduce: {
-              $sum: "$totalQty",
-            },
-            totalOrdersCovered: {
-              $sum: "$ordersCount",
-            },
-            totalReservations: {
-              $sum: "$reservationsCount",
-            },
+    InventoryReservation.aggregate([
+      ...pipeline,
+      {
+        $group: {
+          _id: null,
+          totalSkus: {
+            $sum: 1,
+          },
+          totalQtyToProduce: {
+            $sum: "$totalQty",
+          },
+          totalOrdersCovered: {
+            $sum: "$ordersCount",
+          },
+          totalReservations: {
+            $sum: "$reservationsCount",
           },
         },
-      ]),
-    ]);
+      },
+    ]),
+  ]);
 
-  const total =
-    Number(totalResult?.[0]?.total) || 0;
+  const total = Number(totalResult?.[0]?.total) || 0;
 
-  const pages = wantsAll
-    ? 1
-    : Math.max(
-        Math.ceil(total / limit),
-        1
-      );
+  const pages = wantsAll ? 1 : Math.max(Math.ceil(total / limit), 1);
 
   return {
     rows,
     summary: {
-      totalSkus:
-        Number(
-          summaryResult?.[0]?.totalSkus
-        ) || 0,
+      totalSkus: Number(summaryResult?.[0]?.totalSkus) || 0,
 
-      totalQtyToProduce:
-        Number(
-          summaryResult?.[0]
-            ?.totalQtyToProduce
-        ) || 0,
+      totalQtyToProduce: Number(summaryResult?.[0]?.totalQtyToProduce) || 0,
 
-      totalOrdersCovered:
-        Number(
-          summaryResult?.[0]
-            ?.totalOrdersCovered
-        ) || 0,
+      totalOrdersCovered: Number(summaryResult?.[0]?.totalOrdersCovered) || 0,
 
-      totalReservations:
-        Number(
-          summaryResult?.[0]
-            ?.totalReservations
-        ) || 0,
+      totalReservations: Number(summaryResult?.[0]?.totalReservations) || 0,
     },
 
     pagination: {
       total,
       page: wantsAll ? 1 : page,
-      limit: wantsAll
-        ? rows.length
-        : limit,
+      limit: wantsAll ? rows.length : limit,
       pages,
-      hasMore:
-        !wantsAll && page < pages,
+      hasMore: !wantsAll && page < pages,
     },
   };
 };
@@ -532,41 +521,30 @@ const fetchVendorProductionData = async ({
    VENDOR PRODUCTION JOBS
 ========================================================= */
 
-export const getVendorProductionJobs = async (
-  req,
-  res
-) => {
+export const getVendorProductionJobs = async (req, res) => {
   try {
-    const result =
-      await fetchVendorProductionData({
-        req,
-      });
+    const result = await fetchVendorProductionData({
+      req,
+    });
 
     if (result.error) {
-      return res
-        .status(result.error.status)
-        .json({
-          success: false,
-          message: result.error.message,
-        });
+      return res.status(result.error.status).json({
+        success: false,
+        message: result.error.message,
+      });
     }
 
     return res.status(200).json({
       success: true,
-      message:
-        "Vendor production jobs fetched successfully",
+      message: "Vendor production jobs fetched successfully",
       ...result,
     });
   } catch (error) {
-    console.error(
-      "getVendorProductionJobs error:",
-      error
-    );
+    console.error("getVendorProductionJobs error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to fetch vendor production jobs",
+      message: "Failed to fetch vendor production jobs",
     });
   }
 };
@@ -575,34 +553,25 @@ export const getVendorProductionJobs = async (
    EXPORT VENDOR PRODUCTION JOBS
 ========================================================= */
 
-export const exportVendorProductionJobs = async (
-  req,
-  res
-) => {
+export const exportVendorProductionJobs = async (req, res) => {
   try {
-    const result =
-      await fetchVendorProductionData({
-        req,
-        fetchAll: true,
-      });
+    const result = await fetchVendorProductionData({
+      req,
+      fetchAll: true,
+    });
 
     if (result.error) {
-      return res
-        .status(result.error.status)
-        .json({
-          success: false,
-          message: result.error.message,
-        });
+      return res.status(result.error.status).json({
+        success: false,
+        message: result.error.message,
+      });
     }
 
-    const workbook =
-      new ExcelJS.Workbook();
+    const workbook = new ExcelJS.Workbook();
 
     workbook.creator = "OATCLUB";
 
-    const sheet = workbook.addWorksheet(
-      "Production Jobs"
-    );
+    const sheet = workbook.addWorksheet("Production Jobs");
 
     sheet.columns = [
       {
@@ -648,32 +617,19 @@ export const exportVendorProductionJobs = async (
 
     result.rows.forEach((job) => {
       const sizes = (job.sizes || [])
-        .map(
-          (item) =>
-            `${item.size || "NA"}: ${
-              item.qty || 0
-            }`
-        )
+        .map((item) => `${item.size || "NA"}: ${item.qty || 0}`)
         .join(", ");
 
       const colors = (job.colors || [])
-        .map(
-          (item) =>
-            `${item.color || "NA"}: ${
-              item.qty || 0
-            }`
-        )
+        .map((item) => `${item.color || "NA"}: ${item.qty || 0}`)
         .join(", ");
 
       sheet.addRow({
-        productTitle:
-          job.productTitle || "",
-        productCode:
-          job.productCode || "",
+        productTitle: job.productTitle || "",
+        productCode: job.productCode || "",
         sku: job.sku || "",
         totalQty: job.totalQty || 0,
-        ordersCount:
-          job.ordersCount || 0,
+        ordersCount: job.ordersCount || 0,
         sizes,
         colors,
       });
@@ -686,34 +642,26 @@ export const exportVendorProductionJobs = async (
       };
     });
 
-    const fileName =
-      `oatclub-vendor-production-${new Date()
-        .toISOString()
-        .slice(0, 10)}.xlsx`;
+    const fileName = `oatclub-vendor-production-${new Date()
+      .toISOString()
+      .slice(0, 10)}.xlsx`;
 
     res.setHeader(
       "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
 
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${fileName}"`
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
 
     await workbook.xlsx.write(res);
 
     return res.end();
   } catch (error) {
-    console.error(
-      "exportVendorProductionJobs error:",
-      error
-    );
+    console.error("exportVendorProductionJobs error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to export vendor production jobs",
+      message: "Failed to export vendor production jobs",
     });
   }
 };

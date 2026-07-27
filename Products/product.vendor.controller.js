@@ -41,54 +41,46 @@ const normalizeSamplingStatus = (product) =>
   product?.isSamplingDone ? "done" : "pending";
 
 const getAssignmentProductId = (assignment) =>
-  String(
-    assignment?.product?._id ||
-      assignment?.product ||
-      ""
-  );
+  String(assignment?.product?._id || assignment?.product || "");
 
 const getVendorWithAssignments = async (vendorId) => {
-  if (!isValidObjectId(vendorId)) return null;
+  if (!isValidObjectId(vendorId)) {
+    return null;
+  }
 
   return VendorUser.findById(vendorId)
-    .select("modules assignedProducts isActive")
+    .select("role modules assignedProducts isActive")
     .lean();
 };
 
-const getAllowedProductIds = (
-  vendor,
-  moduleName
-) => {
-  if (
-    !vendor?.isActive ||
-    vendor?.modules?.[moduleName] !== true
-  ) {
+const getAllowedProductIds = (vendor, moduleName) => {
+  if (!vendor?.isActive) {
+    return [];
+  }
+
+  // Superadmin ko assigned IDs ki zarurat nahi
+  if (vendor.role === "superadmin") {
+    return null;
+  }
+
+  if (vendor?.modules?.[moduleName] !== true) {
     return [];
   }
 
   return [
     ...new Set(
       (vendor.assignedProducts || [])
-        .filter(
-          (assignment) =>
-            assignment?.modules?.[moduleName] === true
-        )
+        .filter((assignment) => assignment?.modules?.[moduleName] === true)
         .map(getAssignmentProductId)
-        .filter(isValidObjectId)
+        .filter(isValidObjectId),
     ),
   ];
 };
 
-const getVendorAccess = async (
-  req,
-  moduleName
-) => {
-  const vendorId =
-    req.vendor?._id ||
-    req.vendor?.id;
+const getVendorAccess = async (req, moduleName) => {
+  const vendorId = req.vendor?._id || req.vendor?.id;
 
-  const vendor =
-    await getVendorWithAssignments(vendorId);
+  const vendor = await getVendorWithAssignments(vendorId);
 
   if (!vendor) {
     return {
@@ -97,6 +89,7 @@ const getVendorAccess = async (
       message: "Vendor not authorized",
       vendor: null,
       productIds: [],
+      isSuperAdmin: false,
     };
   }
 
@@ -107,16 +100,20 @@ const getVendorAccess = async (
       message: "Vendor account is disabled",
       vendor,
       productIds: [],
+      isSuperAdmin: false,
     };
   }
 
-  if (vendor.modules?.[moduleName] !== true) {
+  const isSuperAdmin = vendor.role === "superadmin";
+
+  if (!isSuperAdmin && vendor.modules?.[moduleName] !== true) {
     return {
       success: false,
       status: 403,
       message: `${moduleName} module access denied`,
       vendor,
       productIds: [],
+      isSuperAdmin: false,
     };
   }
 
@@ -124,36 +121,31 @@ const getVendorAccess = async (
     success: true,
     status: 200,
     vendor,
-    productIds: getAllowedProductIds(
-      vendor,
-      moduleName
-    ),
+    isSuperAdmin,
+
+    // null means unrestricted/all products
+    productIds: isSuperAdmin ? null : getAllowedProductIds(vendor, moduleName),
   };
 };
 
-const hasAssignedProductAccess = (
-  productIds,
-  productId
-) =>
-  productIds.some(
-    (allowedId) =>
-      String(allowedId) ===
-      String(productId)
-  );
+const hasAssignedProductAccess = (productIds, productId) => {
+  // null = superadmin = all products allowed
+  if (productIds === null) {
+    return true;
+  }
+
+  return Array.isArray(productIds)
+    ? productIds.some((allowedId) => String(allowedId) === String(productId))
+    : false;
+};
 
 /* =========================================================
    VENDOR SAMPLING
 ========================================================= */
 
-export const getVendorSamplingProducts = async (
-  req,
-  res
-) => {
+export const getVendorSamplingProducts = async (req, res) => {
   try {
-    const access = await getVendorAccess(
-      req,
-      "sampling"
-    );
+    const access = await getVendorAccess(req, "sampling");
 
     if (!access.success) {
       return res.status(access.status).json({
@@ -162,35 +154,23 @@ export const getVendorSamplingProducts = async (
       });
     }
 
-    const page = toPositiveInt(
-      req.query.page,
-      1
-    );
+    const page = toPositiveInt(req.query.page, 1);
 
-    const limit = Math.min(
-      toPositiveInt(req.query.limit, 20),
-      100
-    );
+    const limit = Math.min(toPositiveInt(req.query.limit, 20), 100);
 
-    const skip = (page - 1) * limit;
+    const search = String(req.query.search || "").trim();
 
-    const search = String(
-      req.query.search || ""
-    ).trim();
-
-    const status = String(
-      req.query.status || "all"
-    )
+    const status = String(req.query.status || "all")
       .trim()
       .toLowerCase();
 
-    const productCode = String(
-      req.query.productCode || ""
-    ).trim();
+    const productCode = String(req.query.productCode || "").trim();
 
-    if (!access.productIds.length) {
+    if (!access.isSuperAdmin && !access.productIds.length) {
       return res.json({
         success: true,
+        isSuperAdmin: false,
+        hasAllProductAccess: false,
         samples: [],
         page: 1,
         limit,
@@ -202,14 +182,17 @@ export const getVendorSamplingProducts = async (
     }
 
     const query = {
-      _id: {
-        $in: access.productIds,
-      },
       isActive: true,
       isDraft: {
         $ne: true,
       },
     };
+
+    if (!access.isSuperAdmin) {
+      query._id = {
+        $in: access.productIds,
+      };
+    }
 
     if (status === "done") {
       query.isSamplingDone = true;
@@ -234,70 +217,66 @@ export const getVendorSamplingProducts = async (
         $options: "i",
       };
 
-      query.$or = [
-        { title: regex },
-        { productCode: regex },
-      ];
+      query.$or = [{ title: regex }, { productCode: regex }, { slug: regex }];
     }
 
-    const [products, total] =
-      await Promise.all([
-        Product.find(query)
-          .select(productSelect)
-          .sort({
-            isSamplingDone: 1,
-            updatedAt: -1,
-          })
-          .skip(skip)
-          .limit(limit)
-          .lean(),
+    const total = await Product.countDocuments(query);
 
-        Product.countDocuments(query),
-      ]);
+    const pages = Math.max(Math.ceil(total / limit), 1);
 
-    const samples = products.map(
-      (product) => ({
-        ...product,
-        status:
-          normalizeSamplingStatus(product),
-        samplingStatus:
-          normalizeSamplingStatus(product),
+    const safePage = Math.min(page, pages);
+
+    const skip = (safePage - 1) * limit;
+
+    const products = await Product.find(query)
+      .select(productSelect)
+      .sort({
+        isSamplingDone: 1,
+        updatedAt: -1,
       })
-    );
+      .skip(skip)
+      .limit(limit)
+      .lean();
 
-    const pages = Math.max(
-      Math.ceil(total / limit),
-      1
-    );
+    const samples = products.map((product) => {
+      const samplingStatus = normalizeSamplingStatus(product);
+
+      return {
+        ...product,
+        status: samplingStatus,
+        samplingStatus,
+      };
+    });
 
     return res.json({
       success: true,
+
+      isSuperAdmin: access.isSuperAdmin,
+
+      hasAllProductAccess: access.isSuperAdmin,
+
       samples,
-      page,
+
+      page: safePage,
       limit,
       total,
       pages,
-      hasNextPage: page < pages,
-      hasPrevPage: page > 1,
+
+      hasNextPage: safePage < pages,
+
+      hasPrevPage: safePage > 1,
     });
   } catch (error) {
-    console.error(
-      "getVendorSamplingProducts error:",
-      error
-    );
+    console.error("getVendorSamplingProducts error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to fetch sampling products",
+      message: error?.message || "Failed to fetch sampling products",
     });
   }
 };
 
-export const updateVendorSamplingStatus = async (
-  req,
-  res
-) => {
+export const updateVendorSamplingStatus = async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -308,10 +287,7 @@ export const updateVendorSamplingStatus = async (
       });
     }
 
-    const access = await getVendorAccess(
-      req,
-      "sampling"
-    );
+    const access = await getVendorAccess(req, "sampling");
 
     if (!access.success) {
       return res.status(access.status).json({
@@ -320,106 +296,78 @@ export const updateVendorSamplingStatus = async (
       });
     }
 
-    if (
-      !hasAssignedProductAccess(
-        access.productIds,
-        id
-      )
-    ) {
+    if (!hasAssignedProductAccess(access.productIds, id)) {
       return res.status(403).json({
         success: false,
-        message:
-          "This product is not assigned for sampling",
+        message: "This product is not assigned for sampling",
       });
     }
 
-    const rawStatus = String(
-      req.body.status ||
-        req.body.samplingStatus ||
-        ""
-    )
+    const rawStatus = String(req.body.status || req.body.samplingStatus || "")
       .trim()
       .toLowerCase();
 
-    if (
-      !["done", "pending"].includes(
-        rawStatus
-      )
-    ) {
+    if (!["done", "pending"].includes(rawStatus)) {
       return res.status(400).json({
         success: false,
-        message:
-          "Status must be done or pending",
+        message: "Status must be done or pending",
       });
     }
 
-    const product =
-      await Product.findOneAndUpdate(
-        {
-          _id: id,
-          isActive: true,
-          isDraft: {
-            $ne: true,
-          },
+    const product = await Product.findOneAndUpdate(
+      {
+        _id: id,
+        isActive: true,
+        isDraft: {
+          $ne: true,
         },
-        {
-          $set: {
-            isSamplingDone:
-              rawStatus === "done",
-          },
+      },
+      {
+        $set: {
+          isSamplingDone: rawStatus === "done",
         },
-        {
-          new: true,
-          runValidators: true,
-        }
-      )
-        .select(productSelect)
-        .lean();
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    )
+      .select(productSelect)
+      .lean();
 
     if (!product) {
       return res.status(404).json({
         success: false,
-        message:
-          "Assigned product not found",
+        message: "Product not found",
       });
     }
 
-    const sample = {
-      ...product,
-      status:
-        normalizeSamplingStatus(product),
-      samplingStatus:
-        normalizeSamplingStatus(product),
-    };
+    const samplingStatus = normalizeSamplingStatus(product);
 
     return res.json({
       success: true,
-      message:
-        "Sampling status updated",
-      sample,
+      message: "Sampling status updated",
+
+      sample: {
+        ...product,
+        status: samplingStatus,
+        samplingStatus,
+      },
     });
   } catch (error) {
-    console.error(
-      "updateVendorSamplingStatus error:",
-      error
-    );
+    console.error("updateVendorSamplingStatus error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to update sampling status",
+      message: error?.message || "Failed to update sampling status",
     });
   }
 };
 
-export const addVendorSamplingRemark = async (
-  req,
-  res
-) => {
+export const addVendorSamplingRemark = async (req, res) => {
   return res.status(400).json({
     success: false,
-    message:
-      "Sampling remark field is not available in Product schema yet",
+    message: "Sampling remark field is not available in Product schema yet",
   });
 };
 
@@ -427,15 +375,9 @@ export const addVendorSamplingRemark = async (
    VENDOR PATTERN
 ========================================================= */
 
-export const getVendorPatternProducts = async (
-  req,
-  res
-) => {
+export const getVendorPatternProducts = async (req, res) => {
   try {
-    const access = await getVendorAccess(
-      req,
-      "pattern"
-    );
+    const access = await getVendorAccess(req, "pattern");
 
     if (!access.success) {
       return res.status(access.status).json({
@@ -444,39 +386,25 @@ export const getVendorPatternProducts = async (
       });
     }
 
-    const page = toPositiveInt(
-      req.query.page,
-      1
-    );
+    const page = toPositiveInt(req.query.page, 1);
 
-    const limit = Math.min(
-      toPositiveInt(req.query.limit, 20),
-      100
-    );
+    const limit = Math.min(toPositiveInt(req.query.limit, 20), 100);
 
-    const skip = (page - 1) * limit;
+    const search = String(req.query.search || "").trim();
 
-    const search = String(
-      req.query.search || ""
-    ).trim();
-
-    const status = String(
-      req.query.status || "all"
-    )
+    const status = String(req.query.status || "all")
       .trim()
       .toLowerCase();
 
-    const productCode = String(
-      req.query.productCode || ""
-    ).trim();
+    const productCode = String(req.query.productCode || "").trim();
 
-    const patternNumber = String(
-      req.query.patternNumber || ""
-    ).trim();
+    const patternNumber = String(req.query.patternNumber || "").trim();
 
-    if (!access.productIds.length) {
+    if (!access.isSuperAdmin && !access.productIds.length) {
       return res.json({
         success: true,
+        isSuperAdmin: false,
+        hasAllProductAccess: false,
         patterns: [],
         page: 1,
         limit,
@@ -488,19 +416,19 @@ export const getVendorPatternProducts = async (
     }
 
     const query = {
-      _id: {
-        $in: access.productIds,
-      },
       isActive: true,
       isDraft: {
         $ne: true,
       },
     };
 
-    if (
-      status === "ready" ||
-      status === "done"
-    ) {
+    if (!access.isSuperAdmin) {
+      query._id = {
+        $in: access.productIds,
+      };
+    }
+
+    if (status === "ready" || status === "done") {
       query.isPatternReady = true;
     }
 
@@ -519,8 +447,7 @@ export const getVendorPatternProducts = async (
 
     if (patternNumber) {
       query["variants.patternNumber"] = {
-        $regex:
-          escapeRegex(patternNumber),
+        $regex: escapeRegex(patternNumber),
         $options: "i",
       };
     }
@@ -534,70 +461,70 @@ export const getVendorPatternProducts = async (
       query.$or = [
         { title: regex },
         { productCode: regex },
+        { slug: regex },
         {
           "variants.patternNumber": regex,
         },
       ];
     }
 
-    const [products, total] =
-      await Promise.all([
-        Product.find(query)
-          .select(productSelect)
-          .sort({
-            isPatternReady: 1,
-            updatedAt: -1,
-          })
-          .skip(skip)
-          .limit(limit)
-          .lean(),
+    const total = await Product.countDocuments(query);
 
-        Product.countDocuments(query),
-      ]);
+    const pages = Math.max(Math.ceil(total / limit), 1);
 
-    const patterns = products.map(
-      (product) => ({
-        ...product,
-        status:
-          normalizePatternStatus(product),
-        patternStatus:
-          normalizePatternStatus(product),
+    const safePage = Math.min(page, pages);
+
+    const skip = (safePage - 1) * limit;
+
+    const products = await Product.find(query)
+      .select(productSelect)
+      .sort({
+        isPatternReady: 1,
+        updatedAt: -1,
       })
-    );
+      .skip(skip)
+      .limit(limit)
+      .lean();
 
-    const pages = Math.max(
-      Math.ceil(total / limit),
-      1
-    );
+    const patterns = products.map((product) => {
+      const patternStatus = normalizePatternStatus(product);
+
+      return {
+        ...product,
+        status: patternStatus,
+        patternStatus,
+      };
+    });
 
     return res.json({
       success: true,
+
+      isSuperAdmin: access.isSuperAdmin,
+
+      hasAllProductAccess: access.isSuperAdmin,
+
       patterns,
-      page,
+
+      page: safePage,
       limit,
       total,
       pages,
-      hasNextPage: page < pages,
-      hasPrevPage: page > 1,
+
+      hasNextPage: safePage < pages,
+
+      hasPrevPage: safePage > 1,
     });
   } catch (error) {
-    console.error(
-      "getVendorPatternProducts error:",
-      error
-    );
+    console.error("getVendorPatternProducts error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to fetch pattern jobs",
+      message: error?.message || "Failed to fetch pattern jobs",
     });
   }
 };
 
-export const updateVendorPatternStatus = async (
-  req,
-  res
-) => {
+export const updateVendorPatternStatus = async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -608,10 +535,7 @@ export const updateVendorPatternStatus = async (
       });
     }
 
-    const access = await getVendorAccess(
-      req,
-      "pattern"
-    );
+    const access = await getVendorAccess(req, "pattern");
 
     if (!access.success) {
       return res.status(access.status).json({
@@ -620,99 +544,70 @@ export const updateVendorPatternStatus = async (
       });
     }
 
-    if (
-      !hasAssignedProductAccess(
-        access.productIds,
-        id
-      )
-    ) {
+    if (!hasAssignedProductAccess(access.productIds, id)) {
       return res.status(403).json({
         success: false,
-        message:
-          "This product is not assigned for pattern work",
+        message: "This product is not assigned for pattern work",
       });
     }
 
-    const rawStatus = String(
-      req.body.status ||
-        req.body.patternStatus ||
-        ""
-    )
+    const rawStatus = String(req.body.status || req.body.patternStatus || "")
       .trim()
       .toLowerCase();
 
-    if (
-      ![
-        "ready",
-        "done",
-        "pending",
-      ].includes(rawStatus)
-    ) {
+    if (!["ready", "done", "pending"].includes(rawStatus)) {
       return res.status(400).json({
         success: false,
-        message:
-          "Status must be ready, done or pending",
+        message: "Status must be ready, done or pending",
       });
     }
 
-    const isReady =
-      rawStatus === "ready" ||
-      rawStatus === "done";
-
-    const product =
-      await Product.findOneAndUpdate(
-        {
-          _id: id,
-          isActive: true,
-          isDraft: {
-            $ne: true,
-          },
+    const product = await Product.findOneAndUpdate(
+      {
+        _id: id,
+        isActive: true,
+        isDraft: {
+          $ne: true,
         },
-        {
-          $set: {
-            isPatternReady: isReady,
-          },
+      },
+      {
+        $set: {
+          isPatternReady: rawStatus === "ready" || rawStatus === "done",
         },
-        {
-          new: true,
-          runValidators: true,
-        }
-      )
-        .select(productSelect)
-        .lean();
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    )
+      .select(productSelect)
+      .lean();
 
     if (!product) {
       return res.status(404).json({
         success: false,
-        message:
-          "Assigned product not found",
+        message: "Product not found",
       });
     }
 
-    const pattern = {
-      ...product,
-      status:
-        normalizePatternStatus(product),
-      patternStatus:
-        normalizePatternStatus(product),
-    };
+    const patternStatus = normalizePatternStatus(product);
 
     return res.json({
       success: true,
-      message:
-        "Pattern status updated",
-      pattern,
+      message: "Pattern status updated",
+
+      pattern: {
+        ...product,
+        status: patternStatus,
+        patternStatus,
+      },
     });
   } catch (error) {
-    console.error(
-      "updateVendorPatternStatus error:",
-      error
-    );
+    console.error("updateVendorPatternStatus error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to update pattern status",
+      message: error?.message || "Failed to update pattern status",
     });
   }
 };

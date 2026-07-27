@@ -28,6 +28,14 @@ const vendorUserSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // ✅ Normal vendor or vendor super admin
+    role: {
+      type: String,
+      enum: ["vendor", "superadmin"],
+      default: "vendor",
+      index: true,
+    },
+
     modules: {
       sampling: { type: Boolean, default: true },
       pattern: { type: Boolean, default: true },
@@ -45,28 +53,28 @@ const vendorUserSchema = new mongoose.Schema(
       default: null,
     },
     assignedProducts: [
-  {
-    product: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Product",
-      required: true,
-    },
+      {
+        product: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Product",
+          required: true,
+        },
 
-    modules: {
-      sampling: { type: Boolean, default: false },
-      pattern: { type: Boolean, default: false },
-      production: { type: Boolean, default: false },
-      cuttingList: { type: Boolean, default: false },
-    },
+        modules: {
+          sampling: { type: Boolean, default: false },
+          pattern: { type: Boolean, default: false },
+          production: { type: Boolean, default: false },
+          cuttingList: { type: Boolean, default: false },
+        },
 
-    assignedAt: {
-      type: Date,
-      default: Date.now,
-    },
+        assignedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
   },
-],
-  },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 vendorUserSchema.pre("save", async function (next) {
@@ -82,7 +90,6 @@ vendorUserSchema.methods.matchPassword = async function (enteredPassword) {
 };
 
 const VendorUser =
-  mongoose.models.VendorUser ||
-  mongoose.model("VendorUser", vendorUserSchema);
+  mongoose.models.VendorUser || mongoose.model("VendorUser", vendorUserSchema);
 
 export default VendorUser;
