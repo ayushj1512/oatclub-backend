@@ -31,7 +31,7 @@ const SELLER = {
 
   phone: process.env.INVOICE_SELLER_PHONE || "(+91) 7217649990",
   email: process.env.INVOICE_SELLER_EMAIL || "hey@oatclub.in",
-  website: process.env.INVOICE_SELLER_WEBSITE || "https://www.oatclub.in",
+  website: process.env.INVOICE_SELLER_WEBSITE || "www.oatclub.in",
 
   gstin: process.env.INVOICE_SELLER_GSTIN || "07BAGPN9548F1ZC",
   pan: process.env.INVOICE_SELLER_PAN || "BAGPN9548F",
