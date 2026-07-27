@@ -1429,14 +1429,14 @@ export const getAllOrders = async (req, res) => {
     setInOrEq("paymentMethod", paymentMethod, (x) => toLower(x));
 
     if (isInfluencerOrder != null) {
-  const value = toLower(isInfluencerOrder);
+      const value = toLower(isInfluencerOrder);
 
-  if (value === "true") {
-    filters.isInfluencerOrder = true;
-  } else if (value === "false") {
-    filters.isInfluencerOrder = { $ne: true };
-  }
-}
+      if (value === "true") {
+        filters.isInfluencerOrder = true;
+      } else if (value === "false") {
+        filters.isInfluencerOrder = { $ne: true };
+      }
+    }
 
     /* ----------------------------
        ✅ Universal attribution filters
@@ -1556,7 +1556,7 @@ export const getAllOrders = async (req, res) => {
       paymentStatus: 1,
       fulfillmentStatus: 1,
       isConfirmed: 1,
-isInfluencerOrder: 1,
+      isInfluencerOrder: 1,
       subtotal: 1,
       discount: 1,
       shippingFee: 1,
@@ -1589,11 +1589,25 @@ isInfluencerOrder: 1,
       "attribution.clickIds.ttclid": 1,
       "attribution.clickIds.scClickId": 1,
 
-      // light tracking
+      // ✅ Shipment + Shiprocket details
+      "shipment.provider": 1,
       "shipment.status": 1,
+
+      // Universal shipment fields
+      "shipment.orderId": 1,
+      "shipment.shipmentId": 1,
+      "shipment.awb": 1,
+      "shipment.courierName": 1,
+      "shipment.trackingUrl": 1,
+      "shipment.labelUrl": 1,
+
+      // Shiprocket-specific fields
+      "shipment.shiprocket.orderId": 1,
+      "shipment.shiprocket.shipmentId": 1,
       "shipment.shiprocket.awb": 1,
       "shipment.shiprocket.courierName": 1,
       "shipment.shiprocket.trackingUrl": 1,
+      "shipment.shiprocket.labelUrl": 1,
 
       // items but light + snapshot
       "items.lineId": 1,

@@ -115,6 +115,7 @@ const ALLOWED_ORIGINS = [
   "http://localhost:3002",
   "http://localhost:4000",
   "http://192.168.29.74:3000",
+
   // OATCLUB Store
   "https://oatclub.in",
   "https://www.oatclub.in",
@@ -124,11 +125,12 @@ const ALLOWED_ORIGINS = [
   "https://admin.oatclub.in",
   "https://oatclub-admin.vercel.app",
 
-  // Backend Domain
+  // Backend
   "https://studio.oatclub.in",
 
+  // Vendor
+  "https://vendor.oatclub.in",
   "https://oatclub-vendor-vdsc.vercel.app",
-  "http://vendor.oatclub.in",
 ];
 
 // ✅ Shiprocket webhook CORS bypass

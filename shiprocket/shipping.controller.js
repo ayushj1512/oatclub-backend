@@ -4,6 +4,7 @@ import { buildShiprocketPayload } from "./shiprocket.payload.js";
 import { buildReverseShiprocketPayload } from "./shiprocket.reverse.payload.js";
 import { getShiprocketToken } from "./shiprocket.auth.js";
 import { shiprocketApi } from "./shiprocket.client.js";
+import { generateShiprocketLabel } from "./shiprocket.label.js";
 
 const s = (v) => (v == null ? "" : String(v)).trim();
 
@@ -66,7 +67,8 @@ const sendShiprocketError = (res, err, fallbackMessage) => {
     return res.status(503).json({
       success: false,
       code: "SHIPROCKET_TEMPORARY_DOWN",
-      message: "Shiprocket service is temporarily unavailable. Please try again later.",
+      message:
+        "Shiprocket service is temporarily unavailable. Please try again later.",
       retryable: true,
       retryAfterSec: 120,
       error,
@@ -101,7 +103,9 @@ export async function bookWithShiprocket(req, res) {
     const order = await Order.findById(orderId);
 
     if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
     if (order.shipment?.shiprocket?.awb) {
@@ -172,39 +176,71 @@ export async function bookWithShiprocket(req, res) {
 
     const awb = s(shipment?.awb_code);
     const courierName = s(shipment?.courier_name);
-    const trackingUrl = s(shipment?.tracking_url);
+
+    const shiprocketOrderId = s(shipment?.order_id);
+    const shiprocketShipmentId = s(shipment?.shipment_id);
+
+    const trackingUrl =
+      s(shipment?.tracking_url) ||
+      (awb ? `https://shiprocket.co/tracking/${encodeURIComponent(awb)}` : "");
 
     if (!awb) {
       throw new Error(
         shipment?.message ||
           shipment?.error ||
-          "Shiprocket did not return AWB. Courier assignment failed."
+          "Shiprocket did not return AWB. Courier assignment failed.",
       );
     }
 
+    const now = new Date();
+
+    const existingShipment =
+      order.shipment?.toObject?.() || order.shipment || {};
+
+    const existingShiprocket =
+      order.shipment?.shiprocket?.toObject?.() ||
+      order.shipment?.shiprocket ||
+      {};
+
     order.shipment = {
+      ...existingShipment,
+
       provider: "shiprocket",
+
+      orderId: shiprocketOrderId,
+      shipmentId: shiprocketShipmentId,
+      awb,
+      courierName,
+      trackingUrl,
+
+      status: "shipped",
+      shippedAt: now,
+      lastSyncedAt: now,
+      lastTrackAt: now,
+
       shiprocket: {
-        orderId: String(shipment.order_id || ""),
-        shipmentId: String(shipment.shipment_id || ""),
+        ...existingShiprocket,
+
+        orderId: shiprocketOrderId,
+        shipmentId: shiprocketShipmentId,
         awb,
         courierName,
         trackingUrl,
-        status: "shipped",
-        lastUpdatedAt: new Date(),
       },
-      status: "shipped",
-      shippedAt: new Date(),
     };
 
     order.fulfillmentStatus = "shipped";
 
     order.trackingDetails = {
-      ...(order.trackingDetails || {}),
+      ...(order.trackingDetails?.toObject?.() || order.trackingDetails || {}),
+
       trackingId: awb,
+      awb,
+      provider: "shiprocket",
       courierName,
       trackingUrl,
-      shippedAt: new Date(),
+      shippedAt: now,
+      lastUpdatedAt: now,
     };
 
     await order.save();
@@ -232,11 +268,13 @@ export async function createReversePickup(req, res) {
     const order = await Order.findById(orderId);
 
     if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
     const rma = order.rmas?.find(
-      (item) => String(item.rmaNumber) === String(rmaNumber)
+      (item) => String(item.rmaNumber) === String(rmaNumber),
     );
 
     if (!rma) {
@@ -266,7 +304,7 @@ export async function createReversePickup(req, res) {
       throw new Error(
         shipment?.message ||
           shipment?.error ||
-          "Shiprocket did not return reverse AWB. Reverse booking failed."
+          "Shiprocket did not return reverse AWB. Reverse booking failed.",
       );
     }
 
@@ -327,7 +365,9 @@ export async function syncShiprocketTrackingFlex(req, res) {
     }
 
     if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
     const shipmentId = s(order?.shipment?.shiprocket?.shipmentId);
@@ -336,31 +376,39 @@ export async function syncShiprocketTrackingFlex(req, res) {
     if (!shipmentId && !shiprocketOrderId) {
       return res.status(400).json({
         success: false,
-        message: "Shiprocket shipmentId/orderId missing in order. Cannot sync tracking.",
+        message:
+          "Shiprocket shipmentId/orderId missing in order. Cannot sync tracking.",
         orderId: String(order._id),
         orderNumber: order.orderNumber,
       });
     }
 
     const existingAwb = s(
-      order?.shipment?.shiprocket?.awb || order?.trackingDetails?.trackingId
+      order?.shipment?.shiprocket?.awb || order?.trackingDetails?.trackingId,
     );
     const existingCourier = s(
       order?.shipment?.shiprocket?.courierName ||
-        order?.trackingDetails?.courierName
+        order?.trackingDetails?.courierName,
     );
     const existingUrl = s(
       order?.shipment?.shiprocket?.trackingUrl ||
-        order?.trackingDetails?.trackingUrl
+        order?.shipment?.trackingUrl ||
+        order?.trackingDetails?.trackingUrl,
+    );
+
+    const existingLabelUrl = s(
+      order?.shipment?.shiprocket?.labelUrl || order?.shipment?.labelUrl,
     );
 
     let nextAwb = existingAwb;
     let nextCourier = existingCourier;
     let nextUrl = existingUrl;
+    let nextLabelUrl = existingLabelUrl;
 
     let source = "";
     let rawTrack = null;
     let rawShow = null;
+    let rawLabel = null;
     let trackFailed = false;
     let trackError = null;
 
@@ -389,7 +437,10 @@ export async function syncShiprocketTrackingFlex(req, res) {
       } catch (err) {
         trackFailed = true;
         trackError = err;
-        console.error("❌ Shiprocket track/shipment failed:", getShiprocketError(err));
+        console.error(
+          "❌ Shiprocket track/shipment failed:",
+          getShiprocketError(err),
+        );
       }
     } else {
       trackFailed = true;
@@ -409,18 +460,18 @@ export async function syncShiprocketTrackingFlex(req, res) {
           rawShow?.awb_code ||
             rawShow?.awb ||
             rawShow?.shipment?.awb_code ||
-            rawShow?.shipment?.awb
+            rawShow?.shipment?.awb,
         );
 
         const courierFromShow = s(
           rawShow?.courier_name ||
             rawShow?.courier ||
             rawShow?.shipment?.courier_name ||
-            rawShow?.shipment?.courier
+            rawShow?.shipment?.courier,
         );
 
         const urlFromShow = s(
-          rawShow?.tracking_url || rawShow?.shipment?.tracking_url
+          rawShow?.tracking_url || rawShow?.shipment?.tracking_url,
         );
 
         if (awbFromShow) nextAwb = awbFromShow;
@@ -429,24 +480,67 @@ export async function syncShiprocketTrackingFlex(req, res) {
 
         source = source ? `${source} + orders/show` : "orders/show";
       } catch (err) {
-        console.error("⚠️ Shiprocket orders/show fallback failed:", getShiprocketError(err));
+        console.error(
+          "⚠️ Shiprocket orders/show fallback failed:",
+          getShiprocketError(err),
+        );
 
-        if (!nextAwb && !nextCourier && !nextUrl && isShiprocketTemporaryError(err)) {
-          return sendShiprocketError(res, err, "Shiprocket tracking sync failed");
+        if (
+          !nextAwb &&
+          !nextCourier &&
+          !nextUrl &&
+          isShiprocketTemporaryError(err)
+        ) {
+          return sendShiprocketError(
+            res,
+            err,
+            "Shiprocket tracking sync failed",
+          );
         }
       }
     }
 
-    const gotAny = Boolean(nextAwb || nextCourier || nextUrl);
+    if (!nextUrl && nextAwb) {
+      nextUrl = `https://shiprocket.co/tracking/${encodeURIComponent(nextAwb)}`;
+    }
 
-    if (!gotAny && trackFailed && trackError && isShiprocketTemporaryError(trackError)) {
-      return sendShiprocketError(res, trackError, "Shiprocket tracking sync failed");
+    if (!nextLabelUrl && shipmentId) {
+      try {
+        const labelResult = await generateShiprocketLabel(shipmentId);
+
+        nextLabelUrl = s(labelResult?.labelUrl);
+        rawLabel = labelResult?.raw || null;
+
+        if (nextLabelUrl) {
+          source = source ? `${source} + generate/label` : "generate/label";
+        }
+      } catch (err) {
+        console.error(
+          "⚠️ Shiprocket label generation failed:",
+          getShiprocketError(err),
+        );
+      }
+    }
+
+    const gotAny = Boolean(nextAwb || nextCourier || nextUrl || nextLabelUrl);
+    if (
+      !gotAny &&
+      trackFailed &&
+      trackError &&
+      isShiprocketTemporaryError(trackError)
+    ) {
+      return sendShiprocketError(
+        res,
+        trackError,
+        "Shiprocket tracking sync failed",
+      );
     }
 
     if (!gotAny) {
       return res.status(200).json({
         success: true,
-        message: "Tracking not available yet. AWB/carrier may not be generated by Shiprocket.",
+        message:
+          "Tracking not available yet. AWB/carrier may not be generated by Shiprocket.",
         source: source || "none",
         orderId: String(order._id),
         orderNumber: order.orderNumber,
@@ -455,36 +549,73 @@ export async function syncShiprocketTrackingFlex(req, res) {
         trackingId: existingAwb,
         courierName: existingCourier,
         trackingUrl: existingUrl,
+        labelUrl: existingLabelUrl,
         rawTrack,
         rawShow,
       });
     }
 
+    const now = new Date();
+
     const $set = {
       "shipment.provider": "shiprocket",
-      "shipment.shiprocket.lastUpdatedAt": new Date(),
+
+      "shipment.lastSyncedAt": now,
+      "shipment.lastTrackAt": now,
+      "shipment.lastTrack": rawTrack || rawShow || null,
+
+      "shipment.shiprocket.lastTrack": rawTrack || rawShow || null,
+
+      "trackingDetails.provider": "shiprocket",
+      "trackingDetails.lastUpdatedAt": now,
     };
 
+    if (shiprocketOrderId) {
+      $set["shipment.orderId"] = shiprocketOrderId;
+      $set["shipment.shiprocket.orderId"] = shiprocketOrderId;
+    }
+
+    if (shipmentId) {
+      $set["shipment.shipmentId"] = shipmentId;
+      $set["shipment.shiprocket.shipmentId"] = shipmentId;
+    }
+
     if (nextAwb) {
+      $set["shipment.awb"] = nextAwb;
       $set["shipment.shiprocket.awb"] = nextAwb;
+
       $set["trackingDetails.trackingId"] = nextAwb;
+      $set["trackingDetails.awb"] = nextAwb;
     }
 
     if (nextCourier) {
+      $set["shipment.courierName"] = nextCourier;
       $set["shipment.shiprocket.courierName"] = nextCourier;
+
       $set["trackingDetails.courierName"] = nextCourier;
     }
 
     if (nextUrl) {
+      $set["shipment.trackingUrl"] = nextUrl;
       $set["shipment.shiprocket.trackingUrl"] = nextUrl;
+
       $set["trackingDetails.trackingUrl"] = nextUrl;
     }
 
-    await Order.updateOne({ _id: order._id }, { $set });
+    if (nextLabelUrl) {
+      $set["shipment.labelUrl"] = nextLabelUrl;
+      $set["shipment.shiprocket.labelUrl"] = nextLabelUrl;
+    }
+
+    await Order.updateOne(
+      { _id: order._id },
+      { $set },
+      { runValidators: true },
+    );
 
     return res.status(200).json({
       success: true,
-      message: "Tracking synced from Shiprocket",
+      message: "Tracking and label synced from Shiprocket",
       source: source || "shiprocket",
       orderId: String(order._id),
       orderNumber: order.orderNumber,
@@ -493,9 +624,13 @@ export async function syncShiprocketTrackingFlex(req, res) {
       trackingId: nextAwb,
       courierName: nextCourier,
       trackingUrl: nextUrl,
+      labelUrl: nextLabelUrl,
     });
   } catch (err) {
-    console.error("❌ Shiprocket Tracking Sync Error:", getShiprocketError(err));
+    console.error(
+      "❌ Shiprocket Tracking Sync Error:",
+      getShiprocketError(err),
+    );
     return sendShiprocketError(res, err, "Shiprocket tracking sync failed");
   }
 }
