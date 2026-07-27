@@ -21,13 +21,13 @@ const SELLER = {
 
   address:
     process.env.INVOICE_SELLER_ADDRESS ||
-    "house no. 1033, 2nd floor Gali no.15",
+    "Ground Floor KH NO- 36/7-A-117",
 
-  addressLine2: process.env.INVOICE_SELLER_ADDRESS_LINE_2 || "lakhapat colony part2 meethapur extension, badarpur,",
+  addressLine2: process.env.INVOICE_SELLER_ADDRESS_LINE_2 || "RADHEY SHYAM PARK EXTN KHUREJI KHAS,",
   city: process.env.INVOICE_SELLER_CITY || "New Delhi",
   state: process.env.INVOICE_SELLER_STATE || "Delhi",
   country: process.env.INVOICE_SELLER_COUNTRY || "India",
-  pincode: process.env.INVOICE_SELLER_PINCODE || "110044",
+  pincode: process.env.INVOICE_SELLER_PINCODE || "110051",
 
   phone: process.env.INVOICE_SELLER_PHONE || "(+91) 7217649990",
   email: process.env.INVOICE_SELLER_EMAIL || "hey@oatclub.in",
