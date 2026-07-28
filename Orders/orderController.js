@@ -106,6 +106,19 @@ const scrubXpressbees = (order) => {
 };
 
 /* ============================================================
+   ORDER ITEM EDITING GUARD
+============================================================ */
+
+const canEditOrderItems = (order) => {
+  const status = String(order?.fulfillmentStatus || "processing").toLowerCase();
+
+  return (
+    ["processing", "packed"].includes(status) &&
+    order?.cancellation?.isCancelled !== true
+  );
+};
+
+/* ============================================================
    RMA POLICY (hardcoded backend)
    - Return/Exchange allowed within 7 days from deliveredAt
    - 1st exchange free, 2nd+ exchange fee = 199
@@ -5608,6 +5621,530 @@ export const markOrderAsInfluencer = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || "Unable to update influencer order",
+    });
+  }
+};
+
+/* ============================================================
+   ADD PRODUCT TO ORDER
+   POST /api/orders/:id/items
+============================================================ */
+
+export const addProductToOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { productId, variantId = null, quantity = 1 } = req.body || {};
+
+    const qty = Number(quantity);
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid productId is required",
+      });
+    }
+
+    if (!Number.isInteger(qty) || qty < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Quantity must be at least 1",
+      });
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    if (!canEditOrderItems(order)) {
+      return res.status(400).json({
+        success: false,
+        message: `Products cannot be edited when order is ${order.fulfillmentStatus}`,
+      });
+    }
+
+    const product = await Product.findById(productId).lean();
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    const variants = Array.isArray(product.variants) ? product.variants : [];
+
+    const isVariable =
+      product.productType === "variable" || variants.length > 0;
+
+    let variant = null;
+
+    if (isVariable) {
+      if (!variantId || !mongoose.Types.ObjectId.isValid(variantId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid variantId is required",
+        });
+      }
+
+      variant = variants.find((item) => String(item._id) === String(variantId));
+
+      if (!variant) {
+        return res.status(404).json({
+          success: false,
+          message: "Product variant not found",
+        });
+      }
+    }
+
+    const variantAttributes = Array.isArray(variant?.attributes)
+      ? variant.attributes
+          .filter(
+            (attribute) => attribute?.key != null && attribute?.value != null,
+          )
+          .map((attribute) => ({
+            key: String(attribute.key),
+            value: String(attribute.value),
+          }))
+      : [];
+
+    const selectedSize =
+      variantAttributes.find(
+        (attribute) => String(attribute.key).toLowerCase() === "size",
+      )?.value || "";
+
+    const selectedColor =
+      variantAttributes.find((attribute) =>
+        ["color", "colour"].includes(String(attribute.key).toLowerCase()),
+      )?.value || "";
+
+    const existingItem = order.items.find((item) => {
+      const sameProduct = String(item.productId) === String(product._id);
+
+      const sameVariant =
+        String(item.variant?.variantId || "") === String(variant?._id || "");
+
+      return sameProduct && sameVariant;
+    });
+
+    const unitPrice = Number(product.price || 0);
+
+    if (unitPrice <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Product price is invalid",
+      });
+    }
+
+    if (existingItem) {
+      existingItem.quantity = Number(existingItem.quantity || 0) + qty;
+
+      existingItem.subtotal =
+        Number(existingItem.price || unitPrice) * existingItem.quantity;
+
+      existingItem.fulfillment = existingItem.fulfillment || {};
+
+      existingItem.fulfillment.toProduceQty =
+        Number(existingItem.fulfillment.toProduceQty || 0) + qty;
+    } else {
+      order.items.push({
+        lineId: new mongoose.Types.ObjectId().toString(),
+
+        productModel: "Product",
+        productId: product._id,
+
+        fulfillment: {
+          allocatedQty: 0,
+          shippedQty: 0,
+          toProduceQty: qty,
+        },
+
+        productSnapshot: {
+          productCode: product.productCode || "",
+          title: product.title,
+          slug: product.slug || "",
+          thumbnail: product.thumbnail || product.images?.[0] || "",
+          images: Array.isArray(product.images) ? product.images : [],
+          productType:
+            product.productType || (variants.length ? "variable" : "simple"),
+          sku: product.sku || "",
+          tags: Array.isArray(product.tags) ? product.tags : [],
+          hsnCode: product.hsnCode || "",
+          weight: Number(product.weight || 0),
+          currency: product.currency || order.currency || "INR",
+          isPrimaryProduct: product.isPrimaryProduct !== false,
+        },
+
+        variant: {
+          variantId: variant?._id || null,
+          sku: variant?.sku || "",
+          attributes: variantAttributes,
+          weight: Number(variant?.weight || 0),
+        },
+
+        selectedSize,
+        selectedColor,
+
+        quantity: qty,
+        price: unitPrice,
+        compareAtPrice: product.compareAtPrice ?? null,
+        subtotal: unitPrice * qty,
+      });
+    }
+
+    order.markModified("items");
+
+    // First save recalculates subtotal and finalPayable
+    await order.save();
+
+    syncOrderPaymentBreakdown(order);
+    await order.save();
+
+    syncCustomerAnalyticsSafe(order.customerId, "addProductToOrder");
+
+    return res.status(200).json({
+      success: true,
+      message: existingItem
+        ? "Product quantity increased"
+        : "Product added to order",
+      order,
+      totals: {
+        subtotal: order.subtotal,
+        discount: order.discount,
+        shippingFee: order.shippingFee,
+        tax: order.tax,
+        totalAmount: order.totalAmount,
+        finalPayable: order.finalPayable,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Add Product To Order Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to add product to order",
+    });
+  }
+};
+
+/* ============================================================
+   REMOVE PRODUCT FROM ORDER
+   DELETE /api/orders/:id/items/:lineId
+
+   Optional body:
+   {
+     quantity: 1
+   }
+
+   quantity missing => complete line remove
+============================================================ */
+
+export const removeProductFromOrder = async (req, res) => {
+  try {
+    const { id, lineId } = req.params;
+    const requestedQuantity = Number(req.body?.quantity || 0);
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    if (!canEditOrderItems(order)) {
+      return res.status(400).json({
+        success: false,
+        message: `Products cannot be edited when order is ${order.fulfillmentStatus}`,
+      });
+    }
+
+    const itemIndex = order.items.findIndex(
+      (item) => String(item.lineId) === String(lineId),
+    );
+
+    if (itemIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: "Order item not found",
+      });
+    }
+
+    const item = order.items[itemIndex];
+    const currentQuantity = Number(item.quantity || 0);
+
+    const removeCompleteLine =
+      requestedQuantity <= 0 || requestedQuantity >= currentQuantity;
+
+    if (removeCompleteLine) {
+      if (order.items.length === 1) {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot remove the last product. Cancel the order instead.",
+        });
+      }
+
+      order.items.splice(itemIndex, 1);
+    } else {
+      item.quantity = currentQuantity - requestedQuantity;
+
+      item.subtotal = Number(item.price || 0) * item.quantity;
+
+      item.fulfillment = item.fulfillment || {};
+
+      item.fulfillment.toProduceQty = Math.max(
+        0,
+        Number(item.fulfillment.toProduceQty || 0) - requestedQuantity,
+      );
+
+      item.fulfillment.allocatedQty = Math.min(
+        Number(item.fulfillment.allocatedQty || 0),
+        item.quantity,
+      );
+    }
+
+    order.markModified("items");
+
+    // Existing order model hook recalculates totals
+    await order.save();
+
+    syncOrderPaymentBreakdown(order);
+    await order.save();
+
+    syncCustomerAnalyticsSafe(order.customerId, "removeProductFromOrder");
+
+    return res.status(200).json({
+      success: true,
+      message: removeCompleteLine
+        ? "Product removed from order"
+        : "Product quantity reduced",
+      order,
+      totals: {
+        subtotal: order.subtotal,
+        discount: order.discount,
+        shippingFee: order.shippingFee,
+        tax: order.tax,
+        totalAmount: order.totalAmount,
+        finalPayable: order.finalPayable,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Remove Product From Order Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to remove product from order",
+    });
+  }
+};
+
+/* ============================================================
+   CHANGE ORDER ITEM SIZE
+   PATCH /api/orders/:id/items/:lineId/size
+
+   Body:
+   {
+     "variantId": "TARGET_VARIANT_ID"
+   }
+============================================================ */
+
+export const changeOrderItemSize = async (req, res) => {
+  try {
+    const { id, lineId } = req.params;
+    const { variantId } = req.body || {};
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid order id is required",
+      });
+    }
+
+    if (!lineId) {
+      return res.status(400).json({
+        success: false,
+        message: "lineId is required",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(variantId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid variantId is required",
+      });
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    if (!canEditOrderItems(order)) {
+      return res.status(400).json({
+        success: false,
+        message: `Size cannot be changed when order is ${order.fulfillmentStatus}`,
+      });
+    }
+
+    const item = order.items.find(
+      (orderItem) => String(orderItem.lineId) === String(lineId),
+    );
+
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "Order item not found",
+      });
+    }
+
+    if (String(item.productModel || "Product") !== "Product") {
+      return res.status(400).json({
+        success: false,
+        message: "Size change currently supports Product items only",
+      });
+    }
+
+    const shippedQty = Number(item.fulfillment?.shippedQty || 0);
+
+    if (shippedQty > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Size cannot be changed after this item has been shipped",
+      });
+    }
+
+    const product = await Product.findById(item.productId).lean();
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product linked to this order item was not found",
+      });
+    }
+
+    const variants = Array.isArray(product.variants) ? product.variants : [];
+
+    const targetVariant = variants.find(
+      (variant) => String(variant._id) === String(variantId),
+    );
+
+    if (!targetVariant) {
+      return res.status(404).json({
+        success: false,
+        message: "Selected size variant was not found for this product",
+      });
+    }
+
+    if (String(item.variant?.variantId || "") === String(targetVariant._id)) {
+      return res.status(400).json({
+        success: false,
+        message: "This size is already selected",
+      });
+    }
+
+    const attributes = Array.isArray(targetVariant.attributes)
+      ? targetVariant.attributes
+          .filter(
+            (attribute) => attribute?.key != null && attribute?.value != null,
+          )
+          .map((attribute) => ({
+            key: String(attribute.key),
+            value: String(attribute.value),
+          }))
+      : [];
+
+    const sizeAttribute = attributes.find(
+      (attribute) => String(attribute.key).trim().toLowerCase() === "size",
+    );
+
+    if (!sizeAttribute?.value) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected variant does not contain a size attribute",
+      });
+    }
+
+    const duplicateTargetLine = order.items.find(
+      (orderItem) =>
+        String(orderItem.lineId) !== String(lineId) &&
+        String(orderItem.productId) === String(item.productId) &&
+        String(orderItem.variant?.variantId || "") ===
+          String(targetVariant._id),
+    );
+
+    if (duplicateTargetLine) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "The selected size already exists as another line in this order",
+      });
+    }
+
+    const oldVariant = {
+      variantId: item.variant?.variantId || null,
+      sku: item.variant?.sku || "",
+      selectedSize: item.selectedSize || "",
+    };
+
+    const selectedColor =
+      attributes.find((attribute) =>
+        ["color", "colour"].includes(
+          String(attribute.key).trim().toLowerCase(),
+        ),
+      )?.value ||
+      item.selectedColor ||
+      "";
+
+    item.variant = {
+      variantId: targetVariant._id,
+      sku: targetVariant.sku || "",
+      attributes,
+      weight: Number(targetVariant.weight || 0),
+    };
+
+    item.selectedSize = String(sizeAttribute.value);
+    item.selectedColor = String(selectedColor);
+
+    order.markModified("items");
+
+    await order.save();
+
+    syncCustomerAnalyticsSafe(order.customerId, "changeOrderItemSize");
+
+    return res.status(200).json({
+      success: true,
+      message: `Size changed from ${
+        oldVariant.selectedSize || "previous size"
+      } to ${item.selectedSize}`,
+      item: {
+        lineId: item.lineId,
+        productId: item.productId,
+        productCode: item.productSnapshot?.productCode || "",
+        title: item.productSnapshot?.title || "",
+        quantity: item.quantity,
+        oldVariant,
+        variant: item.variant,
+        selectedSize: item.selectedSize,
+        selectedColor: item.selectedColor,
+      },
+      order,
+    });
+  } catch (error) {
+    console.error("❌ Change Order Item Size Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to change order item size",
     });
   }
 };

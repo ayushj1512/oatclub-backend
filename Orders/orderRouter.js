@@ -29,6 +29,9 @@ import {
   adjustOrderFinalPayable,
   markCodOrderAsPaid,
   markOrderAsInfluencer,
+  addProductToOrder,
+  removeProductFromOrder,
+  changeOrderItemSize,
 } from "./orderController.js";
 
 import {
@@ -368,5 +371,15 @@ router.patch("/:id/mark-cod-paid", markCodOrderAsPaid);
 ============================================================ */
 
 router.get("/:id", getOrderById);
+
+/* ============================================================
+   ORDER ITEM EDITING
+============================================================ */
+
+router.post("/:id/items", addProductToOrder);
+
+router.delete("/:id/items/:lineId", removeProductFromOrder);
+
+router.patch("/:id/items/:lineId/size", changeOrderItemSize);
 
 export default router;
