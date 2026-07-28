@@ -12,7 +12,9 @@ const normalizeIncomingCustomer = (body = {}) => {
   const email = body.email ? String(body.email).trim().toLowerCase() : "";
   const phone = body.phone ? String(body.phone).trim() : "";
   const name = body.name ? String(body.name).trim() : "";
-  const profileImage = body.profileImage ? String(body.profileImage).trim() : "";
+  const profileImage = body.profileImage
+    ? String(body.profileImage).trim()
+    : "";
 
   return {
     firebaseUID: firebaseUID || null,
@@ -161,7 +163,7 @@ const generateCustomerId = async () => {
   const counter = await Counter.findOneAndUpdate(
     { name: "customerId" },
     { $inc: { seq: 1 } },
-    { new: true, upsert: true }
+    { new: true, upsert: true },
   );
 
   return String(counter.seq).padStart(4, "0");
@@ -191,7 +193,7 @@ export const recalculateCustomerAnalytics = async (customerId) => {
         "isConfirmed",
         "confirmedBy",
         "fulfillmentDates",
-      ].join(" ")
+      ].join(" "),
     )
     .lean();
 
@@ -245,15 +247,15 @@ export const recalculateCustomerAnalytics = async (customerId) => {
   const unconfirmedOrders = totalOrders - confirmedOrders;
 
   const confirmedByCustomerOrders = orders.filter(
-    (o) => o.confirmedBy === "customer"
+    (o) => o.confirmedBy === "customer",
   ).length;
 
   const confirmedByAdminOrders = orders.filter(
-    (o) => o.confirmedBy === "admin"
+    (o) => o.confirmedBy === "admin",
   ).length;
 
   const confirmedByAutoOrders = orders.filter(
-    (o) => o.confirmedBy === "auto"
+    (o) => o.confirmedBy === "auto",
   ).length;
 
   const sortedOrders = [...orders].sort((a, b) => {
@@ -267,7 +269,9 @@ export const recalculateCustomerAnalytics = async (customerId) => {
     ? getOrderDate(sortedOrders[sortedOrders.length - 1])
     : null;
 
-  const avgOrderValue = totalOrders ? Number((totalSpend / totalOrders).toFixed(2)) : 0;
+  const avgOrderValue = totalOrders
+    ? Number((totalSpend / totalOrders).toFixed(2))
+    : 0;
 
   const deliveryRate = percentage(deliveredOrders, totalOrders);
   const cancellationRate = percentage(cancelledOrders, totalOrders);
@@ -277,7 +281,9 @@ export const recalculateCustomerAnalytics = async (customerId) => {
 
   const riskScore = Math.min(
     100,
-    Number((rtoRate * 0.45 + returnRate * 0.35 + cancellationRate * 0.2).toFixed(2))
+    Number(
+      (rtoRate * 0.45 + returnRate * 0.35 + cancellationRate * 0.2).toFixed(2),
+    ),
   );
 
   const customerType = getCustomerType({
@@ -334,16 +340,13 @@ export const recalculateCustomerAnalytics = async (customerId) => {
 
     lastDeliveredAt: latestDateFromOrders(
       orders,
-      "fulfillmentDates.deliveredAt"
+      "fulfillmentDates.deliveredAt",
     ),
     lastCancelledAt: latestDateFromOrders(
       orders,
-      "fulfillmentDates.cancelledAt"
+      "fulfillmentDates.cancelledAt",
     ),
-    lastReturnedAt: latestDateFromOrders(
-      orders,
-      "fulfillmentDates.returnedAt"
-    ),
+    lastReturnedAt: latestDateFromOrders(orders, "fulfillmentDates.returnedAt"),
     lastRtoAt: latestDateFromOrders(orders, "fulfillmentDates.rtoAt"),
 
     deliveryRate,
@@ -366,7 +369,7 @@ export const recalculateCustomerAnalytics = async (customerId) => {
         return acc;
       }, {}),
     },
-    { new: true, runValidators: true }
+    { new: true, runValidators: true },
   );
 
   return updatedCustomer;
@@ -445,8 +448,7 @@ export const createCustomer = async (req, res) => {
       !!safeUpiId;
 
     const finalReferralCode =
-      referralCode ||
-      Math.random().toString(36).substring(2, 10).toUpperCase();
+      referralCode || Math.random().toString(36).substring(2, 10).toUpperCase();
 
     if (!safeFirebaseUID && !safeEmail && !safePhone) {
       return res.status(400).json({
@@ -469,7 +471,7 @@ export const createCustomer = async (req, res) => {
               { firebaseUID: { $exists: false } },
             ],
           },
-          { $set: { firebaseUID: safeFirebaseUID, updatedAt: new Date() } }
+          { $set: { firebaseUID: safeFirebaseUID, updatedAt: new Date() } },
         );
       }
     }
@@ -531,7 +533,7 @@ export const createCustomer = async (req, res) => {
       const counter = await Counter.findOneAndUpdate(
         { name: "customerId" },
         { $inc: { seq: 1 } },
-        { new: true, upsert: true }
+        { new: true, upsert: true },
       );
 
       generatedCustomerId = String(counter.seq).padStart(4, "0");
@@ -566,7 +568,7 @@ export const createCustomer = async (req, res) => {
           new: true,
           setDefaultsOnInsert: true,
           runValidators: true,
-        }
+        },
       );
     } catch (err) {
       if (err?.code === 11000) {
@@ -730,11 +732,17 @@ export const getAllCustomers = async (req, res) => {
     addRange("credits.totalDebited", minTotalDebited, maxTotalDebited);
 
     if (hasCreditBalance === "true") {
-      filter["credits.balance"] = { ...(filter["credits.balance"] || {}), $gt: 0 };
+      filter["credits.balance"] = {
+        ...(filter["credits.balance"] || {}),
+        $gt: 0,
+      };
     }
 
     if (hasCreditBalance === "false") {
-      filter["credits.balance"] = { ...(filter["credits.balance"] || {}), $lte: 0 };
+      filter["credits.balance"] = {
+        ...(filter["credits.balance"] || {}),
+        $lte: 0,
+      };
     }
 
     const safeLimit = Math.min(100, Math.max(1, Number(limit) || 20));
@@ -889,7 +897,9 @@ export const updateCustomer = async (req, res) => {
         ? String(bank.ifscCode).trim().toUpperCase()
         : "";
 
-      const safeUpiId = upi?.upiId ? String(upi.upiId).trim().toLowerCase() : "";
+      const safeUpiId = upi?.upiId
+        ? String(upi.upiId).trim().toLowerCase()
+        : "";
 
       payload.payoutDetails = {
         bank: {
@@ -926,11 +936,7 @@ export const updateCustomer = async (req, res) => {
 
 export const updateCustomerAnalytics = async (req, res) => {
   try {
-    const allowed = [
-      "wishlistCount",
-      "couponUses",
-      "walletCreditsEarned",
-    ];
+    const allowed = ["wishlistCount", "couponUses", "walletCreditsEarned"];
 
     const $set = {
       updatedAt: new Date(),
@@ -945,7 +951,7 @@ export const updateCustomerAnalytics = async (req, res) => {
     const customer = await Customer.findByIdAndUpdate(
       req.params.id,
       { $set },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     if (!customer) {
@@ -989,9 +995,7 @@ export const syncCustomerAnalytics = async (req, res) => {
 
 export const syncAllCustomerAnalytics = async (req, res) => {
   try {
-    const customers = await Customer.find({})
-      .select("_id")
-      .lean();
+    const customers = await Customer.find({}).select("_id").lean();
 
     let synced = 0;
     let failed = 0;
@@ -1004,7 +1008,7 @@ export const syncAllCustomerAnalytics = async (req, res) => {
         failed += 1;
         console.error(
           `Customer analytics sync failed for ${customer._id}:`,
-          err.message
+          err.message,
         );
       }
     }
@@ -1174,11 +1178,15 @@ export const addCartAddByCustomerId = async (req, res) => {
       return res.status(404).json({ message: "Customer not found" });
     }
 
-    customer.cartAdds = Array.isArray(customer.cartAdds) ? customer.cartAdds : [];
+    customer.cartAdds = Array.isArray(customer.cartAdds)
+      ? customer.cartAdds
+      : [];
 
     const sameKey = (x) =>
       String(x?.productCode || "").trim() === code &&
-      (vId ? String(x?.variantId || "") === vId : String(x?.size || "").trim() === sz);
+      (vId
+        ? String(x?.variantId || "") === vId
+        : String(x?.size || "").trim() === sz);
 
     customer.cartAdds = customer.cartAdds.filter((x) => !sameKey(x));
 
@@ -1199,7 +1207,9 @@ export const addCartAddByCustomerId = async (req, res) => {
     });
   } catch (err) {
     console.error("Add CartAdd Error:", err);
-    return res.status(500).json({ message: "Server error", error: err.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: err.message });
   }
 };
 
@@ -1225,7 +1235,9 @@ export const removeCartAddByCustomerId = async (req, res) => {
       return res.status(404).json({ message: "Customer not found" });
     }
 
-    customer.cartAdds = Array.isArray(customer.cartAdds) ? customer.cartAdds : [];
+    customer.cartAdds = Array.isArray(customer.cartAdds)
+      ? customer.cartAdds
+      : [];
 
     const shouldRemove = (x) => {
       if (String(x?.productCode || "").trim() !== code) return false;
@@ -1247,7 +1259,9 @@ export const removeCartAddByCustomerId = async (req, res) => {
     });
   } catch (err) {
     console.error("Remove CartAdd Error:", err);
-    return res.status(500).json({ message: "Server error", error: err.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: err.message });
   }
 };
 
@@ -1276,7 +1290,9 @@ export const mergeGuestCartAddsByCustomerId = async (req, res) => {
       .filter(Boolean);
 
     if (!normItems.length) {
-      return res.status(200).json({ message: "Nothing to merge", cartAdds: [] });
+      return res
+        .status(200)
+        .json({ message: "Nothing to merge", cartAdds: [] });
     }
 
     const customer = await Customer.findById(id);
@@ -1327,7 +1343,9 @@ export const mergeGuestCartAddsByCustomerId = async (req, res) => {
     });
   } catch (err) {
     console.error("Merge Guest CartAdds Error:", err);
-    return res.status(500).json({ message: "Server error", error: err.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: err.message });
   }
 };
 
@@ -1392,7 +1410,7 @@ export const addCustomerBankingDetails = async (req, res) => {
     const customer = await Customer.findByIdAndUpdate(
       id,
       { $set },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     if (!customer) {
@@ -1406,7 +1424,9 @@ export const addCustomerBankingDetails = async (req, res) => {
     });
   } catch (err) {
     console.error("Add Customer Banking Details Error:", err);
-    return res.status(500).json({ message: "Server error", error: err.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: err.message });
   }
 };
 
@@ -1441,9 +1461,7 @@ const normalizeCreditPayload = (body = {}) => {
 
     refundId: body.refundId || null,
 
-    promotionName: body.promotionName
-      ? String(body.promotionName).trim()
-      : "",
+    promotionName: body.promotionName ? String(body.promotionName).trim() : "",
 
     influencerName: body.influencerName
       ? String(body.influencerName).trim()
@@ -1503,7 +1521,9 @@ export const addCustomerCredit = async (req, res) => {
 
     customer.credits = customer.credits || {};
     customer.credits.balance = Number(customer.credits.balance || 0);
-    customer.credits.totalCredited = Number(customer.credits.totalCredited || 0);
+    customer.credits.totalCredited = Number(
+      customer.credits.totalCredited || 0,
+    );
     customer.credits.totalDebited = Number(customer.credits.totalDebited || 0);
     customer.credits.logs = Array.isArray(customer.credits.logs)
       ? customer.credits.logs
@@ -1734,7 +1754,9 @@ export const getCustomerCreditLogs = async (req, res) => {
     if (orderNumber) {
       const safeOrderNumber = String(orderNumber).trim().toLowerCase();
       logs = logs.filter((log) =>
-        String(log.orderNumber || "").toLowerCase().includes(safeOrderNumber)
+        String(log.orderNumber || "")
+          .toLowerCase()
+          .includes(safeOrderNumber),
       );
     }
 
@@ -1744,7 +1766,7 @@ export const getCustomerCreditLogs = async (req, res) => {
     }
 
     logs = logs.sort(
-      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0),
     );
 
     const safeLimit = Math.min(100, Math.max(1, Number(limit)));
@@ -1803,10 +1825,18 @@ export const getAllCustomerCreditLogs = async (req, res) => {
     const match = {};
 
     if (type) match["credits.logs.type"] = type;
-    if (transactionType) match["credits.logs.transactionType"] = transactionType;
-    if (orderNumber) match["credits.logs.orderNumber"] = new RegExp(orderNumber, "i");
-    if (influencerCode) match["credits.logs.influencerCode"] = String(influencerCode).trim().toUpperCase();
-    if (couponCode) match["credits.logs.couponCode"] = String(couponCode).trim().toUpperCase();
+    if (transactionType)
+      match["credits.logs.transactionType"] = transactionType;
+    if (orderNumber)
+      match["credits.logs.orderNumber"] = new RegExp(orderNumber, "i");
+    if (influencerCode)
+      match["credits.logs.influencerCode"] = String(influencerCode)
+        .trim()
+        .toUpperCase();
+    if (couponCode)
+      match["credits.logs.couponCode"] = String(couponCode)
+        .trim()
+        .toUpperCase();
 
     const createdAtRange = dateRangeFilter(from, to);
     if (createdAtRange) match["credits.logs.createdAt"] = createdAtRange;
@@ -1952,25 +1982,15 @@ export const lookupCustomerByEmail = async (req, res) => {
   }
 };
 
-
-export const createOrFindGuestCustomer = async (
-  req,
-  res,
-) => {
+export const createOrFindGuestCustomer = async (req, res) => {
   try {
-    const name = String(
-      req.body?.name || "",
-    ).trim();
+    const name = String(req.body?.name || "").trim();
 
-    const email = String(
-      req.body?.email || "",
-    )
+    const email = String(req.body?.email || "")
       .trim()
       .toLowerCase();
 
-    const phone = String(
-      req.body?.phone || "",
-    )
+    const phone = String(req.body?.phone || "")
       .replace(/\D/g, "")
       .slice(-10);
 
@@ -1980,11 +2000,7 @@ export const createOrFindGuestCustomer = async (
       });
     }
 
-    if (
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
-        email,
-      )
-    ) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({
         message: "Valid email is required",
       });
@@ -1992,8 +2008,7 @@ export const createOrFindGuestCustomer = async (
 
     if (!/^\d{10}$/.test(phone)) {
       return res.status(400).json({
-        message:
-          "Valid phone number is required",
+        message: "Valid phone number is required",
       });
     }
 
@@ -2032,15 +2047,55 @@ export const createOrFindGuestCustomer = async (
       customer,
     });
   } catch (error) {
-    console.error(
-      "Guest customer error:",
-      error,
-    );
+    console.error("Guest customer error:", error);
 
     return res.status(500).json({
-      message:
-        error?.message ||
-        "Could not create customer",
+      message: error?.message || "Could not create customer",
+    });
+  }
+};
+
+export const toggleCustomerBlacklist = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isBlacklisted } = req.body;
+
+    if (typeof isBlacklisted !== "boolean") {
+      return res.status(400).json({
+        message: "isBlacklisted must be a boolean",
+      });
+    }
+
+    const customer = await Customer.findByIdAndUpdate(
+      id,
+      {
+        isBlacklisted,
+        updatedAt: new Date(),
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
+
+    if (!customer) {
+      return res.status(404).json({
+        message: "Customer not found",
+      });
+    }
+
+    return res.status(200).json({
+      message: isBlacklisted
+        ? "Customer blacklisted"
+        : "Customer removed from blacklist",
+      customer,
+    });
+  } catch (err) {
+    console.error("Toggle Customer Blacklist Error:", err);
+
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
     });
   }
 };

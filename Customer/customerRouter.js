@@ -31,8 +31,8 @@ import {
   // Banking / Payout
   addCustomerBankingDetails,
   getCustomerCreditSummary,
-
-  createOrFindGuestCustomer
+  createOrFindGuestCustomer,
+  toggleCustomerBlacklist
 } from "../Customer/customerController.js";
 
 import Customer from "../Customer/Customer.js";
@@ -123,5 +123,7 @@ router.patch("/:id/analytics", updateCustomerAnalytics);
 router.get("/:id", getCustomerById);
 router.put("/:id", updateCustomer);
 router.delete("/:id", deleteCustomer);
+
+router.patch("/:id/blacklist", toggleCustomerBlacklist);
 
 export default router;
