@@ -30,7 +30,10 @@ const STATUS_MAP = {
   READY_TO_SHIP: "shipped",
   AWB_ASSIGNED: "shipped",
   SHIPMENT_BOOKED: "shipped",
+
+  PICKUP_BOOKED: "shipped",
   PICKUP_SCHEDULED: "shipped",
+  OUT_FOR_PICKUP: "shipped",
 
   PICKED_UP: "shipped",
   SHIPMENT_PICKED_UP: "shipped",
@@ -56,6 +59,8 @@ const STATUS_MAP = {
 
   LOST: "failed",
   DAMAGED: "failed",
+  PICKUP_ERROR: "failed",
+  PICKUP_EXCEPTION: "failed",
 };
 
 const getRawStatus = (data = {}) =>
@@ -304,8 +309,11 @@ export async function shiprocketWebhook(req, res) {
     const normalizedStatus = normalizeStatus(rawStatus);
     const statusCode = getStatusCode(data);
 
-    const mappedStatus = STATUS_MAP[normalizedStatus] || null;
-    console.log("📦 [SHIPROCKET-WEBHOOK] PARSED", {
+const mappedStatus =
+  STATUS_MAP[normalizedStatus] ||
+  STATUS_CODE_MAP[statusCode] ||
+  null;
+      console.log("📦 [SHIPROCKET-WEBHOOK] PARSED", {
       awb,
       shipmentId,
       shiprocketOrderId,
