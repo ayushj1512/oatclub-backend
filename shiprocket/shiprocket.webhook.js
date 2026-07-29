@@ -3,8 +3,7 @@
 import Order from "../Orders/Orders.js";
 import { triggerFulfillmentStatusEmail } from "../Orders/order.emails.js";
 
-const SHIPROCKET_WEBHOOK_TOKEN =
-  process.env.SHIPROCKET_WEBHOOK_TOKEN || "";
+const SHIPROCKET_WEBHOOK_TOKEN = process.env.SHIPROCKET_WEBHOOK_TOKEN || "";
 
 const safeStr = (value) =>
   value === undefined || value === null ? "" : String(value).trim();
@@ -77,32 +76,19 @@ const getStatusCode = (data = {}) =>
   );
 
 const getAwb = (data = {}) =>
-  safeStr(
-    data.awb ||
-      data.awb_code ||
-      data.awb_number ||
-      data.tracking_number,
-  );
+  safeStr(data.awb || data.awb_code || data.awb_number || data.tracking_number);
 
 const getShipmentId = (data = {}) =>
-  safeStr(
-    data.shipment_id ||
-      data.shipmentId ||
-      data.sr_shipment_id,
-  );
+  safeStr(data.shipment_id || data.shipmentId || data.sr_shipment_id);
 
 const getShiprocketOrderId = (data = {}) =>
   safeStr(
-    data.sr_order_id ||
-      data.shiprocket_order_id ||
-      data.shiprocketOrderId,
+    data.sr_order_id || data.shiprocket_order_id || data.shiprocketOrderId,
   );
 
 const getChannelOrderNumber = (data = {}) =>
   safeStr(
-    data.channel_order_id ||
-      data.channel_order_number ||
-      data.order_number,
+    data.channel_order_id || data.channel_order_number || data.order_number,
   );
 
 const getCourierName = (data = {}) =>
@@ -119,17 +105,10 @@ const getTrackingUrl = (data = {}, awb = "") =>
       data.track_url ||
       data.tracking_link ||
       data.track_link,
-  ) ||
-  (awb
-    ? `https://shiprocket.co/tracking/${encodeURIComponent(awb)}`
-    : "");
+  ) || (awb ? `https://shiprocket.co/tracking/${encodeURIComponent(awb)}` : "");
 
 const getLabelUrl = (data = {}) =>
-  safeStr(
-    data.label_url ||
-      data.label ||
-      data.shipping_label_url,
-  );
+  safeStr(data.label_url || data.label || data.shipping_label_url);
 
 const verifyWebhookToken = (req) => {
   if (!SHIPROCKET_WEBHOOK_TOKEN) return true;
@@ -153,9 +132,7 @@ const toDate = (value) => {
   const str = safeStr(value);
 
   // Example: 29 07 2026 14:30:00
-  const spacedDateMatch = str.match(
-    /^(\d{2})\s+(\d{2})\s+(\d{4})\s+(.+)$/,
-  );
+  const spacedDateMatch = str.match(/^(\d{2})\s+(\d{2})\s+(\d{4})\s+(.+)$/);
 
   if (spacedDateMatch) {
     const [, dd, mm, yyyy, time] = spacedDateMatch;
@@ -165,20 +142,14 @@ const toDate = (value) => {
   }
 
   const parsed = new Date(
-    str.includes(" ") && !str.includes("T")
-      ? str.replace(" ", "T")
-      : str,
+    str.includes(" ") && !str.includes("T") ? str.replace(" ", "T") : str,
   );
 
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
 const getExpectedDelivery = (data = {}) =>
-  toDate(
-    data.expected_delivery_date ||
-      data.expected_delivery ||
-      data.etd,
-  );
+  toDate(data.expected_delivery_date || data.expected_delivery || data.etd);
 
 const getWebhookDate = (data = {}) =>
   toDate(
@@ -194,15 +165,9 @@ const normalizeOrderNumberCandidates = (value) => {
   if (!original) return [];
 
   const withoutHash = original.replace(/^#+/, "").trim();
-  const withoutShopPrefix = withoutHash
-    .replace(/^SHOP[-_\s]*/i, "")
-    .trim();
+  const withoutShopPrefix = withoutHash.replace(/^SHOP[-_\s]*/i, "").trim();
 
-  const candidates = new Set([
-    original,
-    withoutHash,
-    withoutShopPrefix,
-  ]);
+  const candidates = new Set([original, withoutHash, withoutShopPrefix]);
 
   if (withoutShopPrefix) {
     candidates.add(`SHOP-${withoutShopPrefix}`);
@@ -294,15 +259,33 @@ const setDateIfMissing = (object, field, value) => {
 
 export async function shiprocketWebhook(req, res) {
   try {
-    if (!verifyWebhookToken(req)) {
-      console.warn("⚠️ Shiprocket webhook invalid token");
+    console.log("🚨 [SHIPROCKET-WEBHOOK] TRIGGERED", {
+      method: req.method,
+      url: req.originalUrl,
+      receivedAt: new Date().toISOString(),
+      headers: {
+        "x-api-key": req.header("x-api-key") ? "present" : "missing",
+        "anx-api-key": req.header("anx-api-key") ? "present" : "missing",
+        authorization: req.header("authorization") ? "present" : "missing",
+        "content-type": req.header("content-type"),
+      },
+      body: req.body,
+    });
 
-      // Always acknowledge webhook to prevent endless retries.
+    if (!verifyWebhookToken(req)) {
+      console.warn("⚠️ [SHIPROCKET-WEBHOOK] INVALID TOKEN", {
+        receivedAt: new Date().toISOString(),
+        tokenConfigured: Boolean(SHIPROCKET_WEBHOOK_TOKEN),
+      });
+
       return res.status(200).json({
         success: true,
         ignored: true,
+        reason: "invalid_token",
       });
     }
+
+    console.log("✅ [SHIPROCKET-WEBHOOK] TOKEN VERIFIED");
 
     const data = req.body || {};
     const now = new Date();
@@ -322,7 +305,18 @@ export async function shiprocketWebhook(req, res) {
     const statusCode = getStatusCode(data);
 
     const mappedStatus = STATUS_MAP[normalizedStatus] || null;
-
+    console.log("📦 [SHIPROCKET-WEBHOOK] PARSED", {
+      awb,
+      shipmentId,
+      shiprocketOrderId,
+      channelOrderNumber,
+      courierName,
+      trackingUrl,
+      rawStatus,
+      normalizedStatus,
+      statusCode,
+      mappedStatus,
+    });
     /**
      * Even when status is unknown, continue processing if tracking,
      * AWB or courier information is present.
@@ -343,6 +337,13 @@ export async function shiprocketWebhook(req, res) {
         reason: "No usable shipment information",
       });
     }
+
+    console.log("🔍 [SHIPROCKET-WEBHOOK] FINDING ORDER", {
+      awb,
+      shipmentId,
+      shiprocketOrderId,
+      channelOrderNumber,
+    });
 
     const order = await findOrderFromWebhook({
       awb,
@@ -368,6 +369,13 @@ export async function shiprocketWebhook(req, res) {
       });
     }
 
+    console.log("✅ [SHIPROCKET-WEBHOOK] ORDER FOUND", {
+      mongoId: order._id?.toString(),
+      orderNumber: order.orderNumber,
+      currentFulfillmentStatus: order.fulfillmentStatus,
+      currentShipmentStatus: order.shipment?.status,
+    });
+
     const existingShipment =
       order.shipment?.toObject?.() || order.shipment || {};
 
@@ -377,9 +385,7 @@ export async function shiprocketWebhook(req, res) {
       {};
 
     const existingTracking =
-      order.trackingDetails?.toObject?.() ||
-      order.trackingDetails ||
-      {};
+      order.trackingDetails?.toObject?.() || order.trackingDetails || {};
 
     const nextAwb =
       awb ||
@@ -427,18 +433,15 @@ export async function shiprocketWebhook(req, res) {
     ).toLowerCase();
 
     const nextShipmentStatus =
-      mappedStatus?.shipmentStatus || currentShipmentStatus || "booked";
+      mappedStatus || currentShipmentStatus || "booked";
 
     const nextFulfillmentStatus =
-      mappedStatus?.fulfillmentStatus ||
-      currentFulfillmentStatus ||
-      "shipped";
+      mappedStatus || currentFulfillmentStatus || "shipped";
 
     const fulfillmentChanged =
       currentFulfillmentStatus !== nextFulfillmentStatus;
 
-    const shipmentStatusChanged =
-      currentShipmentStatus !== nextShipmentStatus;
+    const shipmentStatusChanged = currentShipmentStatus !== nextShipmentStatus;
 
     const trackingChanged =
       safeStr(existingShipment.awb) !== nextAwb ||
@@ -458,9 +461,7 @@ export async function shiprocketWebhook(req, res) {
 
     const isStatusDowngrade =
       isDelivered &&
-      !["delivered", "rto", "cancelled"].includes(
-        nextFulfillmentStatus,
-      );
+      !["delivered", "rto", "cancelled"].includes(nextFulfillmentStatus);
 
     const finalFulfillmentStatus = isStatusDowngrade
       ? currentFulfillmentStatus
@@ -473,8 +474,7 @@ export async function shiprocketWebhook(req, res) {
     const finalFulfillmentChanged =
       currentFulfillmentStatus !== finalFulfillmentStatus;
 
-    const finalShipmentChanged =
-      currentShipmentStatus !== finalShipmentStatus;
+    const finalShipmentChanged = currentShipmentStatus !== finalShipmentStatus;
 
     if (
       !finalFulfillmentChanged &&
@@ -528,9 +528,7 @@ export async function shiprocketWebhook(req, res) {
     order.fulfillmentStatus = finalFulfillmentStatus;
 
     order.fulfillmentDates = {
-      ...(order.fulfillmentDates?.toObject?.() ||
-        order.fulfillmentDates ||
-        {}),
+      ...(order.fulfillmentDates?.toObject?.() || order.fulfillmentDates || {}),
     };
 
     order.trackingDetails = {
@@ -542,20 +540,14 @@ export async function shiprocketWebhook(req, res) {
       courierName: nextCourierName,
       trackingUrl: nextTrackingUrl,
       expectedDelivery:
-        getExpectedDelivery(data) ||
-        existingTracking.expectedDelivery ||
-        null,
+        getExpectedDelivery(data) || existingTracking.expectedDelivery || null,
 
       lastUpdatedAt: now,
     };
 
     switch (finalFulfillmentStatus) {
       case "picked":
-        setDateIfMissing(
-          order.fulfillmentDates,
-          "pickedAt",
-          webhookDate,
-        );
+        setDateIfMissing(order.fulfillmentDates, "pickedAt", webhookDate);
 
         if (!order.shipment.pickedAt) {
           order.shipment.pickedAt = webhookDate;
@@ -563,11 +555,7 @@ export async function shiprocketWebhook(req, res) {
         break;
 
       case "shipped":
-        setDateIfMissing(
-          order.fulfillmentDates,
-          "shippedAt",
-          webhookDate,
-        );
+        setDateIfMissing(order.fulfillmentDates, "shippedAt", webhookDate);
 
         if (!order.shipment.shippedAt) {
           order.shipment.shippedAt = webhookDate;
@@ -591,11 +579,7 @@ export async function shiprocketWebhook(req, res) {
         break;
 
       case "delivered":
-        setDateIfMissing(
-          order.fulfillmentDates,
-          "deliveredAt",
-          webhookDate,
-        );
+        setDateIfMissing(order.fulfillmentDates, "deliveredAt", webhookDate);
 
         if (!order.shipment.deliveredAt) {
           order.shipment.deliveredAt = webhookDate;
@@ -607,11 +591,7 @@ export async function shiprocketWebhook(req, res) {
         break;
 
       case "rto":
-        setDateIfMissing(
-          order.fulfillmentDates,
-          "rtoAt",
-          webhookDate,
-        );
+        setDateIfMissing(order.fulfillmentDates, "rtoAt", webhookDate);
 
         if (!order.shipment.rtoAt) {
           order.shipment.rtoAt = webhookDate;
@@ -619,11 +599,7 @@ export async function shiprocketWebhook(req, res) {
         break;
 
       case "cancelled":
-        setDateIfMissing(
-          order.fulfillmentDates,
-          "cancelledAt",
-          webhookDate,
-        );
+        setDateIfMissing(order.fulfillmentDates, "cancelledAt", webhookDate);
 
         if (!order.shipment.cancelledAt) {
           order.shipment.cancelledAt = webhookDate;
@@ -631,11 +607,7 @@ export async function shiprocketWebhook(req, res) {
         break;
 
       case "failed":
-        setDateIfMissing(
-          order.fulfillmentDates,
-          "failedAt",
-          webhookDate,
-        );
+        setDateIfMissing(order.fulfillmentDates, "failedAt", webhookDate);
 
         if (!order.shipment.failedAt) {
           order.shipment.failedAt = webhookDate;
@@ -646,7 +618,28 @@ export async function shiprocketWebhook(req, res) {
         break;
     }
 
+    console.log("💾 [SHIPROCKET-WEBHOOK] SAVING ORDER", {
+      orderNumber: order.orderNumber,
+      previousFulfillmentStatus: currentFulfillmentStatus,
+      nextFulfillmentStatus: finalFulfillmentStatus,
+      previousShipmentStatus: currentShipmentStatus,
+      nextShipmentStatus: finalShipmentStatus,
+      awb: nextAwb,
+      shipmentId: nextShipmentId,
+      shiprocketOrderId: nextShiprocketOrderId,
+      courierName: nextCourierName,
+      trackingChanged,
+    });
+
     await order.save();
+
+    console.log("✅ [SHIPROCKET-WEBHOOK] ORDER SAVED", {
+      orderNumber: order.orderNumber,
+      fulfillmentStatus: order.fulfillmentStatus,
+      shipmentStatus: order.shipment?.status,
+      awb: order.shipment?.awb,
+      courierName: order.shipment?.courierName,
+    });
 
     /**
      * Send email only when actual fulfillment status changes.
@@ -678,15 +671,19 @@ export async function shiprocketWebhook(req, res) {
       trackingChanged,
     });
   } catch (error) {
-    console.error(
-      "❌ Shiprocket Webhook Error:",
-      error?.response?.data || error?.message || error,
-    );
+    console.error("❌ [SHIPROCKET-WEBHOOK] ERROR", {
+      message: error?.message,
+      name: error?.name,
+      stack: error?.stack,
+      responseStatus: error?.response?.status,
+      responseData: error?.response?.data,
+      body: req.body,
+    });
 
-    // Shiprocket should receive 200, otherwise it may retry endlessly.
     return res.status(200).json({
       success: true,
       internalError: true,
+      message: error?.message || "Webhook processing failed",
     });
   }
 }

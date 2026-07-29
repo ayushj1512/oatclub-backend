@@ -1318,11 +1318,11 @@ export const createOrder = async (req, res) => {
   } catch (error) {
     console.error("❌ Create Order Error:", error);
 
-   return res.status(error.statusCode || 400).json({
-  success: false,
-  code: error.code || "ORDER_CREATION_FAILED",
-  message: error.message || "Order creation failed",
-});
+    return res.status(error.statusCode || 400).json({
+      success: false,
+      code: error.code || "ORDER_CREATION_FAILED",
+      message: error.message || "Order creation failed",
+    });
   } finally {
     session.endSession();
   }
@@ -3320,51 +3320,127 @@ async function performOrderCancellation({ orderId, reason = "", session }) {
 async function autoBookShiprocketForOrder(order) {
   const TAG = "🚀[AUTO-SHIPROCKET]";
 
-  /* ---------------- small helpers ---------------- */
-  const low = (v) =>
-    String(v || "")
-      .trim()
-      .toLowerCase();
-  const log = (m, o) => console.log(`${TAG} ${m}`, o || "");
+  const clean = (value) => String(value ?? "").trim();
+  const lower = (value) => clean(value).toLowerCase();
+  const log = (message, data = "") => console.log(`${TAG} ${message}`, data);
+
   const scrubXpressbees = () => {
-    // if xpressbees exists but isn't a proper object, remove it (prevents cast error)
     if (!order?.shipment || typeof order.shipment !== "object") return;
-    if (order.shipment.xpressbees === undefined)
+
+    if (
+      order.shipment.xpressbees === undefined ||
+      (order.shipment.xpressbees !== null &&
+        typeof order.shipment.xpressbees !== "object")
+    ) {
       delete order.shipment.xpressbees;
-    else if (
-      order.shipment.xpressbees != null &&
-      typeof order.shipment.xpressbees !== "object"
-    )
-      delete order.shipment.xpressbees;
+    }
   };
+
   const ensureShipment = () => {
-    order.shipment =
-      order.shipment && typeof order.shipment === "object"
-        ? order.shipment
-        : {};
-    order.shipment.shiprocket =
-      order.shipment.shiprocket && typeof order.shipment.shiprocket === "object"
-        ? order.shipment.shiprocket
-        : {};
+    if (!order.shipment || typeof order.shipment !== "object") {
+      order.shipment = {};
+    }
+
+    if (
+      !order.shipment.shiprocket ||
+      typeof order.shipment.shiprocket !== "object"
+    ) {
+      order.shipment.shiprocket = {};
+    }
+
     scrubXpressbees();
   };
-  const saveSafe = async () => {
+
+  const saveOrder = async () => {
     scrubXpressbees();
     await order.save();
   };
 
-  /* ---------------- guards ---------------- */
-  if (isParentOrder(order))
+  const saveShipmentDetails = async ({
+    shipmentId = "",
+    shiprocketOrderId = "",
+    awb = "",
+    courierName = "",
+    trackingUrl = "",
+  }) => {
+    ensureShipment();
+
+    const finalShipmentId =
+      clean(shipmentId) ||
+      clean(order.shipment.shipmentId) ||
+      clean(order.shipment.shiprocket.shipmentId);
+
+    const finalOrderId =
+      clean(shiprocketOrderId) ||
+      clean(order.shipment.orderId) ||
+      clean(order.shipment.shiprocket.orderId);
+
+    const finalAwb =
+      clean(awb) ||
+      clean(order.shipment.awb) ||
+      clean(order.shipment.shiprocket.awb);
+
+    const finalCourierName =
+      clean(courierName) ||
+      clean(order.shipment.courierName) ||
+      clean(order.shipment.shiprocket.courierName);
+
+    const finalTrackingUrl =
+      clean(trackingUrl) ||
+      clean(order.shipment.trackingUrl) ||
+      clean(order.shipment.shiprocket.trackingUrl) ||
+      (finalAwb
+        ? `https://shiprocket.co/tracking/${encodeURIComponent(finalAwb)}`
+        : "");
+
+    const status = finalAwb ? "booked" : "processing";
+    const now = new Date();
+
+    order.shipment.provider = "shiprocket";
+    order.shipment.status = status;
+    order.shipment.shipmentId = finalShipmentId;
+    order.shipment.orderId = finalOrderId;
+    order.shipment.awb = finalAwb;
+    order.shipment.courierName = finalCourierName;
+    order.shipment.trackingUrl = finalTrackingUrl;
+
+    order.shipment.shiprocket.shipmentId = finalShipmentId;
+    order.shipment.shiprocket.orderId = finalOrderId;
+    order.shipment.shiprocket.awb = finalAwb;
+    order.shipment.shiprocket.courierName = finalCourierName;
+    order.shipment.shiprocket.trackingUrl = finalTrackingUrl;
+    order.shipment.shiprocket.status = status;
+    order.shipment.shiprocket.lastUpdatedAt = now;
+
+    order.trackingDetails = {
+      ...(order.trackingDetails?.toObject?.() || order.trackingDetails || {}),
+      provider: "shiprocket",
+      trackingId: finalAwb,
+      awb: finalAwb,
+      courierName: finalCourierName,
+      trackingUrl: finalTrackingUrl,
+      lastUpdatedAt: now,
+    };
+
+    await saveOrder();
+  };
+
+  if (isParentOrder(order)) {
     return log("🚫 SKIP: parent order cannot be shipped", {
       orderNumber: order?.orderNumber,
     });
+  }
 
-  if (!order?.isConfirmed) return log("🚫 SKIP: not confirmed");
-  if (low(order?.fulfillmentStatus) !== "packed")
-    return log("🚫 SKIP: not packed yet", {
+  if (!order?.isConfirmed) {
+    return log("🚫 SKIP: order not confirmed");
+  }
+
+  if (lower(order?.fulfillmentStatus) !== "packed") {
+    return log("🚫 SKIP: order not packed", {
       orderNumber: order?.orderNumber,
       fulfillmentStatus: order?.fulfillmentStatus,
     });
+  }
 
   try {
     log("START", {
@@ -3372,110 +3448,125 @@ async function autoBookShiprocketForOrder(order) {
       orderId: order?._id?.toString(),
       paymentMethod: order?.paymentMethod,
       paymentStatus: order?.paymentStatus,
-      isConfirmed: order?.isConfirmed,
     });
 
-    // env/address guards
-    if (!order?.shippingAddressSnapshot?.pincode)
+    if (!clean(order?.shippingAddressSnapshot?.pincode)) {
       return log("❌ SKIP: shipping pincode missing");
-    if (!process.env.SHIPROCKET_PICKUP_PINCODE)
-      return log("❌ SKIP: SHIPROCKET_PICKUP_PINCODE missing");
-    if (!process.env.SHIPROCKET_PICKUP_LOCATION)
-      return log("❌ SKIP: SHIPROCKET_PICKUP_LOCATION missing");
+    }
 
-    // prepaid guard
+    if (!clean(process.env.SHIPROCKET_PICKUP_PINCODE)) {
+      return log("❌ SKIP: SHIPROCKET_PICKUP_PINCODE missing");
+    }
+
+    if (!clean(process.env.SHIPROCKET_PICKUP_LOCATION)) {
+      return log("❌ SKIP: SHIPROCKET_PICKUP_LOCATION missing");
+    }
+
     if (
-      low(order?.paymentMethod) === "razorpay" &&
-      low(order?.paymentStatus) !== "paid"
-    )
-      return log("⏳ SKIP: prepaid not paid yet");
+      lower(order?.paymentMethod) === "razorpay" &&
+      lower(order?.paymentStatus) !== "paid"
+    ) {
+      return log("⏳ SKIP: Razorpay payment not paid");
+    }
 
     ensureShipment();
 
-    // already has AWB -> done
-    if (order?.shipment?.shiprocket?.awb)
-      return log("✅ SKIP: AWB exists", { awb: order.shipment.shiprocket.awb });
+    const existingAwb =
+      clean(order.shipment.awb) || clean(order.shipment.shiprocket.awb);
 
-    // shipment exists but AWB missing -> assign AWB
-    const existingShipmentId = String(
-      order?.shipment?.shiprocket?.shipmentId || "",
-    ).trim();
+    if (existingAwb) {
+      await saveShipmentDetails({ awb: existingAwb });
+
+      return log("✅ SKIP: AWB already exists", {
+        awb: existingAwb,
+      });
+    }
+
+    const existingShipmentId =
+      clean(order.shipment.shipmentId) ||
+      clean(order.shipment.shiprocket.shipmentId);
+
     if (existingShipmentId) {
-      log("✅ Shipment exists. Trying assign AWB...", { existingShipmentId });
+      log("Shipment exists. Assigning AWB...", {
+        shipmentId: existingShipmentId,
+      });
 
       try {
         const assigned = await assignAwb(existingShipmentId);
-        const awb = String(assigned?.awb_code || assigned?.awb || "").trim();
-        if (!awb)
+
+        const awb = clean(
+          assigned?.awb_code ||
+            assigned?.awb ||
+            assigned?.response?.data?.awb_code,
+        );
+
+        if (!awb) {
           return log("⚠️ Assign AWB response missing awb_code", {
             shipmentId: existingShipmentId,
+            response: assigned,
           });
+        }
 
-        ensureShipment();
-        order.shipment.provider = order.shipment.provider || "shiprocket";
-        order.shipment.status = "processing";
+        await saveShipmentDetails({
+          shipmentId: existingShipmentId,
+          awb,
+          courierName:
+            assigned?.courier_name ||
+            assigned?.courierName ||
+            assigned?.response?.data?.courier_name,
+          trackingUrl:
+            assigned?.tracking_url ||
+            assigned?.trackingUrl ||
+            assigned?.response?.data?.tracking_url,
+        });
 
-        order.shipment.shiprocket.awb = awb;
-        order.shipment.shiprocket.courierName =
-          assigned?.courier_name || order.shipment.shiprocket.courierName || "";
-        order.shipment.shiprocket.trackingUrl =
-          assigned?.tracking_url ||
-          order.shipment.shiprocket.trackingUrl ||
-          `https://shiprocket.co/tracking/${awb}`;
-        order.shipment.shiprocket.status = "processing";
-        order.shipment.shiprocket.lastUpdatedAt = new Date();
-
-        order.trackingDetails = {
-          ...(order.trackingDetails || {}),
-          trackingId: awb,
-          courierName: order.shipment.shiprocket.courierName,
-          trackingUrl: order.shipment.shiprocket.trackingUrl,
-        };
-
-        await saveSafe();
-        return log("✅ AWB assigned & saved", {
+        return log("✅ AWB assigned and saved", {
           shipmentId: existingShipmentId,
           awb,
         });
-      } catch (e) {
+      } catch (error) {
         return log("⚠️ Assign AWB failed", {
           shipmentId: existingShipmentId,
-          message: e?.message,
-          status: e?.response?.status,
-          data: e?.response?.data,
+          message: error?.message,
+          status: error?.response?.status,
+          data: error?.response?.data,
         });
       }
     }
 
-    /* ---------------- weight ---------------- */
     const totalWeight =
-      order.items?.reduce((sum, it) => {
-        const w =
-          Number(it.variant?.weight) ||
-          Number(it.productSnapshot?.weight) ||
+      order.items?.reduce((total, item) => {
+        const weight =
+          Number(item?.variant?.weight) ||
+          Number(item?.productSnapshot?.weight) ||
           0.5;
-        return sum + w * Number(it.quantity || 1);
+
+        return total + weight * Number(item?.quantity || 1);
       }, 0) || 0.5;
 
-    /* ---------------- serviceability ---------------- */
-    const isCOD = low(order.paymentMethod) === "cod";
+    const isCOD = lower(order?.paymentMethod) === "cod";
+
     const couriers = await checkServiceability({
-      pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE,
-      deliveryPincode: String(order.shippingAddressSnapshot.pincode || ""),
+      pickupPincode: clean(process.env.SHIPROCKET_PICKUP_PINCODE),
+      deliveryPincode: clean(order.shippingAddressSnapshot.pincode),
       weight: totalWeight,
       cod: isCOD ? 1 : 0,
     });
-    if (!Array.isArray(couriers) || couriers.length === 0)
-      return log("⚠️ SKIP: No courier available");
 
-    /* ---------------- payload ---------------- */
+    if (!Array.isArray(couriers) || !couriers.length) {
+      return log("⚠️ SKIP: no courier available");
+    }
+
     const payload = buildShiprocketPayload(order);
+
     payload.payment_method = isCOD ? "COD" : "Prepaid";
     payload.shipping_charges = Number(order.shippingFee || 0);
     payload.collectable_amount = isCOD ? Number(order.finalPayable || 0) : 0;
-    if (payload.transaction_charges == null) payload.transaction_charges = 0;
 
-    // ✅ NET consistency (COD): sub_total should equal (finalPayable - shipping - tax)
+    if (payload.transaction_charges == null) {
+      payload.transaction_charges = 0;
+    }
+
     if (isCOD) {
       const expectedSubTotal = Math.max(
         0,
@@ -3483,39 +3574,46 @@ async function autoBookShiprocketForOrder(order) {
           Number(order.shippingFee || 0) -
           Number(order.tax || 0),
       );
+
       if (
         Number.isFinite(expectedSubTotal) &&
         Math.abs(Number(payload.sub_total || 0) - expectedSubTotal) >= 1
       ) {
         payload.sub_total = expectedSubTotal;
 
-        // quick rebalance order_items selling_price
         if (Array.isArray(payload.order_items) && payload.order_items.length) {
           const totalUnits =
-            payload.order_items.reduce((s, x) => s + Number(x.units || 0), 0) ||
-            1;
+            payload.order_items.reduce(
+              (total, item) => total + Number(item.units || 0),
+              0,
+            ) || 1;
+
           const perUnit = Math.round(expectedSubTotal / totalUnits);
 
-          payload.order_items = payload.order_items.map((x) => ({
-            ...x,
+          payload.order_items = payload.order_items.map((item) => ({
+            ...item,
             selling_price: String(perUnit),
             discount: "0",
           }));
 
-          const after = payload.order_items.reduce(
-            (s, x) => s + Number(x.selling_price || 0) * Number(x.units || 0),
+          const calculatedTotal = payload.order_items.reduce(
+            (total, item) =>
+              total + Number(item.selling_price || 0) * Number(item.units || 0),
             0,
           );
-          const delta = expectedSubTotal - after;
-          const lastIdx = payload.order_items.length - 1;
-          const last = payload.order_items[lastIdx];
-          const lastUnits = Number(last.units || 1);
-          payload.order_items[lastIdx] = {
-            ...last,
+
+          const difference = expectedSubTotal - calculatedTotal;
+          const lastIndex = payload.order_items.length - 1;
+          const lastItem = payload.order_items[lastIndex];
+          const lastUnits = Number(lastItem.units || 1);
+
+          payload.order_items[lastIndex] = {
+            ...lastItem,
             selling_price: String(
               Math.max(
                 0,
-                Number(last.selling_price || 0) + Math.round(delta / lastUnits),
+                Number(lastItem.selling_price || 0) +
+                  Math.round(difference / lastUnits),
               ),
             ),
           };
@@ -3524,91 +3622,108 @@ async function autoBookShiprocketForOrder(order) {
     }
 
     log("📦 Creating shipment...", {
-      order_id: payload?.order_id,
-      payment_method: payload?.payment_method,
+      orderId: payload?.order_id,
+      paymentMethod: payload?.payment_method,
       weight: payload?.weight || totalWeight,
       items: payload?.order_items?.length || 0,
     });
 
     const shipment = await createShipment(payload);
-    const shipmentId = shipment?.shipment_id
-      ? String(shipment.shipment_id)
-      : "";
-    const shiprocketOrderId = shipment?.order_id
-      ? String(shipment.order_id)
-      : "";
-    let awb = String(shipment?.awb_code || "").trim();
 
-    if (!shipmentId) return log("❌ FAIL: shipment_id missing", { shipment });
+    const shipmentId = clean(
+      shipment?.shipment_id ||
+        shipment?.shipmentId ||
+        shipment?.response?.data?.shipment_id,
+    );
 
-    /* ---------------- save shiprocket snapshot (NO overwrite) ---------------- */
-    ensureShipment();
-    order.shipment.provider = "shiprocket";
-    order.shipment.status = "processing";
+    const shiprocketOrderId = clean(
+      shipment?.order_id ||
+        shipment?.orderId ||
+        shipment?.response?.data?.order_id,
+    );
 
-    order.shipment.shiprocket.shipmentId = shipmentId;
-    order.shipment.shiprocket.orderId = shiprocketOrderId;
-    order.shipment.shiprocket.courierName =
-      shipment?.courier_name || order.shipment.shiprocket.courierName || "";
-    order.shipment.shiprocket.trackingUrl =
-      shipment?.tracking_url || order.shipment.shiprocket.trackingUrl || "";
-    order.shipment.shiprocket.status = "processing";
-    order.shipment.shiprocket.lastUpdatedAt = new Date();
+    let awb = clean(
+      shipment?.awb_code || shipment?.awb || shipment?.response?.data?.awb_code,
+    );
 
-    await saveSafe();
+    if (!shipmentId) {
+      return log("❌ FAIL: shipment_id missing", {
+        response: shipment,
+      });
+    }
 
-    /* ---------------- assign AWB if missing ---------------- */
+    await saveShipmentDetails({
+      shipmentId,
+      shiprocketOrderId,
+      awb,
+      courierName:
+        shipment?.courier_name ||
+        shipment?.courierName ||
+        shipment?.response?.data?.courier_name,
+      trackingUrl:
+        shipment?.tracking_url ||
+        shipment?.trackingUrl ||
+        shipment?.response?.data?.tracking_url,
+    });
+
     if (!awb) {
       try {
         const assigned = await assignAwb(shipmentId);
-        awb = String(assigned?.awb_code || assigned?.awb || "").trim();
 
-        if (awb) {
-          ensureShipment();
-          order.shipment.shiprocket.awb = awb;
-          order.shipment.shiprocket.courierName =
-            assigned?.courier_name ||
-            order.shipment.shiprocket.courierName ||
-            "";
-          order.shipment.shiprocket.trackingUrl =
-            assigned?.tracking_url ||
-            order.shipment.shiprocket.trackingUrl ||
-            `https://shiprocket.co/tracking/${awb}`;
+        awb = clean(
+          assigned?.awb_code ||
+            assigned?.awb ||
+            assigned?.response?.data?.awb_code,
+        );
 
-          order.trackingDetails = {
-            ...(order.trackingDetails || {}),
-            trackingId: awb,
-            courierName: order.shipment.shiprocket.courierName,
-            trackingUrl: order.shipment.shiprocket.trackingUrl,
-          };
-
-          await saveSafe();
-          log("✅ AWB assigned & saved", { shipmentId, awb });
+        if (!awb) {
+          log("⚠️ Assign AWB response missing awb_code", {
+            shipmentId,
+            response: assigned,
+          });
         } else {
-          log("⚠️ Assign AWB success but awb_code missing", { shipmentId });
+          await saveShipmentDetails({
+            shipmentId,
+            shiprocketOrderId,
+            awb,
+            courierName:
+              assigned?.courier_name ||
+              assigned?.courierName ||
+              assigned?.response?.data?.courier_name,
+            trackingUrl:
+              assigned?.tracking_url ||
+              assigned?.trackingUrl ||
+              assigned?.response?.data?.tracking_url,
+          });
+
+          log("✅ AWB assigned and saved", {
+            shipmentId,
+            awb,
+          });
         }
-      } catch (e) {
+      } catch (error) {
         log("⚠️ Assign AWB failed", {
           shipmentId,
-          message: e?.message,
-          status: e?.response?.status,
-          data: e?.response?.data,
+          message: error?.message,
+          status: error?.response?.status,
+          data: error?.response?.data,
         });
       }
     }
 
     log("END ✅", {
-      orderNumber: order.orderNumber,
-      shipmentId: order.shipment?.shiprocket?.shipmentId,
-      awb: order.shipment?.shiprocket?.awb,
+      orderNumber: order?.orderNumber,
+      shipmentId:
+        order.shipment?.shipmentId || order.shipment?.shiprocket?.shipmentId,
+      awb: order.shipment?.awb || order.shipment?.shiprocket?.awb,
       status: order.shipment?.status,
     });
-  } catch (err) {
+  } catch (error) {
     console.error(`${TAG} ❌ ERROR`, {
-      message: err?.message,
-      status: err?.response?.status,
-      data: err?.response?.data,
-      url: err?.config?.url,
+      message: error?.message,
+      status: error?.response?.status,
+      data: error?.response?.data,
+      url: error?.config?.url,
     });
   }
 }
