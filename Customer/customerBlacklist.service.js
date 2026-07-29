@@ -3,131 +3,67 @@ import Customer from "./Customer.js";
 
 const clean = (value) => String(value ?? "").trim();
 
-export const normalizeBlacklistEmail = (value) =>
-  clean(value).toLowerCase();
+const normalizeEmail = (email) => clean(email).toLowerCase();
 
-export const normalizeBlacklistPhone = (value) => {
-  const digits = clean(value).replace(/\D/g, "");
-
-  // Store/compare Indian mobile number using final 10 digits
+const normalizePhone = (phone) => {
+  const digits = clean(phone).replace(/\D/g, "");
   return digits.length >= 10 ? digits.slice(-10) : digits;
 };
 
-const buildPhoneCandidates = (phone) => {
-  const normalizedPhone = normalizeBlacklistPhone(phone);
-
-  if (!normalizedPhone) return [];
-
-  return [
-    normalizedPhone,
-    `91${normalizedPhone}`,
-    `+91${normalizedPhone}`,
-    `0${normalizedPhone}`,
-  ];
-};
-
-/**
- * Checks whether a customer is blacklisted through:
- * 1. Customer MongoDB _id
- * 2. Customer email
- * 3. Customer phone
- *
- * A match through any identity blocks the order.
- */
 export const checkIsBlacklistedCustomer = async ({
-  customerId = null,
-  email = "",
-  phone = "",
+  customerId,
+  email,
+  phone,
   session = null,
-} = {}) => {
-  const normalizedEmail = normalizeBlacklistEmail(email);
-  const normalizedPhone = normalizeBlacklistPhone(phone);
-  const phoneCandidates = buildPhoneCandidates(phone);
-
-  const identityConditions = [];
+}) => {
+  const conditions = [];
 
   if (
     customerId &&
     mongoose.Types.ObjectId.isValid(String(customerId))
   ) {
-    identityConditions.push({
+    conditions.push({
       _id: new mongoose.Types.ObjectId(String(customerId)),
     });
   }
 
+  const normalizedEmail = normalizeEmail(email);
+
   if (normalizedEmail) {
-    identityConditions.push({
+    conditions.push({
       email: normalizedEmail,
     });
   }
 
-  if (phoneCandidates.length) {
-    identityConditions.push({
-      phone: { $in: phoneCandidates },
+  const normalizedPhone = normalizePhone(phone);
+
+  if (normalizedPhone) {
+    conditions.push({
+      phone: {
+        $in: [
+          normalizedPhone,
+          `91${normalizedPhone}`,
+          `+91${normalizedPhone}`,
+          `0${normalizedPhone}`,
+        ],
+      },
     });
   }
 
-  if (!identityConditions.length) {
-    return {
-      isBlacklisted: false,
-      customer: null,
-      matchedBy: [],
-      normalizedEmail,
-      normalizedPhone,
-    };
+  if (!conditions.length) {
+    return null;
   }
 
   const query = Customer.findOne({
     isBlacklisted: true,
-    $or: identityConditions,
+    $or: conditions,
   })
-    .select("_id customerId name email phone isBlacklisted")
+    .select("_id name email phone isBlacklisted")
     .lean();
 
   if (session) {
     query.session(session);
   }
 
-  const customer = await query;
-
-  if (!customer) {
-    return {
-      isBlacklisted: false,
-      customer: null,
-      matchedBy: [],
-      normalizedEmail,
-      normalizedPhone,
-    };
-  }
-
-  const matchedBy = [];
-
-  if (
-    customerId &&
-    String(customer._id) === String(customerId)
-  ) {
-    matchedBy.push("customerId");
-  }
-
-  if (
-    normalizedEmail &&
-    normalizeBlacklistEmail(customer.email) === normalizedEmail
-  ) {
-    matchedBy.push("email");
-  }
-
-  if (
-    normalizedPhone &&
-    normalizeBlacklistPhone(customer.phone) === normalizedPhone
-  ) {
-    matchedBy.push("phone");
-  }
-
-  return {
-    isBlacklisted: true,
-    customer,
-    matchedBy,
-    normalizedEmail,
-    normalizedPhone,
-  };
+  return query;
 };

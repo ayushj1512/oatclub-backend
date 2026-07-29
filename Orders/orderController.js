@@ -924,12 +924,18 @@ export const createOrder = async (req, res) => {
         customerId,
         email: shippingAddressSnapshot?.email,
         phone: shippingAddressSnapshot?.phone,
+        session,
       });
 
       if (blacklistedCustomer) {
-        throw new Error(
-          "We're unable to process your order at the moment. Please contact our support team for assistance.",
+        const error = new Error(
+          "We couldn't process your order at this time. If you believe this is an error, please contact our support team.",
         );
+
+        error.code = "ORDER_NOT_AVAILABLE";
+        error.statusCode = 403;
+
+        throw error;
       }
 
       const identity = buildCouponIdentity({
@@ -1312,9 +1318,11 @@ export const createOrder = async (req, res) => {
   } catch (error) {
     console.error("❌ Create Order Error:", error);
 
-    return res.status(400).json({
-      message: error.message || "Order creation failed",
-    });
+   return res.status(error.statusCode || 400).json({
+  success: false,
+  code: error.code || "ORDER_CREATION_FAILED",
+  message: error.message || "Order creation failed",
+});
   } finally {
     session.endSession();
   }
