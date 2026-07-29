@@ -668,17 +668,11 @@ const orderSchema = new mongoose.Schema(
     },
 
     paymentMethod: {
-  type: String,
-  enum: [
-    "cod",
-    "razorpay",
-    "exchange",
-    "wallet",
-    "manual_prepaid",
-  ],
-  default: "cod",
-  index: true,
-},
+      type: String,
+      enum: ["cod", "razorpay", "exchange", "wallet", "manual_prepaid"],
+      default: "cod",
+      index: true,
+    },
 
     // ✅ FIX: added refund_pending to prevent crashes
     paymentStatus: {
@@ -707,6 +701,16 @@ const orderSchema = new mongoose.Schema(
       default: false,
       index: true,
     },
+
+    deliveryMethod: {
+  type: String,
+  enum: [
+    "courier",
+    "founders",
+  ],
+  default: "courier",
+  index: true,
+},
 
     reviewRequest: {
       sent: { type: Boolean, default: false, index: true },

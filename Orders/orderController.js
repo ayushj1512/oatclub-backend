@@ -40,6 +40,7 @@ import { recalculateCustomerAnalytics } from "../Customer/customerAnalytics.serv
 import Customer from "../Customer/Customer.js";
 import { debitWalletForOrderInternal } from "../Customer/customerCredit.service.js"; // ⚠️ path tumhare project ke hisaab se adjust kar lena
 import { creditOrderWalletRewardInternal } from "../Customer/orderWalletReward.service.js";
+import { checkIsBlacklistedCustomer } from "../Customer/customerBlacklist.service.js";
 
 const isParentOrder = (order) =>
   String(order?.orderType || "").toLowerCase() === "parent";
@@ -917,6 +918,18 @@ export const createOrder = async (req, res) => {
         billingAddressSnapshot = {
           ...shippingAddressSnapshot,
         };
+      }
+
+      const blacklistedCustomer = await checkIsBlacklistedCustomer({
+        customerId,
+        email: shippingAddressSnapshot?.email,
+        phone: shippingAddressSnapshot?.phone,
+      });
+
+      if (blacklistedCustomer) {
+        throw new Error(
+          "We're unable to process your order at the moment. Please contact our support team for assistance.",
+        );
       }
 
       const identity = buildCouponIdentity({
