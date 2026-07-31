@@ -1,6 +1,6 @@
 // controller/productController.js
 
-import Product from "./Products.js";
+import Product, { PRODUCT_LIFECYCLE_STAGES } from "./Products.js";
 import Attribute from "../Attribute/Attribute.js";
 import slugify from "slugify";
 import mongoose from "mongoose";
@@ -5053,10 +5053,7 @@ const PRODUCT_EXCEL_COLUMNS = {
         return getSize(variant);
       }
 
-      return (product.variants || [])
-        .map(getSize)
-        .filter(Boolean)
-        .join(", ");
+      return (product.variants || []).map(getSize).filter(Boolean).join(", ");
     },
   },
 
@@ -5082,8 +5079,7 @@ const PRODUCT_EXCEL_COLUMNS = {
     header: "Compare At Price",
     width: 18,
     value: ({ product }) =>
-      product.compareAtPrice === null ||
-      product.compareAtPrice === undefined
+      product.compareAtPrice === null || product.compareAtPrice === undefined
         ? ""
         : Number(product.compareAtPrice),
     format: "₹#,##0.00",
@@ -5113,8 +5109,7 @@ const PRODUCT_EXCEL_COLUMNS = {
     value: ({ product }) =>
       Math.max(
         0,
-        Number(product.stock || 0) -
-          Number(product.reservedStock || 0),
+        Number(product.stock || 0) - Number(product.reservedStock || 0),
       ),
   },
 
@@ -5147,17 +5142,14 @@ const PRODUCT_EXCEL_COLUMNS = {
       const getAvailable = (item) =>
         Math.max(
           0,
-          Number(item?.stock || 0) -
-            Number(item?.reservedStock || 0),
+          Number(item?.stock || 0) - Number(item?.reservedStock || 0),
         );
 
       if (variant) {
         return getAvailable(variant);
       }
 
-      return (product.variants || [])
-        .map(getAvailable)
-        .join(", ");
+      return (product.variants || []).map(getAvailable).join(", ");
     },
   },
 
@@ -5165,16 +5157,13 @@ const PRODUCT_EXCEL_COLUMNS = {
     header: "In Stock",
     width: 12,
     value: ({ product, variant }) =>
-      (variant ? variant.isInStock : product.isInStock)
-        ? "Yes"
-        : "No",
+      (variant ? variant.isInStock : product.isInStock) ? "Yes" : "No",
   },
 
   categories: {
     header: "Categories",
     width: 30,
-    value: ({ product }) =>
-      (product.categories || []).join(", "),
+    value: ({ product }) => (product.categories || []).join(", "),
   },
 
   collections: {
@@ -5202,15 +5191,13 @@ const PRODUCT_EXCEL_COLUMNS = {
   tags: {
     header: "Tags",
     width: 30,
-    value: ({ product }) =>
-      (product.tags || []).join(", "),
+    value: ({ product }) => (product.tags || []).join(", "),
   },
 
   colors: {
     header: "Colors",
     width: 24,
-    value: ({ product }) =>
-      (product.colors || []).join(", "),
+    value: ({ product }) => (product.colors || []).join(", "),
   },
 
   hsnCode: {
@@ -5263,12 +5250,9 @@ const PRODUCT_EXCEL_COLUMNS = {
     header: "Avg. Fabric Consumption",
     width: 25,
     value: ({ product }) => {
-      const value = Number(
-        product.avgFabricConsumption?.value || 0,
-      );
+      const value = Number(product.avgFabricConsumption?.value || 0);
 
-      const unit =
-        product.avgFabricConsumption?.unit || "meter";
+      const unit = product.avgFabricConsumption?.unit || "meter";
 
       return `${value} ${unit}`;
     },
@@ -5289,187 +5273,160 @@ const PRODUCT_EXCEL_COLUMNS = {
 
       return `${Number(dimensions.length || 0)} x ${Number(
         dimensions.width || 0,
-      )} x ${Number(dimensions.height || 0)} ${
-        dimensions.unit || "cm"
-      }`;
+      )} x ${Number(dimensions.height || 0)} ${dimensions.unit || "cm"}`;
     },
   },
 
   averageRating: {
     header: "Average Rating",
     width: 16,
-    value: ({ product }) =>
-      Number(product.averageRating || 0),
+    value: ({ product }) => Number(product.averageRating || 0),
   },
 
   totalReviews: {
     header: "Total Reviews",
     width: 16,
-    value: ({ product }) =>
-      Number(product.totalReviews || 0),
+    value: ({ product }) => Number(product.totalReviews || 0),
   },
 
   views: {
     header: "Views",
     width: 14,
-    value: ({ product }) =>
-      Number(product.analytics?.views || 0),
+    value: ({ product }) => Number(product.analytics?.views || 0),
   },
 
   purchases: {
     header: "Purchases",
     width: 14,
-    value: ({ product }) =>
-      Number(product.analytics?.purchases || 0),
+    value: ({ product }) => Number(product.analytics?.purchases || 0),
   },
 
   wishlistCount: {
     header: "Wishlist Count",
     width: 18,
-    value: ({ product }) =>
-      Number(product.analytics?.wishlistCount || 0),
+    value: ({ product }) => Number(product.analytics?.wishlistCount || 0),
   },
 
   cartAdds: {
     header: "Cart Adds",
     width: 14,
-    value: ({ product }) =>
-      Number(product.analytics?.cartAdds || 0),
+    value: ({ product }) => Number(product.analytics?.cartAdds || 0),
   },
 
   searchAppearances: {
     header: "Search Appearances",
     width: 20,
-    value: ({ product }) =>
-      Number(product.analytics?.searchAppearances || 0),
+    value: ({ product }) => Number(product.analytics?.searchAppearances || 0),
   },
 
   isActive: {
     header: "Active",
     width: 12,
-    value: ({ product }) =>
-      product.isActive ? "Yes" : "No",
+    value: ({ product }) => (product.isActive ? "Yes" : "No"),
   },
 
   isDraft: {
     header: "Draft",
     width: 12,
-    value: ({ product }) =>
-      product.isDraft ? "Yes" : "No",
+    value: ({ product }) => (product.isDraft ? "Yes" : "No"),
   },
 
   isFeatured: {
     header: "Featured",
     width: 12,
-    value: ({ product }) =>
-      product.isFeatured ? "Yes" : "No",
+    value: ({ product }) => (product.isFeatured ? "Yes" : "No"),
   },
 
   isBestSeller: {
     header: "Best Seller",
     width: 14,
-    value: ({ product }) =>
-      product.isBestSeller ? "Yes" : "No",
+    value: ({ product }) => (product.isBestSeller ? "Yes" : "No"),
   },
 
   isTrending: {
     header: "Trending",
     width: 14,
-    value: ({ product }) =>
-      product.isTrending ? "Yes" : "No",
+    value: ({ product }) => (product.isTrending ? "Yes" : "No"),
   },
 
   isDispatchReady: {
     header: "Dispatch Ready",
     width: 18,
-    value: ({ product }) =>
-      product.isDispatchReady ? "Yes" : "No",
+    value: ({ product }) => (product.isDispatchReady ? "Yes" : "No"),
   },
 
   availableForCollab: {
     header: "Collab Ready",
     width: 16,
-    value: ({ product }) =>
-      product.availableForCollab ? "Yes" : "No",
+    value: ({ product }) => (product.availableForCollab ? "Yes" : "No"),
   },
 
   isPatternReady: {
     header: "Pattern Ready",
     width: 16,
-    value: ({ product }) =>
-      product.isPatternReady ? "Yes" : "No",
+    value: ({ product }) => (product.isPatternReady ? "Yes" : "No"),
   },
 
   isSamplingDone: {
     header: "Sampling Done",
     width: 16,
-    value: ({ product }) =>
-      product.isSamplingDone ? "Yes" : "No",
+    value: ({ product }) => (product.isSamplingDone ? "Yes" : "No"),
   },
 
   isPrimaryProduct: {
     header: "Primary Product",
     width: 18,
-    value: ({ product }) =>
-      product.isPrimaryProduct ? "Yes" : "No",
+    value: ({ product }) => (product.isPrimaryProduct ? "Yes" : "No"),
   },
 
   wordpressId: {
     header: "WordPress ID",
     width: 16,
-    value: ({ product }) =>
-      product.wordpressId ?? "",
+    value: ({ product }) => product.wordpressId ?? "",
   },
 
   originalProductLink: {
     header: "Original Product Link",
     width: 40,
-    value: ({ product }) =>
-      product.originalProductLink || "",
+    value: ({ product }) => product.originalProductLink || "",
   },
 
   metaTitle: {
     header: "Meta Title",
     width: 34,
-    value: ({ product }) =>
-      product.metaTitle || "",
+    value: ({ product }) => product.metaTitle || "",
   },
 
   metaDescription: {
     header: "Meta Description",
     width: 50,
-    value: ({ product }) =>
-      product.metaDescription || "",
+    value: ({ product }) => product.metaDescription || "",
   },
 
   keywords: {
     header: "Keywords",
     width: 34,
-    value: ({ product }) =>
-      (product.keywords || []).join(", "),
+    value: ({ product }) => (product.keywords || []).join(", "),
   },
 
   createdAt: {
     header: "Created At",
     width: 22,
-    value: ({ product }) =>
-      product.createdAt || "",
+    value: ({ product }) => product.createdAt || "",
     format: "dd-mmm-yyyy hh:mm",
   },
 
   updatedAt: {
     header: "Updated At",
     width: 22,
-    value: ({ product }) =>
-      product.updatedAt || "",
+    value: ({ product }) => product.updatedAt || "",
     format: "dd-mmm-yyyy hh:mm",
   },
 
   publishAt: {
     header: "Publish At",
     width: 22,
-    value: ({ product }) =>
-      product.publishAt || "",
+    value: ({ product }) => product.publishAt || "",
     format: "dd-mmm-yyyy hh:mm",
   },
 };
@@ -5484,12 +5441,10 @@ export const getProductExcelColumns = async (_req, res) => {
   return res.status(200).json({
     success: true,
 
-    columns: Object.entries(PRODUCT_EXCEL_COLUMNS).map(
-      ([key, config]) => ({
-        key,
-        label: config.header,
-      }),
-    ),
+    columns: Object.entries(PRODUCT_EXCEL_COLUMNS).map(([key, config]) => ({
+      key,
+      label: config.header,
+    })),
   });
 };
 
@@ -5497,17 +5452,12 @@ export const getProductExcelColumns = async (_req, res) => {
    BUILD EXPORT FILTER
 ============================================================ */
 
-const buildProductExcelFilter = (
-  filters = {},
-  productIds = [],
-) => {
+const buildProductExcelFilter = (filters = {}, productIds = []) => {
   const query = {};
   const andFilters = [];
 
   const hasValue = (value) =>
-    value !== undefined &&
-    value !== null &&
-    String(value).trim() !== "";
+    value !== undefined && value !== null && String(value).trim() !== "";
 
   const asArray = (value) =>
     Array.isArray(value)
@@ -5523,9 +5473,7 @@ const buildProductExcelFilter = (
   const asBoolean = (value) =>
     typeof value === "boolean"
       ? value
-      : ["true", "1", "yes"].includes(
-          String(value).trim().toLowerCase(),
-        );
+      : ["true", "1", "yes"].includes(String(value).trim().toLowerCase());
 
   const validIds = asArray(productIds).filter((id) =>
     mongoose.Types.ObjectId.isValid(id),
@@ -5551,9 +5499,7 @@ const buildProductExcelFilter = (
 
   if (hasValue(filters.colors)) {
     query.colors = {
-      $in: asArray(filters.colors).map((color) =>
-        color.toLowerCase(),
-      ),
+      $in: asArray(filters.colors).map((color) => color.toLowerCase()),
     };
   }
 
@@ -5575,22 +5521,13 @@ const buildProductExcelFilter = (
     }
   });
 
-  [
-    "productType",
-    "currency",
-    "taxClass",
-    "hsnCode",
-    "slug",
-  ].forEach((key) => {
+  ["productType", "currency", "taxClass", "hsnCode", "slug"].forEach((key) => {
     if (hasValue(filters[key])) {
       query[key] = String(filters[key]).trim();
     }
   });
 
-  if (
-    hasValue(filters.minPrice) ||
-    hasValue(filters.maxPrice)
-  ) {
+  if (hasValue(filters.minPrice) || hasValue(filters.maxPrice)) {
     query.price = {};
 
     if (hasValue(filters.minPrice)) {
@@ -5603,10 +5540,7 @@ const buildProductExcelFilter = (
   }
 
   if (hasValue(filters.search)) {
-    const rx = new RegExp(
-      escapeRegex(String(filters.search).trim()),
-      "i",
-    );
+    const rx = new RegExp(escapeRegex(String(filters.search).trim()), "i");
 
     andFilters.push({
       $or: [
@@ -5657,39 +5591,26 @@ export const exportProductsExcel = async (req, res) => {
       new Set(
         incomingColumns
           .map((column) => String(column).trim())
-          .filter(
-            (column) => PRODUCT_EXCEL_COLUMNS[column],
-          ),
+          .filter((column) => PRODUCT_EXCEL_COLUMNS[column]),
       ),
     );
 
     if (!requestedColumns.length) {
       return res.status(400).json({
         success: false,
-        message:
-          "Select at least one valid export column",
-        allowedColumns: Object.keys(
-          PRODUCT_EXCEL_COLUMNS,
-        ),
+        message: "Select at least one valid export column",
+        allowedColumns: Object.keys(PRODUCT_EXCEL_COLUMNS),
       });
     }
 
-    if (
-      !["single_row", "separate_rows"].includes(
-        variantMode,
-      )
-    ) {
+    if (!["single_row", "separate_rows"].includes(variantMode)) {
       return res.status(400).json({
         success: false,
-        message:
-          "variantMode must be single_row or separate_rows",
+        message: "variantMode must be single_row or separate_rows",
       });
     }
 
-    const query = buildProductExcelFilter(
-      filters,
-      productIds,
-    );
+    const query = buildProductExcelFilter(filters, productIds);
 
     const products = await Product.find(query)
       .populate("collections", "name title slug")
@@ -5710,26 +5631,22 @@ export const exportProductsExcel = async (req, res) => {
     workbook.creator = "OATCLUB Admin";
     workbook.created = new Date();
 
-    const worksheet = workbook.addWorksheet(
-      "Products",
-      {
-        views: [
-          {
-            state: "frozen",
-            ySplit: 1,
-          },
-        ],
-        properties: {
-          defaultRowHeight: 20,
+    const worksheet = workbook.addWorksheet("Products", {
+      views: [
+        {
+          state: "frozen",
+          ySplit: 1,
         },
+      ],
+      properties: {
+        defaultRowHeight: 20,
       },
-    );
+    });
 
     worksheet.columns = requestedColumns.map((key) => ({
       header: PRODUCT_EXCEL_COLUMNS[key].header,
       key,
-      width:
-        PRODUCT_EXCEL_COLUMNS[key].width || 18,
+      width: PRODUCT_EXCEL_COLUMNS[key].width || 18,
     }));
 
     const headerRow = worksheet.getRow(1);
@@ -5767,18 +5684,14 @@ export const exportProductsExcel = async (req, res) => {
       },
     };
 
-    const addExcelRow = (
-      product,
-      variant = null,
-    ) => {
+    const addExcelRow = (product, variant = null) => {
       const rowData = {};
 
       requestedColumns.forEach((key) => {
-        rowData[key] =
-          PRODUCT_EXCEL_COLUMNS[key].value({
-            product,
-            variant,
-          });
+        rowData[key] = PRODUCT_EXCEL_COLUMNS[key].value({
+          product,
+          variant,
+        });
       });
 
       const row = worksheet.addRow(rowData);
@@ -5789,8 +5702,7 @@ export const exportProductsExcel = async (req, res) => {
       };
 
       requestedColumns.forEach((key, index) => {
-        const format =
-          PRODUCT_EXCEL_COLUMNS[key].format;
+        const format = PRODUCT_EXCEL_COLUMNS[key].format;
 
         if (format) {
           row.getCell(index + 1).numFmt = format;
@@ -5799,16 +5711,9 @@ export const exportProductsExcel = async (req, res) => {
     };
 
     products.forEach((product) => {
-      const variants = Array.isArray(
-        product.variants,
-      )
-        ? product.variants
-        : [];
+      const variants = Array.isArray(product.variants) ? product.variants : [];
 
-      if (
-        variantMode === "separate_rows" &&
-        variants.length
-      ) {
+      if (variantMode === "separate_rows" && variants.length) {
         variants.forEach((variant) => {
           addExcelRow(product, variant);
         });
@@ -5855,8 +5760,7 @@ export const exportProductsExcel = async (req, res) => {
     const safeFileName =
       String(fileName || "products-export")
         .trim()
-        .replace(/[^a-zA-Z0-9-_]/g, "-") ||
-      "products-export";
+        .replace(/[^a-zA-Z0-9-_]/g, "-") || "products-export";
 
     const datedFileName = `${safeFileName}-${new Date()
       .toISOString()
@@ -5872,29 +5776,214 @@ export const exportProductsExcel = async (req, res) => {
       `attachment; filename="${datedFileName}"`,
     );
 
-    res.setHeader(
-      "Access-Control-Expose-Headers",
-      "Content-Disposition",
-    );
+    res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
 
     await workbook.xlsx.write(res);
 
     return res.end();
   } catch (error) {
-    console.error(
-      "❌ Product Excel Export Error:",
-      error,
-    );
+    console.error("❌ Product Excel Export Error:", error);
 
     if (!res.headersSent) {
       return res.status(500).json({
         success: false,
-        message:
-          error.message ||
-          "Failed to export products Excel",
+        message: error.message || "Failed to export products Excel",
       });
     }
 
     return res.end();
+  }
+};
+
+export const advanceProductLifecycle = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const note = String(req.body?.note || "").trim();
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product ID",
+      });
+    }
+
+    const product = await Product.findById(id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    const lifecycle = product.manufacturingLifecycle;
+    const currentIndex = PRODUCT_MAKING_STAGES.indexOf(lifecycle.currentStage);
+
+    if (
+      lifecycle.isCompleted ||
+      currentIndex === PRODUCT_MAKING_STAGES.length - 1
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Product lifecycle is already completed",
+      });
+    }
+
+    const nextStage = PRODUCT_MAKING_STAGES[currentIndex + 1];
+
+    lifecycle.currentStage = nextStage;
+    lifecycle.isCompleted = nextStage === "completed";
+
+    lifecycle.events.push({
+      stage: nextStage,
+      date: new Date(),
+      note,
+    });
+
+    product.markModified("manufacturingLifecycle");
+    await product.save();
+
+    return res.status(200).json({
+      success: true,
+      message:
+        nextStage === "completed"
+          ? "Product making lifecycle completed"
+          : `Product moved to ${nextStage.replaceAll("_", " ")}`,
+      manufacturingLifecycle: product.manufacturingLifecycle,
+    });
+  } catch (error) {
+    console.error("Advance Product Lifecycle Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update product lifecycle",
+    });
+  }
+};
+
+export const completeProductLifecycle = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const note = String(
+      req.body?.note ||
+        "Remaining lifecycle stages marked as fulfilled",
+    ).trim();
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product ID",
+      });
+    }
+
+    const product = await Product.findById(id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    const lifecycle =
+      product.manufacturingLifecycle;
+
+    if (!lifecycle) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Manufacturing lifecycle is not available for this product",
+      });
+    }
+
+    if (
+      lifecycle.status === "completed" ||
+      lifecycle.currentStage === "completed"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Product lifecycle is already completed",
+      });
+    }
+
+    const now = new Date();
+
+    lifecycle.status = "completed";
+    lifecycle.currentStage = "completed";
+    lifecycle.startedAt =
+      lifecycle.startedAt || now;
+    lifecycle.completedAt = now;
+
+    lifecycle.stages =
+      PRODUCT_MAKING_STAGES.map((stageName) => {
+        const existingStage =
+          lifecycle.stages?.find(
+            (item) =>
+              item.stage === stageName,
+          );
+
+        const stage =
+          existingStage || {
+            stage: stageName,
+          };
+
+        stage.status = "completed";
+        stage.startedAt =
+          stage.startedAt || now;
+        stage.completedAt =
+          stage.completedAt || now;
+
+        if (
+          !stage.note &&
+          stageName !== "completed"
+        ) {
+          stage.note = note;
+        }
+
+        if (stageName === "completed") {
+          stage.note = note;
+        }
+
+        if (req.vendor?._id) {
+          stage.updatedBy =
+            req.vendor._id;
+        } else if (req.user?._id) {
+          stage.updatedBy =
+            req.user._id;
+        }
+
+        return stage;
+      });
+
+    product.markModified(
+      "manufacturingLifecycle",
+    );
+
+    await product.save({
+      validateBeforeSave: true,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "All remaining lifecycle stages marked as fulfilled",
+      product,
+      manufacturingLifecycle:
+        product.manufacturingLifecycle,
+    });
+  } catch (error) {
+    console.error(
+      "Complete Product Lifecycle Error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to complete product lifecycle",
+    });
   }
 };

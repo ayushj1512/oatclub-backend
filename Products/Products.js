@@ -35,6 +35,59 @@ const variantSchema = new mongoose.Schema(
   { _id: true, timestamps: false },
 );
 
+export const PRODUCT_LIFECYCLE_STAGES = [
+  "pattern_in_making",
+  "sampling",
+  "sample_approval",
+  "pattern_grading",
+  "cutting",
+  "stitching",
+  "finishing",
+  "completed",
+];
+
+const lifecycleStageSchema = new mongoose.Schema(
+  {
+    stage: {
+      type: String,
+      enum: PRODUCT_LIFECYCLE_STAGES,
+      required: true,
+    },
+
+    status: {
+      type: String,
+      enum: ["pending", "in_progress", "completed", "rejected"],
+      default: "pending",
+    },
+
+    startedAt: {
+      type: Date,
+      default: null,
+    },
+
+    completedAt: {
+      type: Date,
+      default: null,
+    },
+
+    note: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "AdminUser",
+      default: null,
+    },
+  },
+  {
+    _id: false,
+    timestamps: false,
+  },
+);
+
 /* ------------------------------------------------------------------
 SPECIFICATIONS (like your screenshot)
 Flexible key/value list so you can add/remove anytime ✅
@@ -257,6 +310,45 @@ const productSchema = new mongoose.Schema(
     // ✅ NEW: Original product link (string)
     // (keeps it flexible: can store URL, productCode, slug, or _id as string)
     originalProductLink: { type: String, trim: true, default: "" },
+
+    manufacturingLifecycle: {
+      currentStage: {
+        type: String,
+        enum: PRODUCT_LIFECYCLE_STAGES,
+        default: "pattern_in_making",
+        index: true,
+      },
+
+      status: {
+        type: String,
+        enum: ["not_started", "in_progress", "completed"],
+        default: "not_started",
+        index: true,
+      },
+
+      startedAt: {
+        type: Date,
+        default: null,
+      },
+
+      completedAt: {
+        type: Date,
+        default: null,
+      },
+
+      stages: {
+        type: [lifecycleStageSchema],
+        default: () =>
+          PRODUCT_LIFECYCLE_STAGES.map((stage) => ({
+            stage,
+            status: "pending",
+            startedAt: null,
+            completedAt: null,
+            note: "",
+            updatedBy: null,
+          })),
+      },
+    },
 
     wordpressId: { type: Number, default: null },
 
