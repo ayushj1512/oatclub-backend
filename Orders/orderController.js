@@ -6284,3 +6284,1148 @@ export const changeOrderItemSize = async (req, res) => {
     });
   }
 };
+
+
+/* ============================================================
+   ADVANCED ORDER FILTERS
+   Additive controller — getAllOrders remains untouched
+============================================================ */
+
+const ADVANCED_FILTER_IST_OFFSET_MINUTES = 330;
+const ADVANCED_FILTER_MAX_LIMIT = 500;
+
+const advancedFilterString = (value) =>
+  String(value ?? "").trim();
+
+const advancedFilterLower = (value) =>
+  advancedFilterString(value).toLowerCase();
+
+const advancedFilterEscapeRegex = (value) =>
+  advancedFilterString(value).replace(
+    /[.*+?^${}()|[\]\\]/g,
+    "\\$&",
+  );
+
+const advancedFilterList = (
+  value,
+  { lowercase = false } = {},
+) => {
+  const rawValues = Array.isArray(value)
+    ? value
+    : value == null
+      ? []
+      : [value];
+
+  return [
+    ...new Set(
+      rawValues
+        .flatMap((entry) =>
+          advancedFilterString(entry).split(","),
+        )
+        .map((entry) =>
+          lowercase
+            ? advancedFilterLower(entry)
+            : advancedFilterString(entry),
+        )
+        .filter(Boolean),
+    ),
+  ];
+};
+
+const advancedFilterObjectIds = (value) =>
+  advancedFilterList(value)
+    .filter((id) =>
+      mongoose.Types.ObjectId.isValid(id),
+    )
+    .map(
+      (id) =>
+        new mongoose.Types.ObjectId(id),
+    );
+
+const advancedFilterBoolean = (value) => {
+  const normalized = advancedFilterLower(value);
+
+  if (["true", "1", "yes"].includes(normalized)) {
+    return true;
+  }
+
+  if (["false", "0", "no"].includes(normalized)) {
+    return false;
+  }
+
+  return null;
+};
+
+const advancedFilterParseYMD = (value) => {
+  const match = advancedFilterString(value).match(
+    /^(\d{4})-(\d{2})-(\d{2})$/,
+  );
+
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  if (
+    !year ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return null;
+  }
+
+  return {
+    year,
+    month,
+    day,
+  };
+};
+
+const advancedFilterISTStartUTC = (ymd) => {
+  const parsed = advancedFilterParseYMD(ymd);
+
+  if (!parsed) return null;
+
+  const utcMidnight = Date.UTC(
+    parsed.year,
+    parsed.month - 1,
+    parsed.day,
+    0,
+    0,
+    0,
+    0,
+  );
+
+  return new Date(
+    utcMidnight -
+    ADVANCED_FILTER_IST_OFFSET_MINUTES *
+    60 *
+    1000,
+  );
+};
+
+const advancedFilterISTEndExclusiveUTC = (ymd) => {
+  const start =
+    advancedFilterISTStartUTC(ymd);
+
+  if (!start) return null;
+
+  return new Date(
+    start.getTime() +
+    24 * 60 * 60 * 1000,
+  );
+};
+
+const advancedFilterAddInNin = ({
+  clauses,
+  field,
+  include,
+  exclude,
+  lowercase = false,
+  allowed = null,
+}) => {
+  let includeValues = advancedFilterList(
+    include,
+    { lowercase },
+  );
+
+  let excludeValues = advancedFilterList(
+    exclude,
+    { lowercase },
+  );
+
+  if (allowed) {
+    includeValues = includeValues.filter(
+      (value) => allowed.has(value),
+    );
+
+    excludeValues = excludeValues.filter(
+      (value) => allowed.has(value),
+    );
+  }
+
+  const condition = {};
+
+  if (includeValues.length) {
+    condition.$in = includeValues;
+  }
+
+  if (excludeValues.length) {
+    condition.$nin = excludeValues;
+  }
+
+  if (Object.keys(condition).length) {
+    clauses.push({
+      [field]: condition,
+    });
+  }
+};
+
+const advancedFilterAddRegexList = ({
+  clauses,
+  field,
+  include,
+  exclude,
+}) => {
+  const includeValues =
+    advancedFilterList(include);
+
+  const excludeValues =
+    advancedFilterList(exclude);
+
+  if (includeValues.length) {
+    clauses.push({
+      $or: includeValues.map((value) => ({
+        [field]: new RegExp(
+          advancedFilterEscapeRegex(value),
+          "i",
+        ),
+      })),
+    });
+  }
+
+  if (excludeValues.length) {
+    clauses.push({
+      $nor: excludeValues.map((value) => ({
+        [field]: new RegExp(
+          advancedFilterEscapeRegex(value),
+          "i",
+        ),
+      })),
+    });
+  }
+};
+
+const advancedFilterAddTextExists = ({
+  clauses,
+  fields,
+  value,
+}) => {
+  const parsed =
+    advancedFilterBoolean(value);
+
+  if (parsed === null) return;
+
+  if (parsed === true) {
+    clauses.push({
+      $or: fields.map((field) => ({
+        [field]: {
+          $exists: true,
+          $nin: ["", null],
+        },
+      })),
+    });
+
+    return;
+  }
+
+  clauses.push({
+    $and: fields.map((field) => ({
+      $or: [
+        {
+          [field]: {
+            $exists: false,
+          },
+        },
+        {
+          [field]: "",
+        },
+        {
+          [field]: null,
+        },
+      ],
+    })),
+  });
+};
+
+const ADVANCED_PAYMENT_STATUSES = new Set([
+  "pending",
+  "paid",
+  "failed",
+  "refunded",
+  "partially_refunded",
+  "refund_pending",
+  "not_applicable",
+]);
+
+const ADVANCED_PAYMENT_METHODS = new Set([
+  "cod",
+  "razorpay",
+  "exchange",
+  "wallet",
+  "manual_prepaid",
+]);
+
+const ADVANCED_FULFILLMENT_STATUSES = new Set([
+  "processing",
+  "packed",
+  "picked",
+  "shipped",
+  "out_for_delivery",
+  "delivered",
+  "pickup_initiated",
+  "return_requested",
+  "exchange_requested",
+  "returned",
+  "refunded",
+  "exchanged",
+  "cancelled",
+  "rto",
+  "failed",
+]);
+
+const ADVANCED_PRIORITIES = new Set([
+  "normal",
+  "medium",
+  "high",
+]);
+
+const ADVANCED_ORDER_TYPES = new Set([
+  "parent",
+  "shipment",
+]);
+
+const ADVANCED_ORDER_LIST_FIELDS = {
+  orderNumber: 1,
+  createdAt: 1,
+  orderDate: 1,
+
+  orderType: 1,
+  priority: 1,
+  priorityRank: 1,
+
+  paymentMethod: 1,
+  paymentStatus: 1,
+  fulfillmentStatus: 1,
+
+  isConfirmed: 1,
+  isInfluencerOrder: 1,
+
+  subtotal: 1,
+  discount: 1,
+  shippingFee: 1,
+  tax: 1,
+  totalAmount: 1,
+  finalPayable: 1,
+  currency: 1,
+
+  coupon: 1,
+
+  "shippingAddressSnapshot.fullName": 1,
+  "shippingAddressSnapshot.phone": 1,
+  "shippingAddressSnapshot.email": 1,
+  "shippingAddressSnapshot.city": 1,
+  "shippingAddressSnapshot.state": 1,
+  "shippingAddressSnapshot.country": 1,
+  "shippingAddressSnapshot.pincode": 1,
+
+  "attribution.source": 1,
+  "attribution.medium": 1,
+  "attribution.campaign": 1,
+  "attribution.campaignSlug": 1,
+
+  "shipment.provider": 1,
+  "shipment.status": 1,
+  "shipment.orderId": 1,
+  "shipment.shipmentId": 1,
+  "shipment.awb": 1,
+  "shipment.courierName": 1,
+  "shipment.trackingUrl": 1,
+  "shipment.labelUrl": 1,
+
+  "shipment.shiprocket.orderId": 1,
+  "shipment.shiprocket.shipmentId": 1,
+  "shipment.shiprocket.awb": 1,
+  "shipment.shiprocket.courierName": 1,
+  "shipment.shiprocket.trackingUrl": 1,
+  "shipment.shiprocket.labelUrl": 1,
+
+  "items.lineId": 1,
+  "items.productId": 1,
+  "items.quantity": 1,
+  "items.price": 1,
+  "items.subtotal": 1,
+  "items.selectedSize": 1,
+  "items.selectedColor": 1,
+
+  "items.productSnapshot.productCode": 1,
+  "items.productSnapshot.title": 1,
+  "items.productSnapshot.thumbnail": 1,
+  "items.productSnapshot.sku": 1,
+
+  "items.variant.sku": 1,
+};
+
+/**
+ * GET /api/orders/advanced-filter
+ *
+ * This controller is additive.
+ * Existing getAllOrders remains unchanged.
+ */
+export const getAdvancedFilteredOrders = async (
+  req,
+  res,
+) => {
+  try {
+    const query = req.query || {};
+    const clauses = [];
+
+    /* ---------------- Payment filters ---------------- */
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "paymentStatus",
+      include: query.paymentStatus,
+      exclude: query.excludePaymentStatus,
+      lowercase: true,
+      allowed: ADVANCED_PAYMENT_STATUSES,
+    });
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "paymentMethod",
+      include: query.paymentMethod,
+      exclude: query.excludePaymentMethod,
+      lowercase: true,
+      allowed: ADVANCED_PAYMENT_METHODS,
+    });
+
+    /* ---------------- Status filters ---------------- */
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "fulfillmentStatus",
+      include: query.fulfillmentStatus,
+      exclude:
+        query.excludeFulfillmentStatus,
+      lowercase: true,
+      allowed:
+        ADVANCED_FULFILLMENT_STATUSES,
+    });
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "priority",
+      include: query.priority,
+      exclude: query.excludePriority,
+      lowercase: true,
+      allowed: ADVANCED_PRIORITIES,
+    });
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "orderType",
+      include: query.orderType,
+      exclude: query.excludeOrderType,
+      lowercase: true,
+      allowed: ADVANCED_ORDER_TYPES,
+    });
+
+    /* ---------------- Attribution ---------------- */
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "attribution.source",
+      include: query.attributionSource,
+      exclude:
+        query.excludeAttributionSource,
+      lowercase: true,
+    });
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "attribution.medium",
+      include: query.attributionMedium,
+      exclude:
+        query.excludeAttributionMedium,
+      lowercase: true,
+    });
+
+    advancedFilterAddRegexList({
+      clauses,
+      field: "attribution.campaign",
+      include:
+        query.attributionCampaign,
+      exclude:
+        query.excludeAttributionCampaign,
+    });
+
+    /* ---------------- Product filters ---------------- */
+
+    advancedFilterAddInNin({
+      clauses,
+      field:
+        "items.productSnapshot.productCode",
+      include: query.productCode,
+      exclude: query.excludeProductCode,
+    });
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "items.variant.sku",
+      include: query.sku,
+      exclude: query.excludeSku,
+    });
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "items.selectedSize",
+      include: query.size,
+      exclude: query.excludeSize,
+    });
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "items.selectedColor",
+      include: query.color,
+      exclude: query.excludeColor,
+      lowercase: true,
+    });
+
+    const productIds =
+      advancedFilterObjectIds(
+        query.productId,
+      );
+
+    const excludeProductIds =
+      advancedFilterObjectIds(
+        query.excludeProductId,
+      );
+
+    if (
+      productIds.length ||
+      excludeProductIds.length
+    ) {
+      const productCondition = {};
+
+      if (productIds.length) {
+        productCondition.$in = productIds;
+      }
+
+      if (excludeProductIds.length) {
+        productCondition.$nin =
+          excludeProductIds;
+      }
+
+      clauses.push({
+        "items.productId": productCondition,
+      });
+    }
+
+    /* ---------------- Order filters ---------------- */
+
+    advancedFilterAddRegexList({
+      clauses,
+      field: "orderNumber",
+      include: query.orderNumber,
+      exclude: query.excludeOrderNumber,
+    });
+
+    const customerIds =
+      advancedFilterObjectIds(
+        query.customerId,
+      );
+
+    const excludeCustomerIds =
+      advancedFilterObjectIds(
+        query.excludeCustomerId,
+      );
+
+    if (
+      customerIds.length ||
+      excludeCustomerIds.length
+    ) {
+      const customerCondition = {};
+
+      if (customerIds.length) {
+        customerCondition.$in = customerIds;
+      }
+
+      if (excludeCustomerIds.length) {
+        customerCondition.$nin =
+          excludeCustomerIds;
+      }
+
+      clauses.push({
+        customerId: customerCondition,
+      });
+    }
+
+    /* ---------------- Location filters ---------------- */
+
+    advancedFilterAddRegexList({
+      clauses,
+      field:
+        "shippingAddressSnapshot.city",
+      include: query.city,
+      exclude: query.excludeCity,
+    });
+
+    advancedFilterAddRegexList({
+      clauses,
+      field:
+        "shippingAddressSnapshot.state",
+      include: query.state,
+      exclude: query.excludeState,
+    });
+
+    advancedFilterAddRegexList({
+      clauses,
+      field:
+        "shippingAddressSnapshot.country",
+      include: query.country,
+      exclude: query.excludeCountry,
+    });
+
+    advancedFilterAddRegexList({
+      clauses,
+      field:
+        "shippingAddressSnapshot.pincode",
+      include: query.pincode,
+      exclude: query.excludePincode,
+    });
+
+    /* ---------------- Confirmation ---------------- */
+
+    const confirmationValue =
+      query.confirmFilter ??
+      query.isConfirmed;
+
+    const confirmationBoolean =
+      advancedFilterBoolean(
+        confirmationValue,
+      );
+
+    if (
+      advancedFilterLower(
+        confirmationValue,
+      ) === "confirmed" ||
+      confirmationBoolean === true
+    ) {
+      clauses.push({
+        isConfirmed: true,
+      });
+    } else if (
+      advancedFilterLower(
+        confirmationValue,
+      ) === "not_confirmed" ||
+      confirmationBoolean === false
+    ) {
+      clauses.push({
+        isConfirmed: {
+          $ne: true,
+        },
+      });
+    }
+
+    /* ---------------- Influencer ---------------- */
+
+    const influencerValue =
+      advancedFilterBoolean(
+        query.isInfluencerOrder,
+      );
+
+    if (influencerValue === true) {
+      clauses.push({
+        isInfluencerOrder: true,
+      });
+    }
+
+    if (influencerValue === false) {
+      clauses.push({
+        isInfluencerOrder: {
+          $ne: true,
+        },
+      });
+    }
+
+    /* ---------------- Date range ---------------- */
+
+    const startAt =
+      advancedFilterString(query.startAt)
+        ? new Date(
+          advancedFilterString(
+            query.startAt,
+          ),
+        )
+        : advancedFilterISTStartUTC(
+          query.startDate,
+        );
+
+    const endAt =
+      advancedFilterString(query.endAt)
+        ? new Date(
+          advancedFilterString(
+            query.endAt,
+          ),
+        )
+        : advancedFilterISTEndExclusiveUTC(
+          query.endDate,
+        );
+
+    const createdAtCondition = {};
+
+    if (
+      startAt &&
+      !Number.isNaN(startAt.getTime())
+    ) {
+      createdAtCondition.$gte = startAt;
+    }
+
+    if (
+      endAt &&
+      !Number.isNaN(endAt.getTime())
+    ) {
+      if (
+        advancedFilterString(
+          query.endAt,
+        )
+      ) {
+        createdAtCondition.$lte = endAt;
+      } else {
+        createdAtCondition.$lt = endAt;
+      }
+    }
+
+    if (
+      Object.keys(
+        createdAtCondition,
+      ).length
+    ) {
+      clauses.push({
+        createdAt: createdAtCondition,
+      });
+    }
+
+    /* ---------------- Amount range ---------------- */
+
+    const minAmount = Number(
+      query.minAmount,
+    );
+
+    const maxAmount = Number(
+      query.maxAmount,
+    );
+
+    if (
+      Number.isFinite(minAmount) ||
+      Number.isFinite(maxAmount)
+    ) {
+      const amountCondition = {};
+
+      if (Number.isFinite(minAmount)) {
+        amountCondition.$gte = minAmount;
+      }
+
+      if (Number.isFinite(maxAmount)) {
+        amountCondition.$lte = maxAmount;
+      }
+
+      clauses.push({
+        finalPayable: amountCondition,
+      });
+    }
+
+    /* ---------------- Discount range ---------------- */
+
+    const minDiscount = Number(
+      query.minDiscount,
+    );
+
+    const maxDiscount = Number(
+      query.maxDiscount,
+    );
+
+    if (
+      Number.isFinite(minDiscount) ||
+      Number.isFinite(maxDiscount)
+    ) {
+      const discountCondition = {};
+
+      if (Number.isFinite(minDiscount)) {
+        discountCondition.$gte =
+          minDiscount;
+      }
+
+      if (Number.isFinite(maxDiscount)) {
+        discountCondition.$lte =
+          maxDiscount;
+      }
+
+      clauses.push({
+        discount: discountCondition,
+      });
+    }
+
+    /* ---------------- Coupon filters ---------------- */
+
+    const couponCodes =
+      advancedFilterList(
+        query.couponCode,
+      );
+
+    const excludedCouponCodes =
+      advancedFilterList(
+        query.excludeCouponCode,
+      );
+
+    if (
+      couponCodes.length ||
+      excludedCouponCodes.length
+    ) {
+      const couponCondition = {};
+
+      if (couponCodes.length) {
+        couponCondition.$in =
+          couponCodes;
+      }
+
+      if (
+        excludedCouponCodes.length
+      ) {
+        couponCondition.$nin =
+          excludedCouponCodes;
+      }
+
+      clauses.push({
+        "coupon.code": couponCondition,
+      });
+    }
+
+    const hasCoupon =
+      advancedFilterBoolean(
+        query.hasCoupon,
+      );
+
+    if (hasCoupon === true) {
+      clauses.push({
+        "coupon.code": {
+          $exists: true,
+          $nin: ["", null],
+        },
+      });
+    } else if (hasCoupon === false) {
+      clauses.push({
+        $or: [
+          {
+            coupon: {
+              $exists: false,
+            },
+          },
+          {
+            "coupon.code": {
+              $exists: false,
+            },
+          },
+          {
+            "coupon.code": "",
+          },
+          {
+            "coupon.code": null,
+          },
+        ],
+      });
+    }
+
+    /* ---------------- Courier filters ---------------- */
+
+    const includedCouriers =
+      advancedFilterList(
+        query.courier,
+      );
+
+    const excludedCouriers =
+      advancedFilterList(
+        query.excludeCourier,
+      );
+
+    if (includedCouriers.length) {
+      clauses.push({
+        $or: includedCouriers.flatMap(
+          (courier) => {
+            const regex = new RegExp(
+              advancedFilterEscapeRegex(
+                courier,
+              ),
+              "i",
+            );
+
+            return [
+              {
+                "shipment.courierName":
+                  regex,
+              },
+              {
+                "shipment.shiprocket.courierName":
+                  regex,
+              },
+            ];
+          },
+        ),
+      });
+    }
+
+    if (excludedCouriers.length) {
+      clauses.push({
+        $nor: excludedCouriers.flatMap(
+          (courier) => {
+            const regex = new RegExp(
+              advancedFilterEscapeRegex(
+                courier,
+              ),
+              "i",
+            );
+
+            return [
+              {
+                "shipment.courierName":
+                  regex,
+              },
+              {
+                "shipment.shiprocket.courierName":
+                  regex,
+              },
+            ];
+          },
+        ),
+      });
+    }
+
+    /* ---------------- Shipment existence filters ---------------- */
+
+    advancedFilterAddTextExists({
+      clauses,
+      fields: [
+        "shipment.awb",
+        "shipment.shiprocket.awb",
+      ],
+      value: query.hasAwb,
+    });
+
+    advancedFilterAddTextExists({
+      clauses,
+      fields: [
+        "shipment.trackingUrl",
+        "shipment.shiprocket.trackingUrl",
+      ],
+      value: query.hasTracking,
+    });
+
+    advancedFilterAddTextExists({
+      clauses,
+      fields: [
+        "shipment.labelUrl",
+        "shipment.shiprocket.labelUrl",
+      ],
+      value: query.hasLabel,
+    });
+
+    /* ---------------- Global search ---------------- */
+
+    const search =
+      advancedFilterString(
+        query.search ??
+        query.customerName,
+      );
+
+    if (search) {
+      const searchRegex = new RegExp(
+        advancedFilterEscapeRegex(
+          search,
+        ),
+        "i",
+      );
+
+      clauses.push({
+        $or: [
+          {
+            orderNumber: searchRegex,
+          },
+          {
+            "shippingAddressSnapshot.fullName":
+              searchRegex,
+          },
+          {
+            "shippingAddressSnapshot.email":
+              searchRegex,
+          },
+          {
+            "shippingAddressSnapshot.phone":
+              searchRegex,
+          },
+          {
+            "items.productSnapshot.productCode":
+              searchRegex,
+          },
+          {
+            "items.productSnapshot.title":
+              searchRegex,
+          },
+          {
+            "items.variant.sku":
+              searchRegex,
+          },
+          {
+            "attribution.source":
+              searchRegex,
+          },
+          {
+            "attribution.medium":
+              searchRegex,
+          },
+          {
+            "attribution.campaign":
+              searchRegex,
+          },
+        ],
+      });
+    }
+
+    /* ---------------- Final Mongo filter ---------------- */
+
+    const mongoFilter =
+      clauses.length === 0
+        ? {}
+        : clauses.length === 1
+          ? clauses[0]
+          : {
+            $and: clauses,
+          };
+
+    /* ---------------- Pagination ---------------- */
+
+    const page = Math.max(
+      1,
+      parseInt(
+        advancedFilterString(
+          query.page,
+        ),
+        10,
+      ) || 1,
+    );
+
+    const requestedLimit =
+      parseInt(
+        advancedFilterString(
+          query.limit,
+        ),
+        10,
+      ) || 100;
+
+    const limit = Math.min(
+      Math.max(requestedLimit, 1),
+      ADVANCED_FILTER_MAX_LIMIT,
+    );
+
+    const skip =
+      (page - 1) * limit;
+
+    const includeSum =
+      advancedFilterBoolean(
+        query.includeSum,
+      ) === true;
+
+    /* ---------------- Database query ---------------- */
+
+    const databaseQueries = [
+      Order.find(mongoFilter)
+        .select(
+          ADVANCED_ORDER_LIST_FIELDS,
+        )
+        .sort({
+          priorityRank: -1,
+          createdAt: -1,
+        })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .populate({
+          path: "customerId",
+          select:
+            "name email phone",
+        }),
+
+      Order.countDocuments(
+        mongoFilter,
+      ),
+    ];
+
+    if (includeSum) {
+      databaseQueries.push(
+        Order.aggregate([
+          {
+            $match: mongoFilter,
+          },
+          {
+            $group: {
+              _id: null,
+              totalSum: {
+                $sum: {
+                  $ifNull: [
+                    "$finalPayable",
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        ]),
+      );
+    }
+
+    const [
+      orders,
+      totalCount,
+      sumResult,
+    ] = await Promise.all(
+      databaseQueries,
+    );
+
+    return res.status(200).json({
+      orders,
+
+      meta: {
+        page,
+        limit,
+        totalCount,
+
+        totalPages: Math.max(
+          1,
+          Math.ceil(
+            totalCount / limit,
+          ),
+        ),
+
+        totalSum: includeSum
+          ? Number(
+            sumResult?.[0]
+              ?.totalSum || 0,
+          )
+          : null,
+
+        hasMore:
+          skip + orders.length <
+          totalCount,
+      },
+
+      appliedFilters:
+        query.debug === "true"
+          ? mongoFilter
+          : undefined,
+    });
+  } catch (error) {
+    console.error(
+      "Advanced order filter error:",
+      error,
+    );
+
+    return res.status(500).json({
+      message:
+        "Unable to filter orders",
+      error: error.message,
+    });
+  }
+};

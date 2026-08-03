@@ -1,8 +1,8 @@
-import fs from "fs";
-import csv from "csv-parser";
-import slugify from "slugify";
-import fse from "fs-extra";
 import axios from "axios";
+import csv from "csv-parser";
+import fs from "fs";
+import fse from "fs-extra";
+import slugify from "slugify";
 
 /* ============================================================
    CONFIG
@@ -12,7 +12,7 @@ const OUTPUT_JSON = "./scripts/31stdec/products.mapped.json";
 
 // Optional: directly import to API
 const IMPORT_TO_API = false;
-const API_URL = "http://localhost:5000/api/products/bulk/import"; // change to your deployed API
+const API_URL = "http://localhost:6001/api/products/bulk/import"; // change to your deployed API
 
 /* ============================================================
    HELPERS
@@ -21,9 +21,9 @@ const splitComma = (v) =>
   !v
     ? []
     : String(v)
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean);
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
 
 const splitHierarchyLeaf = (cat) => {
   // "Top > Crop Top" => "Crop Top"

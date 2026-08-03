@@ -3,6 +3,7 @@ import express from "express";
 import {
   createOrder,
   getAllOrders,
+  getAdvancedFilteredOrders,
   getOrderById,
   getOrdersByCustomer,
   updateOrder,
@@ -115,6 +116,11 @@ const router = express.Router();
 
 router.post("/", createOrder);
 router.get("/", getAllOrders);
+
+router.get(
+  "/advanced-filter",
+  getAdvancedFilteredOrders,
+);
 
 /* ============================================================
    DASHBOARD

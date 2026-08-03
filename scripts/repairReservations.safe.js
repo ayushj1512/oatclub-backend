@@ -1,11 +1,11 @@
-import mongoose from "mongoose";
 import dotenv from "dotenv";
+import mongoose from "mongoose";
 import Order from "../Orders/Orders.js";
 
 dotenv.config();
 
 const MONGO_URI = process.env.MONGO_URI;
-const BASE_URL = "http://localhost:5000";
+const BASE_URL = "http://localhost:6001";
 
 const s = (v) => String(v ?? "").trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
