@@ -1584,6 +1584,7 @@ export const getAllOrders = async (req, res) => {
       orderNumber: 1,
       createdAt: 1,
       orderDate: 1,
+      "fulfillmentDates.packedAt": 1,
 
       priority: 1,
       priorityRank: 1,
@@ -1629,6 +1630,8 @@ export const getAllOrders = async (req, res) => {
       // ✅ Shipment + Shiprocket details
       "shipment.provider": 1,
       "shipment.status": 1,
+
+
 
       // Universal shipment fields
       "shipment.orderId": 1,
