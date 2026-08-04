@@ -33,6 +33,10 @@ import {
   addProductToOrder,
   removeProductFromOrder,
   changeOrderItemSize,
+  splitOrder,
+  toggleTestingOrder,
+  sendOrderPaymentRecoveryEmail,
+  sendBulkOrderPaymentRecoveryEmails,
 } from "./orderController.js";
 
 import {
@@ -335,7 +339,11 @@ router.post("/:orderId/duplicate-exchange", duplicateExchangeOrder);
 
 router.post("/:id/confirm", confirmOrder);
 
-router.post("/:id/split", splitOrderIntoShipments);
+router.post("/:orderId/split", splitOrder);
+
+router.patch("/:id/toggle-testing", toggleTestingOrder);
+
+// router.post("/:id/split", splitOrderIntoShipments);
 
 router.patch("/:id/influencer-order", markOrderAsInfluencer);
 
@@ -387,5 +395,15 @@ router.post("/:id/items", addProductToOrder);
 router.delete("/:id/items/:lineId", removeProductFromOrder);
 
 router.patch("/:id/items/:lineId/size", changeOrderItemSize);
+
+router.post(
+  "/send-payment-recovery-emails",
+  sendBulkOrderPaymentRecoveryEmails,
+);
+
+router.post(
+  "/:id/send-payment-recovery-email",
+  sendOrderPaymentRecoveryEmail,
+);
 
 export default router;

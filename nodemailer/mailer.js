@@ -9,6 +9,7 @@ import { rmaCreatedTemplate } from "./events/RmaEmailTemplate.js";
 import { orderTrackingTemplate } from "./events/OrderTrackingTemplate.js";
 import { orderShippedTemplate } from "./events/OrderShippedTemplate.js";
 import { orderDeliveredTemplate } from "./events/OrderDeliveredTemplate.js";
+import { orderPaymentPendingTemplate } from "./events/OrderPaymentPendingTemplate.js";
 
 const MAIL_ENABLED = String(process.env.MAIL_ENABLED).toLowerCase() !== "false";
 

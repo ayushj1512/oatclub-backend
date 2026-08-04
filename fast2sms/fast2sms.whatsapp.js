@@ -1,115 +1,175 @@
-// fast2sms/fast2sms.whatsapp.js
-
 import { FAST2SMS_CONFIG } from "./fast2sms.config.js";
+import { fast2smsRequest } from "./fast2sms.service.js";
+
+import {
+  getApprovedFast2SmsTemplate,
+  getFast2SmsTemplate,
+} from "./fast2sms.templates.js";
+
 import {
   buildOrderActionLink,
+  getOrderCustomerName,
+  getOrderItemSummary,
+  getOrderNumber,
+  getOrderPhone,
+  getOrderTotal,
+  joinTemplateVariables,
   normalizeIndianPhone,
 } from "./fast2sms.utils.js";
 
-export const sendWhatsappTemplateMessage = async ({
+export const sendFast2SmsWhatsappTemplate = async ({
   phone,
-  templateName,
-  language = "en",
-  headerVariables = [],
-  bodyVariables = [],
+  templateKey,
+  variables = [],
+  udf1,
+  udf2,
+  udf3,
 }) => {
-  if (!FAST2SMS_CONFIG.API_KEY) {
-    throw new Error("FAST2SMS_API_KEY missing in .env");
-  }
+  const template = getApprovedFast2SmsTemplate(templateKey);
 
-  if (!FAST2SMS_CONFIG.PHONE_NUMBER_ID) {
-    throw new Error("FAST2SMS_PHONE_NUMBER_ID missing in .env");
-  }
+  const normalizedPhone = normalizeIndianPhone(phone);
 
-  if (!templateName) {
-    throw new Error("WhatsApp templateName is required");
-  }
+  const result = await fast2smsRequest({
+    method: "GET",
+    endpoint: FAST2SMS_CONFIG.ENDPOINTS.SEND_SIMPLE,
 
-  const version = FAST2SMS_CONFIG.WHATSAPP_VERSION || "v24.0";
-  const url = `${FAST2SMS_CONFIG.BASE_URL}/whatsapp/${version}/${FAST2SMS_CONFIG.PHONE_NUMBER_ID}/messages`;
+    params: {
+      message_id: template.messageId,
+      phone_number_id: FAST2SMS_CONFIG.PHONE_NUMBER_ID,
+      numbers: normalizedPhone,
 
-  const components = [];
+      ...(variables.length
+        ? {
+          variables_values:
+            joinTemplateVariables(variables),
+        }
+        : {}),
 
-  if (headerVariables.length) {
-    components.push({
-      type: "header",
-      parameters: headerVariables.map((text) => ({
-        type: "text",
-        text: String(text),
-      })),
-    });
-  }
-
-  if (bodyVariables.length) {
-    components.push({
-      type: "body",
-      parameters: bodyVariables.map((text) => ({
-        type: "text",
-        text: String(text),
-      })),
-    });
-  }
-
-  const body = {
-    messaging_product: "whatsapp",
-    recipient_type: "individual",
-    to: `+91${normalizeIndianPhone(phone)}`,
-    type: "template",
-    template: {
-      name: templateName,
-      language: { code: language },
-      components,
+      ...(udf1 ? { udf1 } : {}),
+      ...(udf2 ? { udf2 } : {}),
+      ...(udf3 ? { udf3 } : {}),
     },
-  };
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: FAST2SMS_CONFIG.API_KEY,
-      "Content-Type": "application/json",
-      accept: "application/json",
-    },
-    body: JSON.stringify(body),
   });
 
-  const json = await res.json().catch(() => ({}));
-
   return {
-    success: res.ok && !json?.error,
-    status: res.status,
-    data: json,
-    request: {
-      url,
-      body,
+    ...result,
+
+    meta: {
+      templateKey,
+      templateName: template.templateName,
+      messageId: template.messageId,
+      phone: normalizedPhone,
     },
   };
 };
 
-export const sendOrderConfirmationWhatsapp = async ({ order }) => {
-  const phone =
-    order?.shippingAddressSnapshot?.phone ||
-    order?.shippingAddress?.phone ||
-    order?.customerId?.phone ||
-    order?.customer?.phone;
-
-  const customerName =
-    order?.shippingAddressSnapshot?.fullName ||
-    order?.shippingAddress?.fullName ||
-    order?.customerId?.name ||
-    order?.customer?.name ||
-    "Customer";
-
-  const orderNumber = order?.orderNumber;
+export const sendCodOrderConfirmationWhatsapp = async ({
+  order,
+}) => {
+  const phone = getOrderPhone(order);
+  const customerName = getOrderCustomerName(order);
+  const orderNumber = getOrderNumber(order);
   const actionLink = buildOrderActionLink(orderNumber);
 
-  return sendWhatsappTemplateMessage({
+  const template = getApprovedFast2SmsTemplate(
+    "COD_ORDER_CONFIRMATION"
+  );
+
+  const variables = template.buildVariables({
+    customerName,
+    orderNumber,
+    actionLink,
+  });
+
+  return sendFast2SmsWhatsappTemplate({
     phone,
-    templateName:
-      FAST2SMS_CONFIG.TEMPLATES.ORDER_CONFIRMATION_NAME ||
-      "order_confirmation_action",
-    language:
-      FAST2SMS_CONFIG.TEMPLATES.ORDER_CONFIRMATION_LANGUAGE || "en",
-    headerVariables: [orderNumber],
-    bodyVariables: [customerName, orderNumber, actionLink],
+    templateKey: "COD_ORDER_CONFIRMATION",
+    variables,
+    udf1: orderNumber,
+    udf2: "cod_order_confirmation",
+  });
+};
+
+export const sendPaymentCompletedWhatsapp = async ({
+  phone,
+  amount,
+  orderNumber,
+}) => {
+  const template = getApprovedFast2SmsTemplate(
+    "PAYMENT_COMPLETED"
+  );
+
+  const variables = template.buildVariables({
+    amount,
+  });
+
+  return sendFast2SmsWhatsappTemplate({
+    phone,
+    templateKey: "PAYMENT_COMPLETED",
+    variables,
+    udf1: orderNumber,
+    udf2: "payment_completed",
+  });
+};
+
+export const sendPrepaidOrderConfirmationWhatsapp = async ({
+  order,
+}) => {
+  const template = getFast2SmsTemplate(
+    "PREPAID_ORDER_CONFIRMATION"
+  );
+
+  if (template.status !== "APPROVED") {
+    /*
+     * Temporary fallback until detailed prepaid
+     * order template gets approved.
+     */
+    return sendPaymentCompletedWhatsapp({
+      phone: getOrderPhone(order),
+      amount: getOrderTotal(order),
+      orderNumber: getOrderNumber(order),
+    });
+  }
+
+  const variables = template.buildVariables({
+    customerName: getOrderCustomerName(order),
+    orderNumber: getOrderNumber(order),
+    itemSummary: getOrderItemSummary(order),
+    amount: getOrderTotal(order),
+  });
+
+  return sendFast2SmsWhatsappTemplate({
+    phone: getOrderPhone(order),
+    templateKey: "PREPAID_ORDER_CONFIRMATION",
+    variables,
+    udf1: getOrderNumber(order),
+    udf2: "prepaid_order_confirmation",
+  });
+};
+
+export const sendOrderConfirmationWhatsapp = async ({
+  order,
+}) => {
+  const paymentMethod = String(
+    order?.paymentMethod ||
+    order?.payment?.method ||
+    order?.paymentMode ||
+    ""
+  ).toLowerCase();
+
+  const isCod = [
+    "cod",
+    "cash_on_delivery",
+    "cash on delivery",
+  ].includes(paymentMethod);
+
+  if (isCod) {
+    return sendCodOrderConfirmationWhatsapp({
+      order,
+    });
+  }
+
+  return sendPrepaidOrderConfirmationWhatsapp({
+    order,
   });
 };

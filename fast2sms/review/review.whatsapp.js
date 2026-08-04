@@ -1,4 +1,4 @@
-import { sendWhatsappTemplateMessage } from "../fast2sms.whatsapp.js";
+import { sendFast2SmsWhatsappTemplate } from "../fast2sms.whatsapp.js";
 import { FAST2SMS_REVIEW_CONFIG } from "./review.config.js";
 import {
   buildReviewLink,
@@ -21,37 +21,47 @@ export const sendOrderReviewWhatsapp = async ({ order }) => {
   const reviewLink = buildReviewLink(orderNumber);
 
   if (!phone || phone.length !== 10) {
-    throw new Error(`Invalid customer phone for review WhatsApp: ${rawPhone}`);
+    throw new Error(
+      `Invalid customer phone for review WhatsApp: ${rawPhone}`
+    );
   }
 
   if (!orderNumber) {
     throw new Error("Order number missing for review WhatsApp");
   }
 
-  const payload = {
+  const variables = [
+    customerName,
+    orderNumber,
+    productSummary,
+    reviewLink,
+  ];
+
+  console.log("📲 REVIEW WHATSAPP PAYLOAD:", {
     phone,
-    templateName: FAST2SMS_REVIEW_CONFIG.TEMPLATE_NAME,
-    templateId: FAST2SMS_REVIEW_CONFIG.TEMPLATE_ID,
-    messageId: FAST2SMS_REVIEW_CONFIG.MESSAGE_ID,
-    senderNumber: FAST2SMS_REVIEW_CONFIG.SENDER_NUMBER,
-    language: FAST2SMS_REVIEW_CONFIG.TEMPLATE_LANGUAGE,
+    templateKey: "CUSTOMER_REVIEW",
+    variables,
+  });
 
-    headerVariables: [customerName],
-    bodyVariables: [orderNumber, productSummary, reviewLink],
-  };
+  const res = await sendFast2SmsWhatsappTemplate({
+    phone,
+    templateKey: "CUSTOMER_REVIEW",
+    variables,
+    udf1: orderNumber,
+    udf2: "customer_review",
+  });
 
-  console.log("📲 REVIEW WHATSAPP PAYLOAD:", payload);
-
-  const res = await sendWhatsappTemplateMessage(payload);
-
-  console.log("📲 REVIEW WHATSAPP FAST2SMS RESPONSE:", JSON.stringify(res, null, 2));
+  console.log(
+    "📲 REVIEW WHATSAPP FAST2SMS RESPONSE:",
+    JSON.stringify(res, null, 2)
+  );
 
   if (!res?.success) {
     throw new Error(
       res?.data?.message ||
-        res?.data?.error ||
-        res?.error ||
-        "Fast2SMS review WhatsApp failed"
+      res?.data?.error ||
+      res?.error ||
+      "Fast2SMS review WhatsApp failed"
     );
   }
 

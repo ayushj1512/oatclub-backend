@@ -46,6 +46,21 @@ const buildCustomerOrderCta = (orderId) => {
     : `${base}/profile/orders`;
 };
 
+const buildPaymentRetryCta = (order) => {
+  const base = baseCustomerUrl();
+
+  const orderId =
+    order?._id ||
+    order?.orderId ||
+    order?.orderNumber;
+
+  if (!orderId) {
+    return `${base}/profile/orders`;
+  }
+
+  return `${base}/payment/retry/${orderId}`;
+};
+
 const buildAdminRmaCta = (orderId, rmaId) => {
   const base = baseAdminUrl();
   if (orderId && rmaId) return `${base}/admin/orders/${orderId}?rma=${rmaId}`;
@@ -158,6 +173,207 @@ export async function sendAdminOrderReceivedMail(order) {
   }
 }
 
+/* ============================================================
+   ✅ PAYMENT RECOVERY EMAILS
+   supported:
+   - pending
+   - failed
+============================================================ */
+
+const PAYMENT_RECOVERY_STATUSES = [
+  "pending",
+  "failed",
+];
+
+const PAYMENT_RECOVERY_METHODS = [
+  "razorpay",
+  "manual_prepaid",
+];
+
+const canSendPaymentRecoveryMail = (order) => {
+  if (!order) return false;
+
+  const paymentStatus = String(
+    order?.paymentStatus || "",
+  )
+    .trim()
+    .toLowerCase();
+
+  const paymentMethod = String(
+    order?.paymentMethod || "",
+  )
+    .trim()
+    .toLowerCase();
+
+  const isCancelled =
+    order?.cancellation?.isCancelled === true ||
+    String(order?.fulfillmentStatus || "")
+      .trim()
+      .toLowerCase() === "cancelled";
+
+  if (isCancelled) {
+    return false;
+  }
+
+  if (
+    !PAYMENT_RECOVERY_METHODS.includes(
+      paymentMethod,
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    !PAYMENT_RECOVERY_STATUSES.includes(
+      paymentStatus,
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    paymentStatus === "paid" ||
+    order?.razorpay?.paymentId
+  ) {
+    return false;
+  }
+
+  return true;
+};
+
+export async function sendCustomerPaymentRecoveryMail(
+  order,
+  {
+    paymentLink = "",
+    expiresAt = null,
+  } = {},
+) {
+  try {
+    if (!isMailEnabled()) {
+      return {
+        success: false,
+        skipped: true,
+        reason: "Mail disabled",
+      };
+    }
+
+    if (!canSendPaymentRecoveryMail(order)) {
+      console.log(
+        "📭 Payment recovery email skipped: order not eligible",
+        {
+          orderNumber:
+            order?.orderNumber,
+          paymentMethod:
+            order?.paymentMethod,
+          paymentStatus:
+            order?.paymentStatus,
+        },
+      );
+
+      return {
+        success: false,
+        skipped: true,
+        reason:
+          "Order not eligible for payment recovery",
+      };
+    }
+
+    const {
+      email,
+      name,
+    } = await fetchCustomerFallback(order);
+
+    if (!email) {
+      console.log(
+        "📭 Payment recovery email skipped: customer email missing",
+        {
+          orderNumber:
+            order?.orderNumber,
+          customerId:
+            order?.customerId,
+        },
+      );
+
+      return {
+        success: false,
+        skipped: true,
+        reason: "Customer email missing",
+      };
+    }
+
+    const retryLink =
+      paymentLink ||
+      buildPaymentRetryCta(order);
+
+    const reservationExpiry =
+      expiresAt ||
+      new Date(
+        Date.now() +
+        24 * 60 * 60 * 1000,
+      );
+
+    await Mailer.sendOrderPaymentPending({
+      to: email,
+      name,
+      order,
+      paymentLink: retryLink,
+      expiresAt: reservationExpiry,
+    });
+
+    console.log(
+      "✅ Customer payment recovery email sent:",
+      {
+        email,
+        orderNumber:
+          order?.orderNumber,
+        paymentStatus:
+          order?.paymentStatus,
+      },
+    );
+
+    return {
+      success: true,
+      skipped: false,
+      email,
+    };
+  } catch (err) {
+    console.error(
+      "❌ Customer payment recovery email error:",
+      err,
+    );
+
+    return {
+      success: false,
+      skipped: false,
+      error:
+        err?.message ||
+        "Payment recovery email failed",
+    };
+  }
+}
+
+export function triggerPaymentRecoveryEmail(
+  order,
+  options = {},
+) {
+  try {
+    sendCustomerPaymentRecoveryMail(
+      order,
+      options,
+    ).catch((error) => {
+      console.error(
+        "❌ Payment recovery trigger error:",
+        error?.message || error,
+      );
+    });
+  } catch (error) {
+    console.error(
+      "⚠️ triggerPaymentRecoveryEmail failed:",
+      error,
+    );
+  }
+}
+
 export async function sendCustomerOrderConfirmationMail(order) {
   try {
     if (!isMailEnabled()) return;
@@ -190,15 +406,59 @@ export async function sendCustomerOrderConfirmationMail(order) {
 
 export function triggerOrderEmails(order) {
   try {
+    // Every created order can notify admin.
     sendAdminOrderReceivedMail(order).catch((e) =>
-      console.error("❌ Admin order received trigger error:", e?.message || e)
+      console.error(
+        "❌ Admin order received trigger error:",
+        e?.message || e,
+      ),
     );
 
+    const paymentMethod = String(
+      order?.paymentMethod || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const paymentStatus = String(
+      order?.paymentStatus || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const shouldSendCustomerConfirmation =
+      paymentStatus === "paid" ||
+      (
+        paymentMethod === "cod" &&
+        order?.isConfirmed === true
+      ) ||
+      paymentStatus === "not_applicable";
+
+    if (!shouldSendCustomerConfirmation) {
+      console.log(
+        "📭 Customer confirmation skipped:",
+        {
+          orderNumber: order?.orderNumber,
+          paymentMethod,
+          paymentStatus,
+          isConfirmed: order?.isConfirmed,
+        },
+      );
+
+      return;
+    }
+
     sendCustomerOrderConfirmationMail(order).catch((e) =>
-      console.error("❌ Customer confirmation trigger error:", e?.message || e)
+      console.error(
+        "❌ Customer confirmation trigger error:",
+        e?.message || e,
+      ),
     );
   } catch (e) {
-    console.error("⚠️ triggerOrderEmails failed:", e);
+    console.error(
+      "⚠️ triggerOrderEmails failed:",
+      e,
+    );
   }
 }
 

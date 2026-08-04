@@ -16,6 +16,7 @@ import {
   triggerOrderEmails,
   triggerOrderCancellationEmails,
   triggerRmaEmails,
+  triggerPaymentRecoveryEmail,
 } from "./order.emails.js";
 import Coupon from "../Coupon/Coupon.js";
 import {
@@ -1591,6 +1592,7 @@ export const getAllOrders = async (req, res) => {
       fulfillmentStatus: 1,
       isConfirmed: 1,
       isInfluencerOrder: 1,
+      isTestingOrder: 1,
       subtotal: 1,
       discount: 1,
       shippingFee: 1,
@@ -4622,10 +4624,17 @@ export const markDuplicateOrderAlertsController = async (req, res) => {
 /* ============================================================
    UPDATE ORDER PAYMENT STATUS ONLY
 ============================================================ */
+/* ============================================================
+   UPDATE ORDER PAYMENT STATUS ONLY
+============================================================ */
+
 export const updateOrderPaymentStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const paymentStatus = String(req.body?.paymentStatus || "")
+
+    const paymentStatus = String(
+      req.body?.paymentStatus || "",
+    )
       .trim()
       .toLowerCase();
 
@@ -4639,55 +4648,134 @@ export const updateOrderPaymentStatus = async (req, res) => {
     ];
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid order id" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order id",
+      });
     }
 
     if (!allowedStatuses.includes(paymentStatus)) {
       return res.status(400).json({
+        success: false,
         message: "Invalid payment status",
         allowedStatuses,
       });
     }
 
     const order = await Order.findById(id);
+
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
     }
+
+    const previousPaymentStatus = String(
+      order.paymentStatus || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const paymentMethod = String(
+      order.paymentMethod || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const statusActuallyChanged =
+      previousPaymentStatus !== paymentStatus;
 
     order.paymentStatus = paymentStatus;
 
-    // ✅ Razorpay paid => auto confirm
+    // Razorpay paid → auto confirm
     if (
       paymentStatus === "paid" &&
-      String(order.paymentMethod || "").toLowerCase() === "razorpay"
+      paymentMethod === "razorpay"
     ) {
       order.isConfirmed = true;
-      order.confirmedAt = order.confirmedAt || new Date();
+      order.confirmedAt =
+        order.confirmedAt || new Date();
+      order.confirmedBy =
+        order.confirmedBy || "auto";
 
-      if (!order.razorpay?.paidAt) {
-        order.razorpay = order.razorpay || {};
+      order.razorpay = order.razorpay || {};
+
+      if (!order.razorpay.paidAt) {
         order.razorpay.paidAt = new Date();
       }
     }
 
-    // ✅ refunded status sync
+    // Refunded status sync
     if (paymentStatus === "refunded") {
       order.fulfillmentStatus = "refunded";
     }
 
     const updatedOrder = await order.save();
-    await creditOrderWalletRewardInternal({ orderId: order._id }).catch((e) => {
-      console.error("⚠️ Wallet reward credit failed:", e?.message || e);
+
+    // Wallet reward runs only after successful database save
+    await creditOrderWalletRewardInternal({
+      orderId: updatedOrder._id,
+    }).catch((error) => {
+      console.error(
+        "⚠️ Wallet reward credit failed:",
+        error?.message || error,
+      );
     });
-    syncCustomerAnalyticsSafe(order.customerId, "updateOrderPaymentStatus");
+
+    syncCustomerAnalyticsSafe(
+      updatedOrder.customerId,
+      "updateOrderPaymentStatus",
+    );
+
+    /*
+     * Payment recovery email:
+     * - status must genuinely change to failed
+     * - only online/prepaid payment methods
+     * - database save must complete first
+     */
+    const shouldSendPaymentRecoveryEmail =
+      statusActuallyChanged &&
+      paymentStatus === "failed" &&
+      ["razorpay", "manual_prepaid"].includes(
+        paymentMethod,
+      ) &&
+      updatedOrder?.cancellation?.isCancelled !==
+      true;
+
+    if (shouldSendPaymentRecoveryEmail) {
+      triggerPaymentRecoveryEmail(
+        updatedOrder,
+      );
+
+      console.log(
+        "📩 Payment recovery email triggered:",
+        {
+          orderNumber:
+            updatedOrder.orderNumber,
+          previousPaymentStatus,
+          paymentStatus,
+          paymentMethod,
+        },
+      );
+    }
 
     return res.status(200).json({
-      message: "Payment status updated successfully",
+      success: true,
+      message:
+        "Payment status updated successfully",
       order: updatedOrder,
+      paymentRecoveryEmailTriggered:
+        shouldSendPaymentRecoveryEmail,
     });
   } catch (error) {
-    console.error("❌ Update Payment Status Error:", error);
+    console.error(
+      "❌ Update Payment Status Error:",
+      error,
+    );
+
     return res.status(500).json({
+      success: false,
       message: "Server error",
       error: error.message,
     });
@@ -6603,7 +6691,7 @@ const ADVANCED_ORDER_LIST_FIELDS = {
 
   isConfirmed: 1,
   isInfluencerOrder: 1,
-
+  isTestingOrder: 1,
   subtotal: 1,
   discount: 1,
   shippingFee: 1,
@@ -7425,6 +7513,849 @@ export const getAdvancedFilteredOrders = async (
     return res.status(500).json({
       message:
         "Unable to filter orders",
+      error: error.message,
+    });
+  }
+};
+
+// ============================================================================
+// SPLIT ORDER
+// POST /api/orders/:orderId/split
+//
+// Body:
+// {
+//   "shipments": [
+//     {
+//       "items": [
+//         { "lineId": "item-line-id-1", "quantity": 1 }
+//       ]
+//     },
+//     {
+//       "items": [
+//         { "lineId": "item-line-id-2", "quantity": 1 }
+//       ]
+//     }
+//   ]
+// }
+// ============================================================================
+
+export const splitOrder = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  try {
+    const { orderId } = req.params;
+    const { shipments = [] } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(String(orderId || ""))) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid orderId",
+      });
+    }
+
+    if (!Array.isArray(shipments) || shipments.length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: "At least two shipments are required.",
+      });
+    }
+
+    let parentOrderId = null;
+    const createdChildIds = [];
+
+    await session.withTransaction(async () => {
+      const order = await Order.findById(orderId).session(session);
+
+      if (!order) {
+        throw new Error("Order not found");
+      }
+
+      if (String(order.orderType || "").toLowerCase() === "parent") {
+        throw new Error("This order has already been split.");
+      }
+
+      if (order.parentOrderId) {
+        throw new Error("A child shipment order cannot be split.");
+      }
+
+      if (
+        order.cancellation?.isCancelled === true ||
+        order.fulfillmentStatus === "cancelled"
+      ) {
+        throw new Error("Cancelled order cannot be split.");
+      }
+
+      const blockedStatuses = [
+        "picked",
+        "shipped",
+        "out_for_delivery",
+        "delivered",
+        "rto",
+        "returned",
+        "refunded",
+      ];
+
+      if (blockedStatuses.includes(order.fulfillmentStatus)) {
+        throw new Error(
+          `Order cannot be split in ${order.fulfillmentStatus} status.`,
+        );
+      }
+
+      const existingChildren = await Order.exists({
+        parentOrderId: order._id,
+      }).session(session);
+
+      if (existingChildren) {
+        throw new Error("Split shipment orders already exist.");
+      }
+
+      const originalItems = Array.isArray(order.items) ? order.items : [];
+
+      if (!originalItems.length) {
+        throw new Error("Order has no items to split.");
+      }
+
+      const itemMap = new Map(
+        originalItems.map((item) => [String(item.lineId), item]),
+      );
+
+      const assignedQuantityMap = new Map();
+
+      for (let shipmentIndex = 0; shipmentIndex < shipments.length; shipmentIndex++) {
+        const shipment = shipments[shipmentIndex];
+
+        if (!Array.isArray(shipment?.items) || !shipment.items.length) {
+          throw new Error(
+            `Shipment ${shipmentIndex + 1} must contain at least one item.`,
+          );
+        }
+
+        for (const requestedItem of shipment.items) {
+          const lineId = String(requestedItem?.lineId || "").trim();
+          const quantity = Number(requestedItem?.quantity);
+
+          if (!lineId) {
+            throw new Error(
+              `lineId missing in shipment ${shipmentIndex + 1}.`,
+            );
+          }
+
+          if (!Number.isInteger(quantity) || quantity < 1) {
+            throw new Error(`Invalid quantity for lineId ${lineId}.`);
+          }
+
+          const originalItem = itemMap.get(lineId);
+
+          if (!originalItem) {
+            throw new Error(`Order item not found for lineId ${lineId}.`);
+          }
+
+          const previouslyAssigned = assignedQuantityMap.get(lineId) || 0;
+          const newAssignedQuantity = previouslyAssigned + quantity;
+
+          if (newAssignedQuantity > Number(originalItem.quantity || 0)) {
+            throw new Error(
+              `Split quantity exceeds ordered quantity for ${originalItem?.productSnapshot?.title || lineId}.`,
+            );
+          }
+
+          assignedQuantityMap.set(lineId, newAssignedQuantity);
+        }
+      }
+
+      for (const originalItem of originalItems) {
+        const lineId = String(originalItem.lineId);
+        const orderedQuantity = Number(originalItem.quantity || 0);
+        const assignedQuantity = assignedQuantityMap.get(lineId) || 0;
+
+        if (assignedQuantity !== orderedQuantity) {
+          throw new Error(
+            `Complete quantity must be assigned for ${originalItem?.productSnapshot?.title || lineId}. Ordered: ${orderedQuantity}, assigned: ${assignedQuantity}.`,
+          );
+        }
+      }
+
+      parentOrderId = order._id;
+
+      order.orderType = "parent";
+
+      order.shipment = {
+        provider: order.shipment?.provider || "shiprocket",
+        status: "pending",
+        orderId: "",
+        shipmentId: "",
+        awb: "",
+        courierName: "",
+        trackingUrl: "",
+        labelUrl: "",
+      };
+
+      order.trackingDetails = {
+        trackingId: "",
+        awb: "",
+        provider: "",
+        courierName: "",
+        trackingUrl: "",
+        lastUpdatedAt: null,
+      };
+
+      await order.save({ session });
+
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+      if (shipments.length > alphabet.length) {
+        throw new Error("Maximum 26 split shipments are allowed.");
+      }
+
+      const totalSubtotal = Number(order.subtotal || 0);
+      const totalDiscount = Number(order.discount || 0);
+      const totalShippingFee = Number(order.shippingFee || 0);
+      const totalTax = Number(order.tax || 0);
+      const totalFinalPayable = Number(order.finalPayable || 0);
+
+      let distributedDiscount = 0;
+      let distributedShippingFee = 0;
+      let distributedTax = 0;
+      let distributedFinalPayable = 0;
+
+      for (let index = 0; index < shipments.length; index++) {
+        const shipmentRequest = shipments[index];
+        const splitSuffix = alphabet[index];
+
+        const childItems = shipmentRequest.items.map((requestedItem) => {
+          const originalItem = itemMap.get(String(requestedItem.lineId));
+          const quantity = Number(requestedItem.quantity);
+          const price = Number(originalItem.price || 0);
+          const subtotal = price * quantity;
+
+          const itemObject =
+            typeof originalItem.toObject === "function"
+              ? originalItem.toObject()
+              : { ...originalItem };
+
+          return {
+            ...itemObject,
+            quantity,
+            subtotal,
+            fulfillment: {
+              allocatedQty: Math.min(
+                Number(originalItem?.fulfillment?.allocatedQty || 0),
+                quantity,
+              ),
+              shippedQty: 0,
+              toProduceQty: Math.min(
+                Number(originalItem?.fulfillment?.toProduceQty || 0),
+                quantity,
+              ),
+            },
+          };
+        });
+
+        const childSubtotal = childItems.reduce(
+          (sum, item) => sum + Number(item.subtotal || 0),
+          0,
+        );
+
+        const ratio =
+          totalSubtotal > 0 ? childSubtotal / totalSubtotal : 1 / shipments.length;
+
+        const isLastChild = index === shipments.length - 1;
+
+        const childDiscount = isLastChild
+          ? totalDiscount - distributedDiscount
+          : Math.round(totalDiscount * ratio);
+
+        const childShippingFee = isLastChild
+          ? totalShippingFee - distributedShippingFee
+          : Math.round(totalShippingFee * ratio);
+
+        const childTax = isLastChild
+          ? totalTax - distributedTax
+          : Math.round(totalTax * ratio);
+
+        const childFinalPayable = isLastChild
+          ? totalFinalPayable - distributedFinalPayable
+          : Math.round(totalFinalPayable * ratio);
+
+        distributedDiscount += childDiscount;
+        distributedShippingFee += childShippingFee;
+        distributedTax += childTax;
+        distributedFinalPayable += childFinalPayable;
+
+        const childTotalAmount =
+          childSubtotal + childShippingFee + childTax;
+
+        const parentObject = order.toObject();
+
+        delete parentObject._id;
+        delete parentObject.__v;
+        delete parentObject.createdAt;
+        delete parentObject.updatedAt;
+
+        const childOrderPayload = {
+          ...parentObject,
+
+          orderNumber: `${order.orderNumber}-${splitSuffix}`,
+          orderType: "shipment",
+          parentOrderId: order._id,
+          splitSuffix,
+
+          items: childItems,
+
+          subtotal: childSubtotal,
+          discount: Math.max(0, childDiscount),
+          shippingFee: Math.max(0, childShippingFee),
+          tax: Math.max(0, childTax),
+          totalAmount: Math.max(0, childTotalAmount),
+          finalPayable: Math.max(0, childFinalPayable),
+
+          fulfillmentStatus: "processing",
+
+          fulfillmentDates: {
+            processingAt: new Date(),
+            packedAt: null,
+            pickedAt: null,
+            shippedAt: null,
+            outForDeliveryAt: null,
+            deliveredAt: null,
+            pickupInitiatedAt: null,
+            returnRequestedAt: null,
+            exchangeRequestedAt: null,
+            returnedAt: null,
+            refundedAt: null,
+            exchangedAt: null,
+            cancelledAt: null,
+            rtoAt: null,
+            failedAt: null,
+          },
+
+          cancellation: {
+            isCancelled: false,
+            cancelledAt: null,
+            reason: "",
+          },
+
+          shipment: {
+            provider: order.shipment?.provider || "shiprocket",
+            status: "pending",
+            orderId: "",
+            shipmentId: "",
+            awb: "",
+            courierName: "",
+            trackingUrl: "",
+            labelUrl: "",
+          },
+
+          trackingDetails: {
+            trackingId: "",
+            awb: "",
+            provider: "",
+            courierName: "",
+            trackingUrl: "",
+            lastUpdatedAt: null,
+          },
+
+          rmas: [],
+          eligibleForRefund: false,
+          eligibleForRma: false,
+
+          reviewRequest: {
+            sent: false,
+            sentAt: null,
+            channel: "fast2sms",
+            token: "",
+            link: "",
+            error: "",
+          },
+
+          analytics: {
+            ...(parentObject.analytics || {}),
+            totalItems: childItems.reduce(
+              (sum, item) => sum + Number(item.quantity || 0),
+              0,
+            ),
+            averageItemPrice:
+              childItems.reduce(
+                (sum, item) => sum + Number(item.quantity || 0),
+                0,
+              ) > 0
+                ? childSubtotal /
+                childItems.reduce(
+                  (sum, item) => sum + Number(item.quantity || 0),
+                  0,
+                )
+                : 0,
+          },
+        };
+
+        /*
+         * Payment belongs to the original parent transaction.
+         * Child orders should not initiate another Razorpay payment.
+         */
+        childOrderPayload.razorpay = {
+          ...(parentObject.razorpay || {}),
+        };
+
+        const [childOrder] = await Order.create(
+          [childOrderPayload],
+          { session },
+        );
+
+        createdChildIds.push(childOrder._id);
+      }
+    });
+
+    const parent = await Order.findById(parentOrderId)
+      .populate("customerId", "name email phone")
+      .lean();
+
+    const children = await Order.find({
+      _id: { $in: createdChildIds },
+    })
+      .sort({ splitSuffix: 1 })
+      .populate("customerId", "name email phone")
+      .lean();
+
+    return res.status(201).json({
+      success: true,
+      message: `Order ${parent.orderNumber} split into ${children.length} shipments successfully.`,
+      parent,
+      children,
+    });
+  } catch (error) {
+    console.error("❌ Split Order Error:", error);
+
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Order split failed.",
+    });
+  } finally {
+    await session.endSession();
+  }
+};
+
+
+export const toggleTestingOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    order.isTestingOrder = !order.isTestingOrder;
+
+    await order.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Order marked as ${order.isTestingOrder ? "Testing" : "Normal"
+        } successfully.`,
+      order,
+    });
+  } catch (error) {
+    console.error("Toggle Testing Order:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update testing order.",
+    });
+  }
+};
+
+
+/* ============================================================
+   MANUALLY SEND PAYMENT RECOVERY EMAIL
+   POST /api/orders/:id/send-payment-recovery-email
+============================================================ */
+
+export const sendOrderPaymentRecoveryEmail = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order id",
+      });
+    }
+
+    const order = await Order.findById(id)
+      .populate("customerId", "name email phone");
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    const paymentMethod = String(
+      order?.paymentMethod || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const paymentStatus = String(
+      order?.paymentStatus || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const fulfillmentStatus = String(
+      order?.fulfillmentStatus || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const isCancelled =
+      order?.cancellation?.isCancelled === true ||
+      fulfillmentStatus === "cancelled";
+
+    if (isCancelled) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payment recovery email cannot be sent for a cancelled order",
+      });
+    }
+
+    if (
+      !["razorpay", "manual_prepaid"].includes(
+        paymentMethod,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payment recovery email is available only for online payment orders",
+      });
+    }
+
+    if (
+      !["pending", "failed"].includes(
+        paymentStatus,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          paymentStatus === "paid"
+            ? "Order payment is already completed"
+            : `Payment recovery email cannot be sent for status: ${paymentStatus}`,
+      });
+    }
+
+    if (order?.razorpay?.paymentId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Razorpay payment ID already exists. Recovery email was not sent",
+      });
+    }
+
+    const clientUrl =
+      process.env.CLIENT_URL ||
+      "http://localhost:3000";
+
+    const paymentLink =
+      String(req.body?.paymentLink || "").trim() ||
+      `${clientUrl}/payment/retry/${order._id}`;
+
+    const requestedExpiry = req.body?.expiresAt
+      ? new Date(req.body.expiresAt)
+      : null;
+
+    const expiresAt =
+      requestedExpiry &&
+        !Number.isNaN(requestedExpiry.getTime())
+        ? requestedExpiry
+        : new Date(
+          Date.now() +
+          24 * 60 * 60 * 1000,
+        );
+
+    const result =
+      await sendCustomerPaymentRecoveryMail(
+        order,
+        {
+          paymentLink,
+          expiresAt,
+        },
+      );
+
+    if (!result?.success) {
+      return res.status(
+        result?.skipped ? 400 : 500,
+      ).json({
+        success: false,
+        skipped: Boolean(result?.skipped),
+        message:
+          result?.reason ||
+          result?.error ||
+          "Payment recovery email could not be sent",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Payment recovery email sent successfully",
+      data: {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        paymentMethod,
+        paymentStatus,
+        email: result.email,
+        paymentLink,
+        expiresAt,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "❌ Send Payment Recovery Email Error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to send payment recovery email",
+      error: error.message,
+    });
+  }
+};
+
+
+/* ============================================================
+   BULK SEND PAYMENT RECOVERY EMAILS
+   POST /api/orders/send-payment-recovery-emails
+   body: { orderIds: [] }
+============================================================ */
+
+export const sendBulkOrderPaymentRecoveryEmails = async (
+  req,
+  res,
+) => {
+  try {
+    const rawOrderIds = Array.isArray(
+      req.body?.orderIds,
+    )
+      ? req.body.orderIds
+      : [];
+
+    const orderIds = [
+      ...new Set(
+        rawOrderIds
+          .map((id) => String(id || "").trim())
+          .filter((id) =>
+            mongoose.Types.ObjectId.isValid(id),
+          ),
+      ),
+    ];
+
+    if (!orderIds.length) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "At least one valid order id is required",
+      });
+    }
+
+    const maxBulkSize = 100;
+
+    if (orderIds.length > maxBulkSize) {
+      return res.status(400).json({
+        success: false,
+        message: `Maximum ${maxBulkSize} orders can be processed at once`,
+      });
+    }
+
+    const orders = await Order.find({
+      _id: {
+        $in: orderIds,
+      },
+    }).populate(
+      "customerId",
+      "name email phone",
+    );
+
+    const clientUrl =
+      process.env.CLIENT_URL ||
+      "http://localhost:3000";
+
+    const expiresAt = new Date(
+      Date.now() +
+      24 * 60 * 60 * 1000,
+    );
+
+    const results = [];
+
+    for (const order of orders) {
+      const paymentMethod = String(
+        order?.paymentMethod || "",
+      )
+        .trim()
+        .toLowerCase();
+
+      const paymentStatus = String(
+        order?.paymentStatus || "",
+      )
+        .trim()
+        .toLowerCase();
+
+      const fulfillmentStatus = String(
+        order?.fulfillmentStatus || "",
+      )
+        .trim()
+        .toLowerCase();
+
+      const isCancelled =
+        order?.cancellation?.isCancelled ===
+        true ||
+        fulfillmentStatus === "cancelled";
+
+      const orderResult = {
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        paymentMethod,
+        paymentStatus,
+        success: false,
+        skipped: false,
+        email: "",
+        reason: "",
+      };
+
+      if (isCancelled) {
+        orderResult.skipped = true;
+        orderResult.reason =
+          "Order is cancelled";
+        results.push(orderResult);
+        continue;
+      }
+
+      if (
+        !["razorpay", "manual_prepaid"].includes(
+          paymentMethod,
+        )
+      ) {
+        orderResult.skipped = true;
+        orderResult.reason =
+          "Not an online payment order";
+        results.push(orderResult);
+        continue;
+      }
+
+      if (
+        !["pending", "failed"].includes(
+          paymentStatus,
+        )
+      ) {
+        orderResult.skipped = true;
+        orderResult.reason =
+          paymentStatus === "paid"
+            ? "Payment already completed"
+            : "Payment status not eligible";
+        results.push(orderResult);
+        continue;
+      }
+
+      if (order?.razorpay?.paymentId) {
+        orderResult.skipped = true;
+        orderResult.reason =
+          "Razorpay payment ID already exists";
+        results.push(orderResult);
+        continue;
+      }
+
+      const paymentLink =
+        `${clientUrl}/payment/retry/${order._id}`;
+
+      const sendResult =
+        await sendCustomerPaymentRecoveryMail(
+          order,
+          {
+            paymentLink,
+            expiresAt,
+          },
+        );
+
+      orderResult.success =
+        Boolean(sendResult?.success);
+
+      orderResult.skipped =
+        Boolean(sendResult?.skipped);
+
+      orderResult.email =
+        sendResult?.email || "";
+
+      orderResult.reason =
+        sendResult?.reason ||
+        sendResult?.error ||
+        "";
+
+      results.push(orderResult);
+    }
+
+    const foundOrderIds = new Set(
+      orders.map((order) =>
+        String(order._id),
+      ),
+    );
+
+    for (const orderId of orderIds) {
+      if (!foundOrderIds.has(orderId)) {
+        results.push({
+          orderId,
+          orderNumber: "",
+          success: false,
+          skipped: true,
+          email: "",
+          reason: "Order not found",
+        });
+      }
+    }
+
+    const sentCount = results.filter(
+      (item) => item.success,
+    ).length;
+
+    const skippedCount = results.filter(
+      (item) => item.skipped,
+    ).length;
+
+    const failedCount =
+      results.length -
+      sentCount -
+      skippedCount;
+
+    return res.status(200).json({
+      success: true,
+      message: `${sentCount} payment recovery email(s) sent`,
+      summary: {
+        requested: orderIds.length,
+        found: orders.length,
+        sent: sentCount,
+        skipped: skippedCount,
+        failed: failedCount,
+      },
+      results,
+    });
+  } catch (error) {
+    console.error(
+      "❌ Bulk Payment Recovery Email Error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to process bulk payment recovery emails",
       error: error.message,
     });
   }

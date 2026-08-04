@@ -1,6 +1,5 @@
 import WhatsappConfirmationMessage from "./whatsappConfirmationMessage.js";
-import { sendWhatsappTemplateMessage } from "../fast2sms/index.js";
-
+import { sendFast2SmsWhatsappTemplate } from "../fast2sms/index.js";
 /* =========================================================
    HELPERS
 ========================================================= */
