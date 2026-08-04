@@ -83,7 +83,13 @@ export async function sendMail({ to, subject, text, html, headers = {} }) {
 }
 
 export const Mailer = {
-  sendUserOnboarding: async ({ to, name, ctaUrl, brandName, supportEmail }) => {
+  sendUserOnboarding: async ({
+    to,
+    name,
+    ctaUrl,
+    brandName,
+    supportEmail,
+  }) => {
     const { subject, text, html } = userOnboardingTemplate({
       name,
       ctaUrl,
@@ -91,20 +97,63 @@ export const Mailer = {
       supportEmail,
     });
 
-    return sendMail({ to, subject, text, html });
+    return sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
   },
 
-  sendOrderConfirmation: async ({ to, name, order, ctaUrl }) => {
+  sendOrderConfirmation: async ({
+    to,
+    name,
+    order,
+    ctaUrl,
+  }) => {
     const { subject, text, html } = orderConfirmationTemplate({
       name,
       order,
       ctaUrl,
     });
 
-    return sendMail({ to, subject, text, html });
+    return sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
   },
 
-  sendOrderCancelled: async ({ to, name, order, ctaUrl, reason }) => {
+  sendOrderPaymentPending: async ({
+    to,
+    name,
+    order,
+    paymentLink,
+    expiresAt,
+  }) => {
+    const { subject, text, html } = orderPaymentPendingTemplate({
+      name,
+      order,
+      paymentLink,
+      expiresAt,
+    });
+
+    return sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
+  },
+
+  sendOrderCancelled: async ({
+    to,
+    name,
+    order,
+    ctaUrl,
+    reason,
+  }) => {
     const { subject, text, html } = orderCancellationTemplate({
       name,
       order,
@@ -112,23 +161,56 @@ export const Mailer = {
       reason,
     });
 
-    return sendMail({ to, subject, text, html });
+    return sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
   },
 
-  sendOrderCancellation: async ({ to, name, order, ctaUrl, reason }) => {
-    return Mailer.sendOrderCancelled({ to, name, order, ctaUrl, reason });
+  sendOrderCancellation: async ({
+    to,
+    name,
+    order,
+    ctaUrl,
+    reason,
+  }) => {
+    return Mailer.sendOrderCancelled({
+      to,
+      name,
+      order,
+      ctaUrl,
+      reason,
+    });
   },
 
-  sendAdminOrderReceived: async ({ to, order, ctaUrl }) => {
+  sendAdminOrderReceived: async ({
+    to,
+    order,
+    ctaUrl,
+  }) => {
     const { subject, text, html } = orderReceivedAdminTemplate({
       order,
       ctaUrl,
     });
 
-    return sendMail({ to, subject, text, html });
+    return sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
   },
 
-  sendRmaCreated: async ({ to, name, order, rma, policy, ctaUrl }) => {
+  sendRmaCreated: async ({
+    to,
+    name,
+    order,
+    rma,
+    policy,
+    ctaUrl,
+  }) => {
     const { subject, text, html } = rmaCreatedTemplate({
       name,
       order,
@@ -137,7 +219,12 @@ export const Mailer = {
       ctaUrl,
     });
 
-    return sendMail({ to, subject, text, html });
+    return sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
   },
 
   sendOrderTracking: async ({
@@ -158,7 +245,12 @@ export const Mailer = {
       ctaUrl,
     });
 
-    return sendMail({ to, subject, text, html });
+    return sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
   },
 
   sendOrderShipped: async ({
@@ -170,7 +262,12 @@ export const Mailer = {
     courierName,
     trackingLink,
   }) => {
-    const patchedOrder = patchShipment(order, awb, courierName, trackingLink);
+    const patchedOrder = patchShipment(
+      order,
+      awb,
+      courierName,
+      trackingLink,
+    );
 
     const { subject, text, html } = orderShippedTemplate({
       name,
@@ -178,7 +275,12 @@ export const Mailer = {
       ctaUrl,
     });
 
-    return sendMail({ to, subject, text, html });
+    return sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
   },
 
   sendOrderOutForDelivery: async ({
@@ -205,7 +307,9 @@ export const Mailer = {
     return sendMail({
       to,
       subject:
-        subject || `Order Out for Delivery — #${order?.orderNumber || order?._id}`,
+        subject ||
+        `Order Out for Delivery — #${order?.orderNumber || order?._id
+        }`,
       text,
       html,
     });
@@ -220,7 +324,12 @@ export const Mailer = {
     courierName,
     trackingLink,
   }) => {
-    const patchedOrder = patchShipment(order, awb, courierName, trackingLink);
+    const patchedOrder = patchShipment(
+      order,
+      awb,
+      courierName,
+      trackingLink,
+    );
 
     const { subject, text, html } = orderDeliveredTemplate({
       name,
@@ -228,7 +337,12 @@ export const Mailer = {
       ctaUrl,
     });
 
-    return sendMail({ to, subject, text, html });
+    return sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
   },
 };
 

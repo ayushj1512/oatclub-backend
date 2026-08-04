@@ -17,6 +17,7 @@ import {
   triggerOrderCancellationEmails,
   triggerRmaEmails,
   triggerPaymentRecoveryEmail,
+  sendCustomerPaymentRecoveryMail,
 } from "./order.emails.js";
 import Coupon from "../Coupon/Coupon.js";
 import {
@@ -482,8 +483,8 @@ export const createOrder = async (req, res) => {
 
     const target = str(
       couponDoc?.discountTarget ||
-        couponDoc?.cartRule?.discountTarget ||
-        "cart",
+      couponDoc?.cartRule?.discountTarget ||
+      "cart",
     );
 
     const hasRules =
@@ -993,10 +994,10 @@ export const createOrder = async (req, res) => {
 
         const frontendPrice = num(
           item?.price ??
-            item?.itemPrice ??
-            item?.item_price ??
-            item?.salePrice ??
-            item?.productSnapshot?.price,
+          item?.itemPrice ??
+          item?.item_price ??
+          item?.salePrice ??
+          item?.productSnapshot?.price,
         );
 
         const dbPrice = num(product.price);
@@ -1097,10 +1098,10 @@ export const createOrder = async (req, res) => {
 
       const discountBase = couponDocForBase
         ? getCouponDiscountBase({
-            couponDoc: couponDocForBase,
-            subtotal,
-            eligibleCouponBase,
-          })
+          couponDoc: couponDocForBase,
+          subtotal,
+          eligibleCouponBase,
+        })
         : null;
 
       console.log("🎟️ CREATE ORDER COUPON DEBUG:", {
@@ -1143,9 +1144,9 @@ export const createOrder = async (req, res) => {
       const actualWalletAmount =
         requestedWalletAmount > 0 || pm === "wallet"
           ? Math.min(
-              requestedWalletAmount || afterCouponPayable,
-              afterCouponPayable,
-            )
+            requestedWalletAmount || afterCouponPayable,
+            afterCouponPayable,
+          )
           : 0;
 
       const amountAfterWallet = Math.max(
@@ -1156,9 +1157,9 @@ export const createOrder = async (req, res) => {
       const razorpayExtraDiscount =
         pm === "razorpay"
           ? Math.min(
-              amountAfterWallet,
-              Math.round((amountAfterWallet * RAZORPAY_DISCOUNT_PERCENT) / 100),
-            )
+            amountAfterWallet,
+            Math.round((amountAfterWallet * RAZORPAY_DISCOUNT_PERCENT) / 100),
+          )
           : 0;
 
       let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
@@ -2893,22 +2894,22 @@ export const updateTracking = async (req, res) => {
 
     const finalAwb = String(
       awb ??
-        trackingId ??
-        order?.shipment?.shiprocket?.awb ??
-        order?.trackingDetails?.trackingId ??
-        "",
+      trackingId ??
+      order?.shipment?.shiprocket?.awb ??
+      order?.trackingDetails?.trackingId ??
+      "",
     ).trim();
     const finalCourier = String(
       courierName ??
-        order?.shipment?.shiprocket?.courierName ??
-        order?.trackingDetails?.courierName ??
-        "",
+      order?.shipment?.shiprocket?.courierName ??
+      order?.trackingDetails?.courierName ??
+      "",
     ).trim();
     const finalUrl = String(
       trackingUrl ??
-        order?.shipment?.shiprocket?.trackingUrl ??
-        order?.trackingDetails?.trackingUrl ??
-        "",
+      order?.shipment?.shiprocket?.trackingUrl ??
+      order?.trackingDetails?.trackingUrl ??
+      "",
     ).trim();
 
     order.shipment =
@@ -3498,8 +3499,8 @@ async function autoBookShiprocketForOrder(order) {
 
         const awb = clean(
           assigned?.awb_code ||
-            assigned?.awb ||
-            assigned?.response?.data?.awb_code,
+          assigned?.awb ||
+          assigned?.response?.data?.awb_code,
         );
 
         if (!awb) {
@@ -3573,8 +3574,8 @@ async function autoBookShiprocketForOrder(order) {
       const expectedSubTotal = Math.max(
         0,
         Number(order.finalPayable || 0) -
-          Number(order.shippingFee || 0) -
-          Number(order.tax || 0),
+        Number(order.shippingFee || 0) -
+        Number(order.tax || 0),
       );
 
       if (
@@ -3615,7 +3616,7 @@ async function autoBookShiprocketForOrder(order) {
               Math.max(
                 0,
                 Number(lastItem.selling_price || 0) +
-                  Math.round(difference / lastUnits),
+                Math.round(difference / lastUnits),
               ),
             ),
           };
@@ -3634,14 +3635,14 @@ async function autoBookShiprocketForOrder(order) {
 
     const shipmentId = clean(
       shipment?.shipment_id ||
-        shipment?.shipmentId ||
-        shipment?.response?.data?.shipment_id,
+      shipment?.shipmentId ||
+      shipment?.response?.data?.shipment_id,
     );
 
     const shiprocketOrderId = clean(
       shipment?.order_id ||
-        shipment?.orderId ||
-        shipment?.response?.data?.order_id,
+      shipment?.orderId ||
+      shipment?.response?.data?.order_id,
     );
 
     let awb = clean(
@@ -3674,8 +3675,8 @@ async function autoBookShiprocketForOrder(order) {
 
         awb = clean(
           assigned?.awb_code ||
-            assigned?.awb ||
-            assigned?.response?.data?.awb_code,
+          assigned?.awb ||
+          assigned?.response?.data?.awb_code,
         );
 
         if (!awb) {
@@ -4809,14 +4810,14 @@ export const getOrderConfirmationDetails = async (req, res) => {
 
     const confirmedAtIST = order.confirmedAt
       ? new Date(order.confirmedAt).toLocaleString("en-IN", {
-          timeZone: "Asia/Kolkata",
-          day: "2-digit",
-          month: "short",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        })
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      })
       : null;
 
     return res.status(200).json({
@@ -5374,15 +5375,15 @@ export const applyCouponAfterOrderPlaced = async (req, res) => {
     await session.withTransaction(async () => {
       const orderQuery = mongoose.Types.ObjectId.isValid(idOrNumber)
         ? {
-            $or: [
-              { _id: idOrNumber },
-              { orderNumber: idOrNumber },
-              { orderId: idOrNumber },
-            ],
-          }
+          $or: [
+            { _id: idOrNumber },
+            { orderNumber: idOrNumber },
+            { orderId: idOrNumber },
+          ],
+        }
         : {
-            $or: [{ orderNumber: idOrNumber }, { orderId: idOrNumber }],
-          };
+          $or: [{ orderNumber: idOrNumber }, { orderId: idOrNumber }],
+        };
 
       const order = await Order.findOne(orderQuery).session(session);
 
@@ -5452,12 +5453,12 @@ export const applyCouponAfterOrderPlaced = async (req, res) => {
 
       const email = normalizeEmail(
         order.shippingAddressSnapshot?.email ||
-          order.billingAddressSnapshot?.email,
+        order.billingAddressSnapshot?.email,
       );
 
       const phone = normalizePhone(
         order.shippingAddressSnapshot?.phone ||
-          order.billingAddressSnapshot?.phone,
+        order.billingAddressSnapshot?.phone,
       );
 
       const customerIdentity = email
@@ -5480,8 +5481,8 @@ export const applyCouponAfterOrderPlaced = async (req, res) => {
 
       const usedTimes = customerIdentity
         ? (coupon.usedBy || []).filter(
-            (value) => str(value).trim() === customerIdentity,
-          ).length
+          (value) => str(value).trim() === customerIdentity,
+        ).length
         : 0;
 
       if (
@@ -5662,15 +5663,15 @@ export const adjustOrderFinalPayable = async (req, res) => {
 
     const orderQuery = mongoose.Types.ObjectId.isValid(idOrNumber)
       ? {
-          $or: [
-            { _id: idOrNumber },
-            { orderNumber: idOrNumber },
-            { orderId: idOrNumber },
-          ],
-        }
+        $or: [
+          { _id: idOrNumber },
+          { orderNumber: idOrNumber },
+          { orderId: idOrNumber },
+        ],
+      }
       : {
-          $or: [{ orderNumber: idOrNumber }, { orderId: idOrNumber }],
-        };
+        $or: [{ orderNumber: idOrNumber }, { orderId: idOrNumber }],
+      };
 
     const order = await Order.findOne(orderQuery);
 
@@ -5928,13 +5929,13 @@ export const addProductToOrder = async (req, res) => {
 
     const variantAttributes = Array.isArray(variant?.attributes)
       ? variant.attributes
-          .filter(
-            (attribute) => attribute?.key != null && attribute?.value != null,
-          )
-          .map((attribute) => ({
-            key: String(attribute.key),
-            value: String(attribute.value),
-          }))
+        .filter(
+          (attribute) => attribute?.key != null && attribute?.value != null,
+        )
+        .map((attribute) => ({
+          key: String(attribute.key),
+          value: String(attribute.value),
+        }))
       : [];
 
     const selectedSize =
@@ -6278,13 +6279,13 @@ export const changeOrderItemSize = async (req, res) => {
 
     const attributes = Array.isArray(targetVariant.attributes)
       ? targetVariant.attributes
-          .filter(
-            (attribute) => attribute?.key != null && attribute?.value != null,
-          )
-          .map((attribute) => ({
-            key: String(attribute.key),
-            value: String(attribute.value),
-          }))
+        .filter(
+          (attribute) => attribute?.key != null && attribute?.value != null,
+        )
+        .map((attribute) => ({
+          key: String(attribute.key),
+          value: String(attribute.value),
+        }))
       : [];
 
     const sizeAttribute = attributes.find(
@@ -6303,7 +6304,7 @@ export const changeOrderItemSize = async (req, res) => {
         String(orderItem.lineId) !== String(lineId) &&
         String(orderItem.productId) === String(item.productId) &&
         String(orderItem.variant?.variantId || "") ===
-          String(targetVariant._id),
+        String(targetVariant._id),
     );
 
     if (duplicateTargetLine) {
@@ -6347,9 +6348,8 @@ export const changeOrderItemSize = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Size changed from ${
-        oldVariant.selectedSize || "previous size"
-      } to ${item.selectedSize}`,
+      message: `Size changed from ${oldVariant.selectedSize || "previous size"
+        } to ${item.selectedSize}`,
       item: {
         lineId: item.lineId,
         productId: item.productId,
