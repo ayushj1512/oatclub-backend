@@ -15,7 +15,9 @@ export const normalizeIndianPhone = (value = "") => {
   }
 
   if (phone.length !== 10) {
-    throw new Error("A valid 10-digit Indian phone number is required");
+    throw new Error(
+      "A valid 10-digit Indian phone number is required",
+    );
   }
 
   return phone;
@@ -30,26 +32,30 @@ export const normalizeAmount = (value = "") =>
     .trim();
 
 export const buildOrderActionLink = (orderNumber) => {
-  const normalizedOrderNumber = normalizeOrderNumber(orderNumber);
+  const normalizedOrderNumber =
+    normalizeOrderNumber(orderNumber);
 
   if (!normalizedOrderNumber) {
     throw new Error("Order number is required");
   }
 
   return `https://www.oatclub.in/orders/action/${encodeURIComponent(
-    normalizedOrderNumber
+    normalizedOrderNumber,
   )}`;
 };
 
 export const getOrderPhone = (order = {}) =>
   order?.shippingAddressSnapshot?.phone ||
+  order?.billingAddressSnapshot?.phone ||
   order?.shippingAddress?.phone ||
   order?.customerId?.phone ||
   order?.customer?.phone ||
+  order?.phone ||
   "";
 
 export const getOrderCustomerName = (order = {}) =>
   order?.shippingAddressSnapshot?.fullName ||
+  order?.billingAddressSnapshot?.fullName ||
   order?.shippingAddress?.fullName ||
   order?.customerId?.name ||
   order?.customer?.name ||
@@ -60,61 +66,93 @@ export const getOrderNumber = (order = {}) =>
     order?.orderNumber ||
     order?.displayOrderNumber ||
     order?._id ||
-    ""
+    "",
   );
 
 export const getOrderTotal = (order = {}) =>
   normalizeAmount(
+    order?.finalPayable ??
     order?.finalAmount ??
     order?.totalAmount ??
     order?.grandTotal ??
     order?.total ??
-    ""
+    "",
   );
 
 export const getOrderItemSummary = (order = {}) => {
-  const items = Array.isArray(order?.items) ? order.items : [];
+  const items = Array.isArray(order?.items)
+    ? order.items
+    : [];
 
   if (!items.length) {
     return "OATCLUB order";
   }
 
-  return items
+  const visibleItems = items
     .slice(0, 3)
     .map((item) => {
       const name =
+        item?.productSnapshot?.title ||
+        item?.productSnapshot?.name ||
         item?.productName ||
         item?.name ||
-        item?.productSnapshot?.name ||
         "Product";
 
-      const size = item?.size ? ` (${item.size})` : "";
-      const quantity = Number(item?.quantity || 1);
+      const selectedSize =
+        item?.selectedSize ||
+        item?.size ||
+        item?.variant?.size ||
+        "";
+
+      const size = selectedSize
+        ? ` (${selectedSize})`
+        : "";
+
+      const quantity = Math.max(
+        1,
+        Number(item?.quantity || 1),
+      );
 
       return `${name}${size} x${quantity}`;
-    })
-    .join(", ");
+    });
+
+  const remaining =
+    items.length - visibleItems.length;
+
+  if (remaining > 0) {
+    visibleItems.push(
+      `+${remaining} more item${remaining > 1 ? "s" : ""
+      }`,
+    );
+  }
+
+  return visibleItems.join(", ");
 };
 
-export const joinTemplateVariables = (variables = []) => {
-  return variables
+export const joinTemplateVariables = (
+  variables = [],
+) =>
+  variables
     .map((value) => {
-      const normalizedValue = String(value ?? "").trim();
+      const normalizedValue = String(
+        value ?? "",
+      ).trim();
 
       if (!normalizedValue) {
-        throw new Error("Fast2SMS template variable cannot be empty");
+        throw new Error(
+          "Fast2SMS template variable cannot be empty",
+        );
       }
 
       if (normalizedValue.includes("|")) {
         throw new Error(
-          "Fast2SMS template variable cannot contain pipe character"
+          "Fast2SMS template variable cannot contain pipe character",
         );
       }
 
       return normalizedValue;
     })
     .join("|");
-};
 
 export const assertFast2SMSReady = () => {
   if (!FAST2SMS_CONFIG.API_KEY) {
@@ -122,6 +160,39 @@ export const assertFast2SMSReady = () => {
   }
 
   if (!FAST2SMS_CONFIG.PHONE_NUMBER_ID) {
-    throw new Error("FAST2SMS_PHONE_NUMBER_ID is missing");
+    throw new Error(
+      "FAST2SMS_PHONE_NUMBER_ID is missing",
+    );
   }
 };
+
+export const parseFast2SMSWebhook = (
+  payload = {},
+) => ({
+  requestId:
+    payload.request_id ||
+    payload.requestId ||
+    "",
+
+  messageId:
+    payload.message_id ||
+    payload.messageId ||
+    "",
+
+  status:
+    payload.status ||
+    payload.event ||
+    "",
+
+  phone:
+    payload.mobile ||
+    payload.phone ||
+    "",
+
+  message:
+    payload.message ||
+    payload.text ||
+    "",
+
+  raw: payload,
+});

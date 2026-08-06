@@ -34,11 +34,7 @@ import {
 } from "./order.duplicate.utils.js";
 
 import { updateOrderFulfillmentStatus } from "./order.utils.js";
-
-import { sendCodOrderConfirmationWhatsapp } from "../whatsappConfirmationMessage/whatsappConfirmationMessage.service.js";
-
 import { recalculateCustomerAnalytics } from "../Customer/customerAnalytics.service.js";
-
 import Customer from "../Customer/Customer.js";
 import { debitWalletForOrderInternal } from "../Customer/customerCredit.service.js"; // ⚠️ path tumhare project ke hisaab se adjust kar lena
 import { creditOrderWalletRewardInternal } from "../Customer/orderWalletReward.service.js";
@@ -46,6 +42,11 @@ import { checkIsBlacklistedCustomer } from "../Customer/customerBlacklist.servic
 import { createShipment as createDelhiveryShipment } from "../delhivery/shipment.js";
 import { checkServiceability as checkDelhiveryServiceability } from "../delhivery/serviceability.js";
 import { calculateDelhiveryRate } from "../delhivery/rate.js";
+import {
+  sendCodOrderConfirmationWhatsapp,
+  sendPaymentPendingWhatsapp,
+  sendPrepaidOrderConfirmationWhatsapp,
+} from "../fast2sms/index.js";
 
 const isParentOrder = (order) =>
   String(order?.orderType || "").toLowerCase() === "parent";
@@ -55,6 +56,69 @@ const isShipmentOrder = (order) =>
 const ADMIN_ORDER_ALERT_EMAILS = ["oatclub.in@gmail.com"].filter(Boolean);
 
 const RAZORPAY_DISCOUNT_PERCENT = 10;
+
+const triggerFast2SmsSafe = ({
+  type,
+  order,
+  paymentStatus = "",
+}) => {
+  if (!order?._id) return;
+
+  const run = async () => {
+    try {
+      let result = null;
+
+      if (type === "cod_confirmation") {
+        result =
+          await sendCodOrderConfirmationWhatsapp({
+            order,
+          });
+      }
+
+      if (type === "payment_pending") {
+        result =
+          await sendPaymentPendingWhatsapp({
+            order,
+            paymentStatus,
+          });
+      }
+
+      if (type === "payment_confirmed") {
+        result =
+          await sendPrepaidOrderConfirmationWhatsapp({
+            order,
+          });
+      }
+
+      if (!result?.success) {
+        console.error(
+          `⚠️ Fast2SMS ${type} failed:`,
+          result?.error ||
+          result?.data ||
+          result,
+        );
+
+        return;
+      }
+
+      console.log(
+        `✅ Fast2SMS ${type} sent:`,
+        order?.orderNumber || order?._id,
+      );
+    } catch (error) {
+      console.error(
+        `⚠️ Fast2SMS ${type} error:`,
+        error?.message || error,
+      );
+    }
+  };
+
+  if (typeof setImmediate === "function") {
+    setImmediate(run);
+  } else {
+    setTimeout(run, 0);
+  }
+};
 
 const sendAdminOrderReceivedMail = async (order) => {
   try {
@@ -1302,11 +1366,14 @@ export const createOrder = async (req, res) => {
     );
 
     if (
-      String(finalOrder?.paymentMethod || "").toLowerCase() === "cod" &&
+      String(
+        finalOrder?.paymentMethod || "",
+      ).toLowerCase() === "cod" &&
       finalOrder?.isConfirmed !== true
     ) {
-      sendCodOrderConfirmationWhatsapp(finalOrder).catch((e) => {
-        console.error("⚠️ COD WhatsApp confirmation failed:", e?.message || e);
+      triggerFast2SmsSafe({
+        type: "cod_confirmation",
+        order: finalOrder,
       });
     }
 
@@ -5392,7 +5459,6 @@ export const updateOrderPaymentStatus = async (req, res) => {
 
     const updatedOrder = await order.save();
 
-    // Wallet reward runs only after successful database save
     await creditOrderWalletRewardInternal({
       orderId: updatedOrder._id,
     }).catch((error) => {
@@ -5407,31 +5473,46 @@ export const updateOrderPaymentStatus = async (req, res) => {
       "updateOrderPaymentStatus",
     );
 
-    /*
-     * Payment recovery email:
-     * - status must genuinely change to failed
-     * - only online/prepaid payment methods
-     * - database save must complete first
-     */
+    const isCancelled =
+      updatedOrder?.cancellation?.isCancelled === true ||
+      String(
+        updatedOrder?.fulfillmentStatus || "",
+      ).toLowerCase() === "cancelled";
+
     const shouldSendPaymentRecoveryEmail =
       statusActuallyChanged &&
       paymentStatus === "failed" &&
       ["razorpay", "manual_prepaid"].includes(
         paymentMethod,
       ) &&
-      updatedOrder?.cancellation?.isCancelled !==
-      true;
+      !isCancelled;
+
+    const shouldSendPaymentPendingWhatsapp =
+      statusActuallyChanged &&
+      ["pending", "failed"].includes(
+        paymentStatus,
+      ) &&
+      ["razorpay", "manual_prepaid"].includes(
+        paymentMethod,
+      ) &&
+      !isCancelled;
+
+    const shouldSendPaymentConfirmedWhatsapp =
+      statusActuallyChanged &&
+      paymentStatus === "paid" &&
+      paymentMethod !== "cod" &&
+      !isCancelled;
+
+    const orderPayload =
+      updatedOrder.toObject?.() || updatedOrder;
 
     if (shouldSendPaymentRecoveryEmail) {
-      triggerPaymentRecoveryEmail(
-        updatedOrder,
-      );
+      triggerPaymentRecoveryEmail(updatedOrder);
 
       console.log(
         "📩 Payment recovery email triggered:",
         {
-          orderNumber:
-            updatedOrder.orderNumber,
+          orderNumber: updatedOrder.orderNumber,
           previousPaymentStatus,
           paymentStatus,
           paymentMethod,
@@ -5439,13 +5520,35 @@ export const updateOrderPaymentStatus = async (req, res) => {
       );
     }
 
+    if (shouldSendPaymentPendingWhatsapp) {
+      triggerFast2SmsSafe({
+        type: "payment_pending",
+        order: orderPayload,
+        paymentStatus,
+      });
+    }
+
+    if (shouldSendPaymentConfirmedWhatsapp) {
+      triggerFast2SmsSafe({
+        type: "payment_confirmed",
+        order: orderPayload,
+      });
+    }
+
     return res.status(200).json({
       success: true,
       message:
         "Payment status updated successfully",
       order: updatedOrder,
+
       paymentRecoveryEmailTriggered:
         shouldSendPaymentRecoveryEmail,
+
+      paymentPendingWhatsappTriggered:
+        shouldSendPaymentPendingWhatsapp,
+
+      paymentConfirmedWhatsappTriggered:
+        shouldSendPaymentConfirmedWhatsapp,
     });
   } catch (error) {
     console.error(

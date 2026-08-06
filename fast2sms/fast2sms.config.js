@@ -5,7 +5,8 @@ export const FAST2SMS_CONFIG = Object.freeze({
     process.env.FAST2SMS_BASE_URL ||
     "https://www.fast2sms.com/dev",
 
-  PHONE_NUMBER_ID: process.env.FAST2SMS_PHONE_NUMBER_ID,
+  PHONE_NUMBER_ID:
+    "1093796253824604",
 
   WHATSAPP_VERSION:
     process.env.FAST2SMS_WHATSAPP_VERSION || "v24.0",
