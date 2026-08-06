@@ -37,6 +37,11 @@ import {
   toggleTestingOrder,
   sendOrderPaymentRecoveryEmail,
   sendBulkOrderPaymentRecoveryEmails,
+  adminBookDelhiveryIfMissing,
+  assignCourierToPackedOrder,
+  getPackedOrdersForShipping,
+  getShiprocketRatesForOrder,
+  getDelhiveryRateForOrder,
 } from "./orderController.js";
 
 import {
@@ -68,6 +73,7 @@ import {
   getOperationsStatusReport,
   getFinalPayableByStatus,
   getCancellationAnalyticsReport,
+
 } from "./orderReportsController.js";
 
 import {
@@ -331,7 +337,24 @@ router.post(
 
 router.post("/:id/shiprocket/book", adminBookShiprocketIfMissing);
 
+router.get(
+  "/:id/delhivery/rate",
+  getDelhiveryRateForOrder,
+);
+
+router.post("/:id/delhivery/book", adminBookDelhiveryIfMissing);
+
+
 router.post("/:id/ship", bookWithShiprocket);
+
+router.get("/shipping/packed", getPackedOrdersForShipping);
+
+router.patch("/:id/courier", assignCourierToPackedOrder);
+
+router.get(
+  "/:id/shiprocket/rates",
+  getShiprocketRatesForOrder,
+);
 
 router.post("/:id/cancel", cancelOrder);
 
@@ -405,5 +428,6 @@ router.post(
   "/:id/send-payment-recovery-email",
   sendOrderPaymentRecoveryEmail,
 );
+
 
 export default router;

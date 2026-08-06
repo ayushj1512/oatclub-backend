@@ -108,17 +108,45 @@ export async function bookWithShiprocket(req, res) {
         .json({ success: false, message: "Order not found" });
     }
 
-    if (order.shipment?.shiprocket?.awb) {
+    const shipmentStatus = s(order?.shipment?.status).toLowerCase();
+
+    const existingAwb = s(
+      order?.shipment?.awb ||
+      order?.shipment?.shiprocket?.awb,
+    );
+
+    const inactiveShipmentStatuses = [
+      "cancelled",
+      "canceled",
+      "failed",
+      "void",
+    ];
+
+    const hasActiveShipment =
+      Boolean(existingAwb) &&
+      !inactiveShipmentStatuses.includes(shipmentStatus);
+
+    if (hasActiveShipment) {
       return res.status(400).json({
         success: false,
-        message: "Shipment already created for this order",
+        message:
+          "An active shipment already exists. Cancel it before rebooking.",
       });
     }
+    const fulfillmentStatus = s(
+      order.fulfillmentStatus,
+    ).toLowerCase();
 
-    if (order.fulfillmentStatus !== "processing") {
+    const allowedFulfillmentStatuses = [
+      "processing",
+      "packed",
+    ];
+
+    if (!allowedFulfillmentStatuses.includes(fulfillmentStatus)) {
       return res.status(400).json({
         success: false,
-        message: "Only processing orders can be shipped",
+        message:
+          "Only processing or packed orders can be booked with Shiprocket.",
       });
     }
 

@@ -844,8 +844,15 @@ const orderSchema = new mongoose.Schema(
     shipment: {
       provider: {
         type: String,
-        enum: ["shiprocket", "xpressbees", "eshipz", "manual"],
-        default: "shiprocket",
+        enum: [
+          "unassigned",
+          "shiprocket",
+          "delhivery",
+          "xpressbees",
+          "eshipz",
+          "manual",
+        ],
+        default: "unassigned",
         index: true,
       },
 
@@ -906,6 +913,60 @@ const orderSchema = new mongoose.Schema(
 
         lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
         lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
+      },
+
+      delhivery: {
+        waybill: {
+          type: String,
+          default: "",
+          index: true,
+        },
+
+        orderId: {
+          type: String,
+          default: "",
+          index: true,
+        },
+
+        courierName: {
+          type: String,
+          default: "Delhivery",
+        },
+
+        trackingUrl: {
+          type: String,
+          default: "",
+        },
+
+        labelUrl: {
+          type: String,
+          default: "",
+        },
+
+        rawStatus: {
+          type: String,
+          default: "",
+        },
+
+        statusCode: {
+          type: String,
+          default: "",
+        },
+
+        lastWebhook: {
+          type: mongoose.Schema.Types.Mixed,
+          default: null,
+        },
+
+        lastTrack: {
+          type: mongoose.Schema.Types.Mixed,
+          default: null,
+        },
+
+        rawBookingResponse: {
+          type: mongoose.Schema.Types.Mixed,
+          default: null,
+        },
       },
 
       xpressbees: {
@@ -1865,6 +1926,9 @@ orderSchema.index({ "shipment.eshipz.awb": 1 });
 orderSchema.index({ "shipment.eshipz.shipmentId": 1 });
 orderSchema.index({ "shipment.eshipz.orderId": 1 });
 orderSchema.index({ "shipment.eshipz.courierName": 1, createdAt: -1 });
+
+orderSchema.index({ "shipment.delhivery.waybill": 1 });
+orderSchema.index({ "shipment.delhivery.orderId": 1 });
 
 // Xpressbees
 orderSchema.index({ "shipment.xpressbees.awb": 1 });

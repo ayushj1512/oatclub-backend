@@ -43,6 +43,9 @@ import Customer from "../Customer/Customer.js";
 import { debitWalletForOrderInternal } from "../Customer/customerCredit.service.js"; // ⚠️ path tumhare project ke hisaab se adjust kar lena
 import { creditOrderWalletRewardInternal } from "../Customer/orderWalletReward.service.js";
 import { checkIsBlacklistedCustomer } from "../Customer/customerBlacklist.service.js";
+import { createShipment as createDelhiveryShipment } from "../delhivery/shipment.js";
+import { checkServiceability as checkDelhiveryServiceability } from "../delhivery/serviceability.js";
+import { calculateDelhiveryRate } from "../delhivery/rate.js";
 
 const isParentOrder = (order) =>
   String(order?.orderType || "").toLowerCase() === "parent";
@@ -1919,30 +1922,48 @@ export const updateOrderStatus = async (req, res) => {
     if (!obj || typeof obj !== "object") return obj;
 
     const out = {};
-    for (const [k, v] of Object.entries(obj)) {
-      if (v !== undefined) out[k] = stripUndefinedDeep(v);
+
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        out[key] = stripUndefinedDeep(value);
+      }
     }
+
     return out;
   };
 
   const buildCouponIdentity = ({ email, phone }) => {
-    const e = normEmail(email);
-    if (e && e.includes("@")) return `email:${e}`;
+    const normalizedEmail = normEmail(email);
 
-    const p = normPhone(phone);
-    if (p) return `phone:${p}`;
+    if (normalizedEmail && normalizedEmail.includes("@")) {
+      return `email:${normalizedEmail}`;
+    }
+
+    const normalizedPhone = normPhone(phone);
+
+    if (normalizedPhone) {
+      return `phone:${normalizedPhone}`;
+    }
 
     return "";
   };
 
   const pickCancelActor = () => {
     const actor = lower(req.body?.cancelledBy);
-    if (["admin", "customer", "system"].includes(actor)) return actor;
+
+    if (["admin", "customer", "system"].includes(actor)) {
+      return actor;
+    }
 
     const reason = lower(req.body?.reason);
-    if (["cancelled_by_admin", "admin"].includes(reason)) return "admin";
-    if (["cancelled_by_customer", "customer"].includes(reason))
+
+    if (["cancelled_by_admin", "admin"].includes(reason)) {
+      return "admin";
+    }
+
+    if (["cancelled_by_customer", "customer"].includes(reason)) {
       return "customer";
+    }
 
     return req.user?.role === "admin" ? "admin" : "customer";
   };
@@ -1966,11 +1987,16 @@ export const updateOrderStatus = async (req, res) => {
       ? `${baseUrl}/orders/${order.orderNumber}`
       : baseUrl;
 
-    return { to, name, ctaUrl };
+    return {
+      to,
+      name,
+      ctaUrl,
+    };
   };
 
   const triggerReserveNonBlocking = (orderNumber) => {
     const cleanOrderNumber = str(orderNumber).trim();
+
     if (!cleanOrderNumber) return;
 
     defer(async () => {
@@ -1981,8 +2007,11 @@ export const updateOrderStatus = async (req, res) => {
           confirmedOnly: true,
           debug: false,
         });
-      } catch (err) {
-        console.error("⚠️ Reserve trigger failed:", err?.message || err);
+      } catch (error) {
+        console.error(
+          "⚠️ Reserve trigger failed:",
+          error?.message || error,
+        );
       }
     });
   };
@@ -1996,22 +2025,41 @@ export const updateOrderStatus = async (req, res) => {
         }
 
         const { to, name, ctaUrl } = getCustomerMailData(order);
+
         if (!to) {
           console.log(`📭 ${type} mail skipped: customer email missing`);
           return;
         }
 
         if (type === "shipped") {
-          await Mailer.sendOrderShipped({ to, name, order, ctaUrl });
+          await Mailer.sendOrderShipped({
+            to,
+            name,
+            order,
+            ctaUrl,
+          });
         }
 
         if (type === "delivered") {
-          await Mailer.sendOrderDelivered({ to, name, order, ctaUrl });
+          await Mailer.sendOrderDelivered({
+            to,
+            name,
+            order,
+            ctaUrl,
+          });
         }
 
-        console.log(`✅ ${type} email sent:`, order?.orderNumber, "->", to);
-      } catch (err) {
-        console.error(`❌ ${type} email failed:`, err?.message || err);
+        console.log(
+          `✅ ${type} email sent:`,
+          order?.orderNumber,
+          "->",
+          to,
+        );
+      } catch (error) {
+        console.error(
+          `❌ ${type} email failed:`,
+          error?.message || error,
+        );
       }
     });
   };
@@ -2020,15 +2068,21 @@ export const updateOrderStatus = async (req, res) => {
     req.body = stripUndefinedDeep(req.body);
 
     if (req.body?.shipment) {
-      if (req.body.shipment.xpressbees == null)
+      if (req.body.shipment.xpressbees == null) {
         delete req.body.shipment.xpressbees;
-      if (req.body.shipment.shiprocket == null)
+      }
+
+      if (req.body.shipment.shiprocket == null) {
         delete req.body.shipment.shiprocket;
+      }
     }
 
     const orderId = req.params.id;
+
     if (!mongoose.Types.ObjectId.isValid(orderId)) {
-      return res.status(400).json({ message: "Invalid order id" });
+      return res.status(400).json({
+        message: "Invalid order id",
+      });
     }
 
     const fulfillmentStatus = lower(req.body?.fulfillmentStatus);
@@ -2046,7 +2100,10 @@ export const updateOrderStatus = async (req, res) => {
 
     await session.withTransaction(async () => {
       let order = await Order.findById(orderId).session(session);
-      if (!order) throw new Error("Order not found");
+
+      if (!order) {
+        throw new Error("Order not found");
+      }
 
       const isParent = lower(order?.orderType) === "parent";
       const prevPaid = lower(order?.paymentStatus) === "paid";
@@ -2058,7 +2115,9 @@ export const updateOrderStatus = async (req, res) => {
         const currentStatus = lower(order.fulfillmentStatus);
 
         if (!allowed.includes(currentStatus)) {
-          throw new Error("Cancel allowed only in processing or packed stage");
+          throw new Error(
+            "Cancel allowed only in processing or packed stage",
+          );
         }
 
         await cancelReservationsInternalByOrder({
@@ -2074,7 +2133,8 @@ export const updateOrderStatus = async (req, res) => {
           "fulfillmentDates.cancelledAt": now,
 
           "cancellation.isCancelled": true,
-          "cancellation.cancelledAt": order.cancellation?.cancelledAt || now,
+          "cancellation.cancelledAt":
+            order.cancellation?.cancelledAt || now,
           "cancellation.cancelledBy": cancelActor,
           "cancellation.reason":
             cancelReason || order.cancellation?.reason || "",
@@ -2084,11 +2144,15 @@ export const updateOrderStatus = async (req, res) => {
 
         if (cancelActor === "admin") {
           setPayload.adminRemarks =
-            str(req.body?.adminRemarks).trim() || "cancelled_by_admin";
+            str(req.body?.adminRemarks).trim() ||
+            "cancelled_by_admin";
+
           unsetPayload.customerMessage = "";
         } else {
           setPayload.customerMessage =
-            str(req.body?.customerMessage).trim() || "cancelled_by_customer";
+            str(req.body?.customerMessage).trim() ||
+            "cancelled_by_customer";
+
           unsetPayload.adminRemarks = "";
         }
 
@@ -2102,14 +2166,17 @@ export const updateOrderStatus = async (req, res) => {
 
           setPayload.eligibleForRefund = true;
           setPayload.paymentStatus = "refund_pending";
+
           setPayload["refundSummary.status"] = "refund_pending";
           setPayload["refundSummary.refundType"] = "full";
           setPayload["refundSummary.eligibleAmount"] = amount;
           setPayload["refundSummary.pendingAmount"] = amount;
           setPayload["refundSummary.reason"] =
             cancelReason || "Paid order cancelled before shipment";
+
           setPayload["refundSummary.markedEligibleAt"] =
             order.refundSummary?.markedEligibleAt || now;
+
           setPayload["refundSummary.refundRequestedAt"] =
             order.refundSummary?.refundRequestedAt || now;
         }
@@ -2117,12 +2184,16 @@ export const updateOrderStatus = async (req, res) => {
         updatedOrder = await Order.findOneAndUpdate(
           {
             _id: order._id,
-            fulfillmentStatus: { $in: allowed },
+            fulfillmentStatus: {
+              $in: allowed,
+            },
           },
           {
             $set: setPayload,
             ...(Object.keys(unsetPayload).length
-              ? { $unset: unsetPayload }
+              ? {
+                $unset: unsetPayload,
+              }
               : {}),
           },
           {
@@ -2172,7 +2243,9 @@ export const updateOrderStatus = async (req, res) => {
       const nowConfirmed = Boolean(order?.isConfirmed);
 
       if (
-        (!prevPaid && nowPaid && lower(order.paymentMethod) === "razorpay") ||
+        (!prevPaid &&
+          nowPaid &&
+          lower(order.paymentMethod) === "razorpay") ||
         (!prevConfirmed && nowConfirmed)
       ) {
         shouldTriggerReserve = true;
@@ -2183,7 +2256,10 @@ export const updateOrderStatus = async (req, res) => {
         lower(order.paymentMethod) === "razorpay" &&
         order?.coupon?.code
       ) {
-        const couponCode = str(order.coupon.code).trim().toUpperCase();
+        const couponCode = str(order.coupon.code)
+          .trim()
+          .toUpperCase();
+
         const identity =
           str(order?.coupon?.identity).trim() ||
           buildCouponIdentity({
@@ -2192,9 +2268,9 @@ export const updateOrderStatus = async (req, res) => {
           });
 
         if (couponCode && identity) {
-          const couponDoc = await Coupon.findOne({ code: couponCode }).session(
-            session,
-          );
+          const couponDoc = await Coupon.findOne({
+            code: couponCode,
+          }).session(session);
 
           if (couponDoc) {
             couponDoc.usedBy = Array.isArray(couponDoc.usedBy)
@@ -2203,8 +2279,12 @@ export const updateOrderStatus = async (req, res) => {
 
             if (!couponDoc.usedBy.includes(identity)) {
               couponDoc.usedBy.push(identity);
-              couponDoc.usedCount = Number(couponDoc.usedCount || 0) + 1;
-              await couponDoc.save({ session });
+              couponDoc.usedCount =
+                Number(couponDoc.usedCount || 0) + 1;
+
+              await couponDoc.save({
+                session,
+              });
             }
           }
         }
@@ -2220,35 +2300,55 @@ export const updateOrderStatus = async (req, res) => {
         ];
 
         const currentStatus = lower(order.fulfillmentStatus);
-        const isReversePickup = fulfillmentStatus === "pickup_initiated";
+
+        const isReversePickup =
+          fulfillmentStatus === "pickup_initiated";
+
         const becomingPacked =
-          fulfillmentStatus === "packed" && currentStatus !== "packed";
+          fulfillmentStatus === "packed" &&
+          currentStatus !== "packed";
+
         const becomingShipped =
           fulfillmentStatus === "shipped" &&
           prevFulfillmentStatus !== "shipped";
+
         const becomingDelivered =
           fulfillmentStatus === "delivered" &&
           prevFulfillmentStatus !== "delivered";
 
         if (!isReversePickup) {
-          if (isParent && shippingStages.includes(fulfillmentStatus)) {
+          if (
+            isParent &&
+            shippingStages.includes(fulfillmentStatus)
+          ) {
             throw new Error(
               "Parent order cannot move to shipping stages. Update shipment orders (-A/-B) instead.",
             );
           }
 
-          if (!nowConfirmed && shippingStages.includes(fulfillmentStatus)) {
-            throw new Error("Order must be confirmed before shipping stages");
+          if (
+            !nowConfirmed &&
+            shippingStages.includes(fulfillmentStatus)
+          ) {
+            throw new Error(
+              "Order must be confirmed before shipping stages",
+            );
           }
         }
 
         if (fulfillmentStatus === "refunded") {
-          const allowedPrev = ["returned", "cancelled", "rto"];
+          const allowedPrev = [
+            "returned",
+            "cancelled",
+            "rto",
+          ];
+
           if (!allowedPrev.includes(currentStatus)) {
             throw new Error(
               "Refunded can be marked only after returned/cancelled/rto",
             );
           }
+
           order.paymentStatus = "refunded";
         }
 
@@ -2258,7 +2358,7 @@ export const updateOrderStatus = async (req, res) => {
             lower(order.paymentStatus) !== "paid"
           ) {
             throw new Error(
-              "Cannot book shipment before Razorpay payment is paid",
+              "Cannot pack Razorpay order before payment is paid",
             );
           }
 
@@ -2269,49 +2369,71 @@ export const updateOrderStatus = async (req, res) => {
           });
 
           order = await Order.findById(orderId).session(session);
-          if (!order)
-            throw new Error("Order not found after reservation consume");
+
+          if (!order) {
+            throw new Error(
+              "Order not found after reservation consume",
+            );
+          }
         }
 
         order.fulfillmentStatus = fulfillmentStatus;
 
         if (fulfillmentStatus === "shipped") {
-          order.trackingDetails = order.trackingDetails || {};
+          order.trackingDetails =
+            order.trackingDetails || {};
+
           order.shipment = order.shipment || {};
 
           if (!order.trackingDetails.shippedAt) {
             order.trackingDetails.shippedAt = new Date();
           }
+
           if (!order.shipment.shippedAt) {
             order.shipment.shippedAt = new Date();
           }
         }
 
         if (fulfillmentStatus === "delivered") {
-          order.trackingDetails = order.trackingDetails || {};
+          order.trackingDetails =
+            order.trackingDetails || {};
+
           order.shipment = order.shipment || {};
 
           if (!order.trackingDetails.deliveredAt) {
             order.trackingDetails.deliveredAt = new Date();
           }
+
           if (!order.shipment.deliveredAt) {
             order.shipment.deliveredAt = new Date();
           }
         }
 
+        // Auto-book only on the first transition to PACKED.
+        // Existing AWB or shipment ID prevents duplicate booking.
         if (becomingPacked && !isParent) {
           const alreadyBooked =
             order?.shipment?.shiprocket?.awb ||
             order?.shipment?.shiprocket?.shipmentId;
 
-          if (!alreadyBooked) shouldBookShiprocket = true;
+          if (!alreadyBooked) {
+            shouldBookShiprocket = true;
+          }
         }
 
-        if (becomingShipped) shouldSendShippedEmail = true;
-        if (becomingDelivered) shouldSendDeliveredEmail = true;
+        if (becomingShipped) {
+          shouldSendShippedEmail = true;
+        }
+
+        if (becomingDelivered) {
+          shouldSendDeliveredEmail = true;
+        }
       }
 
-      await order.save({ session });
+      await order.save({
+        session,
+      });
+
       updatedOrder = order;
     });
 
@@ -2319,34 +2441,71 @@ export const updateOrderStatus = async (req, res) => {
       ? await Order.findById(updatedOrder._id).lean()
       : null;
 
-    syncCustomerAnalyticsSafe(finalOrder?.customerId, "updateOrderStatus");
+    syncCustomerAnalyticsSafe(
+      finalOrder?.customerId,
+      "updateOrderStatus",
+    );
 
     if (finalOrder && shouldTriggerReserve) {
       triggerReserveNonBlocking(finalOrder.orderNumber);
     }
 
+    // Book only after MongoDB transaction commits.
+    // Shiprocket failure will not rollback packed status or inventory consume.
     if (finalOrder && shouldBookShiprocket) {
       try {
-        const freshOrderDoc = await Order.findById(finalOrder._id);
-        await autoBookShiprocketForOrder(freshOrderDoc);
-      } catch (e) {
-        console.error("⚠️ Auto Shiprocket booking failed:", e?.message || e);
+        const freshOrderDoc = await Order.findById(
+          finalOrder._id,
+        );
+
+        if (!freshOrderDoc) {
+          throw new Error(
+            "Order not found before Shiprocket auto booking",
+          );
+        }
+
+        const alreadyBooked =
+          freshOrderDoc?.shipment?.shiprocket?.awb ||
+          freshOrderDoc?.shipment?.shiprocket?.shipmentId;
+
+        if (!alreadyBooked) {
+          await autoBookShiprocketForOrder(freshOrderDoc);
+        }
+      } catch (error) {
+        console.error(
+          "⚠️ Auto Shiprocket booking failed:",
+          error?.response?.data ||
+          error?.message ||
+          error,
+        );
       }
     }
 
     if (finalOrder && shouldSendShippedEmail) {
-      sendOrderMailNonBlocking({ type: "shipped", order: finalOrder });
+      sendOrderMailNonBlocking({
+        type: "shipped",
+        order: finalOrder,
+      });
     }
 
     if (finalOrder && shouldSendDeliveredEmail) {
-      sendOrderMailNonBlocking({ type: "delivered", order: finalOrder });
+      sendOrderMailNonBlocking({
+        type: "delivered",
+        order: finalOrder,
+      });
     }
 
     if (fulfillmentStatus === "cancelled") {
       try {
-        triggerOrderCancellationEmails(finalOrder, cancelReason);
-      } catch (e) {
-        console.error("⚠️ Cancellation email trigger failed:", e?.message || e);
+        triggerOrderCancellationEmails(
+          finalOrder,
+          cancelReason,
+        );
+      } catch (error) {
+        console.error(
+          "⚠️ Cancellation email trigger failed:",
+          error?.message || error,
+        );
       }
     }
 
@@ -2359,6 +2518,7 @@ export const updateOrderStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Update Status Error:", error);
+
     return res.status(500).json({
       message: "Server error",
       error: error.message,
@@ -3908,6 +4068,342 @@ export const adminBookShiprocketIfMissing = async (req, res) => {
   }
 };
 
+
+// ============================================================
+// ADMIN: BOOK ORDER WITH DELHIVERY
+// POST /api/orders/:id/delhivery/book
+// ============================================================
+
+export const adminBookDelhiveryIfMissing = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order id",
+      });
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    if (isParentOrder(order)) {
+      return res.status(400).json({
+        success: false,
+        message: "Parent order cannot be shipped.",
+      });
+    }
+
+    if (!order.isConfirmed) {
+      return res.status(400).json({
+        success: false,
+        message: "Confirm order before booking.",
+      });
+    }
+
+    if (
+      String(order.fulfillmentStatus || "")
+        .trim()
+        .toLowerCase() !== "packed"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Only packed orders can be booked.",
+      });
+    }
+
+    if (
+      String(order.paymentMethod || "")
+        .trim()
+        .toLowerCase() === "razorpay" &&
+      String(order.paymentStatus || "")
+        .trim()
+        .toLowerCase() !== "paid"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Prepaid order is not paid.",
+      });
+    }
+
+    const currentProvider = String(
+      order?.shipment?.provider || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const currentAwb = String(
+      order?.shipment?.awb || "",
+    ).trim();
+
+    const currentCourierName = String(
+      order?.shipment?.courierName || "",
+    ).trim();
+
+    const existingWaybill = String(
+      order?.shipment?.delhivery?.waybill || "",
+    ).trim();
+
+    // Only prevent duplicate active Delhivery booking.
+    // Existing Shiprocket booking can be replaced as active provider.
+    if (currentProvider === "delhivery" && existingWaybill) {
+      return res.status(200).json({
+        success: true,
+        skipped: true,
+        message: "Delhivery shipment already booked.",
+        waybill: existingWaybill,
+      });
+    }
+
+    const previousShipment =
+      currentProvider && currentProvider !== "delhivery"
+        ? {
+          provider: currentProvider,
+          awb: currentAwb,
+          courierName: currentCourierName,
+          orderId: String(order?.shipment?.orderId || ""),
+          shipmentId: String(order?.shipment?.shipmentId || ""),
+          trackingUrl: String(
+            order?.shipment?.trackingUrl || "",
+          ),
+          status: String(
+            order?.shipment?.status || "",
+          ),
+          changedAt: new Date(),
+        }
+        : null;
+
+    const address = order.shippingAddressSnapshot || {};
+
+    const quantity = (order.items || []).reduce(
+      (sum, item) =>
+        sum + Math.max(1, Number(item?.quantity || 1)),
+      0,
+    );
+
+    const productDescription = (order.items || [])
+      .map((item) => item?.productSnapshot?.title)
+      .filter(Boolean)
+      .join(", ");
+
+    const pincode = String(address?.pincode || "")
+      .replace(/\D/g, "")
+      .slice(0, 6);
+
+    if (!/^\d{6}$/.test(pincode)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid shipping pincode is required.",
+      });
+    }
+
+    const serviceability =
+      await checkDelhiveryServiceability(pincode);
+
+    const isCod =
+      String(order.paymentMethod || "")
+        .trim()
+        .toLowerCase() === "cod";
+
+    const canBook = isCod
+      ? serviceability?.codAvailable === true
+      : serviceability?.prepaidAvailable === true;
+
+    if (
+      serviceability?.serviceable !== true ||
+      !canBook
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: isCod
+          ? "Delhivery COD is unavailable for this pincode."
+          : "Delhivery prepaid delivery is unavailable for this pincode.",
+      });
+    }
+
+    const result = await createDelhiveryShipment({
+      customerName: address.fullName,
+      address: [address.line1, address.line2]
+        .filter(Boolean)
+        .join(", "),
+      city: address.city,
+      state: address.state,
+      pincode,
+      phone: address.phone,
+
+      orderNumber: order.orderNumber,
+      paymentMode: isCod ? "COD" : "Prepaid",
+      totalAmount: Number(order.finalPayable || 0),
+      quantity: quantity || 1,
+      productDescription:
+        productDescription || "OATCLUB Clothing",
+
+      weight: Number(req.body?.weight || 500),
+      length: Number(req.body?.length || 25),
+      width: Number(req.body?.width || 20),
+      height: Number(req.body?.height || 5),
+    });
+
+    const packageData =
+      result?.packages?.[0] ||
+      result?.data?.packages?.[0] ||
+      result?.shipment?.[0] ||
+      {};
+
+    const waybill = String(
+      packageData?.waybill ||
+      packageData?.wbn ||
+      result?.waybill ||
+      result?.upload_wbn ||
+      "",
+    ).trim();
+
+    if (!waybill) {
+      return res.status(502).json({
+        success: false,
+        message: "Delhivery did not return a waybill.",
+        data: result,
+      });
+    }
+
+    const trackingUrl = String(
+      packageData?.tracking_url ||
+      result?.tracking_url ||
+      "",
+    ).trim();
+
+    const now = new Date();
+
+    const existingShipment =
+      order.shipment?.toObject?.() ||
+      order.shipment ||
+      {};
+
+    const existingDelhivery =
+      order.shipment?.delhivery?.toObject?.() ||
+      order.shipment?.delhivery ||
+      {};
+
+    const existingHistory = Array.isArray(
+      existingShipment?.history,
+    )
+      ? existingShipment.history
+      : [];
+
+    order.shipment = {
+      ...existingShipment,
+
+      provider: "delhivery",
+      orderId: String(order.orderNumber),
+      shipmentId: waybill,
+      awb: waybill,
+      courierName: "Delhivery",
+      trackingUrl,
+      labelUrl: "",
+      status: "booked",
+      rawStatus: packageData?.status || "booked",
+      bookedAt: now,
+      lastSyncedAt: now,
+
+      history: previousShipment
+        ? [...existingHistory, previousShipment]
+        : existingHistory,
+
+      delhivery: {
+        ...existingDelhivery,
+
+        orderId: String(order.orderNumber),
+        shipmentId: waybill,
+        waybill,
+        awb: waybill,
+        courierName: "Delhivery",
+        trackingUrl,
+        labelUrl: "",
+        status: "booked",
+        rawStatus: packageData?.status || "booked",
+        bookedAt: now,
+        lastSyncedAt: now,
+        rawBookingResponse: result,
+      },
+    };
+
+    order.trackingDetails = {
+      ...(order.trackingDetails?.toObject?.() ||
+        order.trackingDetails ||
+        {}),
+
+      trackingId: waybill,
+      awb: waybill,
+      provider: "delhivery",
+      courierName: "Delhivery",
+      trackingUrl,
+      shippedAt: null,
+      lastUpdatedAt: now,
+    };
+
+    order.markModified("shipment");
+    order.markModified("trackingDetails");
+
+    await order.save();
+
+    const providerChanged =
+      Boolean(previousShipment) &&
+      previousShipment.provider !== "delhivery";
+
+    return res.status(201).json({
+      success: true,
+
+      message: providerChanged
+        ? `Courier provider changed from ${previousShipment.provider} to Delhivery.`
+        : "Delhivery shipment booked successfully.",
+
+      providerChanged,
+
+      previousShipment: previousShipment
+        ? {
+          provider: previousShipment.provider,
+          awb: previousShipment.awb,
+          courierName: previousShipment.courierName,
+        }
+        : null,
+
+      data: {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        provider: "delhivery",
+        waybill,
+        awb: waybill,
+        courierName: "Delhivery",
+        trackingUrl,
+        status: "booked",
+      },
+    });
+  } catch (error) {
+    console.error("❌ Delhivery booking error:", {
+      message: error?.message,
+      response: error?.response?.data,
+      stack: error?.stack,
+    });
+
+    return res
+      .status(error?.response?.status || 500)
+      .json({
+        success: false,
+        message:
+          error?.response?.data?.message ||
+          error?.message ||
+          "Delhivery booking failed",
+        error: error?.response?.data || null,
+      });
+  }
+};
 /* ============================================================
    UPDATE ADDRESS SNAPSHOT (ADMIN)
    PATCH /api/orders/:id/address
@@ -4387,39 +4883,218 @@ export const searchProductOrderNumbers = async (req, res) => {
       });
     }
 
-    // ✅ safe regex
-    const escapeRegex = (s = "") =>
-      String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapeRegex = (value = "") =>
+      String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     const rx = new RegExp(escapeRegex(q), "i");
 
-    // ✅ find matching orders
     const orders = await Order.find({
-      isConfirmed: true, // IMPORTANT
+      isConfirmed: true,
       $or: [
         { "items.productSnapshot.title": rx },
         { "items.productSnapshot.productCode": rx },
       ],
     })
-      .select("orderNumber")
+      .select({
+        orderNumber: 1,
+        orderDate: 1,
+
+        fulfillmentStatus: 1,
+        paymentMethod: 1,
+        paymentStatus: 1,
+
+        shippingAddressSnapshot: 1,
+        items: 1,
+
+        finalPayable: 1,
+        currency: 1,
+      })
+      .sort({ orderDate: -1 })
       .lean();
 
-    // ✅ unique order numbers
+    const groupedOrders = {};
+    const flatOrders = [];
+
+    for (const order of orders) {
+      const matchingItems = (order.items || []).filter((item) => {
+        const productName = String(
+          item?.productSnapshot?.title || "",
+        );
+
+        const productCode = String(
+          item?.productSnapshot?.productCode || "",
+        );
+
+        return rx.test(productName) || rx.test(productCode);
+      });
+
+      if (!matchingItems.length) continue;
+
+      const matchedProducts = matchingItems.map((item) => ({
+        productId: item?.productId || null,
+
+        productCode:
+          item?.productSnapshot?.productCode || "",
+
+        productName:
+          item?.productSnapshot?.title || "",
+
+        sku:
+          item?.variant?.sku ||
+          item?.productSnapshot?.sku ||
+          "",
+
+        size:
+          item?.selectedSize ||
+          (item?.variant?.attributes || []).find((attribute) =>
+            ["size", "sizes"].includes(
+              String(attribute?.key || "")
+                .trim()
+                .toLowerCase(),
+            ),
+          )?.value ||
+          "",
+
+        color:
+          item?.selectedColor ||
+          (item?.variant?.attributes || []).find((attribute) =>
+            ["color", "colour"].includes(
+              String(attribute?.key || "")
+                .trim()
+                .toLowerCase(),
+            ),
+          )?.value ||
+          "",
+
+        quantity: Number(item?.quantity || 0),
+        price: Number(item?.price || 0),
+        subtotal: Number(item?.subtotal || 0),
+      }));
+
+      const productNames = [
+        ...new Set(
+          matchedProducts
+            .map((product) => product.productName)
+            .filter(Boolean),
+        ),
+      ];
+
+      const productCodes = [
+        ...new Set(
+          matchedProducts
+            .map((product) => product.productCode)
+            .filter(Boolean),
+        ),
+      ];
+
+      const sizes = [
+        ...new Set(
+          matchedProducts
+            .map((product) => product.size)
+            .filter(Boolean),
+        ),
+      ];
+
+      const status = String(
+        order.fulfillmentStatus || "unknown",
+      )
+        .trim()
+        .toLowerCase();
+
+      const formattedOrder = {
+        orderId: order._id,
+        orderNumber: order.orderNumber || "",
+        orderDate: order.orderDate || null,
+
+        name:
+          order.shippingAddressSnapshot?.fullName || "",
+
+        city:
+          order.shippingAddressSnapshot?.city || "",
+
+        state:
+          order.shippingAddressSnapshot?.state || "",
+
+        paymentMethod:
+          order.paymentMethod || "",
+
+        paymentStatus:
+          order.paymentStatus || "",
+
+        fulfillmentStatus: status,
+
+        finalPayable:
+          Number(order.finalPayable || 0),
+
+        currency:
+          order.currency || "INR",
+
+        // Convenient flat values for table/CSV
+        productName: productNames.join(", "),
+        productCode: productCodes.join(", "),
+        size: sizes.join(", "),
+
+        // Complete matched item details
+        matchedProducts,
+      };
+
+      if (!groupedOrders[status]) {
+        groupedOrders[status] = [];
+      }
+
+      groupedOrders[status].push(formattedOrder);
+      flatOrders.push(formattedOrder);
+    }
+
     const orderNumbers = [
-      ...new Set(orders.map((o) => o.orderNumber).filter(Boolean)),
+      ...new Set(
+        flatOrders
+          .map((order) => order.orderNumber)
+          .filter(Boolean),
+      ),
     ];
+
+    const summary = Object.entries(groupedOrders).map(
+      ([fulfillmentStatus, statusOrders]) => ({
+        fulfillmentStatus,
+        totalOrders: statusOrders.length,
+
+        totalQuantity: statusOrders.reduce(
+          (total, order) =>
+            total +
+            order.matchedProducts.reduce(
+              (quantity, product) =>
+                quantity + Number(product.quantity || 0),
+              0,
+            ),
+          0,
+        ),
+      }),
+    );
 
     return res.status(200).json({
       success: true,
       query: q,
-      totalOrders: orderNumbers.length,
+
+      totalOrders: flatOrders.length,
       orderNumbers,
+
+      summary,
+      groupedOrders,
+
+      // Also returned for simple table rendering
+      orders: flatOrders,
     });
   } catch (error) {
-    console.error("❌ searchProductOrderNumbers error:", error);
+    console.error(
+      "❌ searchProductOrderNumbers error:",
+      error,
+    );
+
     return res.status(500).json({
       success: false,
       message: "Server error",
+      error: error.message,
     });
   }
 };
@@ -8360,6 +9035,732 @@ export const sendBulkOrderPaymentRecoveryEmails = async (
       message:
         "Failed to process bulk payment recovery emails",
       error: error.message,
+    });
+  }
+};
+
+// ============================================================
+// ADMIN: GET ALL PACKED ORDERS FOR COURIER ASSIGNMENT / REBOOKING
+// GET /api/orders/shipping/packed
+// ============================================================
+
+export const getPackedOrdersForShipping = async (req, res) => {
+  try {
+    const {
+      provider = "",
+      search = "",
+      page = "1",
+      limit = "100",
+    } = req.query;
+
+    const pageNumber = Math.max(1, Number(page) || 1);
+    const limitNumber = Math.min(
+      Math.max(1, Number(limit) || 100),
+      200,
+    );
+
+    const skip = (pageNumber - 1) * limitNumber;
+
+    const filters = {
+      fulfillmentStatus: "packed",
+      isConfirmed: true,
+      "cancellation.isCancelled": { $ne: true },
+    };
+
+    const andConditions = [];
+
+    // ============================================================
+    // PROVIDER FILTER
+    // ============================================================
+
+    const normalizedProvider = String(provider || "")
+      .trim()
+      .toLowerCase();
+
+    if (normalizedProvider === "unassigned") {
+      andConditions.push({
+        $or: [
+          { "shipment.provider": { $exists: false } },
+          { "shipment.provider": null },
+          { "shipment.provider": "" },
+          { "shipment.provider": "unassigned" },
+        ],
+      });
+    }
+
+    if (
+      normalizedProvider === "shiprocket" ||
+      normalizedProvider === "delhivery"
+    ) {
+      andConditions.push({
+        "shipment.provider": normalizedProvider,
+      });
+    }
+
+    // ============================================================
+    // SEARCH FILTER
+    // ============================================================
+
+    const normalizedSearch = String(search || "").trim();
+
+    if (normalizedSearch) {
+      const escapedSearch = normalizedSearch.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+
+      const searchRegex = new RegExp(escapedSearch, "i");
+
+      andConditions.push({
+        $or: [
+          { orderNumber: searchRegex },
+          { "shippingAddressSnapshot.fullName": searchRegex },
+          { "shippingAddressSnapshot.phone": searchRegex },
+          { "shippingAddressSnapshot.email": searchRegex },
+          { "shippingAddressSnapshot.city": searchRegex },
+          { "shippingAddressSnapshot.state": searchRegex },
+          { "shippingAddressSnapshot.pincode": searchRegex },
+
+          { "shipment.awb": searchRegex },
+          { "shipment.courierName": searchRegex },
+
+          { "items.productSnapshot.title": searchRegex },
+          { "items.productSnapshot.productCode": searchRegex },
+          { "items.variant.sku": searchRegex },
+        ],
+      });
+    }
+
+    if (andConditions.length > 0) {
+      filters.$and = andConditions;
+    }
+
+    // ============================================================
+    // FETCH ORDERS
+    // ============================================================
+
+    const [orders, totalCount] = await Promise.all([
+      Order.find(filters)
+        .select({
+          orderNumber: 1,
+          createdAt: 1,
+          orderDate: 1,
+
+          fulfillmentStatus: 1,
+          fulfillmentDates: 1,
+
+          paymentMethod: 1,
+          paymentStatus: 1,
+          finalPayable: 1,
+          currency: 1,
+
+          priority: 1,
+          isInfluencerOrder: 1,
+          isConfirmed: 1,
+
+          shippingAddressSnapshot: 1,
+
+          shipment: 1,
+
+          "items.quantity": 1,
+          "items.price": 1,
+          "items.subtotal": 1,
+          "items.selectedSize": 1,
+          "items.selectedColor": 1,
+
+          "items.productSnapshot.title": 1,
+          "items.productSnapshot.productCode": 1,
+          "items.productSnapshot.thumbnail": 1,
+          "items.productSnapshot.weight": 1,
+
+          "items.variant.weight": 1,
+          "items.variant.sku": 1,
+        })
+        .sort({
+          "fulfillmentDates.packedAt": 1,
+          createdAt: 1,
+        })
+        .skip(skip)
+        .limit(limitNumber)
+        .lean(),
+
+      Order.countDocuments(filters),
+    ]);
+
+    // ============================================================
+    // NORMALIZE RESPONSE
+    // ============================================================
+
+    const normalizedOrders = orders.map((order) => {
+      const items = Array.isArray(order.items) ? order.items : [];
+
+      const totalQuantity = items.reduce(
+        (sum, item) => sum + Number(item?.quantity || 0),
+        0,
+      );
+
+      const totalWeight = items.reduce((sum, item) => {
+        const quantity = Number(item?.quantity || 0);
+
+        const itemWeight =
+          Number(item?.variant?.weight || 0) ||
+          Number(item?.productSnapshot?.weight || 0);
+
+        return sum + itemWeight * quantity;
+      }, 0);
+
+      const paymentMethod = String(
+        order.paymentMethod || "",
+      ).toLowerCase();
+
+      const shipmentProvider = String(
+        order?.shipment?.provider || "",
+      ).toLowerCase();
+
+      const shipmentStatus = String(
+        order?.shipment?.status || "",
+      ).toLowerCase();
+
+      const awb = String(order?.shipment?.awb || "").trim();
+
+      const hasActiveShipment =
+        Boolean(awb) &&
+        ![
+          "cancelled",
+          "canceled",
+          "failed",
+          "void",
+        ].includes(shipmentStatus);
+
+      const canBookShipment = !hasActiveShipment;
+
+      const canChangeCourier =
+        Boolean(awb) ||
+        ["booked", "cancelled", "canceled", "failed"].includes(
+          shipmentStatus,
+        );
+
+      return {
+        ...order,
+
+        shippingSummary: {
+          totalQuantity,
+          totalWeight,
+
+          isCod: paymentMethod === "cod",
+
+          codAmount:
+            paymentMethod === "cod"
+              ? Number(order.finalPayable || 0)
+              : 0,
+        },
+
+        courierSummary: {
+          provider: shipmentProvider || "unassigned",
+          status: shipmentStatus || "pending",
+          awb,
+
+          hasShipment: Boolean(awb),
+          hasActiveShipment,
+          canBookShipment,
+          canChangeCourier,
+        },
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      orders: normalizedOrders,
+
+      meta: {
+        page: pageNumber,
+        limit: limitNumber,
+        totalCount,
+        hasMore:
+          skip + normalizedOrders.length < totalCount,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "❌ Get packed shipping orders error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch packed orders.",
+      error: error.message,
+    });
+  }
+};
+
+// ============================================================
+// ADMIN: ASSIGN COURIER TO PACKED ORDER
+// PATCH /api/orders/:id/courier
+//
+// Body:
+// {
+//   "provider": "shiprocket"
+// }
+//
+// or
+//
+// {
+//   "provider": "delhivery"
+// }
+// ============================================================
+
+export const assignCourierToPackedOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const provider = String(req.body?.provider || "")
+      .trim()
+      .toLowerCase();
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order id.",
+      });
+    }
+
+    if (!["shiprocket", "delhivery", "unassigned"].includes(provider)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid provider. Allowed providers: shiprocket, delhivery, unassigned.",
+      });
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    if (isParentOrder(order)) {
+      return res.status(400).json({
+        success: false,
+        message: "Courier cannot be assigned to a parent order.",
+      });
+    }
+
+    if (!order.isConfirmed) {
+      return res.status(400).json({
+        success: false,
+        message: "Confirm the order before assigning a courier.",
+      });
+    }
+
+    if (
+      String(order.fulfillmentStatus || "")
+        .trim()
+        .toLowerCase() !== "packed"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Only packed orders can be assigned to a courier.",
+      });
+    }
+
+    if (order.cancellation?.isCancelled === true) {
+      return res.status(400).json({
+        success: false,
+        message: "Cancelled order cannot be assigned to a courier.",
+      });
+    }
+
+    const existingAwb =
+      order.shipment?.awb ||
+      order.shipment?.shiprocket?.awb ||
+      order.shipment?.delhivery?.waybill;
+
+    if (existingAwb) {
+      return res.status(409).json({
+        success: false,
+        message: "Courier cannot be changed after shipment booking.",
+        provider: order.shipment?.provider,
+        awb: existingAwb,
+      });
+    }
+
+    order.shipment = order.shipment || {};
+
+    order.shipment.provider = provider;
+    order.shipment.status = "pending";
+
+    await order.save();
+
+    return res.status(200).json({
+      success: true,
+      message:
+        provider === "unassigned"
+          ? "Courier assignment removed."
+          : `Order assigned to ${provider}.`,
+      order: {
+        _id: order._id,
+        orderNumber: order.orderNumber,
+        fulfillmentStatus: order.fulfillmentStatus,
+        shipment: {
+          provider: order.shipment.provider,
+          status: order.shipment.status,
+          awb: order.shipment.awb || "",
+        },
+      },
+    });
+  } catch (error) {
+    console.error("❌ Assign courier error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to assign courier.",
+      error: error.message,
+    });
+  }
+};
+
+// ============================================================
+// ADMIN: GET SHIPROCKET COURIER RATES FOR PACKED ORDER
+// GET /api/orders/:id/shiprocket/rates
+// ============================================================
+
+export const getShiprocketRatesForOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order id.",
+      });
+    }
+
+    const order = await Order.findById(id).lean();
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    if (isParentOrder(order)) {
+      return res.status(400).json({
+        success: false,
+        message: "Parent order cannot be shipped.",
+      });
+    }
+
+    if (!order.isConfirmed) {
+      return res.status(400).json({
+        success: false,
+        message: "Confirm order before checking rates.",
+      });
+    }
+
+    if (
+      String(order.fulfillmentStatus || "")
+        .trim()
+        .toLowerCase() !== "packed"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Only packed orders can check courier rates.",
+      });
+    }
+
+    const address = order.shippingAddressSnapshot || {};
+
+    if (!address.pincode) {
+      return res.status(400).json({
+        success: false,
+        message: "Shipping pincode is missing.",
+      });
+    }
+
+    const totalWeight = (order.items || []).reduce((sum, item) => {
+      const quantity = Number(item.quantity || 0);
+
+      const itemWeight =
+        Number(item?.variant?.weight || 0) ||
+        Number(item?.productSnapshot?.weight || 0);
+
+      return sum + itemWeight * quantity;
+    }, 0);
+
+    // Shiprocket commonly expects weight in KG.
+    // Keep a safe minimum to avoid invalid zero-weight requests.
+    const weight = Math.max(totalWeight || 0.5, 0.5);
+
+    const cod =
+      String(order.paymentMethod || "").toLowerCase() === "cod" ? 1 : 0;
+
+    const pickupPincode =
+      process.env.SHIPROCKET_PICKUP_PINCODE ||
+      process.env.PICKUP_PINCODE ||
+      "";
+
+    if (!pickupPincode) {
+      return res.status(500).json({
+        success: false,
+        message: "Shiprocket pickup pincode is not configured.",
+      });
+    }
+
+    const serviceabilityResult = await checkServiceability({
+      pickup_postcode: pickupPincode,
+      delivery_postcode: String(address.pincode),
+      weight,
+      cod,
+      declared_value: Number(order.finalPayable || order.totalAmount || 0),
+    });
+
+    const couriers =
+      serviceabilityResult?.data?.available_courier_companies ||
+      serviceabilityResult?.available_courier_companies ||
+      serviceabilityResult?.couriers ||
+      [];
+
+    return res.status(200).json({
+      success: true,
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      weight,
+      cod: Boolean(cod),
+      couriers,
+      raw: serviceabilityResult,
+    });
+  } catch (error) {
+    console.error("❌ Shiprocket rates error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch Shiprocket rates.",
+      error: error?.message || "unknown_error",
+    });
+  }
+};
+
+// ============================================================
+// ADMIN: GET DELHIVERY DIRECT RATE
+// GET /api/orders/:id/delhivery/rate
+// ============================================================
+
+export const getDelhiveryRateForOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order id.",
+      });
+    }
+
+    const order = await Order.findById(id).lean();
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    if (isParentOrder(order)) {
+      return res.status(400).json({
+        success: false,
+        message: "Parent order cannot be shipped.",
+      });
+    }
+
+    if (!order.isConfirmed) {
+      return res.status(400).json({
+        success: false,
+        message: "Confirm order before checking courier rates.",
+      });
+    }
+
+    if (
+      String(order.fulfillmentStatus || "")
+        .trim()
+        .toLowerCase() !== "packed"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Only packed orders can check courier rates.",
+      });
+    }
+
+    const pincode = String(
+      order?.shippingAddressSnapshot?.pincode || "",
+    )
+      .replace(/\D/g, "")
+      .slice(0, 6);
+
+    if (!/^\d{6}$/.test(pincode)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid shipping pincode is required.",
+      });
+    }
+
+    const isCod =
+      String(order.paymentMethod || "")
+        .trim()
+        .toLowerCase() === "cod";
+
+    // Step 1: Check serviceability
+    const serviceability =
+      await checkDelhiveryServiceability(pincode);
+
+    const paymentModeAvailable = isCod
+      ? serviceability?.codAvailable === true
+      : serviceability?.prepaidAvailable === true;
+
+    const serviceable =
+      serviceability?.serviceable === true &&
+      paymentModeAvailable;
+
+    // Stop here when unavailable
+    if (!serviceable) {
+      return res.status(200).json({
+        success: true,
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+
+        option: {
+          courierName: "Delhivery Direct",
+          serviceable: false,
+
+          codAvailable: Boolean(
+            serviceability?.codAvailable,
+          ),
+
+          prepaidAvailable: Boolean(
+            serviceability?.prepaidAvailable,
+          ),
+
+          pickupAvailable: Boolean(
+            serviceability?.pickupAvailable,
+          ),
+
+          rate: null,
+          codCharges: null,
+          estimatedDays: "",
+          pricingAvailable: false,
+
+          unavailableReason: isCod
+            ? "Delhivery COD is unavailable for this pincode."
+            : "Delhivery prepaid delivery is unavailable for this pincode.",
+
+          city: serviceability?.city || "",
+          district: serviceability?.district || "",
+          state: serviceability?.state || "",
+        },
+
+        raw: {
+          serviceability:
+            serviceability?.raw || serviceability,
+          rate: null,
+        },
+      });
+    }
+
+    // Step 2: Calculate package weight
+    const totalWeightKg = (order.items || []).reduce(
+      (sum, item) => {
+        const quantity = Number(item.quantity || 0);
+
+        const itemWeight =
+          Number(item?.variant?.weight || 0) ||
+          Number(item?.productSnapshot?.weight || 0);
+
+        return sum + itemWeight * quantity;
+      },
+      0,
+    );
+
+    const weightInGrams = Math.max(
+      500,
+      Math.ceil((totalWeightKg || 0.5) * 1000),
+    );
+
+    // Step 3: Fetch rate only when serviceable
+    const rateResult = await calculateDelhiveryRate({
+      destinationPincode: pincode,
+      weightInGrams,
+      paymentMode: isCod ? "cod" : "prepaid",
+    });
+
+    const rate = Number(rateResult?.rate || 0);
+
+    return res.status(200).json({
+      success: true,
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      weightInGrams,
+
+      option: {
+        courierName: "Delhivery Direct",
+        serviceable: true,
+
+        codAvailable: Boolean(
+          serviceability?.codAvailable,
+        ),
+
+        prepaidAvailable: Boolean(
+          serviceability?.prepaidAvailable,
+        ),
+
+        pickupAvailable: Boolean(
+          serviceability?.pickupAvailable,
+        ),
+
+        rate: rate > 0 ? rate : null,
+        codCharges: null,
+        estimatedDays: "",
+
+        pricingAvailable: rate > 0,
+        zone: rateResult?.zone || "",
+
+        city: serviceability?.city || "",
+        district: serviceability?.district || "",
+        state: serviceability?.state || "",
+      },
+
+      raw: {
+        serviceability:
+          serviceability?.raw || serviceability,
+        rate: rateResult?.raw || rateResult,
+      },
+    });
+  } catch (error) {
+    const isTimeout =
+      error?.code === "ECONNABORTED" ||
+      String(error?.message || "")
+        .toLowerCase()
+        .includes("timeout");
+
+    console.error(
+      "❌ Delhivery rate error:",
+      error?.response?.data ||
+      error?.message ||
+      error,
+    );
+
+    return res.status(isTimeout ? 504 : 500).json({
+      success: false,
+      message: isTimeout
+        ? "Delhivery rate request timed out. Please retry."
+        : "Unable to fetch Delhivery shipping rate.",
+      error:
+        error?.response?.data ||
+        error?.message ||
+        "unknown_error",
     });
   }
 };
