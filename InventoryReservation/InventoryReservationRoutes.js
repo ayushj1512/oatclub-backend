@@ -11,6 +11,10 @@ import {
   cancelReservationsByOrder,
   restockFromRTO,
   reconcileReservations,
+  moveReservationToPending,
+  deleteReservation,
+  transferReservation,
+
 } from "./InventoryReservationController.js";
 
 import { reserveInventoryWebhookByOrderNumber } from "./inventoryWebhook.js";
@@ -42,8 +46,15 @@ router.post("/webhook/reserve-order", reserveInventoryWebhookByOrderNumber);
    single reservation routes
 --------------------------------------------------- */
 router.get("/:id", getReservation);
+
 router.post("/:id/release", releaseReservation);
 router.post("/:id/consume", consumeReservation);
 router.post("/:id/expire", expireReservation);
+
+/* admin repair */
+router.post("/:id/move-to-pending", moveReservationToPending);
+router.delete("/:id", deleteReservation);
+
+router.post("/:id/transfer", transferReservation);
 
 export default router;

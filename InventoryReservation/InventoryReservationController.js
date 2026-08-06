@@ -335,6 +335,45 @@ const releaseOrExpire = async ({ reservation, nextStatus, reason = "", session }
   return reservation;
 };
 
+const reservationProductKey = (productId, variantId = null) =>
+  `${String(productId)}::${variantId ? String(variantId) : "root"}`;
+
+const orderItemProductKey = (item) => {
+  const productId = item?.productId?._id || item?.productId;
+
+  const variantId =
+    item?.variant?.variantId ||
+    item?.variantId ||
+    item?.variant?._id ||
+    null;
+
+  if (!productId) return "";
+
+  return reservationProductKey(productId, variantId);
+};
+
+const getOrderRequiredQtyForProduct = ({
+  order,
+  productId,
+  variantId = null,
+}) => {
+  const requiredKey = reservationProductKey(productId, variantId);
+
+  return (Array.isArray(order?.items) ? order.items : []).reduce(
+    (total, item) => {
+      if (orderItemProductKey(item) !== requiredKey) {
+        return total;
+      }
+
+      const orderedQty = n(item?.quantity);
+      const shippedQty = n(item?.fulfillment?.shippedQty);
+
+      return total + Math.max(0, orderedQty - shippedQty);
+    },
+    0
+  );
+};
+
 /* ---------------------------------------------------
    FIFO pending -> reserved
 --------------------------------------------------- */
@@ -342,18 +381,34 @@ export async function reconcilePendingReservationsInternal({
   productId,
   variantId = null,
   maxRows = 200,
+  excludeReservationIds = [],
   session,
 }) {
   if (!isObjectId(productId)) throw new Error("Invalid productId");
-  if (variantId && !isObjectId(variantId)) throw new Error("Invalid variantId");
+  if (variantId && !isObjectId(variantId)) {
+    throw new Error("Invalid variantId");
+  }
 
-  const runId = `reconcile:${Date.now()}:${Math.random().toString(16).slice(2, 7)}`;
+  const excludedIds = Array.from(
+    new Set(
+      (Array.isArray(excludeReservationIds) ? excludeReservationIds : [])
+        .filter(isObjectId)
+        .map((id) => String(id))
+    )
+  ).map(oid);
+
+  const runId = `reconcile:${Date.now()}:${Math.random()
+    .toString(16)
+    .slice(2, 7)}`;
+
   const log = (tag, payload = null) => {
     if (!INV_DEBUG) return;
+
     if (payload == null) {
       console.log(`🔁 [${runId}] ${tag}`);
       return;
     }
+
     console.log(`🔁 [${runId}] ${tag}`, payload);
   };
 
@@ -361,13 +416,22 @@ export async function reconcilePendingReservationsInternal({
     productId: String(productId),
     variantId: variantId ? String(variantId) : null,
     maxRows: Math.max(1, Number(maxRows || 200)),
+    excludedIds: excludedIds.map(String),
   });
 
-  const list = await InventoryReservation.find({
+  const filter = {
     productId: oid(productId),
-    ...(variantId ? { variantId: oid(variantId) } : { variantId: null }),
+    ...(variantId
+      ? { variantId: oid(variantId) }
+      : { variantId: null }),
     status: "pending",
-  })
+  };
+
+  if (excludedIds.length) {
+    filter._id = { $nin: excludedIds };
+  }
+
+  const list = await InventoryReservation.find(filter)
     .sort({ createdAt: 1, _id: 1 })
     .limit(Math.max(1, Number(maxRows || 200)))
     .session(session);
@@ -389,6 +453,7 @@ export async function reconcilePendingReservationsInternal({
   let promotedQty = 0;
   let skippedNonConfirmed = 0;
   let skippedInsufficientStock = 0;
+
   const orderIdsToSync = new Set();
 
   for (const row of list) {
@@ -404,39 +469,20 @@ export async function reconcilePendingReservationsInternal({
     if (s(row.refType) === "order") {
       if (!row.refId || !isObjectId(row.refId)) {
         skippedNonConfirmed += 1;
-        log("SKIP_ORDER_INVALID_REFID", {
-          reservationId: String(row._id),
-          refId: row.refId ? String(row.refId) : null,
-        });
         continue;
       }
 
       const order = await Order.findById(row.refId)
-        .select("_id orderNumber isConfirmed confirmedAt paymentStatus fulfillmentStatus")
+        .select(
+          "_id orderNumber isConfirmed confirmedAt paymentStatus fulfillmentStatus"
+        )
         .session(session);
 
-      const isConfirmedOrder = !!order?.isConfirmed || !!order?.confirmedAt;
-
-      log("ORDER_CONFIRMATION_CHECK", {
-        reservationId: String(row._id),
-        orderId: order?._id ? String(order._id) : null,
-        orderNumber: order?.orderNumber || row.orderNumber || "",
-        isConfirmed: !!order?.isConfirmed,
-        confirmedAt: order?.confirmedAt || null,
-        paymentStatus: order?.paymentStatus || "",
-        fulfillmentStatus: order?.fulfillmentStatus || "",
-        passes: isConfirmedOrder,
-      });
+      const isConfirmedOrder =
+        Boolean(order?.isConfirmed) || Boolean(order?.confirmedAt);
 
       if (!order || !isConfirmedOrder) {
         skippedNonConfirmed += 1;
-        log("SKIP_NOT_CONFIRMED_ORDER", {
-          reservationId: String(row._id),
-          orderId: order?._id ? String(order._id) : null,
-          orderNumber: order?.orderNumber || row.orderNumber || "",
-          isConfirmed: !!order?.isConfirmed,
-          confirmedAt: order?.confirmedAt || null,
-        });
         continue;
       }
     }
@@ -447,22 +493,12 @@ export async function reconcilePendingReservationsInternal({
       session,
     });
 
-    log("AVAILABLE_STOCK_CHECK", {
-      reservationId: String(row._id),
-      qtyNeeded: Number(row.qty || 0),
-      available: Number(available || 0),
-      productId: String(row.productId),
-      variantId: row.variantId ? String(row.variantId) : null,
-    });
-
-    if (available < row.qty) {
+    if (available < n(row.qty)) {
       skippedInsufficientStock += 1;
-      log("BREAK_INSUFFICIENT_STOCK_FIFO", {
-        reservationId: String(row._id),
-        qtyNeeded: Number(row.qty || 0),
-        available: Number(available || 0),
-      });
-      break;
+
+      // Do not break here.
+      // A later pending row may require a smaller quantity.
+      continue;
     }
 
     const reserveResult = await reserveAvailableStockNow({
@@ -472,26 +508,25 @@ export async function reconcilePendingReservationsInternal({
       session,
     });
 
-    log("RESERVE_RESULT", {
-      reservationId: String(row._id),
-      reservedNow: Number(reserveResult?.reservedNow || 0),
-      pendingNow: Number(reserveResult?.pendingNow || 0),
-    });
+    if (reserveResult.reservedNow !== n(row.qty)) {
+      skippedInsufficientStock += 1;
+      continue;
+    }
 
     row.status = "reserved";
     row.reservedAt = new Date();
-    row.notes = appendNote(row.notes, "Auto-promoted from pending (FIFO)");
+    row.releasedAt = null;
+    row.expiredAt = null;
+
+    row.notes = appendNote(
+      row.notes,
+      `Promoted from pending to reserved at ${new Date().toISOString()}`
+    );
+
     await row.save({ session });
 
     promotedCount += 1;
-    promotedQty += Number(row.qty || 0);
-
-    log("ROW_PROMOTED", {
-      reservationId: String(row._id),
-      promotedCount,
-      promotedQty,
-      status: row.status,
-    });
+    promotedQty += n(row.qty);
 
     if (shouldSyncOrder(row.refType) && row.refId) {
       orderIdsToSync.add(String(row.refId));
@@ -499,26 +534,26 @@ export async function reconcilePendingReservationsInternal({
   }
 
   for (const orderId of orderIdsToSync) {
-    log("SYNC_ORDER_ALLOCATED_QTY", { orderId });
-
-    await syncOrderAllocatedQtyFromReservations({
-      orderId,
-      debug: false,
+    await syncOrderIfNeeded({
+      refType: "order",
+      refId: orderId,
       session,
     });
   }
 
-  const summary = {
+  return {
+    productId: String(productId),
+    variantId: variantId ? String(variantId) : null,
+    checkedCount: list.length,
     promotedCount,
     promotedQty,
     skippedNonConfirmed,
     skippedInsufficientStock,
-    scannedCount: list.length,
+    excludedReservationIds: excludedIds.map(String),
   };
-
-  log("DONE", summary);
-  return summary;
 }
+
+
 
 /* ---------------------------------------------------
    inventory add + reconcile
@@ -887,117 +922,255 @@ export async function expireReservation(req, res) {
 /* ---------------------------------------------------
    API: list / get
 --------------------------------------------------- */
+/* ---------------------------------------------------
+   API: list reservations
+--------------------------------------------------- */
 export async function listReservations(req, res) {
   try {
     const {
       productId,
       variantId,
+
       status,
       refType,
       refId,
       refIds,
+
       productCode,
+      productTitle,
       orderNumber,
       reservationKey,
+
       page = 1,
-      limit = 100,
+      limit = 50,
       all = false,
     } = req.query || {};
 
     const filter = {};
 
-    const toArray = (v) => {
-      if (v == null) return [];
-      if (Array.isArray(v)) return v.flatMap(toArray);
-      if (typeof v === "string") {
-        return v
+    const toArray = (value) => {
+      if (value == null) return [];
+
+      if (Array.isArray(value)) {
+        return value.flatMap(toArray);
+      }
+
+      if (typeof value === "string") {
+        return value
           .split(",")
-          .map((x) => x.trim())
+          .map((item) => item.trim())
           .filter(Boolean);
       }
-      return [String(v).trim()].filter(Boolean);
+
+      return [String(value).trim()].filter(Boolean);
     };
+
+    const escapeRegex = (value = "") =>
+      String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    /* ---------------------------------------------------
+       ObjectId filters
+    --------------------------------------------------- */
 
     if (productId) {
       if (!isObjectId(productId)) {
-        return res.status(400).json({ ok: false, message: "Invalid productId" });
+        return res.status(400).json({
+          ok: false,
+          message: "Invalid productId",
+        });
       }
+
       filter.productId = oid(productId);
     }
 
     if (variantId) {
       if (!isObjectId(variantId)) {
-        return res.status(400).json({ ok: false, message: "Invalid variantId" });
+        return res.status(400).json({
+          ok: false,
+          message: "Invalid variantId",
+        });
       }
+
       filter.variantId = oid(variantId);
     }
 
     if (refId) {
       if (!isObjectId(refId)) {
-        return res.status(400).json({ ok: false, message: "Invalid refId" });
+        return res.status(400).json({
+          ok: false,
+          message: "Invalid refId",
+        });
       }
+
       filter.refId = oid(refId);
     }
 
     if (refIds) {
-      const parsedRefIds = toArray(refIds).filter((id) => isObjectId(id));
+      const rawRefIds = toArray(refIds);
 
-      if (!parsedRefIds.length) {
-        return res.status(400).json({ ok: false, message: "Invalid refIds" });
+      if (!rawRefIds.length) {
+        return res.status(400).json({
+          ok: false,
+          message: "Invalid refIds",
+        });
       }
 
-      filter.refId = { $in: parsedRefIds.map((id) => oid(id)) };
+      const invalidRefIds = rawRefIds.filter(
+        (id) => !isObjectId(id)
+      );
+
+      if (invalidRefIds.length) {
+        return res.status(400).json({
+          ok: false,
+          message: "One or more refIds are invalid",
+          invalidRefIds,
+        });
+      }
+
+      filter.refId = {
+        $in: rawRefIds.map((id) => oid(id)),
+      };
     }
 
+    /* ---------------------------------------------------
+       Enum filters
+    --------------------------------------------------- */
+
     if (status) {
-      const st = s(status);
-      if (!allowedStatuses.has(st)) {
-        return res.status(400).json({ ok: false, message: "Invalid status" });
+      const parsedStatus = s(status).toLowerCase();
+
+      if (!allowedStatuses.has(parsedStatus)) {
+        return res.status(400).json({
+          ok: false,
+          message: "Invalid status",
+        });
       }
-      filter.status = st;
+
+      filter.status = parsedStatus;
     }
 
     if (refType) {
-      const rt = s(refType);
-      if (!allowedRefTypes.has(rt)) {
-        return res.status(400).json({ ok: false, message: "Invalid refType" });
+      const parsedRefType = s(refType).toLowerCase();
+
+      if (!allowedRefTypes.has(parsedRefType)) {
+        return res.status(400).json({
+          ok: false,
+          message: "Invalid refType",
+        });
       }
-      filter.refType = rt;
+
+      filter.refType = parsedRefType;
     }
 
-    if (productCode) filter.productCode = s(productCode);
-    if (orderNumber) filter.orderNumber = s(orderNumber);
-    if (reservationKey) filter.reservationKey = s(reservationKey);
+    /* ---------------------------------------------------
+       Search filters
+
+       Partial and case-insensitive search makes the
+       admin filters easier to use.
+    --------------------------------------------------- */
+
+    if (productCode) {
+      filter.productCode = {
+        $regex: escapeRegex(s(productCode)),
+        $options: "i",
+      };
+    }
+
+    if (productTitle) {
+      filter.productTitle = {
+        $regex: escapeRegex(s(productTitle)),
+        $options: "i",
+      };
+    }
+
+    if (orderNumber) {
+      filter.orderNumber = {
+        $regex: escapeRegex(s(orderNumber)),
+        $options: "i",
+      };
+    }
+
+    if (reservationKey) {
+      filter.reservationKey = {
+        $regex: escapeRegex(s(reservationKey)),
+        $options: "i",
+      };
+    }
+
+    /* ---------------------------------------------------
+       Pagination
+    --------------------------------------------------- */
 
     const wantsAll =
       String(all).trim().toLowerCase() === "true" ||
       String(limit).trim() === "0";
 
-    const safePage = Math.max(1, Number(page) || 1);
-    const safeLimit = Math.min(1000, Math.max(1, Number(limit) || 100));
+    const safePage = Math.max(
+      1,
+      Number.parseInt(page, 10) || 1
+    );
+
+    const safeLimit = Math.min(
+      200,
+      Math.max(1, Number.parseInt(limit, 10) || 50)
+    );
+
     const skip = (safePage - 1) * safeLimit;
 
-    const query = InventoryReservation.find(filter)
-      .sort({ createdAt: -1, _id: -1 })
+    const total = await InventoryReservation.countDocuments(filter);
+
+    const totalPages = wantsAll
+      ? 1
+      : Math.max(1, Math.ceil(total / safeLimit));
+
+    // Prevent requesting a page beyond the last available page.
+    const finalPage = wantsAll
+      ? 1
+      : Math.min(safePage, totalPages);
+
+    const finalSkip = (finalPage - 1) * safeLimit;
+
+    let query = InventoryReservation.find(filter)
+      .sort({
+        createdAt: -1,
+        _id: -1,
+      })
       .lean();
 
-    const [data, total] = await Promise.all([
-      wantsAll ? query : query.skip(skip).limit(safeLimit),
-      InventoryReservation.countDocuments(filter),
-    ]);
+    if (!wantsAll) {
+      query = query.skip(finalSkip).limit(safeLimit);
+    }
+
+    const data = await query;
 
     return res.json({
       ok: true,
-      count: wantsAll ? data.length : total,
-      total,
-      page: wantsAll ? 1 : safePage,
-      limit: wantsAll ? data.length : safeLimit,
-      pages: wantsAll ? 1 : Math.ceil(total / safeLimit),
-      all: wantsAll,
+
       data,
+
+      // Number of records returned in current response.
+      count: data.length,
+
+      // Total records matching the filters.
+      total,
+
+      page: finalPage,
+
+      limit: wantsAll ? data.length : safeLimit,
+
+      pages: totalPages,
+
+      hasNextPage: !wantsAll && finalPage < totalPages,
+      hasPreviousPage: !wantsAll && finalPage > 1,
+
+      all: wantsAll,
     });
-  } catch (e) {
-    return sendErr(res, e, "Failed to list reservations");
+  } catch (error) {
+    return sendErr(
+      res,
+      error,
+      "Failed to list reservations"
+    );
   }
 }
 
@@ -1202,6 +1375,728 @@ export async function reconcileReservations(req, res) {
   } catch (e) {
     await session.abortTransaction();
     return sendErr(res, e, "Failed to reconcile reservations");
+  } finally {
+    session.endSession();
+  }
+}
+
+/* ---------------------------------------------------
+   ADMIN REPAIR: reserved -> pending
+
+   Behaviour:
+   1. Reserved stock is released.
+   2. Current reservation becomes pending.
+   3. Released stock is offered to OTHER pending rows.
+   4. Current row is excluded from immediate reconciliation,
+      otherwise the same old FIFO row may reserve itself again.
+--------------------------------------------------- */
+export async function moveReservationToPending(req, res) {
+  const { id } = req.params;
+  const {
+    reason = "Moved to pending by admin",
+    reconcile = true,
+  } = req.body || {};
+
+  if (!isObjectId(id)) {
+    return res.status(400).json({
+      ok: false,
+      message: "Invalid reservation id",
+    });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const reservation = await InventoryReservation.findById(id).session(
+      session
+    );
+
+    if (!reservation) {
+      throw new Error("Reservation not found");
+    }
+
+    if (reservation.status !== "reserved") {
+      throw new Error(
+        "Only reserved reservations can be moved to pending"
+      );
+    }
+
+    const productId = reservation.productId;
+    const variantId = reservation.variantId || null;
+    const oldStatus = reservation.status;
+
+    await releaseReservedStock({
+      productId,
+      variantId,
+      qty: reservation.qty,
+      session,
+    });
+
+    reservation.status = "pending";
+    reservation.reservedAt = null;
+    reservation.releasedAt = null;
+    reservation.consumedAt = null;
+    reservation.expiredAt = null;
+
+    reservation.notes = appendNote(
+      reservation.notes,
+      `Moved reserved → pending: ${s(reason) || "Admin repair"}`
+    );
+
+    await reservation.save({ session });
+
+    await syncOrderIfNeeded({
+      refType: reservation.refType,
+      refId: reservation.refId,
+      session,
+    });
+
+    let reconcileSummary = null;
+
+    if (reconcile !== false) {
+      reconcileSummary = await reconcilePendingReservationsInternal({
+        productId,
+        variantId,
+        excludeReservationIds: [reservation._id],
+        session,
+      });
+    }
+
+    await session.commitTransaction();
+
+    return res.json({
+      ok: true,
+      message: "Reservation moved to pending",
+      reservation,
+      summary: {
+        reservationId: String(reservation._id),
+        oldStatus,
+        newStatus: reservation.status,
+        releasedQty: n(reservation.qty),
+        reconciliation: reconcileSummary,
+      },
+    });
+  } catch (e) {
+    await session.abortTransaction();
+    return sendErr(
+      res,
+      e,
+      "Failed to move reservation to pending"
+    );
+  } finally {
+    session.endSession();
+  }
+}
+
+/* ---------------------------------------------------
+   ADMIN REPAIR: transfer reserved inventory
+
+   Transfers reservation ownership from one order
+   to another without changing product stock or
+   reservedStock.
+
+   Supports:
+   - full transfer
+   - partial quantity transfer
+   - target pending reservation conversion
+   - target reserved reservation merge
+--------------------------------------------------- */
+export async function transferReservation(req, res) {
+  const { id } = req.params;
+
+  const {
+    targetOrderNumber,
+    qty: requestedQty,
+    reason = "Reservation transferred by admin",
+  } = req.body || {};
+
+  if (!isObjectId(id)) {
+    return res.status(400).json({
+      ok: false,
+      message: "Invalid source reservation id",
+    });
+  }
+
+  const targetOrderNo = s(targetOrderNumber);
+
+  if (!targetOrderNo) {
+    return res.status(400).json({
+      ok: false,
+      message: "targetOrderNumber is required",
+    });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    /* -------------------------------------------------
+       Source reservation
+    ------------------------------------------------- */
+
+    const sourceReservation =
+      await InventoryReservation.findById(id).session(session);
+
+    if (!sourceReservation) {
+      throw new Error("Source reservation not found");
+    }
+
+    if (sourceReservation.status !== "reserved") {
+      throw new Error(
+        "Only reserved reservations can be transferred"
+      );
+    }
+
+    if (sourceReservation.refType !== "order") {
+      throw new Error(
+        "Only order reservations can be transferred"
+      );
+    }
+
+    /* -------------------------------------------------
+       Target order
+    ------------------------------------------------- */
+
+    const targetOrder = await Order.findOne({
+      orderNumber: targetOrderNo,
+    })
+      .select(
+        "_id orderNumber isConfirmed confirmedAt fulfillmentStatus items"
+      )
+      .session(session);
+
+    if (!targetOrder) {
+      throw new Error("Target order not found");
+    }
+
+    if (
+      String(targetOrder._id) ===
+      String(sourceReservation.refId)
+    ) {
+      throw new Error(
+        "Source and target orders cannot be the same"
+      );
+    }
+
+    const targetConfirmed =
+      Boolean(targetOrder.isConfirmed) ||
+      Boolean(targetOrder.confirmedAt);
+
+    if (!targetConfirmed) {
+      throw new Error(
+        "Target order must be confirmed before transferring reservation"
+      );
+    }
+
+    const productId = sourceReservation.productId;
+    const variantId = sourceReservation.variantId || null;
+
+    /* -------------------------------------------------
+       Check target order contains same item
+    ------------------------------------------------- */
+
+    const targetRequiredQty = getOrderRequiredQtyForProduct({
+      order: targetOrder,
+      productId,
+      variantId,
+    });
+
+    if (targetRequiredQty <= 0) {
+      throw new Error(
+        "Target order does not contain this product and variant"
+      );
+    }
+
+    /* -------------------------------------------------
+       Current target reserved quantity
+    ------------------------------------------------- */
+
+    const targetReservedRows =
+      await InventoryReservation.find({
+        refType: "order",
+        refId: targetOrder._id,
+        productId,
+        ...(variantId
+          ? { variantId }
+          : { variantId: null }),
+        status: "reserved",
+      }).session(session);
+
+    const currentTargetReservedQty =
+      targetReservedRows.reduce(
+        (total, row) => total + n(row.qty),
+        0
+      );
+
+    const targetRemainingQty = Math.max(
+      0,
+      targetRequiredQty - currentTargetReservedQty
+    );
+
+    if (targetRemainingQty <= 0) {
+      throw new Error(
+        "Target order is already fully reserved for this product"
+      );
+    }
+
+    /* -------------------------------------------------
+       Transfer quantity
+    ------------------------------------------------- */
+
+    const sourceQty = n(sourceReservation.qty);
+
+    const transferQty =
+      requestedQty == null || requestedQty === ""
+        ? Math.min(sourceQty, targetRemainingQty)
+        : Number(requestedQty);
+
+    if (
+      !Number.isFinite(transferQty) ||
+      transferQty <= 0
+    ) {
+      throw new Error("Transfer qty must be greater than 0");
+    }
+
+    if (transferQty > sourceQty) {
+      throw new Error(
+        `Transfer qty cannot exceed source reserved qty ${sourceQty}`
+      );
+    }
+
+    if (transferQty > targetRemainingQty) {
+      throw new Error(
+        `Target order only requires ${targetRemainingQty} more reserved unit(s)`
+      );
+    }
+
+    const targetReservationKey = buildReservationKey({
+      refType: "order",
+      refId: targetOrder._id,
+      productId,
+      variantId,
+    });
+
+    /* -------------------------------------------------
+       Target pending reservation
+    ------------------------------------------------- */
+
+    const targetPending =
+      await InventoryReservation.findOne({
+        refType: "order",
+        refId: targetOrder._id,
+        productId,
+        ...(variantId
+          ? { variantId }
+          : { variantId: null }),
+        status: "pending",
+      }).session(session);
+
+    let targetReserved = targetReservedRows[0] || null;
+
+    /* -------------------------------------------------
+       Case 1:
+       Target already has a reserved row.
+       Merge transferred qty into it.
+    ------------------------------------------------- */
+
+    if (targetReserved) {
+      targetReserved.qty =
+        n(targetReserved.qty) + transferQty;
+
+      targetReserved.notes = appendNote(
+        targetReserved.notes,
+        `Received ${transferQty} reserved unit(s) from order ${sourceReservation.orderNumber || sourceReservation.refId
+        }. Reason: ${s(reason)}`
+      );
+
+      await targetReserved.save({ session });
+
+      /*
+       Reduce target pending row because the transferred
+       reservation is now fulfilling that pending demand.
+      */
+      if (targetPending) {
+        if (n(targetPending.qty) <= transferQty) {
+          await InventoryReservation.deleteOne({
+            _id: targetPending._id,
+          }).session(session);
+        } else {
+          targetPending.qty =
+            n(targetPending.qty) - transferQty;
+
+          targetPending.notes = appendNote(
+            targetPending.notes,
+            `${transferQty} unit(s) fulfilled through reservation transfer`
+          );
+
+          await targetPending.save({ session });
+        }
+      }
+    }
+
+    /* -------------------------------------------------
+       Case 2:
+       Target only has pending row.
+    ------------------------------------------------- */
+
+    else if (targetPending) {
+      const pendingQty = n(targetPending.qty);
+
+      if (pendingQty <= transferQty) {
+        /*
+         Convert full pending row into reserved.
+         Any extra transferred qty is included in this row.
+        */
+        targetPending.qty = transferQty;
+        targetPending.status = "reserved";
+        targetPending.reservedAt = new Date();
+        targetPending.releasedAt = null;
+        targetPending.expiredAt = null;
+
+        targetPending.notes = appendNote(
+          targetPending.notes,
+          `Converted pending → reserved using ${transferQty} unit(s) transferred from order ${sourceReservation.orderNumber || sourceReservation.refId
+          }. Reason: ${s(reason)}`
+        );
+
+        await targetPending.save({ session });
+
+        targetReserved = targetPending;
+      } else {
+        /*
+         Pending demand is larger than transfer quantity.
+         Reduce pending row and create separate reserved row.
+        */
+        targetPending.qty = pendingQty - transferQty;
+
+        targetPending.notes = appendNote(
+          targetPending.notes,
+          `${transferQty} unit(s) fulfilled through reservation transfer`
+        );
+
+        await targetPending.save({ session });
+
+        const [createdReserved] =
+          await InventoryReservation.create(
+            [
+              {
+                productModel:
+                  sourceReservation.productModel ||
+                  "Product",
+
+                productId,
+                variantId,
+
+                qty: transferQty,
+                status: "reserved",
+
+                refType: "order",
+                refId: targetOrder._id,
+
+                reservationKey: targetReservationKey,
+
+                productCode:
+                  sourceReservation.productCode,
+
+                productTitle:
+                  sourceReservation.productTitle,
+
+                productImage:
+                  sourceReservation.productImage,
+
+                orderNumber: targetOrder.orderNumber,
+
+                variantSku:
+                  sourceReservation.variantSku,
+
+                selectedSize:
+                  sourceReservation.selectedSize,
+
+                selectedColor:
+                  sourceReservation.selectedColor,
+
+                reservedAt: new Date(),
+
+                notes: `Transferred ${transferQty} reserved unit(s) from order ${sourceReservation.orderNumber ||
+                  sourceReservation.refId
+                  }. Reason: ${s(reason)}`,
+              },
+            ],
+            { session }
+          );
+
+        targetReserved = createdReserved;
+      }
+    }
+
+    /* -------------------------------------------------
+       Case 3:
+       No active reservation exists for target.
+       Create reserved row directly.
+    ------------------------------------------------- */
+
+    else {
+      const [createdReserved] =
+        await InventoryReservation.create(
+          [
+            {
+              productModel:
+                sourceReservation.productModel || "Product",
+
+              productId,
+              variantId,
+
+              qty: transferQty,
+              status: "reserved",
+
+              refType: "order",
+              refId: targetOrder._id,
+
+              reservationKey: targetReservationKey,
+
+              productCode:
+                sourceReservation.productCode,
+
+              productTitle:
+                sourceReservation.productTitle,
+
+              productImage:
+                sourceReservation.productImage,
+
+              orderNumber: targetOrder.orderNumber,
+
+              variantSku:
+                sourceReservation.variantSku,
+
+              selectedSize:
+                sourceReservation.selectedSize,
+
+              selectedColor:
+                sourceReservation.selectedColor,
+
+              reservedAt: new Date(),
+
+              notes: `Transferred ${transferQty} reserved unit(s) from order ${sourceReservation.orderNumber ||
+                sourceReservation.refId
+                }. Reason: ${s(reason)}`,
+            },
+          ],
+          { session }
+        );
+
+      targetReserved = createdReserved;
+    }
+
+    /* -------------------------------------------------
+       Update source reservation
+
+       Important:
+       Do not release reservedStock because reservation
+       remains reserved and only its ownership changes.
+    ------------------------------------------------- */
+
+    if (transferQty === sourceQty) {
+      await InventoryReservation.deleteOne({
+        _id: sourceReservation._id,
+      }).session(session);
+    } else {
+      sourceReservation.qty = sourceQty - transferQty;
+
+      sourceReservation.notes = appendNote(
+        sourceReservation.notes,
+        `Transferred ${transferQty} reserved unit(s) to order ${targetOrder.orderNumber}. Reason: ${s(
+          reason
+        )}`
+      );
+
+      await sourceReservation.save({ session });
+    }
+
+    /* -------------------------------------------------
+       Sync both orders
+    ------------------------------------------------- */
+
+    await syncOrderIfNeeded({
+      refType: "order",
+      refId: sourceReservation.refId,
+      session,
+    });
+
+    await syncOrderIfNeeded({
+      refType: "order",
+      refId: targetOrder._id,
+      session,
+    });
+
+    await session.commitTransaction();
+
+    return res.json({
+      ok: true,
+      message: "Reservation transferred successfully",
+
+      summary: {
+        sourceReservationId: String(
+          sourceReservation._id
+        ),
+
+        sourceOrderId: String(
+          sourceReservation.refId
+        ),
+
+        sourceOrderNumber:
+          sourceReservation.orderNumber || "",
+
+        targetOrderId: String(targetOrder._id),
+
+        targetOrderNumber:
+          targetOrder.orderNumber,
+
+        productId: String(productId),
+
+        variantId: variantId
+          ? String(variantId)
+          : null,
+
+        transferredQty: transferQty,
+
+        sourceRemainingQty:
+          sourceQty - transferQty,
+
+        targetRequiredQty,
+
+        targetReservedQtyAfter:
+          currentTargetReservedQty + transferQty,
+
+        targetRemainingQtyAfter: Math.max(
+          0,
+          targetRemainingQty - transferQty
+        ),
+
+        targetReservationId:
+          targetReserved?._id
+            ? String(targetReserved._id)
+            : null,
+      },
+    });
+  } catch (error) {
+    await session.abortTransaction();
+
+    return sendErr(
+      res,
+      error,
+      "Failed to transfer reservation"
+    );
+  } finally {
+    session.endSession();
+  }
+}
+
+/* ---------------------------------------------------
+   ADMIN REPAIR: permanently delete reservation
+
+   Allowed:
+   - pending
+   - reserved
+   - released
+   - expired
+
+   Consumed rows are protected because inventory has already
+   been physically deducted.
+--------------------------------------------------- */
+export async function deleteReservation(req, res) {
+  const { id } = req.params;
+  const {
+    reason = "Deleted by admin",
+    reconcile = true,
+    allowFinalized = false,
+  } = req.body || {};
+
+  if (!isObjectId(id)) {
+    return res.status(400).json({
+      ok: false,
+      message: "Invalid reservation id",
+    });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const reservation = await InventoryReservation.findById(id).session(
+      session
+    );
+
+    if (!reservation) {
+      throw new Error("Reservation not found");
+    }
+
+    const oldStatus = s(reservation.status);
+
+    if (oldStatus === "consumed" && allowFinalized !== true) {
+      throw new Error(
+        "Consumed reservation cannot be deleted. Use an inventory adjustment instead."
+      );
+    }
+
+    const productId = reservation.productId;
+    const variantId = reservation.variantId || null;
+    const qty = n(reservation.qty);
+    const refType = reservation.refType;
+    const refId = reservation.refId;
+    const orderNumber = reservation.orderNumber || "";
+
+    let releasedReservedQty = 0;
+
+    if (oldStatus === "reserved") {
+      await releaseReservedStock({
+        productId,
+        variantId,
+        qty,
+        session,
+      });
+
+      releasedReservedQty = qty;
+    }
+
+    await InventoryReservation.deleteOne({
+      _id: reservation._id,
+    }).session(session);
+
+    await syncOrderIfNeeded({
+      refType,
+      refId,
+      session,
+    });
+
+    let reconcileSummary = null;
+
+    if (oldStatus === "reserved" && reconcile !== false) {
+      reconcileSummary = await reconcilePendingReservationsInternal({
+        productId,
+        variantId,
+        session,
+      });
+    }
+
+    await session.commitTransaction();
+
+    return res.json({
+      ok: true,
+      message: "Reservation permanently deleted",
+      summary: {
+        deletedReservationId: String(id),
+        orderNumber,
+        oldStatus,
+        qty,
+        releasedReservedQty,
+        reason: s(reason),
+        reconciliation: reconcileSummary,
+      },
+    });
+  } catch (e) {
+    await session.abortTransaction();
+    return sendErr(res, e, "Failed to delete reservation");
   } finally {
     session.endSession();
   }

@@ -76,6 +76,7 @@ import barcodeItemRoutes from "./BarcodeItem/barcodeItem.routes.js";
 import abandonedCartRoutes from "./AbandonedCart/AbandonedCartRoutes.js";
 import homepageSettingsRoutes from "./HomepageSettings/homepageSettingsRoutes.js";
 import adminUserRoutes from "./AdminUsers/adminUserRoutes.js";
+import adminUserTaskRoutes from "./AdminUsers/AdminUsersTask/adminUserTaskRoutes.js";
 import mediaAuthRoutes from "./MediaUser/mediaAuthRoutes.js";
 import commingSoonRoutes from "./ComingSoonModel/comingSoon.routes.js";
 import fabriclogRoutes from "./FabricLog/FabricLogRouter.js";
@@ -87,6 +88,8 @@ import cuttingBatchRoutes from "./cuttingbatch/cuttingbatchroute.js";
 import otpRoutes from "./otp/otp.routes.js";
 import fabricPriceLogRoutes from "./FabricPriceLog/FabricPriceLogRoutes.js";
 import fabricLogRoutes from "./FabricLog/FabricLogRouter.js";
+import { delhiveryRoutes } from "./delhivery/index.js";
+
 // --------------------------------------------------
 // APP CONFIG
 // --------------------------------------------------
@@ -247,6 +250,7 @@ app.use("/api/fabrics", fabricRoutes);
 app.use("/api/fabric-logs", fabriclogRoutes);
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/admin-users", adminUserRoutes);
+app.use("/api/admin-user-tasks", adminUserTaskRoutes);
 app.use("/api/vendor-users", vendorUserRoutes);
 app.use("/api", emailRoutes);
 app.use("/api/collaborations", collaborationRoutes);
@@ -288,6 +292,7 @@ app.use("/api", marqueeRoutes);
 app.use("/api/marketing-campaigns", marketingcampaignroutes);
 app.use("/fabric-price-logs", fabricPriceLogRoutes);
 app.use("/fabric-logs", fabricLogRoutes);
+app.use("/api/delhivery", delhiveryRoutes);
 // --------------------------------------------------
 // ROOT + FEEDS
 // --------------------------------------------------

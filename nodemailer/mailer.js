@@ -10,6 +10,9 @@ import { orderTrackingTemplate } from "./events/OrderTrackingTemplate.js";
 import { orderShippedTemplate } from "./events/OrderShippedTemplate.js";
 import { orderDeliveredTemplate } from "./events/OrderDeliveredTemplate.js";
 import { orderPaymentPendingTemplate } from "./events/OrderPaymentPendingTemplate.js";
+import {
+  adminUserTaskEmailTemplate,
+} from "./events/AdminUserTaskEmailTemplate.js";
 
 const MAIL_ENABLED = String(process.env.MAIL_ENABLED).toLowerCase() !== "false";
 
@@ -342,6 +345,46 @@ export const Mailer = {
       subject,
       text,
       html,
+    });
+  },
+
+  sendAdminUserTaskEmail: async ({
+    to,
+    eventType,
+    task,
+    recipient,
+    actor,
+    message = "",
+    feedback = "",
+    ctaUrl,
+    brandName = "OATCLUB",
+    supportEmail,
+  }) => {
+    const { subject, text, html } =
+      adminUserTaskEmailTemplate({
+        eventType,
+        task,
+        recipient,
+        actor,
+        message,
+        feedback,
+        ctaUrl,
+        brandName,
+        supportEmail,
+      });
+
+    return sendMail({
+      to,
+      subject,
+      text,
+      html,
+      headers: {
+        "X-OATCLUB-Notification-Type": "admin-user-task",
+        "X-OATCLUB-Task-Event": eventType || "task_updated",
+        "X-OATCLUB-Task-Id": String(
+          task?._id || task?.taskNumber || "",
+        ),
+      },
     });
   },
 };
