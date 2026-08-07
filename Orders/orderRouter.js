@@ -1,119 +1,118 @@
 import express from "express";
 
 import {
-  createOrder,
-  getAllOrders,
-  getAdvancedFilteredOrders,
-  getOrderById,
-  getOrdersByCustomer,
-  updateOrder,
-  updateOrderStatus,
-  updateOrderPaymentStatus,
-  updateTracking,
-  getOrderAnalytics,
-  getOrderByOrderNumber,
-  cancelOrder,
-  confirmOrder,
-  adminBookShiprocketIfMissing,
-  updateOrderAddress,
-  splitOrderIntoShipments,
-  duplicateExchangeOrder,
-  lookupOrdersByIdentity,
-  getProductOrderCount,
-  searchProductOrderNumbers,
-  findOrdersByStateAndPincode,
-  getDuplicateOrderAlerts,
-  markDuplicateOrderAlertsController,
-  getOrderConfirmationDetails,
-  getOrdersDashboard,
-  applyCouponAfterOrderPlaced,
-  adjustOrderFinalPayable,
-  markCodOrderAsPaid,
-  markOrderAsInfluencer,
   addProductToOrder,
-  removeProductFromOrder,
+  adjustOrderFinalPayable,
+  adminBookDelhiveryIfMissing,
+  adminBookShiprocketIfMissing,
+  applyCouponAfterOrderPlaced,
+  assignCourierToPackedOrder,
+  cancelOrder,
   changeOrderItemSize,
+  confirmOrder,
+  createOrder,
+  duplicateExchangeOrder,
+  findOrdersByStateAndPincode,
+  getAdvancedFilteredOrders,
+  getAllOrders,
+  getDelhiveryRateForOrder,
+  getDuplicateOrderAlerts,
+  getOrderAnalytics,
+  getOrderById,
+  getOrderByOrderNumber,
+  getOrderConfirmationDetails,
+  getOrdersByCustomer,
+  getOrdersDashboard,
+  getPackedOrdersForShipping,
+  getProductOrderCount,
+  getShiprocketRatesForOrder,
+  lookupOrdersByIdentity,
+  markCodOrderAsPaid,
+  markDuplicateOrderAlertsController,
+  markOrderAsInfluencer,
+  removeProductFromOrder,
+  searchProductOrderNumbers,
+  sendBulkOrderPaymentRecoveryEmails,
+  sendOrderPaymentRecoveryEmail,
   splitOrder,
   toggleTestingOrder,
-  sendOrderPaymentRecoveryEmail,
-  sendBulkOrderPaymentRecoveryEmails,
-  adminBookDelhiveryIfMissing,
-  assignCourierToPackedOrder,
-  getPackedOrdersForShipping,
-  getShiprocketRatesForOrder,
-  getDelhiveryRateForOrder,
+  updateOrder,
+  updateOrderAddress,
+  updateOrderPaymentStatus,
+  updateOrderStatus,
+  updateTracking,
+  repairSplitOrderToOriginal
 } from "./orderController.js";
 
 import {
-  getRefundPendingCandidates,
   getEligibleUnrefundedOrders,
+  getRefundPendingCandidates,
 } from "./orderRefunds.controller.js";
 
 import {
-  getInvoicesByOrderNumbers,
   getInvoiceById,
   getInvoiceByOrderNumber,
+  getInvoicesByOrderNumbers,
   getRecentInvoices,
 } from "./order.invoice.controller.js";
 
 import {
-  getSalesReport,
-  getRevenueReport,
-  getSalesLedgerReport,
   downloadSalesLedgerCsv,
   getGSTReport,
+  getRevenueReport,
+  getSalesLedgerReport,
+  getSalesReport,
 } from "./orderAccountsController.js";
 
 import {
-  getProductSalesReport,
-  getLowSellingProducts,
-  getUnsoldProducts,
-  getOrderBusinessOverview,
-  getROASReport,
-  getOperationsStatusReport,
-  getFinalPayableByStatus,
   getCancellationAnalyticsReport,
-
+  getFinalPayableByStatus,
+  getLowSellingProducts,
+  getOperationsStatusReport,
+  getOrderBusinessOverview,
+  getProductSalesReport,
+  getROASReport,
+  getUnsoldProducts,
 } from "./orderReportsController.js";
 
 import {
-  getCustomerSupportOrders,
   getCustomerSupportOrderDetail,
+  getCustomerSupportOrders,
 } from "./customerSupportOrderController.js";
 
 import {
   createRma,
-  updateRma,
-  getRmasByOrder,
-  getRmaByNumber,
   getAllRmasAdmin,
+  getRmaByNumber,
+  getRmasByOrder,
+  updateRma,
 } from "./orderRmaController.js";
 
 import { getRmaReasonsGroupedByProductCode } from "./order.rma.controller.js";
 
 import {
-  getProductionQueue,
-  getProductionSummary,
-  markOrderShippedFromProduction,
-  markAllPackedOrdersShipped,
-  getProductionJobList,
   exportProductionJobListExcel,
   getProcessingOrderProductList,
+  getProductionJobList,
+  getProductionQueue,
+  getProductionSummary,
+  markAllPackedOrdersShipped,
+  markOrderShippedFromProduction,
 } from "./order.production.controller.js";
 
 import { bookWithShiprocket } from "../shiprocket/shipping.controller.js";
 
 import {
   verifyWhatsappWebhook,
-  whatsappConfirmOrderWebhook,
   whatsappCancelOrderWebhook,
+  whatsappConfirmOrderWebhook,
 } from "./order.whatsapp.webhook.js";
 
 import { sendReviewWhatsappManually } from "./orders.review.controller.js";
 
 import {
-  getVendorProductionJobs,
   exportVendorProductionJobs,
+  getVendorProductionJobs,
 } from "./order.vendor.production.controller.js";
 
 import { protectVendor } from "../VendorUser/vendorAuth.js";
@@ -427,6 +426,11 @@ router.post(
 router.post(
   "/:id/send-payment-recovery-email",
   sendOrderPaymentRecoveryEmail,
+);
+
+router.post(
+  "/repair-split-original",
+  repairSplitOrderToOriginal,
 );
 
 

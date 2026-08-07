@@ -436,7 +436,7 @@ export async function validatePendingOrderReservation(
 
   const order = await Order.findById(reservation.refId)
     .select(
-      "_id orderNumber isConfirmed confirmedAt paymentStatus fulfillmentStatus items"
+      "_id orderNumber orderType parentOrderId isConfirmed confirmedAt paymentStatus fulfillmentStatus items"
     )
     .session(session);
 
@@ -447,6 +447,18 @@ export async function validatePendingOrderReservation(
       reason: "ORDER_NOT_FOUND",
       remainingQty: 0,
       order: null,
+    };
+  }
+
+  // Split parent is a logical container only.
+  // It must never own active/pending inventory demand.
+  if (s(order.orderType).toLowerCase() === "parent") {
+    return {
+      valid: false,
+      safeToDelete: true,
+      reason: "SPLIT_PARENT_ORDER",
+      remainingQty: 0,
+      order,
     };
   }
 
@@ -640,15 +652,29 @@ export async function reconcilePendingReservationsInternal({
 
       const order = await Order.findById(row.refId)
         .select(
-          "_id orderNumber isConfirmed confirmedAt paymentStatus fulfillmentStatus"
+          "_id orderNumber orderType parentOrderId isConfirmed confirmedAt paymentStatus fulfillmentStatus"
         )
         .session(session);
 
       const isConfirmedOrder =
-        Boolean(order?.isConfirmed) || Boolean(order?.confirmedAt);
+        Boolean(order?.isConfirmed) ||
+        Boolean(order?.confirmedAt);
 
-      if (!order || !isConfirmedOrder) {
+      const isSplitParent =
+        s(order?.orderType).toLowerCase() === "parent";
+
+      if (!order || !isConfirmedOrder || isSplitParent) {
         skippedNonConfirmed += 1;
+
+        if (isSplitParent) {
+          row.notes = appendNote(
+            row.notes,
+            "Skipped reconciliation: split parent order",
+          );
+
+          await row.save({ session });
+        }
+
         continue;
       }
     }
@@ -780,6 +806,23 @@ export async function createReservationInternal({
   }
   if (!allowedRefTypes.has(s(refType))) throw new Error("Invalid refType");
   if (!isObjectId(refId)) throw new Error("Invalid refId");
+
+  // Order reservations must never be created against a split parent.
+  if (s(refType) === "order") {
+    const refOrder = await Order.findById(refId)
+      .select("_id orderNumber orderType parentOrderId")
+      .session(session);
+
+    if (!refOrder) {
+      throw new Error("Order not found");
+    }
+
+    if (s(refOrder.orderType).toLowerCase() === "parent") {
+      throw new Error(
+        `Cannot create inventory reservation for split parent order ${refOrder.orderNumber}`,
+      );
+    }
+  }
 
   const qtyNum = Math.max(1, Number(qty));
   const productObjId = oid(productId);

@@ -40,10 +40,11 @@ export const reserveInventoryForOrderNumberInternal = async ({
   const runId = `reserveByOrderNo:${Date.now()}:${Math.random().toString(16).slice(2, 7)}`;
   const log = (...args) => debug && console.log(`🧩 [${runId}]`, ...args);
 
-  const summary = {
+ const summary = {
     runId,
     orderNumber: on,
     orderId: "",
+    orderType: "",
     fulfillmentStatus: "",
     isConfirmed: false,
     itemsCount: 0,
@@ -58,10 +59,34 @@ export const reserveInventoryForOrderNumberInternal = async ({
   };
 
   const order = await Order.findOne({ orderNumber: on })
-    .select("orderNumber isConfirmed fulfillmentStatus items")
+    .select(
+      "orderNumber orderType parentOrderId isConfirmed fulfillmentStatus items",
+    )
     .session(session);
 
   if (!order) throw new Error("Order not found");
+
+  const orderType = s(
+    order.orderType || "shipment",
+  ).toLowerCase();
+
+  if (orderType === "parent") {
+    summary.orderId = String(order._id);
+    summary.fulfillmentStatus = s(order.fulfillmentStatus);
+    summary.isConfirmed = !!order.isConfirmed;
+    summary.itemsCount = Array.isArray(order.items)
+      ? order.items.length
+      : 0;
+
+    summary.stoppedBecause = "split_parent";
+
+    log("STOPPED_SPLIT_PARENT", {
+      orderId: String(order._id),
+      orderNumber: order.orderNumber,
+    });
+
+    return summary;
+  }
 
   summary.orderId = String(order._id);
   summary.fulfillmentStatus = s(order.fulfillmentStatus);

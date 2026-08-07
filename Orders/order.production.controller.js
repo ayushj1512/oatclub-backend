@@ -109,6 +109,7 @@ const buildMarkAllPackedFilters = (query = {}) => {
     isConfirmed: true,
     fulfillmentStatus: "packed",
 
+
     // safety
     paymentStatus: { $ne: "failed" },
     orderType: { $ne: "parent" }, // avoid split-parent shipping
@@ -216,6 +217,9 @@ const getProductionJobsBasePipeline = ({ search = "", from, to } = {}) => {
     {
       $match: {
         "orderDoc.isConfirmed": true,
+        "orderDoc.orderType": {
+          $ne: "parent",
+        },
       },
     },
     ...(searchMatch ? [{ $match: searchMatch }] : []),
@@ -341,6 +345,9 @@ const getRawReservationsPipeline = ({ search = "", from, to } = {}) => {
     {
       $match: {
         "orderDoc.isConfirmed": true,
+        "orderDoc.orderType": {
+          $ne: "parent",
+        },
       },
     },
     ...(searchMatch ? [{ $match: searchMatch }] : []),
@@ -679,8 +686,15 @@ export const getProductionQueue = async (req, res) => {
       packability = "all", // all | packable | unpackable | true | false
     } = req.query;
 
-    const filters = { isConfirmed: true };
+    const filters = {
+      isConfirmed: true,
 
+      // Split parent is only a logical container.
+      // Never show it inside warehouse production queue.
+      orderType: {
+        $ne: "parent",
+      },
+    };
     const statuses = toArray(fulfillmentStatus);
     if (statuses.length) {
       filters.fulfillmentStatus =
@@ -976,7 +990,7 @@ export const markAllPackedOrdersShipped = async (req, res) => {
 export const getProductionSummary = async (req, res) => {
   try {
     const [summary] = await Order.aggregate([
-      { $match: { isConfirmed: true } },
+      { $match: { isConfirmed: true, orderType: { $ne: "parent" } } },
       {
         $group: {
           _id: null,
@@ -1119,29 +1133,29 @@ export const getProcessingOrderProductList = async (req, res) => {
 
     const searchStages = search
       ? [
-          {
-            $match: {
-              $or: [
-                { orderNumber: new RegExp(escapeRegex(search), "i") },
-                {
-                  "items.productSnapshot.productCode": new RegExp(
-                    escapeRegex(search),
-                    "i",
-                  ),
-                },
-                {
-                  "items.productSnapshot.title": new RegExp(
-                    escapeRegex(search),
-                    "i",
-                  ),
-                },
-                { "items.variant.sku": new RegExp(escapeRegex(search), "i") },
-                { "items.selectedSize": new RegExp(escapeRegex(search), "i") },
-                { "items.selectedColor": new RegExp(escapeRegex(search), "i") },
-              ],
-            },
+        {
+          $match: {
+            $or: [
+              { orderNumber: new RegExp(escapeRegex(search), "i") },
+              {
+                "items.productSnapshot.productCode": new RegExp(
+                  escapeRegex(search),
+                  "i",
+                ),
+              },
+              {
+                "items.productSnapshot.title": new RegExp(
+                  escapeRegex(search),
+                  "i",
+                ),
+              },
+              { "items.variant.sku": new RegExp(escapeRegex(search), "i") },
+              { "items.selectedSize": new RegExp(escapeRegex(search), "i") },
+              { "items.selectedColor": new RegExp(escapeRegex(search), "i") },
+            ],
           },
-        ]
+        },
+      ]
       : [];
 
     const sortStage = (() => {
