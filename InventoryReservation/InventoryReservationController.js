@@ -375,6 +375,172 @@ const getOrderRequiredQtyForProduct = ({
 };
 
 /* ---------------------------------------------------
+   PENDING ORDER RESERVATION VALIDATION
+
+   Purpose:
+   Prevent stale / already-shipped order reservations
+   from becoming reserved later when stock is added.
+--------------------------------------------------- */
+
+const TERMINAL_FULFILLMENT_STATUSES = new Set([
+  "shipped",
+  "delivered",
+  "cancelled",
+  "canceled",
+]);
+
+export async function validatePendingOrderReservation(
+  reservation,
+  { session } = {}
+) {
+  if (!reservation) {
+    return {
+      valid: false,
+      safeToDelete: false,
+      reason: "RESERVATION_NOT_FOUND",
+      remainingQty: 0,
+      order: null,
+    };
+  }
+
+  if (s(reservation.status) !== "pending") {
+    return {
+      valid: false,
+      safeToDelete: false,
+      reason: "NOT_PENDING",
+      remainingQty: 0,
+      order: null,
+    };
+  }
+
+  // Production/manual reservations are not part of this repair.
+  if (s(reservation.refType) !== "order") {
+    return {
+      valid: true,
+      safeToDelete: false,
+      reason: "",
+      remainingQty: n(reservation.qty),
+      order: null,
+    };
+  }
+
+  if (!reservation.refId || !isObjectId(reservation.refId)) {
+    return {
+      valid: false,
+      safeToDelete: true,
+      reason: "INVALID_ORDER_REFERENCE",
+      remainingQty: 0,
+      order: null,
+    };
+  }
+
+  const order = await Order.findById(reservation.refId)
+    .select(
+      "_id orderNumber isConfirmed confirmedAt paymentStatus fulfillmentStatus items"
+    )
+    .session(session);
+
+  if (!order) {
+    return {
+      valid: false,
+      safeToDelete: true,
+      reason: "ORDER_NOT_FOUND",
+      remainingQty: 0,
+      order: null,
+    };
+  }
+
+  const fulfillmentStatus = s(
+    order.fulfillmentStatus
+  ).toLowerCase();
+
+  /* -----------------------------------------------
+     Terminal order = reservation must never revive
+  ----------------------------------------------- */
+
+  if (TERMINAL_FULFILLMENT_STATUSES.has(fulfillmentStatus)) {
+    const reasonMap = {
+      shipped: "ORDER_SHIPPED",
+      delivered: "ORDER_DELIVERED",
+      cancelled: "ORDER_CANCELLED",
+      canceled: "ORDER_CANCELLED",
+    };
+
+    return {
+      valid: false,
+      safeToDelete: true,
+      reason:
+        reasonMap[fulfillmentStatus] ||
+        "ORDER_FULFILLMENT_FINALIZED",
+      remainingQty: 0,
+      order,
+    };
+  }
+
+  const isConfirmed =
+    Boolean(order.isConfirmed) ||
+    Boolean(order.confirmedAt);
+
+  if (!isConfirmed) {
+    // Do NOT delete automatically.
+    // Order could still get confirmed later.
+    return {
+      valid: false,
+      safeToDelete: false,
+      reason: "ORDER_NOT_CONFIRMED",
+      remainingQty: 0,
+      order,
+    };
+  }
+
+  /* -----------------------------------------------
+     Remaining quantity based on shippedQty
+  ----------------------------------------------- */
+
+  const remainingQty =
+    getOrderRequiredQtyForProduct({
+      order,
+      productId: reservation.productId,
+      variantId: reservation.variantId || null,
+    });
+
+  if (remainingQty <= 0) {
+    return {
+      valid: false,
+      safeToDelete: true,
+      reason: "NO_PENDING_QTY",
+      remainingQty: 0,
+      order,
+    };
+  }
+
+  /*
+   * Important:
+   * Don't reserve qty 3 when order only still needs qty 1.
+   *
+   * We block it, but DON'T auto-delete because some
+   * inventory may still legitimately be required.
+   */
+  if (n(reservation.qty) > remainingQty) {
+    return {
+      valid: false,
+      safeToDelete: false,
+      reason: "PENDING_QTY_EXCEEDS_REQUIRED",
+      remainingQty,
+      order,
+    };
+  }
+
+  return {
+    valid: true,
+    safeToDelete: false,
+    reason: "",
+    remainingQty,
+    order,
+  };
+}
+
+/* ---------------------------------------------------
    FIFO pending -> reserved
 --------------------------------------------------- */
 export async function reconcilePendingReservationsInternal({
@@ -2101,3 +2267,291 @@ export async function deleteReservation(req, res) {
     session.endSession();
   }
 }
+
+
+/* ---------------------------------------------------
+   ADMIN REPAIR:
+   detect stale pending ORDER reservations
+--------------------------------------------------- */
+
+export async function detectInvalidPendingOrderReservations(
+  req,
+  res
+) {
+  try {
+    const limit = Math.min(
+      Math.max(1, Number(req.query?.limit || 500)),
+      1000
+    );
+
+    const pendingRows =
+      await InventoryReservation.find({
+        status: "pending",
+        refType: "order",
+      })
+        .sort({
+          createdAt: 1,
+          _id: 1,
+        })
+        .limit(limit);
+
+    const invalidRows = [];
+    const reviewRows = [];
+
+    let validCount = 0;
+
+    for (const row of pendingRows) {
+      const validation =
+        await validatePendingOrderReservation(row);
+
+      if (validation.valid) {
+        validCount += 1;
+        continue;
+      }
+
+      const order = validation.order;
+
+      const data = {
+        reservationId: String(row._id),
+
+        orderId: row.refId
+          ? String(row.refId)
+          : "",
+
+        orderNumber:
+          row.orderNumber ||
+          order?.orderNumber ||
+          "",
+
+        productId: String(row.productId),
+
+        variantId: row.variantId
+          ? String(row.variantId)
+          : null,
+
+        productCode: row.productCode || "",
+        productTitle: row.productTitle || "",
+
+        selectedSize: row.selectedSize || "",
+        selectedColor: row.selectedColor || "",
+
+        qty: n(row.qty),
+
+        remainingQty: n(
+          validation.remainingQty
+        ),
+
+        reservationStatus: row.status,
+
+        fulfillmentStatus:
+          order?.fulfillmentStatus || "",
+
+        repairReason: validation.reason,
+
+        safeToDelete:
+          validation.safeToDelete === true,
+
+        createdAt: row.createdAt,
+      };
+
+      if (validation.safeToDelete) {
+        invalidRows.push(data);
+      } else {
+        reviewRows.push(data);
+      }
+    }
+
+    return res.json({
+      ok: true,
+
+      summary: {
+        checked: pendingRows.length,
+
+        valid: validCount,
+
+        invalid: invalidRows.length,
+
+        needsReview: reviewRows.length,
+
+        safeToDelete: invalidRows.length,
+      },
+
+      rows: invalidRows,
+
+      reviewRows,
+    });
+  } catch (error) {
+    return sendErr(
+      res,
+      error,
+      "Failed to detect invalid pending reservations"
+    );
+  }
+}
+
+/* ---------------------------------------------------
+   ADMIN REPAIR:
+   safely bulk-delete invalid pending order rows
+
+   IMPORTANT:
+   - pending only
+   - order only
+   - validation runs AGAIN server-side
+   - no reservedStock / stock mutation
+--------------------------------------------------- */
+
+export async function bulkDeleteInvalidPendingOrderReservations(
+  req,
+  res
+) {
+  const rawIds = Array.isArray(req.body?.ids)
+    ? req.body.ids
+    : [];
+
+  const ids = Array.from(
+    new Set(
+      rawIds
+        .map((id) => s(id))
+        .filter(isObjectId)
+    )
+  );
+
+  if (!ids.length) {
+    return res.status(400).json({
+      ok: false,
+      message:
+        "At least one valid reservation id is required",
+    });
+  }
+
+  if (ids.length > 500) {
+    return res.status(400).json({
+      ok: false,
+      message:
+        "Maximum 500 reservations can be repaired at once",
+    });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const reservations =
+      await InventoryReservation.find({
+        _id: {
+          $in: ids.map(oid),
+        },
+        status: "pending",
+        refType: "order",
+      }).session(session);
+
+    const deleted = [];
+    const rejected = [];
+    const orderIdsToSync = new Set();
+
+    for (const row of reservations) {
+      // Always revalidate server-side.
+      const validation =
+        await validatePendingOrderReservation(
+          row,
+          { session }
+        );
+
+      if (
+        validation.valid ||
+        validation.safeToDelete !== true
+      ) {
+        rejected.push({
+          reservationId: String(row._id),
+          orderNumber: row.orderNumber || "",
+          reason:
+            validation.reason ||
+            "RESERVATION_STILL_VALID",
+        });
+
+        continue;
+      }
+
+      await InventoryReservation.deleteOne({
+        _id: row._id,
+        status: "pending",
+        refType: "order",
+      }).session(session);
+
+      /*
+       * Only sync when linked order actually exists.
+       *
+       * ORDER_NOT_FOUND rows must simply be deleted.
+       */
+      if (
+        validation.order?._id &&
+        isObjectId(validation.order._id)
+      ) {
+        orderIdsToSync.add(
+          String(validation.order._id)
+        );
+      }
+
+      deleted.push({
+        reservationId: String(row._id),
+        orderNumber: row.orderNumber || "",
+        productCode: row.productCode || "",
+        qty: n(row.qty),
+        reason: validation.reason,
+      });
+    }
+
+    /*
+     * Keep allocatedQty consistent for existing orders.
+     *
+     * Pending reservation deletion does not change
+     * product.stock or product.reservedStock.
+     */
+    for (const orderId of orderIdsToSync) {
+      if (!isObjectId(orderId)) continue;
+
+      const orderExists =
+        await Order.exists({
+          _id: oid(orderId),
+        }).session(session);
+
+      if (!orderExists) continue;
+
+      await syncOrderIfNeeded({
+        refType: "order",
+        refId: orderId,
+        session,
+      });
+    }
+
+    await session.commitTransaction();
+
+    return res.json({
+      ok: true,
+      message:
+        "Invalid pending reservations repaired",
+
+      summary: {
+        requested: ids.length,
+        foundPending: reservations.length,
+        deleted: deleted.length,
+        rejected: rejected.length,
+      },
+
+      deleted,
+      rejected,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+
+    return sendErr(
+      res,
+      error,
+      "Failed to bulk repair pending reservations"
+    );
+  } finally {
+    session.endSession();
+  }
+}
+
+
