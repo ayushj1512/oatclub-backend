@@ -89,6 +89,7 @@ import otpRoutes from "./otp/otp.routes.js";
 import fabricPriceLogRoutes from "./FabricPriceLog/FabricPriceLogRoutes.js";
 import fabricLogRoutes from "./FabricLog/FabricLogRouter.js";
 import { delhiveryRoutes } from "./delhivery/index.js";
+import productCostingRouter from "./Products/ProductCosting/ProductCostingRouter.js";
 
 // --------------------------------------------------
 // APP CONFIG
@@ -293,6 +294,7 @@ app.use("/api/marketing-campaigns", marketingcampaignroutes);
 app.use("/fabric-price-logs", fabricPriceLogRoutes);
 app.use("/fabric-logs", fabricLogRoutes);
 app.use("/api/delhivery", delhiveryRoutes);
+app.use("/api/product-costing", productCostingRouter);
 // --------------------------------------------------
 // ROOT + FEEDS
 // --------------------------------------------------
