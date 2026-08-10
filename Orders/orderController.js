@@ -50,6 +50,10 @@ import {
   sendPrepaidOrderConfirmationWhatsapp,
 } from "../fast2sms/index.js";
 
+import {
+  enrichOrdersWithFulfillmentReadiness,
+} from "./orderFulfillmentReadiness.service.js";
+
 const isParentOrder = (order) =>
   String(order?.orderType || "").toLowerCase() === "parent";
 const isShipmentOrder = (order) =>
@@ -1732,6 +1736,11 @@ export const getAllOrders = async (req, res) => {
       "items.productSnapshot.title": 1,
       "items.productSnapshot.thumbnail": 1,
       "items.variant.sku": 1,
+
+      "items.productId": 1,
+      "items.productModel": 1,
+      "items.variant.variantId": 1,
+      "items.variant.sku": 1,
     };
 
     const sort = { priorityRank: -1, createdAt: -1 };
@@ -1765,11 +1774,16 @@ export const getAllOrders = async (req, res) => {
 
     const [orders, totalCount, sumAgg] = await Promise.all(promises);
 
+    const finalOrders =
+      confirmFilter === "not_confirmed"
+        ? await enrichOrdersWithFulfillmentReadiness(orders)
+        : orders;
+
     const totalSum = wantSum ? Number(sumAgg?.[0]?.totalSum || 0) : null;
     const hasMore = skip + (orders?.length || 0) < totalCount;
 
     return res.status(200).json({
-      orders,
+      orders: finalOrders,
       meta: {
         page: pageNum,
         limit: limitNum,
@@ -7356,6 +7370,8 @@ const ADVANCED_ORDER_LIST_FIELDS = {
 
   "items.lineId": 1,
   "items.productId": 1,
+  "items.productModel": 1,
+
   "items.quantity": 1,
   "items.price": 1,
   "items.subtotal": 1,
@@ -7367,7 +7383,21 @@ const ADVANCED_ORDER_LIST_FIELDS = {
   "items.productSnapshot.thumbnail": 1,
   "items.productSnapshot.sku": 1,
 
+  "items.variant.variantId": 1,
   "items.variant.sku": 1,
+  "items.price": 1,
+  "items.subtotal": 1,
+  "items.selectedSize": 1,
+  "items.selectedColor": 1,
+
+  "items.productSnapshot.productCode": 1,
+  "items.productSnapshot.title": 1,
+  "items.productSnapshot.thumbnail": 1,
+  "items.productSnapshot.sku": 1,
+
+  "items.variant.sku": 1,
+
+
 };
 
 /**
@@ -8094,9 +8124,19 @@ export const getAdvancedFilteredOrders = async (
     ] = await Promise.all(
       databaseQueries,
     );
+    const needsReadiness = orders.some(
+      (order) =>
+        order?.isConfirmed !== true &&
+        String(order?.paymentMethod || "").toLowerCase() === "cod" &&
+        String(order?.fulfillmentStatus || "").toLowerCase() === "processing"
+    );
+
+    const finalOrders = needsReadiness
+      ? await enrichOrdersWithFulfillmentReadiness(orders)
+      : orders;
 
     return res.status(200).json({
-      orders,
+      orders: finalOrders,
 
       meta: {
         page,
@@ -10698,14 +10738,14 @@ export const repairSplitOrderToOriginal = async (req, res) => {
 
       const childReservations = childIds.length
         ? await InventoryReservation.find({
-            refType: "order",
-            refId: {
-              $in: childIds,
-            },
-            status: {
-              $in: ["pending", "reserved"],
-            },
-          }).session(session)
+          refType: "order",
+          refId: {
+            $in: childIds,
+          },
+          status: {
+            $in: ["pending", "reserved"],
+          },
+        }).session(session)
         : [];
 
       const childReservedRows =
