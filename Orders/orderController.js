@@ -1459,6 +1459,10 @@ export const getAllOrders = async (req, res) => {
       confirmFilter,
       priority,
 
+      // ✅ Added
+      orderType,
+      productCode,
+
       startDate,
       endDate,
       startAt,
@@ -1497,108 +1501,273 @@ export const getAllOrders = async (req, res) => {
 
     const normalizeArrayParam = (v) => {
       if (v == null) return [];
-      const arr = Array.isArray(v) ? v : [v];
-      return arr.map((x) => toStr(x)).filter(Boolean);
+
+      const arr = Array.isArray(v)
+        ? v
+        : [v];
+
+      return arr
+        .map((x) => toStr(x))
+        .filter(Boolean);
     };
 
-    const setInOrEq = (field, raw, mapFn = (x) => x) => {
-      const arr = normalizeArrayParam(raw).map(mapFn).filter(Boolean);
+    const setInOrEq = (
+      field,
+      raw,
+      mapFn = (x) => x
+    ) => {
+      const arr = normalizeArrayParam(raw)
+        .map(mapFn)
+        .filter(Boolean);
+
       if (!arr.length) return;
-      filters[field] = arr.length === 1 ? arr[0] : { $in: arr };
+
+      filters[field] =
+        arr.length === 1
+          ? arr[0]
+          : { $in: arr };
     };
 
     const setRegex = (field, raw) => {
       const value = toStr(raw);
+
       if (!value) return;
 
       filters[field] = new RegExp(
-        value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-        "i",
+        value.replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&"
+        ),
+        "i"
       );
     };
 
     /* ----------------------------
        ✅ Basic filters
     ---------------------------- */
-    if (customerId && mongoose.Types.ObjectId.isValid(String(customerId))) {
-      filters.customerId = new mongoose.Types.ObjectId(String(customerId));
+    if (
+      customerId &&
+      mongoose.Types.ObjectId.isValid(
+        String(customerId)
+      )
+    ) {
+      filters.customerId =
+        new mongoose.Types.ObjectId(
+          String(customerId)
+        );
     }
 
-    setInOrEq("paymentStatus", paymentStatus, (x) => toStr(x));
-    setInOrEq("fulfillmentStatus", fulfillmentStatus, (x) => toStr(x));
+    setInOrEq(
+      "paymentStatus",
+      paymentStatus,
+      (x) => toStr(x)
+    );
 
-    if (confirmFilter === "confirmed") filters.isConfirmed = true;
-    else if (confirmFilter === "not_confirmed")
-      filters.isConfirmed = { $ne: true };
-    else if (isConfirmed != null)
-      filters.isConfirmed = toLower(isConfirmed) === "true";
+    setInOrEq(
+      "fulfillmentStatus",
+      fulfillmentStatus,
+      (x) => toStr(x)
+    );
 
-    const allowedPriority = new Set(["normal", "medium", "high"]);
-    const prClean = normalizeArrayParam(priority)
-      .map((x) => toLower(x))
-      .filter((p) => allowedPriority.has(p));
+    if (confirmFilter === "confirmed") {
+      filters.isConfirmed = true;
+    } else if (
+      confirmFilter === "not_confirmed"
+    ) {
+      filters.isConfirmed = {
+        $ne: true,
+      };
+    } else if (isConfirmed != null) {
+      filters.isConfirmed =
+        toLower(isConfirmed) === "true";
+    }
 
-    if (prClean.length === 1) filters.priority = prClean[0];
-    else if (prClean.length > 1) filters.priority = { $in: prClean };
+    const allowedPriority = new Set([
+      "normal",
+      "medium",
+      "high",
+    ]);
 
-    setInOrEq("paymentMethod", paymentMethod, (x) => toLower(x));
+    const prClean =
+      normalizeArrayParam(priority)
+        .map((x) => toLower(x))
+        .filter((p) =>
+          allowedPriority.has(p)
+        );
+
+    if (prClean.length === 1) {
+      filters.priority = prClean[0];
+    } else if (prClean.length > 1) {
+      filters.priority = {
+        $in: prClean,
+      };
+    }
+
+    setInOrEq(
+      "paymentMethod",
+      paymentMethod,
+      (x) => toLower(x)
+    );
+
+    // ✅ Order type filter
+    setInOrEq(
+      "orderType",
+      orderType,
+      (x) => toLower(x)
+    );
+
+    // ✅ Product code filter
+    if (toStr(productCode)) {
+      filters[
+        "items.productSnapshot.productCode"
+      ] = new RegExp(
+        toStr(productCode).replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&"
+        ),
+        "i"
+      );
+    }
 
     if (isInfluencerOrder != null) {
-      const value = toLower(isInfluencerOrder);
+      const value =
+        toLower(isInfluencerOrder);
 
       if (value === "true") {
         filters.isInfluencerOrder = true;
       } else if (value === "false") {
-        filters.isInfluencerOrder = { $ne: true };
+        filters.isInfluencerOrder = {
+          $ne: true,
+        };
       }
     }
 
     /* ----------------------------
        ✅ Universal attribution filters
     ---------------------------- */
-    setInOrEq("attribution.source", attributionSource, (x) => toLower(x));
-    setInOrEq("attribution.medium", attributionMedium, (x) => toLower(x));
+    setInOrEq(
+      "attribution.source",
+      attributionSource,
+      (x) => toLower(x)
+    );
 
-    // campaign can be partial search because names/slugs can vary
-    setRegex("attribution.campaign", attributionCampaign);
+    setInOrEq(
+      "attribution.medium",
+      attributionMedium,
+      (x) => toLower(x)
+    );
 
-    if (campaignId && mongoose.Types.ObjectId.isValid(String(campaignId))) {
-      filters["attribution.campaignId"] = new mongoose.Types.ObjectId(
-        String(campaignId),
+    setRegex(
+      "attribution.campaign",
+      attributionCampaign
+    );
+
+    if (
+      campaignId &&
+      mongoose.Types.ObjectId.isValid(
+        String(campaignId)
+      )
+    ) {
+      filters[
+        "attribution.campaignId"
+      ] = new mongoose.Types.ObjectId(
+        String(campaignId)
       );
     }
 
-    setInOrEq("attribution.campaignSlug", campaignSlug, (x) => toLower(x));
-    setInOrEq("attribution.marketingLinkId", marketingLinkId, (x) => toStr(x));
-    setInOrEq("attribution.shortCode", shortCode, (x) => toStr(x));
-    setInOrEq("attribution.visitorId", visitorId, (x) => toStr(x));
-    setInOrEq("attribution.sessionId", sessionId, (x) => toStr(x));
+    setInOrEq(
+      "attribution.campaignSlug",
+      campaignSlug,
+      (x) => toLower(x)
+    );
+
+    setInOrEq(
+      "attribution.marketingLinkId",
+      marketingLinkId,
+      (x) => toStr(x)
+    );
+
+    setInOrEq(
+      "attribution.shortCode",
+      shortCode,
+      (x) => toStr(x)
+    );
+
+    setInOrEq(
+      "attribution.visitorId",
+      visitorId,
+      (x) => toStr(x)
+    );
+
+    setInOrEq(
+      "attribution.sessionId",
+      sessionId,
+      (x) => toStr(x)
+    );
 
     /* ----------------------------
        ✅ Date range — IST correct
     ---------------------------- */
-    const hasStartAt = !!toStr(startAt);
-    const hasEndAt = !!toStr(endAt);
-    const hasStartDate = !!toStr(startDate);
-    const hasEndDate = !!toStr(endDate);
+    const hasStartAt =
+      !!toStr(startAt);
 
-    if (hasStartAt || hasEndAt || hasStartDate || hasEndDate) {
+    const hasEndAt =
+      !!toStr(endAt);
+
+    const hasStartDate =
+      !!toStr(startDate);
+
+    const hasEndDate =
+      !!toStr(endDate);
+
+    if (
+      hasStartAt ||
+      hasEndAt ||
+      hasStartDate ||
+      hasEndDate
+    ) {
       filters.createdAt = {};
 
       if (hasStartAt) {
-        const d = new Date(toStr(startAt));
-        if (!Number.isNaN(d.getTime())) filters.createdAt.$gte = d;
+        const d = new Date(
+          toStr(startAt)
+        );
+
+        if (
+          !Number.isNaN(d.getTime())
+        ) {
+          filters.createdAt.$gte = d;
+        }
       } else if (hasStartDate) {
-        const d = istStartUtcFromYMD(startDate);
-        if (d) filters.createdAt.$gte = d;
+        const d =
+          istStartUtcFromYMD(
+            startDate
+          );
+
+        if (d) {
+          filters.createdAt.$gte = d;
+        }
       }
 
       if (hasEndAt) {
-        const d = new Date(toStr(endAt));
-        if (!Number.isNaN(d.getTime())) filters.createdAt.$lte = d;
+        const d = new Date(
+          toStr(endAt)
+        );
+
+        if (
+          !Number.isNaN(d.getTime())
+        ) {
+          filters.createdAt.$lte = d;
+        }
       } else if (hasEndDate) {
-        const d = istEndExclusiveUtcFromYMD(endDate);
-        if (d) filters.createdAt.$lt = d;
+        const d =
+          istEndExclusiveUtcFromYMD(
+            endDate
+          );
+
+        if (d) {
+          filters.createdAt.$lt = d;
+        }
       }
 
       if (
@@ -1613,48 +1782,137 @@ export const getAllOrders = async (req, res) => {
     /* ----------------------------
        ✅ Amount range
     ---------------------------- */
-    const minA = Number(minAmount);
-    const maxA = Number(maxAmount);
+    const minA =
+      Number(minAmount);
 
-    if (Number.isFinite(minA) || Number.isFinite(maxA)) {
+    const maxA =
+      Number(maxAmount);
+
+    if (
+      Number.isFinite(minA) ||
+      Number.isFinite(maxA)
+    ) {
       filters.finalPayable = {};
-      if (Number.isFinite(minA)) filters.finalPayable.$gte = minA;
-      if (Number.isFinite(maxA)) filters.finalPayable.$lte = maxA;
+
+      if (
+        Number.isFinite(minA)
+      ) {
+        filters.finalPayable.$gte =
+          minA;
+      }
+
+      if (
+        Number.isFinite(maxA)
+      ) {
+        filters.finalPayable.$lte =
+          maxA;
+      }
     }
 
     /* ----------------------------
        ✅ Search
     ---------------------------- */
-    const q = toStr(customerName);
+    const q =
+      toStr(customerName);
 
     if (q) {
-      const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      const rx = new RegExp(
+        q.replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&"
+        ),
+        "i"
+      );
 
       filters.$or = [
-        { orderNumber: rx },
-        { "shippingAddressSnapshot.fullName": rx },
-        { "shippingAddressSnapshot.email": rx },
-        { "shippingAddressSnapshot.phone": rx },
+        // Order
+        {
+          orderNumber: rx,
+        },
 
-        // ✅ attribution searchable too
-        { "attribution.source": rx },
-        { "attribution.medium": rx },
-        { "attribution.campaign": rx },
-        { "attribution.campaignSlug": rx },
-        { "attribution.shortCode": rx },
+        // Customer
+        {
+          "shippingAddressSnapshot.fullName":
+            rx,
+        },
+        {
+          "shippingAddressSnapshot.email":
+            rx,
+        },
+        {
+          "shippingAddressSnapshot.phone":
+            rx,
+        },
+
+        // ✅ Product
+        {
+          "items.productSnapshot.productCode":
+            rx,
+        },
+        {
+          "items.productSnapshot.title":
+            rx,
+        },
+        {
+          "items.variant.sku":
+            rx,
+        },
+
+        // Attribution
+        {
+          "attribution.source":
+            rx,
+        },
+        {
+          "attribution.medium":
+            rx,
+        },
+        {
+          "attribution.campaign":
+            rx,
+        },
+        {
+          "attribution.campaignSlug":
+            rx,
+        },
+        {
+          "attribution.shortCode":
+            rx,
+        },
       ];
     }
 
     /* ----------------------------
        ✅ Pagination
     ---------------------------- */
-    const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
+    const pageNum = Math.max(
+      1,
+      parseInt(
+        String(page),
+        10
+      ) || 1
+    );
 
-    const limitNumRaw = parseInt(String(limit), 10) || 100;
+    const limitNumRaw =
+      parseInt(
+        String(limit),
+        10
+      ) || 100;
+
     const MAX_LIMIT = 200;
-    const limitNum = Math.min(Math.max(1, limitNumRaw), MAX_LIMIT);
 
-    const skip = (pageNum - 1) * limitNum;
+    const limitNum =
+      Math.min(
+        Math.max(
+          1,
+          limitNumRaw
+        ),
+        MAX_LIMIT
+      );
+
+    const skip =
+      (pageNum - 1) *
+      limitNum;
 
     /* ----------------------------
        ✅ FAST projection for list
@@ -1665,6 +1923,8 @@ export const getAllOrders = async (req, res) => {
       orderDate: 1,
       "fulfillmentDates.packedAt": 1,
 
+      orderType: 1,
+
       priority: 1,
       priorityRank: 1,
 
@@ -1674,6 +1934,7 @@ export const getAllOrders = async (req, res) => {
       isConfirmed: 1,
       isInfluencerOrder: 1,
       isTestingOrder: 1,
+
       subtotal: 1,
       discount: 1,
       shippingFee: 1,
@@ -1686,8 +1947,10 @@ export const getAllOrders = async (req, res) => {
       "shippingAddressSnapshot.phone": 1,
       "shippingAddressSnapshot.email": 1,
       "shippingAddressSnapshot.pincode": 1,
+      "shippingAddressSnapshot.city": 1,
+      "shippingAddressSnapshot.state": 1,
 
-      // ✅ Universal attribution
+      // Attribution
       "attribution.source": 1,
       "attribution.medium": 1,
       "attribution.campaign": 1,
@@ -1706,13 +1969,9 @@ export const getAllOrders = async (req, res) => {
       "attribution.clickIds.ttclid": 1,
       "attribution.clickIds.scClickId": 1,
 
-      // ✅ Shipment + Shiprocket details
+      // Shipment
       "shipment.provider": 1,
       "shipment.status": 1,
-
-
-
-      // Universal shipment fields
       "shipment.orderId": 1,
       "shipment.shipmentId": 1,
       "shipment.awb": 1,
@@ -1720,7 +1979,7 @@ export const getAllOrders = async (req, res) => {
       "shipment.trackingUrl": 1,
       "shipment.labelUrl": 1,
 
-      // Shiprocket-specific fields
+      // Shiprocket
       "shipment.shiprocket.orderId": 1,
       "shipment.shiprocket.shipmentId": 1,
       "shipment.shiprocket.awb": 1,
@@ -1728,26 +1987,33 @@ export const getAllOrders = async (req, res) => {
       "shipment.shiprocket.trackingUrl": 1,
       "shipment.shiprocket.labelUrl": 1,
 
-      // items but light + snapshot
+      // Items
       "items.lineId": 1,
       "items.quantity": 1,
       "items.price": 1,
       "items.subtotal": 1,
       "items.selectedSize": 1,
       "items.selectedColor": 1,
+
       "items.productSnapshot.productCode": 1,
       "items.productSnapshot.title": 1,
       "items.productSnapshot.thumbnail": 1,
-      "items.variant.sku": 1,
 
       "items.productId": 1,
       "items.productModel": 1,
+
       "items.variant.variantId": 1,
       "items.variant.sku": 1,
     };
 
-    const sort = { priorityRank: -1, createdAt: -1 };
-    const wantSum = toLower(includeSum) === "true";
+    const sort = {
+      priorityRank: -1,
+      createdAt: -1,
+    };
+
+    const wantSum =
+      toLower(includeSum) ===
+      "true";
 
     const promises = [
       Order.find(filters)
@@ -1756,64 +2022,119 @@ export const getAllOrders = async (req, res) => {
         .skip(skip)
         .limit(limitNum)
         .lean()
-        .populate({ path: "customerId", select: "name email phone" }),
+        .populate({
+          path: "customerId",
+          select:
+            "name email phone",
+        }),
 
-      Order.countDocuments(filters),
+      Order.countDocuments(
+        filters
+      ),
     ];
 
     if (wantSum) {
       promises.push(
         Order.aggregate([
-          { $match: filters },
+          {
+            $match: filters,
+          },
           {
             $group: {
               _id: null,
-              totalSum: { $sum: { $ifNull: ["$finalPayable", 0] } },
+
+              totalSum: {
+                $sum: {
+                  $ifNull: [
+                    "$finalPayable",
+                    0,
+                  ],
+                },
+              },
             },
           },
-        ]),
+        ])
       );
     }
 
-    const [orders, totalCount, sumAgg] = await Promise.all(promises);
-
-    const finalOrders =
-      confirmFilter === "not_confirmed"
-        ? await enrichOrdersWithFulfillmentReadiness(orders)
-        : orders;
-
-    const totalSum = wantSum ? Number(sumAgg?.[0]?.totalSum || 0) : null;
-    const hasMore = skip + (orders?.length || 0) < totalCount;
-
-    const totalPages = Math.max(
-      1,
-      Math.ceil(totalCount / limitNum)
+    const [
+      orders,
+      totalCount,
+      sumAgg,
+    ] = await Promise.all(
+      promises
     );
 
-    return res.status(200).json({
-      orders: finalOrders,
+    const finalOrders =
+      confirmFilter ===
+        "not_confirmed"
+        ? await enrichOrdersWithFulfillmentReadiness(
+          orders
+        )
+        : orders;
 
-      meta: {
-        page: pageNum,
-        limit: limitNum,
+    const totalSum =
+      wantSum
+        ? Number(
+          sumAgg?.[0]
+            ?.totalSum || 0
+        )
+        : null;
 
-        total: totalCount,
-        totalCount,
-        totalPages,
+    const hasMore =
+      skip +
+      (orders?.length || 0) <
+      totalCount;
 
-        totalSum,
+    const totalPages =
+      Math.max(
+        1,
+        Math.ceil(
+          totalCount /
+          limitNum
+        )
+      );
 
-        hasMore,
-        hasNextPage: pageNum < totalPages,
-        hasPreviousPage: pageNum > 1,
-      },
-    });
+    return res
+      .status(200)
+      .json({
+        orders:
+          finalOrders,
+
+        meta: {
+          page: pageNum,
+          limit: limitNum,
+
+          total:
+            totalCount,
+          totalCount,
+          totalPages,
+
+          totalSum,
+
+          hasMore,
+          hasNextPage:
+            pageNum <
+            totalPages,
+
+          hasPreviousPage:
+            pageNum > 1,
+        },
+      });
   } catch (error) {
-    console.error("❌ Fetch Orders Error:", error);
-    return res.status(500).json({
-      message: "Server error",
-      error: error.message,
-    });
+    console.error(
+      "❌ Fetch Orders Error:",
+      error
+    );
+
+    return res
+      .status(500)
+      .json({
+        message:
+          "Server error",
+        error:
+          error.message,
+      });
   }
 };
 
