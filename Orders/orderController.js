@@ -54,6 +54,9 @@ import {
   enrichOrdersWithFulfillmentReadiness,
 } from "./orderFulfillmentReadiness.service.js";
 
+import { createReturnOrder } from "../shiprocket/shiprocket.return.js";
+import { buildReverseShiprocketPayload } from "../shiprocket/shiprocket.reverse.payload.js";
+
 const isParentOrder = (order) =>
   String(order?.orderType || "").toLowerCase() === "parent";
 const isShipmentOrder = (order) =>
@@ -1782,14 +1785,27 @@ export const getAllOrders = async (req, res) => {
     const totalSum = wantSum ? Number(sumAgg?.[0]?.totalSum || 0) : null;
     const hasMore = skip + (orders?.length || 0) < totalCount;
 
+    const totalPages = Math.max(
+      1,
+      Math.ceil(totalCount / limitNum)
+    );
+
     return res.status(200).json({
       orders: finalOrders,
+
       meta: {
         page: pageNum,
         limit: limitNum,
+
+        total: totalCount,
         totalCount,
+        totalPages,
+
         totalSum,
+
         hasMore,
+        hasNextPage: pageNum < totalPages,
+        hasPreviousPage: pageNum > 1,
       },
     });
   } catch (error) {
@@ -2178,6 +2194,7 @@ export const updateOrderStatus = async (req, res) => {
     let updatedOrder = null;
     let shouldTriggerReserve = false;
     let shouldBookShiprocket = false;
+    let shouldCreateShiprocketReturn = false;
     let shouldSendShippedEmail = false;
     let shouldSendDeliveredEmail = false;
 
@@ -2384,6 +2401,21 @@ export const updateOrderStatus = async (req, res) => {
 
         const currentStatus = lower(order.fulfillmentStatus);
 
+        const becomingReturnRequested =
+          fulfillmentStatus === "return_requested" &&
+          currentStatus !== "return_requested";
+
+        const becomingExchangeRequested =
+          fulfillmentStatus === "exchange_requested" &&
+          currentStatus !== "exchange_requested";
+
+        if (
+          becomingReturnRequested ||
+          becomingExchangeRequested
+        ) {
+          shouldCreateShiprocketReturn = true;
+        }
+
         const isReversePickup =
           fulfillmentStatus === "pickup_initiated";
 
@@ -2531,6 +2563,199 @@ export const updateOrderStatus = async (req, res) => {
 
     if (finalOrder && shouldTriggerReserve) {
       triggerReserveNonBlocking(finalOrder.orderNumber);
+    }
+
+    /* ============================================================
+   SHIPROCKET AUTO RETURN
+   return_requested / exchange_requested
+============================================================ */
+
+    if (finalOrder && shouldCreateShiprocketReturn) {
+      try {
+        const freshOrderDoc = await Order.findById(finalOrder._id);
+
+        if (!freshOrderDoc) {
+          throw new Error(
+            "Order not found before Shiprocket return creation",
+          );
+        }
+
+        const wantedType =
+          fulfillmentStatus === "exchange_requested"
+            ? "exchange"
+            : "return";
+
+        /*
+          Find latest relevant RMA.
+          Prefer requested/approved RMA.
+        */
+        const matchingRmas = (freshOrderDoc.rmas || [])
+          .filter(
+            (rma) =>
+              lower(rma?.type) === wantedType &&
+              ["requested", "approved"].includes(
+                lower(rma?.status),
+              ),
+          )
+          .sort(
+            (a, b) =>
+              new Date(b?.createdAt || 0).getTime() -
+              new Date(a?.createdAt || 0).getTime(),
+          );
+
+        const rma = matchingRmas[0];
+
+        if (!rma) {
+          throw new Error(
+            `No ${wantedType} RMA found for Shiprocket return`,
+          );
+        }
+
+        /*
+          Duplicate protection
+        */
+        const alreadyCreated =
+          rma?.reverseShipment?.orderId ||
+          rma?.reverseShipment?.shipmentId ||
+          rma?.reverseShipment?.awb;
+
+        if (alreadyCreated) {
+          console.log(
+            "↩️ Shiprocket return already exists:",
+            {
+              orderNumber: freshOrderDoc.orderNumber,
+              rmaNumber: rma.rmaNumber,
+            },
+          );
+        } else {
+          const payload =
+            buildReverseShiprocketPayload({
+              order: freshOrderDoc,
+              rma,
+            });
+
+          /*
+            QC OFF completely
+          */
+          payload.order_items = (
+            payload.order_items || []
+          ).map((item) => {
+            const {
+              qc_enable,
+              qc_product_name,
+              qc_brand,
+              qc_product_image,
+              ...cleanItem
+            } = item;
+
+            return cleanItem;
+          });
+
+          console.log(
+            "↩️ Creating Shiprocket return:",
+            {
+              orderNumber: freshOrderDoc.orderNumber,
+              rmaNumber: rma.rmaNumber,
+              type: wantedType,
+              items: payload.order_items.length,
+            },
+          );
+
+          const shipment =
+            await createReturnOrder(payload);
+
+          const reverseAwb = str(
+            shipment?.awb_code ||
+            shipment?.awb ||
+            shipment?.shipment?.awb_code,
+          ).trim();
+
+          const shiprocketOrderId = str(
+            shipment?.order_id ||
+            shipment?.id,
+          ).trim();
+
+          const shiprocketShipmentId = str(
+            shipment?.shipment_id ||
+            shipment?.shipment?.id,
+          ).trim();
+
+          if (
+            !shiprocketOrderId &&
+            !shiprocketShipmentId
+          ) {
+            throw new Error(
+              shipment?.message ||
+              shipment?.error ||
+              "Shiprocket return order creation failed",
+            );
+          }
+
+          const now = new Date();
+
+          rma.reverseShipment = {
+            provider: "shiprocket",
+
+            orderId: shiprocketOrderId,
+            shipmentId: shiprocketShipmentId,
+
+            awb: reverseAwb,
+
+            courierName: str(
+              shipment?.courier_name ||
+              shipment?.courier,
+            ).trim(),
+
+            trackingUrl: str(
+              shipment?.tracking_url,
+            ).trim(),
+
+            pickupScheduledAt: reverseAwb
+              ? now
+              : null,
+
+            status: reverseAwb
+              ? "pickup_scheduled"
+              : "return_created",
+
+            lastUpdatedAt: now,
+          };
+
+          /*
+            RMA lifecycle
+          */
+          rma.status = reverseAwb
+            ? "pickup_scheduled"
+            : "approved";
+
+          await freshOrderDoc.save();
+
+          console.log(
+            "✅ Shiprocket return created:",
+            {
+              orderNumber:
+                freshOrderDoc.orderNumber,
+              rmaNumber: rma.rmaNumber,
+              shiprocketOrderId,
+              shipmentId:
+                shiprocketShipmentId,
+              awb: reverseAwb || "pending",
+            },
+          );
+        }
+      } catch (error) {
+        /*
+          VERY IMPORTANT:
+          status remains return_requested /
+          exchange_requested even if Shiprocket fails.
+        */
+        console.error(
+          "⚠️ Auto Shiprocket return failed:",
+          error?.response?.data ||
+          error?.message ||
+          error,
+        );
+      }
     }
 
     // Book only after MongoDB transaction commits.

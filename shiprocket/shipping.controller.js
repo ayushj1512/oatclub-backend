@@ -5,6 +5,7 @@ import { buildReverseShiprocketPayload } from "./shiprocket.reverse.payload.js";
 import { getShiprocketToken } from "./shiprocket.auth.js";
 import { shiprocketApi } from "./shiprocket.client.js";
 import { generateShiprocketLabel } from "./shiprocket.label.js";
+import { createReturnOrder } from "./shiprocket.return.js";
 
 const s = (v) => (v == null ? "" : String(v)).trim();
 
@@ -293,12 +294,14 @@ export async function bookWithShiprocket(req, res) {
 export async function createReversePickup(req, res) {
   try {
     const { orderId, rmaNumber } = req.params;
+
     const order = await Order.findById(orderId);
 
     if (!order) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
     }
 
     const rma = order.rmas?.find(
@@ -306,7 +309,10 @@ export async function createReversePickup(req, res) {
     );
 
     if (!rma) {
-      return res.status(404).json({ success: false, message: "RMA not found" });
+      return res.status(404).json({
+        success: false,
+        message: "RMA not found",
+      });
     }
 
     if (rma.status !== "approved") {
@@ -316,49 +322,122 @@ export async function createReversePickup(req, res) {
       });
     }
 
-    if (rma.reverseShipment?.awb) {
+    if (
+      rma.reverseShipment?.orderId ||
+      rma.reverseShipment?.shipmentId ||
+      rma.reverseShipment?.awb
+    ) {
       return res.status(400).json({
         success: false,
         message: "Reverse pickup already created",
       });
     }
 
-    const payload = buildReverseShiprocketPayload({ order, rma });
-    const shipment = await createShipment(payload);
+    const payload = buildReverseShiprocketPayload({
+      order,
+      rma,
+    });
 
-    const reverseAwb = s(shipment?.awb_code);
+    /*
+      QC completely disabled.
+      Safety patch in case payload builder adds it.
+    */
+    payload.order_items = (payload.order_items || []).map((item) => {
+      const {
+        qc_enable,
+        qc_product_name,
+        qc_brand,
+        qc_product_image,
+        ...cleanItem
+      } = item;
 
-    if (!reverseAwb) {
+      return cleanItem;
+    });
+
+    console.log("↩️ Creating Shiprocket return order:", {
+      orderNumber: order.orderNumber,
+      rmaNumber: rma.rmaNumber,
+      items: payload.order_items.length,
+    });
+
+    const shipment = await createReturnOrder(payload);
+
+    const reverseAwb = s(
+      shipment?.awb_code ||
+      shipment?.awb ||
+      shipment?.shipment?.awb_code,
+    );
+
+    const shiprocketOrderId = s(
+      shipment?.order_id ||
+      shipment?.id,
+    );
+
+    const shiprocketShipmentId = s(
+      shipment?.shipment_id ||
+      shipment?.shipment?.id,
+    );
+
+    if (!shiprocketOrderId && !shiprocketShipmentId) {
       throw new Error(
         shipment?.message ||
-          shipment?.error ||
-          "Shiprocket did not return reverse AWB. Reverse booking failed.",
+        shipment?.error ||
+        "Shiprocket return order creation failed.",
       );
     }
 
+    const now = new Date();
+
     rma.reverseShipment = {
       provider: "shiprocket",
-      orderId: String(shipment.order_id || ""),
-      shipmentId: String(shipment.shipment_id || ""),
+
+      orderId: shiprocketOrderId,
+      shipmentId: shiprocketShipmentId,
+
       awb: reverseAwb,
-      courierName: s(shipment.courier_name),
-      trackingUrl: s(shipment.tracking_url),
-      pickupScheduledAt: new Date(),
-      status: "pickup_scheduled",
-      lastUpdatedAt: new Date(),
+
+      courierName: s(
+        shipment?.courier_name ||
+        shipment?.courier,
+      ),
+
+      trackingUrl: s(shipment?.tracking_url),
+
+      pickupScheduledAt: reverseAwb ? now : null,
+
+      status: reverseAwb
+        ? "pickup_scheduled"
+        : "return_created",
+
+      lastUpdatedAt: now,
     };
 
-    rma.status = "pickup_scheduled";
+    rma.status = reverseAwb
+      ? "pickup_scheduled"
+      : "return_created";
+
     await order.save();
 
     return res.status(200).json({
       success: true,
-      message: "Reverse pickup scheduled",
+
+      message: reverseAwb
+        ? "Reverse pickup scheduled"
+        : "Shiprocket return order created",
+
       reverseShipment: rma.reverseShipment,
     });
   } catch (err) {
-    console.error("❌ Reverse Pickup Error:", getShiprocketError(err));
-    return sendShiprocketError(res, err, "Reverse pickup failed");
+    console.error(
+      "❌ Reverse Pickup Error:",
+      getShiprocketError(err),
+    );
+
+    return sendShiprocketError(
+      res,
+      err,
+      "Reverse pickup failed",
+    );
   }
 }
 
