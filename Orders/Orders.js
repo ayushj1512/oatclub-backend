@@ -1,8 +1,7 @@
-import mongoose from "mongoose";
 import crypto from "crypto";
+import mongoose from "mongoose";
+import { buildReviewLink, sendOrderReviewWhatsapp } from "../fast2sms/index.js";
 import Counter from "../models/Counter.js";
-import Coupon from "../Coupon/Coupon.js";
-import { sendOrderReviewWhatsapp, buildReviewLink } from "../fast2sms/index.js";
 
 const REVIEW_WHATSAPP_START_DATE = new Date(
   process.env.REVIEW_WHATSAPP_START_DATE || "2026-05-21T00:00:00.000Z",
@@ -78,6 +77,16 @@ const orderItemSchema = new mongoose.Schema(
     price: { type: Number, required: true },
     compareAtPrice: { type: Number, default: null },
     subtotal: { type: Number, required: true },
+    // ✅ pricing after order-level discount allocation
+    originalPrice: { type: Number, default: 0 },
+    originalSubtotal: { type: Number, default: 0 },
+
+    discountAmount: { type: Number, default: 0 },
+
+    // GST is INCLUDED in final discounted selling price
+    taxRate: { type: Number, default: 5 },
+    taxableValue: { type: Number, default: 0 },
+    taxAmount: { type: Number, default: 0 },
   },
   { _id: false },
 );
@@ -703,14 +712,14 @@ const orderSchema = new mongoose.Schema(
     },
 
     deliveryMethod: {
-  type: String,
-  enum: [
-    "courier",
-    "founders",
-  ],
-  default: "courier",
-  index: true,
-},
+      type: String,
+      enum: [
+        "courier",
+        "founders",
+      ],
+      default: "courier",
+      index: true,
+    },
 
     reviewRequest: {
       sent: { type: Boolean, default: false, index: true },
@@ -1285,32 +1294,84 @@ orderSchema.pre("validate", function (next) {
 
 // ========================================================================================
 // ✅ AUTO-CALC TOTALS
+// Discount distributed proportionally across items
+// GST = flat 5% INCLUDED in discounted product value
 // ========================================================================================
 orderSchema.pre("validate", function (next) {
   try {
-    if (Array.isArray(this.items)) {
-      this.items = this.items.map((it) => {
-        const qty = Math.max(1, Number(it.quantity || 1));
-        const price = Number(it.price || 0);
-        const subtotal = Number(it.subtotal ?? price * qty);
+    const GST_RATE = 5;
+    const GST_DIVISOR = 1 + GST_RATE / 100;
 
-        return { ...it, quantity: qty, price, subtotal };
-      });
-    }
+    const round2 = (n) =>
+      Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
 
-    const subtotal = (this.items || []).reduce(
-      (sum, it) => sum + Number(it.subtotal || 0),
-      0,
+    // ------------------------------------------------------------------
+    // 1. NORMALIZE ORIGINAL ITEMS
+    // ------------------------------------------------------------------
+
+    const normalizedItems = (this.items || []).map((it) => {
+      const qty = Math.max(1, Number(it.quantity || 1));
+
+      // Once originalPrice exists, always use it as source of truth.
+      // This prevents repeated saves from discounting an already
+      // discounted price again.
+      const originalPrice =
+        Number(it.originalPrice || 0) > 0
+          ? Number(it.originalPrice)
+          : Number(it.price || 0);
+
+      const originalSubtotal = round2(originalPrice * qty);
+
+      return {
+        ...it,
+        quantity: qty,
+
+        originalPrice: round2(originalPrice),
+        originalSubtotal,
+
+        // temporarily original; discounted values assigned below
+        price: round2(originalPrice),
+        subtotal: originalSubtotal,
+
+        discountAmount: 0,
+        taxRate: GST_RATE,
+        taxableValue: 0,
+        taxAmount: 0,
+      };
+    });
+
+    const grossSubtotal = round2(
+      normalizedItems.reduce(
+        (sum, it) => sum + Number(it.originalSubtotal || 0),
+        0
+      )
     );
 
-    this.subtotal = subtotal;
+    // ------------------------------------------------------------------
+    // EXCHANGE SAFETY
+    // ------------------------------------------------------------------
 
-    // ✅ Exchange order safety: no money movement
     if (this.paymentMethod === "exchange") {
+      this.items = normalizedItems.map((it) => {
+        const taxableValue = round2(it.subtotal / GST_DIVISOR);
+        const taxAmount = round2(it.subtotal - taxableValue);
+
+        return {
+          ...it,
+          taxableValue,
+          taxAmount,
+        };
+      });
+
+      this.subtotal = grossSubtotal;
       this.discount = 0;
       this.shippingFee = 0;
-      this.tax = 0;
-      this.totalAmount = subtotal;
+
+      this.tax = round2(
+        this.items.reduce((sum, it) => sum + Number(it.taxAmount || 0), 0)
+      );
+
+      this.totalAmount = grossSubtotal;
       this.finalPayable = 0;
       this.paymentStatus = "not_applicable";
 
@@ -1320,9 +1381,11 @@ orderSchema.pre("validate", function (next) {
 
       this.walletCredit.used = false;
       this.walletCredit.amount = 0;
+
       this.paymentBreakdown.walletAmount = 0;
       this.paymentBreakdown.razorpayAmount = 0;
       this.paymentBreakdown.codAmount = 0;
+
       this.analytics.creditsUsed = false;
 
       if (!this.isConfirmed) {
@@ -1331,35 +1394,153 @@ orderSchema.pre("validate", function (next) {
         this.confirmedBy = "auto";
       }
 
-      const totalItems = (this.items || []).reduce(
+      const totalItems = this.items.reduce(
         (sum, it) => sum + Number(it.quantity || 0),
-        0,
+        0
       );
 
       this.analytics.totalItems = totalItems;
-      this.analytics.averageItemPrice = totalItems ? subtotal / totalItems : 0;
+      this.analytics.averageItemPrice = totalItems
+        ? grossSubtotal / totalItems
+        : 0;
 
       return next();
     }
 
-    const shippingFee = Number(this.shippingFee || 0);
-    const tax = Number(this.tax || 0);
-    const discount = Number(this.discount || 0);
+    // ------------------------------------------------------------------
+    // 2. ORDER DISCOUNT
+    // ------------------------------------------------------------------
 
-    this.totalAmount = subtotal + shippingFee + tax;
+    const requestedDiscount = Math.max(
+      0,
+      Number(this.discount || this.coupon?.discount || 0)
+    );
 
-    const beforeWalletPayable = Math.max(0, this.totalAmount - discount);
+    // Discount cannot exceed product subtotal
+    const discount = round2(
+      Math.min(requestedDiscount, grossSubtotal)
+    );
+
+    this.discount = discount;
+
+    // ------------------------------------------------------------------
+    // 3. SCATTER DISCOUNT PROPORTIONATELY ACROSS ITEMS
+    // ------------------------------------------------------------------
+
+    let allocatedDiscount = 0;
+
+    this.items = normalizedItems.map((it, index) => {
+      let itemDiscount = 0;
+
+      if (discount > 0 && grossSubtotal > 0) {
+        // Last item receives rounding remainder
+        if (index === normalizedItems.length - 1) {
+          itemDiscount = round2(discount - allocatedDiscount);
+        } else {
+          itemDiscount = round2(
+            discount * (it.originalSubtotal / grossSubtotal)
+          );
+
+          allocatedDiscount = round2(
+            allocatedDiscount + itemDiscount
+          );
+        }
+      }
+
+      itemDiscount = Math.min(
+        itemDiscount,
+        it.originalSubtotal
+      );
+
+      // final GST-inclusive value after discount
+      const discountedSubtotal = round2(
+        it.originalSubtotal - itemDiscount
+      );
+
+      const discountedUnitPrice = round2(
+        discountedSubtotal / it.quantity
+      );
+
+      // 5% GST INCLUDED
+      const taxableValue = round2(
+        discountedSubtotal / GST_DIVISOR
+      );
+
+      const taxAmount = round2(
+        discountedSubtotal - taxableValue
+      );
+
+      return {
+        ...it,
+
+        // IMPORTANT:
+        // price/subtotal now represent actual discounted selling value
+        price: discountedUnitPrice,
+        subtotal: discountedSubtotal,
+
+        discountAmount: itemDiscount,
+
+        taxRate: GST_RATE,
+        taxableValue,
+        taxAmount,
+      };
+    });
+
+    // ------------------------------------------------------------------
+    // 4. FINAL PRODUCT VALUES
+    // ------------------------------------------------------------------
+
+    const discountedProductTotal = round2(
+      this.items.reduce(
+        (sum, it) => sum + Number(it.subtotal || 0),
+        0
+      )
+    );
+
+    const totalTax = round2(
+      this.items.reduce(
+        (sum, it) => sum + Number(it.taxAmount || 0),
+        0
+      )
+    );
+
+    const shippingFee = round2(
+      Math.max(0, Number(this.shippingFee || 0))
+    );
+
+    // subtotal = original product value before discount
+    this.subtotal = grossSubtotal;
+
+    // tax is INCLUDED, not added again
+    this.tax = totalTax;
+
+    // totalAmount = discounted goods + shipping
+    this.totalAmount = round2(
+      discountedProductTotal + shippingFee
+    );
+
+    // ------------------------------------------------------------------
+    // 5. WALLET
+    // ------------------------------------------------------------------
+
+    const beforeWalletPayable = this.totalAmount;
 
     const requestedWalletAmount = Number(
-      this.walletCredit?.amount || this.paymentBreakdown?.walletAmount || 0,
+      this.walletCredit?.amount ||
+      this.paymentBreakdown?.walletAmount ||
+      0
     );
 
-    const walletAmount = Math.min(
-      Math.max(0, requestedWalletAmount),
-      beforeWalletPayable,
+    const walletAmount = round2(
+      Math.min(
+        Math.max(0, requestedWalletAmount),
+        beforeWalletPayable
+      )
     );
 
-    this.finalPayable = Math.max(0, beforeWalletPayable - walletAmount);
+    this.finalPayable = round2(
+      Math.max(0, beforeWalletPayable - walletAmount)
+    );
 
     this.walletCredit = this.walletCredit || {};
     this.paymentBreakdown = this.paymentBreakdown || {};
@@ -1367,7 +1548,9 @@ orderSchema.pre("validate", function (next) {
 
     this.walletCredit.used = walletAmount > 0;
     this.walletCredit.amount = walletAmount;
+
     this.paymentBreakdown.walletAmount = walletAmount;
+
     this.analytics.creditsUsed = walletAmount > 0;
 
     if (walletAmount > 0 && this.finalPayable === 0) {
@@ -1381,13 +1564,20 @@ orderSchema.pre("validate", function (next) {
       }
     }
 
-    const totalItems = (this.items || []).reduce(
+    // ------------------------------------------------------------------
+    // 6. ANALYTICS
+    // ------------------------------------------------------------------
+
+    const totalItems = this.items.reduce(
       (sum, it) => sum + Number(it.quantity || 0),
-      0,
+      0
     );
 
     this.analytics.totalItems = totalItems;
-    this.analytics.averageItemPrice = totalItems ? subtotal / totalItems : 0;
+
+    this.analytics.averageItemPrice = totalItems
+      ? round2(discountedProductTotal / totalItems)
+      : 0;
 
     next();
   } catch (e) {

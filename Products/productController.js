@@ -27,9 +27,9 @@ const arr = (v) =>
       ? v
       : typeof v === "string"
         ? v
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean)
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean)
         : [];
 const VARIANT_KEYS = ["size"];
 const tagsNorm = (v) =>
@@ -343,9 +343,9 @@ const resolveCollectionFilter = async (collection) => {
   const rawCollections = Array.isArray(collection)
     ? collection
     : String(collection || "")
-        .split(",")
-        .map((c) => c.trim())
-        .filter(Boolean);
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean);
 
   if (!rawCollections.length) return null;
 
@@ -451,6 +451,91 @@ const applyProductCodeFilter = (filters, query) => {
   }
 };
 
+/* =========================================================
+   PRODUCT SELLING PRIORITY SORT
+   Bestseller -> Trending -> Remaining newest
+========================================================= */
+
+const PRODUCT_PRIORITY_SORT = {
+  isBestSeller: -1,
+  isTrending: -1,
+  createdAt: -1,
+  _id: -1,
+};
+
+const buildProductSort = (
+  sort = "",
+  {
+    allowOldest = false,
+    allowTitle = false,
+  } = {},
+) => {
+  const sortMap = {
+    price_asc: {
+      price: 1,
+      _id: -1,
+    },
+
+    price_desc: {
+      price: -1,
+      _id: -1,
+    },
+
+    newest: {
+      createdAt: -1,
+      _id: -1,
+    },
+
+    rating: {
+      averageRating: -1,
+      _id: -1,
+    },
+
+    popularity: {
+      "analytics.views": -1,
+      _id: -1,
+    },
+
+    ...(allowOldest
+      ? {
+        oldest: {
+          createdAt: 1,
+          _id: 1,
+        },
+      }
+      : {}),
+
+    ...(allowTitle
+      ? {
+        title_asc: {
+          title: 1,
+          _id: -1,
+        },
+
+        title_desc: {
+          title: -1,
+          _id: -1,
+        },
+      }
+      : {}),
+  };
+
+  const requestedSort = String(
+    sort || "",
+  ).trim();
+
+  // Explicit customer sorting should win.
+  if (
+    requestedSort &&
+    sortMap[requestedSort]
+  ) {
+    return sortMap[requestedSort];
+  }
+
+  // Default storefront priority.
+  return PRODUCT_PRIORITY_SORT;
+};
+
 /* ============================================================
    ✅ NEW: GET PRODUCTS BY TAG(S)
    GET /api/products/by-tag?tag=sale
@@ -463,8 +548,8 @@ export const getProductsByTag = async (req, res) => {
       page = 1,
       limit = 20,
       tag,
-      tags, // comma-separated
-      category, // comma-separated category slugs/names
+      tags,
+      category,
       collection,
       minPrice,
       maxPrice,
@@ -476,23 +561,32 @@ export const getProductsByTag = async (req, res) => {
 
     /* ---------------- tags ---------------- */
     const t = tagsNorm(tags ?? tag);
+
     if (!t.length) {
-      return res.status(400).json({ message: "tag/tags is required" });
+      return res.status(400).json({
+        message: "tag/tags is required",
+      });
     }
 
-    const filters = { tags: { $in: t } };
+    const filters = {
+      tags: {
+        $in: t,
+      },
+    };
 
-    /* ---------------- categories (STRING ARRAY) ---------------- */
+    /* ---------------- categories ---------------- */
     if (category) {
       const cats = Array.isArray(category)
         ? category
         : String(category)
-            .split(",")
-            .map((c) => c.trim())
-            .filter(Boolean);
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean);
 
       if (cats.length) {
-        filters.categories = { $in: cats };
+        filters.categories = {
+          $in: cats,
+        };
       }
     }
 
@@ -503,57 +597,144 @@ export const getProductsByTag = async (req, res) => {
 
     /* ---------------- active ---------------- */
     if (isActive !== undefined) {
-      filters.isActive = isActive === "true";
+      filters.isActive =
+        String(isActive).toLowerCase() === "true";
     }
 
     /* ---------------- SKU ---------------- */
     if (sku) {
-      filters.$or = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
+      filters.$or = [
+        {
+          sku: String(sku).trim(),
+        },
+        {
+          "variants.sku": String(sku).trim(),
+        },
+      ];
     }
 
     /* ---------------- price ---------------- */
     if (minPrice || maxPrice) {
       filters.price = {};
-      if (minPrice) filters.price.$gte = Number(minPrice);
-      if (maxPrice) filters.price.$lte = Number(maxPrice);
+
+      if (minPrice) {
+        filters.price.$gte =
+          Number(minPrice);
+      }
+
+      if (maxPrice) {
+        filters.price.$lte =
+          Number(maxPrice);
+      }
     }
 
     /* ---------------- search ---------------- */
     if (search) {
-      filters.$text = { $search: search };
+      filters.$text = {
+        $search: search,
+      };
     }
 
-    /* ---------------- sorting ---------------- */
-    const sortMap = {
-      price_asc: { price: 1 },
-      price_desc: { price: -1 },
-      newest: { createdAt: -1 },
-      rating: { averageRating: -1 },
-      popularity: { "analytics.views": -1 },
+    /* =========================================================
+       SORTING
+       Default:
+       Bestseller -> Trending -> Newest
+    ========================================================= */
+
+    const prioritySort = {
+      isBestSeller: -1,
+      isTrending: -1,
+      createdAt: -1,
+      _id: -1,
     };
 
-    const safeLimit = Math.min(200, Math.max(1, Number(limit)));
-    const skip = (Number(page) - 1) * safeLimit;
-    const sortObj = sortMap[sort] || { createdAt: -1 };
+    const sortMap = {
+      price_asc: {
+        price: 1,
+        _id: -1,
+      },
+
+      price_desc: {
+        price: -1,
+        _id: -1,
+      },
+
+      newest: {
+        createdAt: -1,
+        _id: -1,
+      },
+
+      rating: {
+        averageRating: -1,
+        _id: -1,
+      },
+
+      popularity: {
+        "analytics.views": -1,
+        _id: -1,
+      },
+    };
+
+    const requestedSort = String(
+      sort || ""
+    ).trim();
+
+    const sortObj =
+      requestedSort &&
+        sortMap[requestedSort]
+        ? sortMap[requestedSort]
+        : prioritySort;
+
+    /* ---------------- pagination ---------------- */
+    const safePage = Math.max(
+      1,
+      Number(page) || 1
+    );
+
+    const safeLimit = Math.min(
+      200,
+      Math.max(
+        1,
+        Number(limit) || 20
+      )
+    );
+
+    const skip =
+      (safePage - 1) * safeLimit;
 
     /* ---------------- query ---------------- */
-    const docs = await pop(Product.find(filters))
+    const docs = await pop(
+      Product.find(filters)
+    )
       .sort(sortObj)
       .skip(skip)
       .limit(safeLimit);
 
-    const total = await Product.countDocuments(filters);
+    const total =
+      await Product.countDocuments(
+        filters
+      );
 
     return res.json({
       tags: t,
       total,
-      page: Number(page),
-      pages: Math.ceil(total / safeLimit),
-      products: (docs || []).map(applyStockFromVariants),
+      page: safePage,
+      pages: Math.ceil(
+        total / safeLimit
+      ),
+      products: (docs || []).map(
+        applyStockFromVariants
+      ),
     });
   } catch (e) {
-    console.error("❌ Get Products By Tag Error:", e);
-    return res.status(500).json({ message: e.message });
+    console.error(
+      "❌ Get Products By Tag Error:",
+      e
+    );
+
+    return res.status(500).json({
+      message: e.message,
+    });
   }
 };
 
@@ -818,9 +999,9 @@ export const createProduct = async (req, res) => {
       ? data.categories
       : typeof data.categories === "string"
         ? data.categories
-            .split(",")
-            .map((c) => s(c))
-            .filter(Boolean)
+          .split(",")
+          .map((c) => s(c))
+          .filter(Boolean)
         : [];
 
     const hadNewArrivals = data.categories.some(
@@ -1323,7 +1504,10 @@ export const getAllProducts = async (req, res) => {
       stock_desc: { stock: -1 },
     };
 
-    let sortObj = sortMap[sort] || { createdAt: -1 };
+    let sortObj = sort
+      ? sortMap[sort] ||
+      PRODUCT_PRIORITY_SORT
+      : PRODUCT_PRIORITY_SORT;
 
     if (hasVal(sortKey)) {
       const dir = String(sortDir).toLowerCase() === "asc" ? 1 : -1;
@@ -1548,7 +1732,7 @@ export const getAvailableForCollabProducts = async (req, res) => {
         price: Number(product.price || 0),
         compareAtPrice:
           product.compareAtPrice !== null &&
-          product.compareAtPrice !== undefined
+            product.compareAtPrice !== undefined
             ? Number(product.compareAtPrice)
             : null,
 
@@ -2520,9 +2704,9 @@ export const updateProduct = async (req, res) => {
         ? data.categories
         : typeof data.categories === "string"
           ? data.categories
-              .split(",")
-              .map((c) => s(c))
-              .filter(Boolean)
+            .split(",")
+            .map((c) => s(c))
+            .filter(Boolean)
           : [];
 
       const hadNewArrivals = raw.some(
@@ -2761,8 +2945,8 @@ export const syncProductAssociationGroup = async (req, res) => {
       Array.isArray(rawIds)
         ? rawIds
         : String(rawIds || "")
-            .split(",")
-            .map((id) => id.trim())
+          .split(",")
+          .map((id) => id.trim())
     )
       .map((item) =>
         item && typeof item === "object" && item._id
@@ -3006,12 +3190,12 @@ export const updateProductColors = async (req, res) => {
     const parsed =
       typeof raw === "string"
         ? (() => {
-            try {
-              return JSON.parse(raw);
-            } catch {
-              return null;
-            }
-          })()
+          try {
+            return JSON.parse(raw);
+          } catch {
+            return null;
+          }
+        })()
         : raw;
 
     if (!Array.isArray(parsed)) {
@@ -3154,9 +3338,9 @@ export const bulkUpdatePricing = async (req, res) => {
           ...(u.price !== undefined ? { price: Number(u.price) } : {}),
           ...(u.compareAtPrice !== undefined
             ? {
-                compareAtPrice:
-                  u.compareAtPrice === "" ? null : Number(u.compareAtPrice),
-              }
+              compareAtPrice:
+                u.compareAtPrice === "" ? null : Number(u.compareAtPrice),
+            }
             : {}),
         },
       },
@@ -3200,131 +3384,282 @@ export const getProductsByCategory = async (req, res) => {
       card,
     } = req.query;
 
-    const categoryParam = String(req.params.category || "").trim();
+    const categoryParam = String(
+      req.params.category || ""
+    ).trim();
 
     if (!categoryParam) {
-      return res.status(400).json({ message: "Category is required" });
+      return res.status(400).json({
+        message: "Category is required",
+      });
     }
 
     /* ---------------- category: slug / id / name ---------------- */
     let catDoc = null;
 
-    if (mongoose.Types.ObjectId.isValid(categoryParam)) {
-      catDoc = await Category.findById(categoryParam).lean();
+    if (
+      mongoose.Types.ObjectId.isValid(
+        categoryParam
+      )
+    ) {
+      catDoc =
+        await Category.findById(
+          categoryParam
+        ).lean();
     }
 
     if (!catDoc) {
       catDoc = await Category.findOne({
         $or: [
-          { slug: categoryParam.toLowerCase() },
           {
-            name: { $regex: `^${escapeRegex(categoryParam)}$`, $options: "i" },
+            slug:
+              categoryParam.toLowerCase(),
+          },
+          {
+            name: {
+              $regex: `^${escapeRegex(
+                categoryParam
+              )}$`,
+              $options: "i",
+            },
           },
         ],
       }).lean();
     }
 
     const categoryMatch = catDoc
-      ? [catDoc.slug, catDoc.name].filter(Boolean)
+      ? [
+        catDoc.slug,
+        catDoc.name,
+      ].filter(Boolean)
       : [categoryParam];
 
     const filters = {
-      categories: { $in: categoryMatch },
+      categories: {
+        $in: categoryMatch,
+      },
     };
 
     /* ---------------- collections ---------------- */
     if (collection) {
-      filters.collections = await resolveCollectionFilter(collection);
+      filters.collections =
+        await resolveCollectionFilter(
+          collection
+        );
     }
 
     /* ---------------- tags ---------------- */
-    const normalizedTags = tagsNorm(tags);
+    const normalizedTags =
+      tagsNorm(tags);
+
     if (normalizedTags.length) {
-      filters.tags = { $in: normalizedTags };
+      filters.tags = {
+        $in: normalizedTags,
+      };
     }
 
     /* ---------------- active ---------------- */
     if (isActive !== undefined) {
-      filters.isActive = String(isActive).toLowerCase() === "true";
+      filters.isActive =
+        String(isActive).toLowerCase() ===
+        "true";
     }
 
     /* ---------------- sku ---------------- */
     if (sku) {
       filters.$or = [
-        { sku: String(sku).trim() },
-        { "variants.sku": String(sku).trim() },
+        {
+          sku: String(sku).trim(),
+        },
+        {
+          "variants.sku":
+            String(sku).trim(),
+        },
       ];
     }
 
     /* ---------------- product code search ---------------- */
-    applyProductCodeFilter(filters, { q, title, productCode, code, search });
+    applyProductCodeFilter(filters, {
+      q,
+      title,
+      productCode,
+      code,
+      search,
+    });
 
     /* ---------------- price ---------------- */
     if (minPrice || maxPrice) {
       filters.price = {};
 
-      if (minPrice) filters.price.$gte = Number(minPrice);
-      if (maxPrice) filters.price.$lte = Number(maxPrice);
+      if (minPrice) {
+        filters.price.$gte =
+          Number(minPrice);
+      }
+
+      if (maxPrice) {
+        filters.price.$lte =
+          Number(maxPrice);
+      }
     }
 
     /* ---------------- text search ---------------- */
-    const qStr = String(q ?? "").trim();
-    const titleStr = String(title ?? "").trim();
-    const searchStr = String(search ?? "").trim();
+    const qStr = String(
+      q ?? ""
+    ).trim();
+
+    const titleStr = String(
+      title ?? ""
+    ).trim();
+
+    const searchStr = String(
+      search ?? ""
+    ).trim();
 
     const searchText =
       searchStr ||
-      (/^\d+$/.test(qStr) ? "" : qStr) ||
-      (/^\d+$/.test(titleStr) ? "" : titleStr);
+      (/^\d+$/.test(qStr)
+        ? ""
+        : qStr) ||
+      (/^\d+$/.test(titleStr)
+        ? ""
+        : titleStr);
 
     if (searchText) {
-      filters.$text = { $search: searchText };
+      filters.$text = {
+        $search: searchText,
+      };
     }
 
-    /* ---------------- sorting ---------------- */
-    const sortMap = {
-      price_asc: { price: 1 },
-      price_desc: { price: -1 },
-      newest: { createdAt: -1 },
-      rating: { averageRating: -1 },
-      popularity: { "analytics.views": -1 },
+    /* =========================================================
+       SORTING
+       Default:
+       Bestseller -> Trending -> Newest
+    ========================================================= */
+
+    const prioritySort = {
+      isBestSeller: -1,
+      isTrending: -1,
+      createdAt: -1,
+      _id: -1,
     };
 
-    const safePage = Math.max(1, Number(page) || 1);
-    const safeLimit = Math.min(200, Math.max(1, Number(limit) || 20));
-    const skip = (safePage - 1) * safeLimit;
-    const sortObj = sortMap[sort] || { createdAt: -1 };
+    const sortMap = {
+      price_asc: {
+        price: 1,
+        _id: -1,
+      },
 
-    const docs = await pop(Product.find(filters))
+      price_desc: {
+        price: -1,
+        _id: -1,
+      },
+
+      newest: {
+        createdAt: -1,
+        _id: -1,
+      },
+
+      rating: {
+        averageRating: -1,
+        _id: -1,
+      },
+
+      popularity: {
+        "analytics.views": -1,
+        _id: -1,
+      },
+    };
+
+    const requestedSort = String(
+      sort || ""
+    ).trim();
+
+    const sortObj =
+      requestedSort &&
+        sortMap[requestedSort]
+        ? sortMap[requestedSort]
+        : prioritySort;
+
+    /* ---------------- pagination ---------------- */
+    const safePage = Math.max(
+      1,
+      Number(page) || 1
+    );
+
+    const safeLimit = Math.min(
+      200,
+      Math.max(
+        1,
+        Number(limit) || 20
+      )
+    );
+
+    const skip =
+      (safePage - 1) *
+      safeLimit;
+
+    /* ---------------- query ---------------- */
+    const docs = await pop(
+      Product.find(filters)
+    )
       .sort(sortObj)
       .skip(skip)
       .limit(safeLimit);
 
-    const total = await Product.countDocuments(filters);
+    const total =
+      await Product.countDocuments(
+        filters
+      );
 
-    const useCard = ["1", "true", "yes"].includes(
-      String(card || "").toLowerCase(),
+    const useCard = [
+      "1",
+      "true",
+      "yes",
+    ].includes(
+      String(
+        card || ""
+      ).toLowerCase()
     );
 
     const products = useCard
       ? (docs || []).map((doc) =>
-          mapProductCard(doc?.toObject ? doc.toObject() : doc),
+        mapProductCard(
+          doc?.toObject
+            ? doc.toObject()
+            : doc
         )
-      : (docs || []).map(applyStockFromVariants);
+      )
+      : (docs || []).map(
+        applyStockFromVariants
+      );
 
     return res.json({
       category: catDoc
-        ? { _id: catDoc._id, name: catDoc.name, slug: catDoc.slug }
-        : { raw: categoryParam },
+        ? {
+          _id: catDoc._id,
+          name: catDoc.name,
+          slug: catDoc.slug,
+        }
+        : {
+          raw: categoryParam,
+        },
 
       total,
       page: safePage,
-      pages: Math.ceil(total / safeLimit),
+      pages: Math.ceil(
+        total / safeLimit
+      ),
       products,
     });
   } catch (e) {
-    console.error("❌ Get Products By Category Error:", e);
-    return res.status(500).json({ message: e.message });
+    console.error(
+      "❌ Get Products By Category Error:",
+      e
+    );
+
+    return res.status(500).json({
+      message: e.message,
+    });
   }
 };
 
@@ -3342,9 +3677,9 @@ export const getProductsByIds = async (req, res) => {
       ? ids
       : typeof ids === "string"
         ? ids
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean)
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean)
         : [];
 
     if (!ids.length) {
@@ -3623,12 +3958,12 @@ export const updateProductFabrics = async (req, res) => {
     const fabrics =
       typeof fabricsRaw === "string"
         ? (() => {
-            try {
-              return JSON.parse(fabricsRaw);
-            } catch {
-              return null;
-            }
-          })()
+          try {
+            return JSON.parse(fabricsRaw);
+          } catch {
+            return null;
+          }
+        })()
         : fabricsRaw;
 
     if (!Array.isArray(fabrics)) {
@@ -4011,9 +4346,9 @@ export const getProductsByCodes = async (req, res) => {
       ? codes
       : typeof codes === "string"
         ? codes
-            .split(",")
-            .map((x) => String(x).trim())
-            .filter(Boolean)
+          .split(",")
+          .map((x) => String(x).trim())
+          .filter(Boolean)
         : [];
 
     if (!codes.length) {
@@ -4339,9 +4674,9 @@ export const bulkMarkTrendingByCodes = async (req, res) => {
       ? codes
       : typeof codes === "string"
         ? codes
-            .split(",")
-            .map((x) => String(x).trim())
-            .filter(Boolean)
+          .split(",")
+          .map((x) => String(x).trim())
+          .filter(Boolean)
         : [];
 
     codes = [...new Set(codes.map((c) => String(c).trim()).filter(Boolean))];
@@ -4486,6 +4821,7 @@ export const getProductCards = async (req, res) => {
       isDraft = "false",
       isBestSeller,
       isTrending,
+      isDispatchReady,
       isPrimaryProduct,
       search,
       sort,
@@ -4499,16 +4835,18 @@ export const getProductCards = async (req, res) => {
     } = req.query;
 
     const filters = {};
-    const toBool = (v) => String(v).trim().toLowerCase() === "true";
+
+    const toBool = (v) =>
+      String(v).trim().toLowerCase() === "true";
 
     /* ---------------- ids / product codes ---------------- */
     const idList = Array.isArray(ids)
       ? ids
       : typeof ids === "string"
         ? ids
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean)
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean)
         : [];
 
     if (idList.length) {
@@ -4517,21 +4855,37 @@ export const getProductCards = async (req, res) => {
 
       for (const item of idList) {
         const raw = String(item || "").trim();
+
         if (!raw) continue;
 
         if (mongoose.Types.ObjectId.isValid(raw)) {
           objectIds.push(raw);
         }
 
-        buildCodeCandidates(raw).forEach((c) => codeCandidatesSet.add(c));
+        buildCodeCandidates(raw).forEach((candidate) =>
+          codeCandidatesSet.add(candidate),
+        );
       }
 
       const idOr = [];
-      if (objectIds.length) idOr.push({ _id: { $in: objectIds } });
 
-      const codeCandidates = Array.from(codeCandidatesSet);
+      if (objectIds.length) {
+        idOr.push({
+          _id: {
+            $in: objectIds,
+          },
+        });
+      }
+
+      const codeCandidates =
+        Array.from(codeCandidatesSet);
+
       if (codeCandidates.length) {
-        idOr.push({ productCode: { $in: codeCandidates } });
+        idOr.push({
+          productCode: {
+            $in: codeCandidates,
+          },
+        });
       }
 
       if (idOr.length) {
@@ -4544,111 +4898,204 @@ export const getProductCards = async (req, res) => {
       const cats = Array.isArray(category)
         ? category
         : String(category)
-            .split(",")
-            .map((c) => c.trim())
-            .filter(Boolean);
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean);
 
-      if (cats.length) filters.categories = { $in: cats };
+      if (cats.length) {
+        filters.categories = {
+          $in: cats,
+        };
+      }
     }
 
-    /* ---------------- collections (slug OR id OR name) ---------------- */
+    /* ---------------- collections ---------------- */
     if (collection) {
       const rawCollections = Array.isArray(collection)
         ? collection
         : String(collection)
-            .split(",")
-            .map((c) => c.trim())
-            .filter(Boolean);
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean);
 
       if (rawCollections.length) {
-        const objectIds = rawCollections.filter((c) =>
-          mongoose.Types.ObjectId.isValid(c),
-        );
-
-        const nonIds = rawCollections.filter(
-          (c) => !mongoose.Types.ObjectId.isValid(c),
-        );
-
-        let matchedCollectionIds = [...objectIds];
-
-        if (nonIds.length) {
-          const escaped = nonIds.map((s) =>
-            String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        const objectIds =
+          rawCollections.filter((c) =>
+            mongoose.Types.ObjectId.isValid(c),
           );
 
-          const matchedCollections = await Collection.find({
-            $or: [
-              { slug: { $in: nonIds.map((s) => String(s).toLowerCase()) } },
-              { name: { $in: nonIds } },
-              { name: { $in: escaped.map((s) => new RegExp(`^${s}$`, "i")) } },
-            ],
-          })
-            .select("_id slug name")
-            .lean();
+        const nonIds =
+          rawCollections.filter(
+            (c) =>
+              !mongoose.Types.ObjectId.isValid(c),
+          );
+
+        let matchedCollectionIds = [
+          ...objectIds,
+        ];
+
+        if (nonIds.length) {
+          const escaped =
+            nonIds.map((s) =>
+              String(s).replace(
+                /[.*+?^${}()|[\]\\]/g,
+                "\\$&",
+              ),
+            );
+
+          const matchedCollections =
+            await Collection.find({
+              $or: [
+                {
+                  slug: {
+                    $in: nonIds.map((s) =>
+                      String(s).toLowerCase(),
+                    ),
+                  },
+                },
+                {
+                  name: {
+                    $in: nonIds,
+                  },
+                },
+                {
+                  name: {
+                    $in: escaped.map(
+                      (s) =>
+                        new RegExp(
+                          `^${s}$`,
+                          "i",
+                        ),
+                    ),
+                  },
+                },
+              ],
+            })
+              .select("_id slug name")
+              .lean();
 
           matchedCollectionIds.push(
-            ...matchedCollections.map((c) => String(c._id)),
+            ...matchedCollections.map(
+              (c) => String(c._id),
+            ),
           );
         }
 
         matchedCollectionIds = Array.from(
-          new Set(matchedCollectionIds.map((x) => String(x))),
+          new Set(
+            matchedCollectionIds.map(
+              String,
+            ),
+          ),
         ).filter(Boolean);
 
-        if (!matchedCollectionIds.length) {
+        if (
+          !matchedCollectionIds.length
+        ) {
           return res.json({
             total: 0,
-            page: Math.max(1, Number(page) || 1),
+            page: Math.max(
+              1,
+              Number(page) || 1,
+            ),
             pages: 0,
             products: [],
           });
         }
 
-        if (matchedCollectionIds.length === 1) {
-          filters.collections = matchedCollectionIds[0];
-        } else {
-          filters.collections = { $in: matchedCollectionIds };
-        }
+        filters.collections =
+          matchedCollectionIds.length ===
+            1
+            ? matchedCollectionIds[0]
+            : {
+              $in:
+                matchedCollectionIds,
+            };
       }
     }
 
     /* ---------------- tags ---------------- */
     const t = tagsNorm(tags);
-    if (t.length) filters.tags = { $in: t };
+
+    if (t.length) {
+      filters.tags = {
+        $in: t,
+      };
+    }
 
     /* ---------------- booleans ---------------- */
-    if (isActive !== undefined && String(isActive).trim() !== "") {
-      filters.isActive = toBool(isActive);
+    if (
+      isActive !== undefined &&
+      String(isActive).trim() !== ""
+    ) {
+      filters.isActive =
+        toBool(isActive);
     }
 
-    if (isDraft !== undefined && String(isDraft).trim() !== "") {
-      filters.isDraft = toBool(isDraft);
+    if (
+      isDraft !== undefined &&
+      String(isDraft).trim() !== ""
+    ) {
+      filters.isDraft =
+        toBool(isDraft);
     }
 
-    if (isBestSeller !== undefined && String(isBestSeller).trim() !== "") {
-      filters.isBestSeller = toBool(isBestSeller);
+    if (
+      isBestSeller !== undefined &&
+      String(isBestSeller).trim() !== ""
+    ) {
+      filters.isBestSeller =
+        toBool(isBestSeller);
     }
 
-    if (isTrending !== undefined && String(isTrending).trim() !== "") {
-      filters.isTrending = toBool(isTrending);
+    if (
+      isTrending !== undefined &&
+      String(isTrending).trim() !== ""
+    ) {
+      filters.isTrending =
+        toBool(isTrending);
     }
+
     if (hasVal(isDispatchReady)) {
-      filters.isDispatchReady = toBool(isDispatchReady);
+      filters.isDispatchReady =
+        toBool(isDispatchReady);
     }
 
     if (
       isPrimaryProduct !== undefined &&
-      String(isPrimaryProduct).trim() !== ""
+      String(
+        isPrimaryProduct,
+      ).trim() !== ""
     ) {
-      filters.isPrimaryProduct = toBool(isPrimaryProduct);
+      filters.isPrimaryProduct =
+        toBool(isPrimaryProduct);
     }
 
     /* ---------------- SKU exact ---------------- */
     if (sku) {
-      const skuOr = [{ sku: String(sku) }, { "variants.sku": String(sku) }];
+      const skuOr = [
+        {
+          sku: String(sku),
+        },
+        {
+          "variants.sku":
+            String(sku),
+        },
+      ];
 
-      if (Array.isArray(filters.$or) && filters.$or.length) {
-        filters.$and = [{ $or: filters.$or }, { $or: skuOr }];
+      if (
+        Array.isArray(filters.$or) &&
+        filters.$or.length
+      ) {
+        filters.$and = [
+          {
+            $or: filters.$or,
+          },
+          {
+            $or: skuOr,
+          },
+        ];
+
         delete filters.$or;
       } else {
         filters.$or = skuOr;
@@ -4657,22 +5104,53 @@ export const getProductCards = async (req, res) => {
 
     /* ---------------- productCode search ---------------- */
     if (!idList.length) {
-      applyProductCodeFilter(filters, { q, title, productCode, code, search });
+      applyProductCodeFilter(
+        filters,
+        {
+          q,
+          title,
+          productCode,
+          code,
+          search,
+        },
+      );
     }
 
     /* ---------------- price ---------------- */
     if (minPrice || maxPrice) {
       filters.price = {};
-      if (minPrice) filters.price.$gte = Number(minPrice);
-      if (maxPrice) filters.price.$lte = Number(maxPrice);
+
+      if (minPrice) {
+        filters.price.$gte =
+          Number(minPrice);
+      }
+
+      if (maxPrice) {
+        filters.price.$lte =
+          Number(maxPrice);
+      }
     }
 
     /* ---------------- text search ---------------- */
-    const qStr = String(q ?? "").trim();
-    const titleStr = String(title ?? "").trim();
-    const searchStr = String(search ?? "").trim();
-    const pcStr = String(productCode ?? "").trim();
-    const codeStr = String(code ?? "").trim();
+    const qStr = String(
+      q ?? "",
+    ).trim();
+
+    const titleStr = String(
+      title ?? "",
+    ).trim();
+
+    const searchStr = String(
+      search ?? "",
+    ).trim();
+
+    const pcStr = String(
+      productCode ?? "",
+    ).trim();
+
+    const codeStr = String(
+      code ?? "",
+    ).trim();
 
     const isCodeQuery =
       isDigitsOnly(qStr) ||
@@ -4682,102 +5160,255 @@ export const getProductCards = async (req, res) => {
       isDigitsOnly(codeStr);
 
     let searchText = "";
-    if (!idList.length && !isCodeQuery) {
-      searchText = searchStr || qStr || titleStr;
+
+    if (
+      !idList.length &&
+      !isCodeQuery
+    ) {
+      searchText =
+        searchStr ||
+        qStr ||
+        titleStr;
     }
 
     if (searchText) {
-      filters.$text = { $search: searchText };
+      filters.$text = {
+        $search: searchText,
+      };
     }
 
-    /* ---------------- sorting ---------------- */
-    const sortMap = {
-      price_asc: { price: 1, _id: -1 },
-      price_desc: { price: -1, _id: -1 },
-      newest: { createdAt: -1, _id: -1 },
-      rating: { averageRating: -1, _id: -1 },
-      popularity: { "analytics.views": -1, _id: -1 },
+    /* =========================================================
+       SORTING
+       Default:
+       Bestseller -> Trending -> Newest
+    ========================================================= */
+
+    const prioritySort = {
+      isBestSeller: -1,
+      isTrending: -1,
+      createdAt: -1,
+      _id: -1,
     };
 
-    const safeLimit = Math.min(200, Math.max(1, Number(limit) || 20));
-    const safePage = Math.max(1, Number(page) || 1);
-    const skip = (safePage - 1) * safeLimit;
-    const sortObj = sortMap[sort] || { createdAt: -1, _id: -1 };
+    const sortMap = {
+      price_asc: {
+        price: 1,
+        _id: -1,
+      },
 
-    const [docs, total] = await Promise.all([
-      Product.find(filters)
-        .select(
-          [
-            "title",
-            "slug",
-            "productCode",
-            "categories",
-            "price",
-            "compareAtPrice",
-            "thumbnail",
-            "images",
-            "isBestSeller",
-            "isTrending",
-            "isPrimaryProduct",
-            "createdAt",
-          ].join(" "),
-        )
-        .sort(sortObj)
-        .skip(skip)
-        .limit(safeLimit)
-        .lean(),
-      Product.countDocuments(filters),
-    ]);
+      price_desc: {
+        price: -1,
+        _id: -1,
+      },
 
-    let products = (docs || [])
+      newest: {
+        createdAt: -1,
+        _id: -1,
+      },
+
+      rating: {
+        averageRating: -1,
+        _id: -1,
+      },
+
+      popularity: {
+        "analytics.views": -1,
+        _id: -1,
+      },
+
+      bestseller: {
+        isBestSeller: -1,
+        isTrending: -1,
+        createdAt: -1,
+        _id: -1,
+      },
+
+      trending: {
+        isTrending: -1,
+        isBestSeller: -1,
+        createdAt: -1,
+        _id: -1,
+      },
+    };
+
+    const requestedSort = String(
+      sort || "",
+    ).trim();
+
+    const sortObj =
+      requestedSort &&
+        sortMap[requestedSort]
+        ? sortMap[requestedSort]
+        : prioritySort;
+
+    /* ---------------- pagination ---------------- */
+    const safeLimit = Math.min(
+      200,
+      Math.max(
+        1,
+        Number(limit) || 20,
+      ),
+    );
+
+    const safePage = Math.max(
+      1,
+      Number(page) || 1,
+    );
+
+    const skip =
+      (safePage - 1) *
+      safeLimit;
+
+    /* ---------------- query ---------------- */
+    const [docs, total] =
+      await Promise.all([
+        Product.find(filters)
+          .select(
+            [
+              "title",
+              "slug",
+              "productCode",
+              "categories",
+              "price",
+              "compareAtPrice",
+              "thumbnail",
+              "images",
+              "isBestSeller",
+              "isTrending",
+              "isPrimaryProduct",
+              "createdAt",
+            ].join(" "),
+          )
+          .sort(sortObj)
+          .skip(skip)
+          .limit(safeLimit)
+          .lean(),
+
+        Product.countDocuments(
+          filters,
+        ),
+      ]);
+
+    let products = (
+      docs || []
+    )
       .map(mapProductCard)
-      .filter((p) => p.image && p.price > 0 && p.productCode);
+      .filter(
+        (p) =>
+          p.image &&
+          p.price > 0 &&
+          p.productCode,
+      );
 
-    /* ---------------- keep same order when ids are passed ---------------- */
+    /* =========================================================
+       KEEP REQUESTED ORDER WHEN IDS ARE PASSED
+       Do NOT apply bestseller/trending priority here.
+    ========================================================= */
+
     if (idList.length) {
-      const orderMap = new Map();
+      const orderMap =
+        new Map();
 
-      idList.forEach((item, index) => {
-        const raw = String(item || "").trim();
-        if (!raw) return;
+      idList.forEach(
+        (item, index) => {
+          const raw = String(
+            item || "",
+          ).trim();
 
-        orderMap.set(raw, index);
-        buildCodeCandidates(raw).forEach((c) => {
-          if (!orderMap.has(c)) orderMap.set(c, index);
+          if (!raw) return;
+
+          orderMap.set(
+            raw,
+            index,
+          );
+
+          buildCodeCandidates(
+            raw,
+          ).forEach(
+            (candidate) => {
+              if (
+                !orderMap.has(
+                  candidate,
+                )
+              ) {
+                orderMap.set(
+                  candidate,
+                  index,
+                );
+              }
+            },
+          );
+        },
+      );
+
+      products =
+        products.sort((a, b) => {
+          const aKey1 = String(
+            a?._id || "",
+          );
+
+          const aKey2 = String(
+            a?.productCode || "",
+          );
+
+          const bKey1 = String(
+            b?._id || "",
+          );
+
+          const bKey2 = String(
+            b?.productCode || "",
+          );
+
+          const aIdx =
+            orderMap.has(aKey1)
+              ? orderMap.get(aKey1)
+              : orderMap.has(
+                aKey2,
+              )
+                ? orderMap.get(
+                  aKey2,
+                )
+                : Number.MAX_SAFE_INTEGER;
+
+          const bIdx =
+            orderMap.has(bKey1)
+              ? orderMap.get(bKey1)
+              : orderMap.has(
+                bKey2,
+              )
+                ? orderMap.get(
+                  bKey2,
+                )
+                : Number.MAX_SAFE_INTEGER;
+
+          return aIdx - bIdx;
         });
-      });
-
-      products = products.sort((a, b) => {
-        const aKey1 = String(a?._id || "");
-        const aKey2 = String(a?.productCode || "");
-        const bKey1 = String(b?._id || "");
-        const bKey2 = String(b?.productCode || "");
-
-        const aIdx = orderMap.has(aKey1)
-          ? orderMap.get(aKey1)
-          : orderMap.has(aKey2)
-            ? orderMap.get(aKey2)
-            : Number.MAX_SAFE_INTEGER;
-
-        const bIdx = orderMap.has(bKey1)
-          ? orderMap.get(bKey1)
-          : orderMap.has(bKey2)
-            ? orderMap.get(bKey2)
-            : Number.MAX_SAFE_INTEGER;
-
-        return aIdx - bIdx;
-      });
     }
 
     return res.json({
-      total: idList.length ? products.length : total,
+      total: idList.length
+        ? products.length
+        : total,
+
       page: safePage,
-      pages: idList.length ? 1 : Math.ceil(total / safeLimit),
+
+      pages: idList.length
+        ? 1
+        : Math.ceil(
+          total / safeLimit,
+        ),
+
       products,
     });
   } catch (e) {
-    console.error("❌ Get Product Cards Error:", e);
-    return res.status(500).json({ message: e.message });
+    console.error(
+      "❌ Get Product Cards Error:",
+      e,
+    );
+
+    return res.status(500).json({
+      message: e.message,
+    });
   }
 };
 
@@ -5120,8 +5751,8 @@ const PRODUCT_EXCEL_COLUMNS = {
       variant
         ? Number(variant.stock || 0)
         : (product.variants || [])
-            .map((item) => Number(item?.stock || 0))
-            .join(", "),
+          .map((item) => Number(item?.stock || 0))
+          .join(", "),
   },
 
   variantReservedStock: {
@@ -5131,8 +5762,8 @@ const PRODUCT_EXCEL_COLUMNS = {
       variant
         ? Number(variant.reservedStock || 0)
         : (product.variants || [])
-            .map((item) => Number(item?.reservedStock || 0))
-            .join(", "),
+          .map((item) => Number(item?.reservedStock || 0))
+          .join(", "),
   },
 
   variantAvailableStock: {
@@ -5462,13 +6093,13 @@ const buildProductExcelFilter = (filters = {}, productIds = []) => {
   const asArray = (value) =>
     Array.isArray(value)
       ? value
-          .map(String)
-          .map((item) => item.trim())
-          .filter(Boolean)
+        .map(String)
+        .map((item) => item.trim())
+        .filter(Boolean)
       : String(value || "")
-          .split(",")
-          .map((item) => item.trim())
-          .filter(Boolean);
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
 
   const asBoolean = (value) =>
     typeof value === "boolean"
@@ -5867,7 +6498,7 @@ export const completeProductLifecycle = async (req, res) => {
 
     const note = String(
       req.body?.note ||
-        "Remaining lifecycle stages marked as fulfilled",
+      "Remaining lifecycle stages marked as fulfilled",
     ).trim();
 
     if (!mongoose.Types.ObjectId.isValid(id)) {

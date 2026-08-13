@@ -195,7 +195,8 @@ const buildPipeline = ({
   productIds,
   productCodes,
   isSuperAdmin = false,
-  search = "",
+  productName = "",
+  productCode = "",
   from,
   to,
 }) => {
@@ -215,8 +216,8 @@ const buildPipeline = ({
 
     ...(dateRange
       ? {
-          createdAt: dateRange,
-        }
+        createdAt: dateRange,
+      }
       : {}),
   };
 
@@ -248,31 +249,40 @@ const buildPipeline = ({
     },
   ];
 
-  if (search) {
-    const regex = new RegExp(escapeRegex(search), "i");
+  /* =========================
+     PRODUCT NAME SEARCH
+  ========================= */
+
+  if (productName) {
+    const nameRegex = new RegExp(
+      escapeRegex(
+        String(productName).trim()
+      ),
+      "i"
+    );
 
     pipeline.push({
       $match: {
-        $or: [
-          {
-            variantSku: regex,
-          },
-          {
-            productCode: regex,
-          },
-          {
-            productTitle: regex,
-          },
-          {
-            orderNumber: regex,
-          },
-          {
-            selectedSize: regex,
-          },
-          {
-            selectedColor: regex,
-          },
-        ],
+        productTitle: nameRegex,
+      },
+    });
+  }
+
+  /* =========================
+     PRODUCT CODE SEARCH
+  ========================= */
+
+  if (productCode) {
+    const normalizedProductCode =
+      String(productCode)
+        .trim()
+        .replace(/\D/g, "")
+        .padStart(5, "0");
+
+    pipeline.push({
+      $match: {
+        productCode:
+          normalizedProductCode,
       },
     });
   }
@@ -286,7 +296,10 @@ const buildPipeline = ({
               $gt: [
                 {
                   $strLenCP: {
-                    $ifNull: ["$variantSku", ""],
+                    $ifNull: [
+                      "$variantSku",
+                      "",
+                    ],
                   },
                 },
                 0,
@@ -363,13 +376,19 @@ const buildPipeline = ({
           $push: {
             reservationId: "$_id",
             orderId: "$refId",
-            orderNumber: "$orderNumber",
+            orderNumber:
+              "$orderNumber",
             qty: "$qty",
-            selectedSize: "$selectedSize",
-            selectedColor: "$selectedColor",
-            variantSku: "$variantSku",
-            productCode: "$productCode",
-            createdAt: "$createdAt",
+            selectedSize:
+              "$selectedSize",
+            selectedColor:
+              "$selectedColor",
+            variantSku:
+              "$variantSku",
+            productCode:
+              "$productCode",
+            createdAt:
+              "$createdAt",
           },
         },
 
@@ -405,7 +424,7 @@ const buildPipeline = ({
         rawReservations: 1,
         latestCreatedAt: 1,
       },
-    },
+    }
   );
 
   return pipeline;
@@ -420,8 +439,19 @@ const fetchVendorProductionData = async ({ req, fetchAll = false }) => {
     };
   }
 
-  const search = String(req.query.q || "").trim();
+  const productName = String(
+    req.query.productName || ""
+  ).trim();
 
+  const rawProductCode = String(
+    req.query.productCode || ""
+  )
+    .trim()
+    .replace(/\D/g, "");
+
+  const productCode = rawProductCode
+    ? rawProductCode.padStart(5, "0")
+    : "";
   const page = toPositiveInt(req.query.page, 1);
 
   const limit = Math.min(toPositiveInt(req.query.limit, 50), 5000);
@@ -434,10 +464,11 @@ const fetchVendorProductionData = async ({ req, fetchAll = false }) => {
   const pipeline = buildPipeline({
     productIds: access.productIds,
     productCodes: access.productCodes,
-
     isSuperAdmin: access.isSuperAdmin === true,
 
-    search,
+    productName,
+    productCode,
+
     from: req.query.from,
     to: req.query.to,
   });
