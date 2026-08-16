@@ -315,12 +315,6 @@ export async function createReversePickup(req, res) {
       });
     }
 
-    if (rma.status !== "approved") {
-      return res.status(400).json({
-        success: false,
-        message: "RMA must be approved before pickup",
-      });
-    }
 
     if (
       rma.reverseShipment?.orderId ||
@@ -336,22 +330,6 @@ export async function createReversePickup(req, res) {
     const payload = buildReverseShiprocketPayload({
       order,
       rma,
-    });
-
-    /*
-      QC completely disabled.
-      Safety patch in case payload builder adds it.
-    */
-    payload.order_items = (payload.order_items || []).map((item) => {
-      const {
-        qc_enable,
-        qc_product_name,
-        qc_brand,
-        qc_product_image,
-        ...cleanItem
-      } = item;
-
-      return cleanItem;
     });
 
     console.log("↩️ Creating Shiprocket return order:", {
@@ -407,14 +385,14 @@ export async function createReversePickup(req, res) {
 
       status: reverseAwb
         ? "pickup_scheduled"
-        : "return_created",
+        : "return_order_created",
 
       lastUpdatedAt: now,
     };
 
-    rma.status = reverseAwb
-      ? "pickup_scheduled"
-      : "return_created";
+    if (reverseAwb) {
+      rma.status = "pickup_scheduled";
+    }
 
     await order.save();
 

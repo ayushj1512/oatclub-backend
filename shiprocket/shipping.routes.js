@@ -32,6 +32,12 @@ router.post("/shiprocket/webhook", shiprocketWebhook);
 /* ============================================================
    REVERSE PICKUP (RMA)
 ============================================================ */
+
+router.post(
+  "/shiprocket/return/:orderId/:rmaNumber",
+  createReversePickup
+);
+
 router.post("/shiprocket/reverse/:orderId/:rmaNumber", createReversePickup);
 
 /* ============================================================
