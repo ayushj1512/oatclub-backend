@@ -8617,11 +8617,16 @@ export const getAdvancedFilteredOrders = async (
 
     /* ---------------- Database query ---------------- */
 
+    const parentFilter = {
+      $and: [
+        mongoFilter,
+        { parentOrderId: null },
+      ],
+    };
+
     const databaseQueries = [
       Order.find(mongoFilter)
-        .select(
-          ADVANCED_ORDER_LIST_FIELDS,
-        )
+        .select(ADVANCED_ORDER_LIST_FIELDS)
         .sort({
           priorityRank: -1,
           createdAt: -1,
@@ -8631,13 +8636,14 @@ export const getAdvancedFilteredOrders = async (
         .lean()
         .populate({
           path: "customerId",
-          select:
-            "name email phone",
+          select: "name email phone",
         }),
 
-      Order.countDocuments(
-        mongoFilter,
-      ),
+      // All rows — pagination only
+      Order.countDocuments(mongoFilter),
+
+      // Actual order count — excludes split children
+      Order.countDocuments(parentFilter),
     ];
 
     if (includeSum) {
@@ -8666,10 +8672,9 @@ export const getAdvancedFilteredOrders = async (
     const [
       orders,
       totalCount,
+      parentCount,
       sumResult,
-    ] = await Promise.all(
-      databaseQueries,
-    );
+    ] = await Promise.all(databaseQueries);
     const needsReadiness = orders.some(
       (order) =>
         order?.isConfirmed !== true &&
@@ -8688,7 +8693,7 @@ export const getAdvancedFilteredOrders = async (
         page,
         limit,
         totalCount,
-
+        parentCount,
         totalPages: Math.max(
           1,
           Math.ceil(
