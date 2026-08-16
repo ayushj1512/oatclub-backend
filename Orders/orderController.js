@@ -4117,7 +4117,17 @@ async function autoBookShiprocketForOrder(order) {
 
   const clean = (value) => String(value ?? "").trim();
   const lower = (value) => clean(value).toLowerCase();
-  const log = (message, data = "") => console.log(`${TAG} ${message}`, data);
+  const num = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const log = (message, data = "") =>
+    console.log(`${TAG} ${message}`, data);
+
+  /* ============================================================
+     HELPERS
+  ============================================================ */
 
   const scrubXpressbees = () => {
     if (!order?.shipment || typeof order.shipment !== "object") return;
@@ -4208,7 +4218,9 @@ async function autoBookShiprocketForOrder(order) {
     order.shipment.shiprocket.lastUpdatedAt = now;
 
     order.trackingDetails = {
-      ...(order.trackingDetails?.toObject?.() || order.trackingDetails || {}),
+      ...(order.trackingDetails?.toObject?.() ||
+        order.trackingDetails ||
+        {}),
       provider: "shiprocket",
       trackingId: finalAwb,
       awb: finalAwb,
@@ -4219,6 +4231,10 @@ async function autoBookShiprocketForOrder(order) {
 
     await saveOrder();
   };
+
+  /* ============================================================
+     BASIC GUARDS
+  ============================================================ */
 
   if (isParentOrder(order)) {
     return log("🚫 SKIP: parent order cannot be shipped", {
@@ -4243,6 +4259,8 @@ async function autoBookShiprocketForOrder(order) {
       orderId: order?._id?.toString(),
       paymentMethod: order?.paymentMethod,
       paymentStatus: order?.paymentStatus,
+      finalPayable: order?.finalPayable,
+      tax: order?.tax,
     });
 
     if (!clean(order?.shippingAddressSnapshot?.pincode)) {
@@ -4266,8 +4284,13 @@ async function autoBookShiprocketForOrder(order) {
 
     ensureShipment();
 
+    /* ============================================================
+       EXISTING AWB
+    ============================================================ */
+
     const existingAwb =
-      clean(order.shipment.awb) || clean(order.shipment.shiprocket.awb);
+      clean(order.shipment.awb) ||
+      clean(order.shipment.shiprocket.awb);
 
     if (existingAwb) {
       await saveShipmentDetails({ awb: existingAwb });
@@ -4276,6 +4299,10 @@ async function autoBookShiprocketForOrder(order) {
         awb: existingAwb,
       });
     }
+
+    /* ============================================================
+       EXISTING SHIPMENT → ASSIGN AWB
+    ============================================================ */
 
     const existingShipmentId =
       clean(order.shipment.shipmentId) ||
@@ -4329,14 +4356,18 @@ async function autoBookShiprocketForOrder(order) {
       }
     }
 
+    /* ============================================================
+       SERVICEABILITY
+    ============================================================ */
+
     const totalWeight =
       order.items?.reduce((total, item) => {
         const weight =
-          Number(item?.variant?.weight) ||
-          Number(item?.productSnapshot?.weight) ||
+          num(item?.variant?.weight) ||
+          num(item?.productSnapshot?.weight) ||
           0.5;
 
-        return total + weight * Number(item?.quantity || 1);
+        return total + weight * num(item?.quantity || 1);
       }, 0) || 0.5;
 
     const isCOD = lower(order?.paymentMethod) === "cod";
@@ -4352,73 +4383,135 @@ async function autoBookShiprocketForOrder(order) {
       return log("⚠️ SKIP: no courier available");
     }
 
+    /* ============================================================
+       SHIPROCKET PAYLOAD
+
+       IMPORTANT:
+       item.price/subtotal already contain GST.
+       taxableValue + taxAmount = selling value.
+
+       Therefore NEVER subtract order.tax again.
+    ============================================================ */
+
     const payload = buildShiprocketPayload(order);
 
+    const finalPayable = Math.max(0, num(order.finalPayable));
+    const shippingFee = Math.max(0, num(order.shippingFee));
+
+    // Goods value INCLUDING GST.
+    const goodsPayable = Math.max(
+      0,
+      finalPayable - shippingFee,
+    );
+
     payload.payment_method = isCOD ? "COD" : "Prepaid";
-    payload.shipping_charges = Number(order.shippingFee || 0);
-    payload.collectable_amount = isCOD ? Number(order.finalPayable || 0) : 0;
+    payload.shipping_charges = shippingFee;
+
+    // ✅ Actual amount customer has to pay.
+    payload.collectable_amount = isCOD
+      ? finalPayable
+      : 0;
 
     if (payload.transaction_charges == null) {
       payload.transaction_charges = 0;
     }
 
+    /* ============================================================
+       COD FIX
+       DO NOT subtract tax from finalPayable.
+    ============================================================ */
+
     if (isCOD) {
-      const expectedSubTotal = Math.max(
-        0,
-        Number(order.finalPayable || 0) -
-        Number(order.shippingFee || 0) -
-        Number(order.tax || 0),
-      );
+      payload.sub_total = goodsPayable;
 
+      /*
+       * Keep Shiprocket item total aligned with sub_total.
+       * Existing item price already contains GST, so only adjust
+       * when mapper total is different from actual goods payable.
+       */
       if (
-        Number.isFinite(expectedSubTotal) &&
-        Math.abs(Number(payload.sub_total || 0) - expectedSubTotal) >= 1
+        Array.isArray(payload.order_items) &&
+        payload.order_items.length
       ) {
-        payload.sub_total = expectedSubTotal;
-
-        if (Array.isArray(payload.order_items) && payload.order_items.length) {
-          const totalUnits =
-            payload.order_items.reduce(
-              (total, item) => total + Number(item.units || 0),
-              0,
-            ) || 1;
-
-          const perUnit = Math.round(expectedSubTotal / totalUnits);
-
-          payload.order_items = payload.order_items.map((item) => ({
-            ...item,
-            selling_price: String(perUnit),
-            discount: "0",
-          }));
-
-          const calculatedTotal = payload.order_items.reduce(
+        const currentItemsTotal =
+          payload.order_items.reduce(
             (total, item) =>
-              total + Number(item.selling_price || 0) * Number(item.units || 0),
+              total +
+              num(item?.selling_price) *
+              Math.max(1, num(item?.units)),
             0,
           );
 
-          const difference = expectedSubTotal - calculatedTotal;
-          const lastIndex = payload.order_items.length - 1;
-          const lastItem = payload.order_items[lastIndex];
-          const lastUnits = Number(lastItem.units || 1);
+        if (Math.abs(currentItemsTotal - goodsPayable) >= 0.01) {
+          const sourceItems = order.items || [];
 
-          payload.order_items[lastIndex] = {
-            ...lastItem,
-            selling_price: String(
-              Math.max(
-                0,
-                Number(lastItem.selling_price || 0) +
-                Math.round(difference / lastUnits),
-              ),
-            ),
-          };
+          let allocated = 0;
+
+          payload.order_items = payload.order_items.map(
+            (item, index) => {
+              const units = Math.max(
+                1,
+                num(item?.units),
+              );
+
+              const orderItem = sourceItems[index];
+
+              let lineTotal =
+                num(orderItem?.subtotal) ||
+                num(item?.selling_price) * units;
+
+              // Last item gets rounding remainder.
+              if (
+                index ===
+                payload.order_items.length - 1
+              ) {
+                lineTotal = Math.max(
+                  0,
+                  goodsPayable - allocated,
+                );
+              } else {
+                allocated += lineTotal;
+              }
+
+              return {
+                ...item,
+
+                // GST-inclusive per-unit selling value
+                selling_price: String(
+                  Math.max(
+                    0,
+                    Number(
+                      (lineTotal / units).toFixed(2),
+                    ),
+                  ),
+                ),
+
+                discount: "0",
+              };
+            },
+          );
         }
       }
     }
 
+    log("💰 Shiprocket amount check", {
+      finalPayable,
+      shippingFee,
+      taxIncluded: num(order.tax),
+      subTotal: payload.sub_total,
+      collectableAmount: payload.collectable_amount,
+    });
+
+    /* ============================================================
+       CREATE SHIPMENT
+    ============================================================ */
+
     log("📦 Creating shipment...", {
       orderId: payload?.order_id,
       paymentMethod: payload?.payment_method,
+      subTotal: payload?.sub_total,
+      shippingCharges: payload?.shipping_charges,
+      collectableAmount: payload?.collectable_amount,
       weight: payload?.weight || totalWeight,
       items: payload?.order_items?.length || 0,
     });
@@ -4438,7 +4531,9 @@ async function autoBookShiprocketForOrder(order) {
     );
 
     let awb = clean(
-      shipment?.awb_code || shipment?.awb || shipment?.response?.data?.awb_code,
+      shipment?.awb_code ||
+      shipment?.awb ||
+      shipment?.response?.data?.awb_code,
     );
 
     if (!shipmentId) {
@@ -4460,6 +4555,10 @@ async function autoBookShiprocketForOrder(order) {
         shipment?.trackingUrl ||
         shipment?.response?.data?.tracking_url,
     });
+
+    /* ============================================================
+       ASSIGN AWB
+    ============================================================ */
 
     if (!awb) {
       try {
@@ -4509,8 +4608,11 @@ async function autoBookShiprocketForOrder(order) {
     log("END ✅", {
       orderNumber: order?.orderNumber,
       shipmentId:
-        order.shipment?.shipmentId || order.shipment?.shiprocket?.shipmentId,
-      awb: order.shipment?.awb || order.shipment?.shiprocket?.awb,
+        order.shipment?.shipmentId ||
+        order.shipment?.shiprocket?.shipmentId,
+      awb:
+        order.shipment?.awb ||
+        order.shipment?.shiprocket?.awb,
       status: order.shipment?.status,
     });
   } catch (error) {
