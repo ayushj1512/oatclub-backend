@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
+import Product from "../Products/Products.js";
 import Order from "./Orders.js";
 import { triggerRmaEmails } from "./order.emails.js";
-import Product from "../Products/Products.js";
 
 /* ============================================================
    RMA POLICY
@@ -613,10 +613,13 @@ export const createRma = async (req, res) => {
       type,
       reason,
       customerNote,
-      items:
-        rmaItemsSnapshots,
+      items: rmaItemsSnapshots,
+
       status: "requested",
       resolution: "pending",
+
+      isFulfilled: false,
+
       fee,
       exchangeRequest,
     });
@@ -723,8 +726,15 @@ export const updateRma = async (req, res) => {
     const prevFeeStatus = String(rma?.fee?.status || "");
     const prevFeeAmount = Number(rma?.fee?.amount || 0);
 
-    const { status, adminNote, resolution, refund, reverseShipment, fee } = req.body;
-
+    const {
+      status,
+      adminNote,
+      resolution,
+      refund,
+      reverseShipment,
+      fee,
+      isFulfilled,
+    } = req.body;
     // Fee update
     if (fee && typeof fee === "object") {
       rma.fee = rma.fee || { amount: 0, currency: "INR", status: "waived" };
@@ -757,6 +767,18 @@ export const updateRma = async (req, res) => {
     if (status) {
       rma.status = normalize(status);
       rma.statusUpdatedAt = new Date();
+    }
+
+    if (adminNote != null) {
+      rma.adminNote = String(adminNote || "");
+    }
+
+    if (resolution) {
+      rma.resolution = normalize(resolution);
+    }
+
+    if (typeof isFulfilled === "boolean") {
+      rma.isFulfilled = isFulfilled;
     }
 
     if (adminNote != null) rma.adminNote = String(adminNote || "");
@@ -825,11 +847,22 @@ export const updateRma = async (req, res) => {
 ============================================================ */
 export const getRmasByOrder = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id);
-    if (!order) return notFound(res, "Order not found");
-    return res.status(200).json({ rmas: order.rmas || [] });
+    const order = await Order.findById(req.params.id).lean();
+
+    if (!order) {
+      return notFound(res, "Order not found");
+    }
+
+    const rmas = (order.rmas || []).map((rma) => ({
+      ...rma,
+      isFulfilled: Boolean(rma?.isFulfilled),
+    }));
+
+    return res.status(200).json({ rmas });
   } catch (err) {
-    return res.status(500).json({ message: err.message || "Server error" });
+    return res.status(500).json({
+      message: err.message || "Server error",
+    });
   }
 };
 
@@ -838,30 +871,69 @@ export const getRmasByOrder = async (req, res) => {
 ============================================================ */
 export const getRmaByNumber = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id);
-    if (!order) return notFound(res, "Order not found");
+    const order = await Order.findById(req.params.id).lean();
+
+    if (!order) {
+      return notFound(res, "Order not found");
+    }
 
     const rma = (order.rmas || []).find(
-      (r) => String(r.rmaNumber) === String(req.params.rmaNumber)
+      (r) =>
+        String(r.rmaNumber) ===
+        String(req.params.rmaNumber)
     );
 
-    if (!rma) return notFound(res, "RMA not found");
-    return res.status(200).json({ rma });
+    if (!rma) {
+      return notFound(res, "RMA not found");
+    }
+
+    return res.status(200).json({
+      rma: {
+        ...rma,
+        isFulfilled: Boolean(rma?.isFulfilled),
+      },
+    });
   } catch (err) {
-    return res.status(500).json({ message: err.message || "Server error" });
+    return res.status(500).json({
+      message: err.message || "Server error",
+    });
   }
 };
 
 /* ============================================================
    ✅ GET All RMAs (Admin)
 ============================================================ */
+/* ============================================================
+   ✅ GET All RMAs (Admin)
+============================================================ */
 export const getAllRmasAdmin = async (req, res) => {
   try {
-    const { status, type, search } = req.query;
+    const {
+      status,
+      type,
+      search,
+      isFulfilled,
+    } = req.query;
 
-    const match = { rmas: { $exists: true, $ne: [] } };
-    if (status) match["rmas.status"] = normalize(status);
-    if (type) match["rmas.type"] = normalize(type);
+    const match = {
+      rmas: { $exists: true, $ne: [] },
+    };
+
+    if (status) {
+      match["rmas.status"] = normalize(status);
+    }
+
+    if (type) {
+      match["rmas.type"] = normalize(type);
+    }
+
+    if (isFulfilled === "true") {
+      match["rmas.isFulfilled"] = true;
+    }
+
+    if (isFulfilled === "false") {
+      match["rmas.isFulfilled"] = { $ne: true };
+    }
 
     const orders = await Order.find(match)
       .populate("customerId", "name email phone")
@@ -872,28 +944,121 @@ export const getAllRmasAdmin = async (req, res) => {
 
     for (const order of orders) {
       for (const rma of order.rmas || []) {
-        if (search) {
-          const q = String(search).toLowerCase();
-          const ok =
-            String(order.orderNumber || "").toLowerCase().includes(q) ||
-            String(rma.rmaNumber || "").toLowerCase().includes(q);
+        if (
+          status &&
+          normalize(rma?.status) !== normalize(status)
+        ) {
+          continue;
+        }
 
-          if (!ok) continue;
+        if (
+          type &&
+          normalize(rma?.type) !== normalize(type)
+        ) {
+          continue;
+        }
+
+        if (
+          isFulfilled === "true" &&
+          rma?.isFulfilled !== true
+        ) {
+          continue;
+        }
+
+        if (
+          isFulfilled === "false" &&
+          rma?.isFulfilled === true
+        ) {
+          continue;
+        }
+
+        if (search) {
+          const q = normalize(search);
+
+          const searchable = [
+            order.orderNumber,
+            rma.rmaNumber,
+            order.customerId?.name,
+            order.customerId?.email,
+            order.customerId?.phone,
+            order.shippingAddressSnapshot?.fullName,
+            order.shippingAddressSnapshot?.email,
+            order.shippingAddressSnapshot?.phone,
+          ]
+            .filter(Boolean)
+            .map((value) => normalize(value));
+
+          if (!searchable.some((value) => value.includes(q))) {
+            continue;
+          }
         }
 
         allRmas.push({
           ...rma,
+
+          // Old RMAs without field become false
+          isFulfilled: rma?.isFulfilled === true,
+
+          // Order relation
           orderId: order._id,
           orderNumber: order.orderNumber,
-          customer: order.customerId,
-          fulfillmentStatus: order.fulfillmentStatus,
+
+          // Customer
+          customer: order.customerId || null,
+          shippingAddressSnapshot:
+            order.shippingAddressSnapshot || null,
+
+          // Original order items
+          orderItems: order.items || [],
+
+          // Money
+          subtotal: Number(order.subtotal || 0),
+          discount: Number(order.discount || 0),
+          shippingFee: Number(order.shippingFee || 0),
+          tax: Number(order.tax || 0),
+          totalAmount: Number(order.totalAmount || 0),
+          finalPayable: Number(order.finalPayable || 0),
+          currency: order.currency || "INR",
+
+          // Payment
+          paymentMethod: order.paymentMethod || "",
+          paymentStatus: order.paymentStatus || "",
+
+          // Order status
+          fulfillmentStatus:
+            order.fulfillmentStatus || "",
+          fulfillmentDates:
+            order.fulfillmentDates || null,
+
+          // Shipment
+          shipment: order.shipment || null,
+          trackingDetails:
+            order.trackingDetails || null,
+
+          // Dates
+          orderDate:
+            order.orderDate || order.createdAt,
+          orderCreatedAt:
+            order.createdAt,
         });
       }
     }
 
-    return res.status(200).json({ rmas: allRmas });
+    allRmas.sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime()
+    );
+
+    return res.status(200).json({
+      rmas: allRmas,
+      count: allRmas.length,
+    });
   } catch (err) {
     console.error("❌ Fetch All RMAs Error:", err);
-    return res.status(500).json({ message: err.message || "Server error" });
+
+    return res.status(500).json({
+      message: err.message || "Server error",
+    });
   }
 };

@@ -168,6 +168,13 @@ const rmaSchema = new mongoose.Schema(
       type: String,
       enum: ["pending", "refund", "exchange", "store_credit", "reject"],
       default: "pending",
+
+
+    },
+    isFulfilled: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
 
     // ✅ NEW: Exchange details (this is what was missing!)
