@@ -4360,28 +4360,28 @@ async function autoBookShiprocketForOrder(order) {
        SERVICEABILITY
     ============================================================ */
 
-    const totalWeight =
-      order.items?.reduce((total, item) => {
-        const weight =
-          num(item?.variant?.weight) ||
-          num(item?.productSnapshot?.weight) ||
-          0.5;
+    // const totalWeight =
+    //   order.items?.reduce((total, item) => {
+    //     const weight =
+    //       num(item?.variant?.weight) ||
+    //       num(item?.productSnapshot?.weight) ||
+    //       0.5;
 
-        return total + weight * num(item?.quantity || 1);
-      }, 0) || 0.5;
+    //     return total + weight * num(item?.quantity || 1);
+    //   }, 0) || 0.5;
 
-    const isCOD = lower(order?.paymentMethod) === "cod";
+    // const isCOD = lower(order?.paymentMethod) === "cod";
 
-    const couriers = await checkServiceability({
-      pickupPincode: clean(process.env.SHIPROCKET_PICKUP_PINCODE),
-      deliveryPincode: clean(order.shippingAddressSnapshot.pincode),
-      weight: totalWeight,
-      cod: isCOD ? 1 : 0,
-    });
+    // const couriers = await checkServiceability({
+    //   pickupPincode: clean(process.env.SHIPROCKET_PICKUP_PINCODE),
+    //   deliveryPincode: clean(order.shippingAddressSnapshot.pincode),
+    //   weight: totalWeight,
+    //   cod: isCOD ? 1 : 0,
+    // });
 
-    if (!Array.isArray(couriers) || !couriers.length) {
-      return log("⚠️ SKIP: no courier available");
-    }
+    // if (!Array.isArray(couriers) || !couriers.length) {
+    //   return log("⚠️ SKIP: no courier available");
+    // }
 
     /* ============================================================
        SHIPROCKET PAYLOAD
