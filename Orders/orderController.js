@@ -4393,6 +4393,11 @@ async function autoBookShiprocketForOrder(order) {
        Therefore NEVER subtract order.tax again.
     ============================================================ */
 
+    const isCOD =
+      String(order?.paymentMethod || "")
+        .trim()
+        .toLowerCase() === "cod";
+
     const payload = buildShiprocketPayload(order);
 
     const finalPayable = Math.max(0, num(order.finalPayable));
