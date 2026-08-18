@@ -146,11 +146,16 @@ const getRequestBaseUrl = (req) => {
 const buildFeedUrl = (req, doc) => {
   const baseUrl = getRequestBaseUrl(req);
 
+  const path =
+    doc?.platform === "google"
+      ? "/api/commerce-manager/google/xml"
+      : "/api/commerce-manager/xml";
+
   if (doc?.isDefault || doc?.slug === "default") {
-    return `${baseUrl}/api/commerce-manager/xml`;
+    return `${baseUrl}${path}`;
   }
 
-  return `${baseUrl}/api/commerce-manager/xml/${encodeURIComponent(
+  return `${baseUrl}${path}/${encodeURIComponent(
     doc?.slug || "",
   )}`;
 };
@@ -452,6 +457,7 @@ const toSafeResponse = (doc, req = null) => ({
   _id: doc?._id,
   name: doc?.name,
   slug: doc?.slug,
+  platform: doc?.platform || "meta",
 
   selectedProductCodes:
     doc?.selectedProductCodes || [],
@@ -1165,6 +1171,7 @@ async function getCommerceManagerXml(
 
 const validateFeedPayload = ({
   name,
+  platform,
   selectedProductCodes,
   isActive,
   isDefault,
@@ -1175,6 +1182,13 @@ const validateFeedPayload = ({
     !String(name || "").trim()
   ) {
     return "name cannot be empty";
+  }
+
+  if (
+    platform !== undefined &&
+    !["meta", "google"].includes(platform)
+  ) {
+    return "platform must be meta or google";
   }
 
   if (
@@ -1876,6 +1890,7 @@ export const createCommerceManagerFeed =
       const {
         name,
         slug,
+        platform = "meta",
         selectedProductCodes = [],
         isActive = true,
         isDefault = false,
@@ -1933,6 +1948,7 @@ export const createCommerceManagerFeed =
 
           slug:
             generatedSlug,
+          platform,
 
           selectedProductCodes:
             normalizeCodes(
@@ -2031,6 +2047,7 @@ export const updateCommerceManagerFeed =
       const {
         name,
         slug,
+        platform,
         selectedProductCodes,
         isActive,
         isDefault,
@@ -2042,6 +2059,7 @@ export const updateCommerceManagerFeed =
       const validationError =
         validateFeedPayload({
           name,
+          platform,
           selectedProductCodes,
           isActive,
           isDefault,

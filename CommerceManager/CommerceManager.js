@@ -47,6 +47,13 @@ const CommerceManagerSchema = new mongoose.Schema(
       set: normalizeSlug,
     },
 
+    platform: {
+      type: String,
+      enum: ["meta", "google"],
+      default: "meta",
+      index: true,
+    },
+
     /**
      * Base product codes only.
      *
