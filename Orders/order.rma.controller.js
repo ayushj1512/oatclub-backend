@@ -70,6 +70,7 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
 
     const orderMatch = {};
     const rmaMatch = {};
+
     const dateRange = buildDateRange(startDate, endDate);
 
     if (dateRange) {
@@ -97,10 +98,15 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
 
       { $unwind: "$rmas" },
 
-      ...(Object.keys(rmaMatch).length ? [{ $match: rmaMatch }] : []),
+      ...(Object.keys(rmaMatch).length
+        ? [{ $match: rmaMatch }]
+        : []),
 
       { $unwind: "$rmas.items" },
 
+      /* =====================================================
+         MATCH RMA ITEM WITH ORIGINAL ORDER ITEM
+      ===================================================== */
       {
         $addFields: {
           matchedOrderItem: {
@@ -109,7 +115,10 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
                 input: "$items",
                 as: "orderItem",
                 cond: {
-                  $eq: ["$$orderItem.lineId", "$rmas.items.orderLineId"],
+                  $eq: [
+                    "$$orderItem.lineId",
+                    "$rmas.items.orderLineId",
+                  ],
                 },
               },
             },
@@ -117,6 +126,9 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
         },
       },
 
+      /* =====================================================
+         NORMALIZED PRODUCT + VARIANT DETAILS
+      ===================================================== */
       {
         $addFields: {
           effectiveProductCode: {
@@ -125,102 +137,454 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
               "$matchedOrderItem.productSnapshot.productCode",
             ],
           },
+
           effectiveTitle: {
             $ifNull: [
               "$rmas.items.title",
               "$matchedOrderItem.productSnapshot.title",
             ],
           },
+
           effectiveProductId: {
-            $ifNull: ["$rmas.items.productId", "$matchedOrderItem.productId"],
+            $ifNull: [
+              "$rmas.items.productId",
+              "$matchedOrderItem.productId",
+            ],
           },
+
           effectiveImage: {
             $ifNull: [
               "$matchedOrderItem.productSnapshot.thumbnail",
               {
-                $arrayElemAt: ["$matchedOrderItem.productSnapshot.images", 0],
+                $arrayElemAt: [
+                  "$matchedOrderItem.productSnapshot.images",
+                  0,
+                ],
               },
             ],
           },
-          effectivePrice: "$matchedOrderItem.price",
-          effectiveQty: "$rmas.items.quantity",
+
+          effectivePrice: {
+            $ifNull: ["$matchedOrderItem.price", 0],
+          },
+
+          effectiveQty: {
+            $ifNull: ["$rmas.items.quantity", 0],
+          },
+
+          effectiveSize: {
+            $ifNull: [
+              "$matchedOrderItem.selectedSize",
+              "",
+            ],
+          },
+
+          effectiveColor: {
+            $ifNull: [
+              "$matchedOrderItem.selectedColor",
+              "",
+            ],
+          },
+
+          effectiveVariantSku: {
+            $ifNull: [
+              "$rmas.items.variantSku",
+              "$matchedOrderItem.variant.sku",
+              "",
+            ],
+          },
+
+          effectiveLineId: {
+            $ifNull: [
+              "$rmas.items.orderLineId",
+              "$matchedOrderItem.lineId",
+              "",
+            ],
+          },
+
+          effectiveSubtotal: {
+            $ifNull: [
+              "$matchedOrderItem.subtotal",
+              0,
+            ],
+          },
+
+          effectiveDiscountAmount: {
+            $ifNull: [
+              "$matchedOrderItem.discountAmount",
+              0,
+            ],
+          },
+
+          effectiveTaxAmount: {
+            $ifNull: [
+              "$matchedOrderItem.taxAmount",
+              0,
+            ],
+          },
         },
       },
 
+      /* =====================================================
+         SEARCH
+      ===================================================== */
       {
         $match: {
-          effectiveProductCode: { $exists: true, $ne: "" },
+          effectiveProductCode: {
+            $exists: true,
+            $ne: "",
+          },
+
           ...(searchRegex
             ? {
-                $or: [
-                  { effectiveProductCode: { $regex: searchRegex } },
-                  { effectiveTitle: { $regex: searchRegex } },
-                  { "rmas.reason": { $regex: searchRegex } },
-                  { orderNumber: { $regex: searchRegex } },
-                ],
-              }
+              $or: [
+                {
+                  effectiveProductCode: {
+                    $regex: searchRegex,
+                  },
+                },
+                {
+                  effectiveTitle: {
+                    $regex: searchRegex,
+                  },
+                },
+                {
+                  effectiveVariantSku: {
+                    $regex: searchRegex,
+                  },
+                },
+                {
+                  effectiveSize: {
+                    $regex: searchRegex,
+                  },
+                },
+                {
+                  "rmas.reason": {
+                    $regex: searchRegex,
+                  },
+                },
+                {
+                  "rmas.rmaNumber": {
+                    $regex: searchRegex,
+                  },
+                },
+                {
+                  orderNumber: {
+                    $regex: searchRegex,
+                  },
+                },
+                {
+                  "shippingAddressSnapshot.fullName": {
+                    $regex: searchRegex,
+                  },
+                },
+                {
+                  "shippingAddressSnapshot.phone": {
+                    $regex: searchRegex,
+                  },
+                },
+                {
+                  "shippingAddressSnapshot.email": {
+                    $regex: searchRegex,
+                  },
+                },
+              ],
+            }
             : {}),
         },
       },
 
+      /* =====================================================
+         GROUP PRODUCT-WISE
+      ===================================================== */
       {
         $group: {
           _id: "$effectiveProductCode",
 
-          productCode: { $first: "$effectiveProductCode" },
-          title: { $first: "$effectiveTitle" },
-          image: { $first: "$effectiveImage" },
+          productCode: {
+            $first: "$effectiveProductCode",
+          },
 
-          fallbackProductId: { $first: "$effectiveProductId" },
-          lastOrderedPrice: { $first: "$effectivePrice" },
+          title: {
+            $first: "$effectiveTitle",
+          },
 
-          totalRmaCases: { $sum: 1 },
-          totalRmaQty: { $sum: { $ifNull: ["$effectiveQty", 0] } },
+          image: {
+            $first: "$effectiveImage",
+          },
+
+          fallbackProductId: {
+            $first: "$effectiveProductId",
+          },
+
+          lastOrderedPrice: {
+            $first: "$effectivePrice",
+          },
+
+          totalRmaCases: {
+            $sum: 1,
+          },
+
+          totalRmaQty: {
+            $sum: "$effectiveQty",
+          },
 
           returnCases: {
             $sum: {
-              $cond: [{ $eq: ["$rmas.type", "return"] }, 1, 0],
+              $cond: [
+                { $eq: ["$rmas.type", "return"] },
+                1,
+                0,
+              ],
             },
           },
+
           exchangeCases: {
             $sum: {
-              $cond: [{ $eq: ["$rmas.type", "exchange"] }, 1, 0],
+              $cond: [
+                { $eq: ["$rmas.type", "exchange"] },
+                1,
+                0,
+              ],
             },
           },
 
-          deliveredOrdersAffected: { $addToSet: "$orderNumber" },
-          customersAffected: { $addToSet: "$customerId" },
+          deliveredOrdersAffected: {
+            $addToSet: "$orderNumber",
+          },
 
+          customersAffected: {
+            $addToSet: "$customerId",
+          },
+
+          /* =================================================
+             REASON SUMMARY
+          ================================================= */
           reasonsRaw: {
             $push: {
               reason: "$rmas.reason",
-              qty: { $ifNull: ["$effectiveQty", 0] },
-              type: "$rmas.type",
-              status: "$rmas.status",
-              rmaNumber: "$rmas.rmaNumber",
-              orderNumber: "$orderNumber",
-              customerNote: "$rmas.customerNote",
-              adminNote: "$rmas.adminNote",
-              createdAt: "$rmas.createdAt",
+              qty: "$effectiveQty",
             },
           },
 
+          /* =================================================
+             FULL RMA DETAILS FOR EXPAND + CSV
+          ================================================= */
           recentRmas: {
             $push: {
-              rmaNumber: "$rmas.rmaNumber",
+              /* ---------- ORDER ---------- */
+              orderId: "$_id",
               orderNumber: "$orderNumber",
-              reason: "$rmas.reason",
+              orderDate: "$orderDate",
+              orderCreatedAt: "$createdAt",
+
+              orderType: "$orderType",
+              source: "$source",
+
+              paymentMethod: "$paymentMethod",
+              paymentStatus: "$paymentStatus",
+              fulfillmentStatus: "$fulfillmentStatus",
+
+              orderFinalPayable: "$finalPayable",
+              orderSubtotal: "$subtotal",
+              orderDiscount: "$discount",
+              orderShippingFee: "$shippingFee",
+              orderTax: "$tax",
+
+              /* ---------- CUSTOMER ---------- */
+              customerId: "$customerId",
+
+              customerName: {
+                $ifNull: [
+                  "$shippingAddressSnapshot.fullName",
+                  "$billingAddressSnapshot.fullName",
+                  "",
+                ],
+              },
+
+              customerPhone: {
+                $ifNull: [
+                  "$shippingAddressSnapshot.phone",
+                  "$billingAddressSnapshot.phone",
+                  "",
+                ],
+              },
+
+              customerEmail: {
+                $ifNull: [
+                  "$shippingAddressSnapshot.email",
+                  "$billingAddressSnapshot.email",
+                  "",
+                ],
+              },
+
+              customerCity: {
+                $ifNull: [
+                  "$shippingAddressSnapshot.city",
+                  "",
+                ],
+              },
+
+              customerState: {
+                $ifNull: [
+                  "$shippingAddressSnapshot.state",
+                  "",
+                ],
+              },
+
+              customerPincode: {
+                $ifNull: [
+                  "$shippingAddressSnapshot.pincode",
+                  "",
+                ],
+              },
+
+              /* ---------- PRODUCT ---------- */
+              productId: "$effectiveProductId",
+              productCode: "$effectiveProductCode",
+              productName: "$effectiveTitle",
+
+              productSize: "$effectiveSize",
+              productColor: "$effectiveColor",
+              variantSku: "$effectiveVariantSku",
+              orderLineId: "$effectiveLineId",
+
+              productPrice: "$effectivePrice",
+              productSubtotal: "$effectiveSubtotal",
+              productDiscount: "$effectiveDiscountAmount",
+              productTax: "$effectiveTaxAmount",
+
+              /* ---------- RMA ---------- */
+              rmaNumber: "$rmas.rmaNumber",
               type: "$rmas.type",
+              reason: "$rmas.reason",
               status: "$rmas.status",
+              resolution: "$rmas.resolution",
+              isFulfilled: "$rmas.isFulfilled",
+
               quantity: "$effectiveQty",
+
               customerNote: "$rmas.customerNote",
               adminNote: "$rmas.adminNote",
-              createdAt: "$rmas.createdAt",
+
+              rmaCreatedAt: "$rmas.createdAt",
+              rmaUpdatedAt: "$rmas.updatedAt",
+
+              /* ---------- EXCHANGE ---------- */
+              exchangeProductId:
+                "$rmas.exchangeRequest.productId",
+
+              exchangeVariantId:
+                "$rmas.exchangeRequest.variantId",
+
+              exchangeVariantSku:
+                "$rmas.exchangeRequest.variantSku",
+
+              exchangeAttributes:
+                "$rmas.exchangeRequest.attributes",
+
+              exchangeNote:
+                "$rmas.exchangeRequest.note",
+
+              /* ---------- EXCHANGE FEE ---------- */
+              exchangeFeeAmount:
+                "$rmas.fee.amount",
+
+              exchangeFeeCurrency:
+                "$rmas.fee.currency",
+
+              exchangeFeeStatus:
+                "$rmas.fee.status",
+
+              /* ---------- REFUND ---------- */
+              refundAmount:
+                "$rmas.refund.amount",
+
+              refundMode:
+                "$rmas.refund.mode",
+
+              refundStatus:
+                "$rmas.refund.status",
+
+              refundReferenceId:
+                "$rmas.refund.referenceId",
+
+              /* ---------- FORWARD DELIVERY DATES ---------- */
+              deliveredAt: {
+                $ifNull: [
+                  "$fulfillmentDates.deliveredAt",
+                  "$shipment.deliveredAt",
+                  "$trackingDetails.deliveredAt",
+                ],
+              },
+
+              shippedAt: {
+                $ifNull: [
+                  "$fulfillmentDates.shippedAt",
+                  "$shipment.shippedAt",
+                  "$trackingDetails.shippedAt",
+                ],
+              },
+
+              packedAt:
+                "$fulfillmentDates.packedAt",
+
+              /* ---------- REVERSE SHIPMENT ---------- */
+              reverseProvider:
+                "$rmas.reverseShipment.provider",
+
+              reverseOrderId:
+                "$rmas.reverseShipment.orderId",
+
+              reverseShipmentId:
+                "$rmas.reverseShipment.shipmentId",
+
+              reverseStatus:
+                "$rmas.reverseShipment.status",
+
+              reverseRawStatus:
+                "$rmas.reverseShipment.rawStatus",
+
+              reverseCourierId:
+                "$rmas.reverseShipment.courierId",
+
+              reverseCourierName:
+                "$rmas.reverseShipment.courierName",
+
+              reverseAwb:
+                "$rmas.reverseShipment.awb",
+
+              reverseTrackingUrl:
+                "$rmas.reverseShipment.trackingUrl",
+
+              reverseFreightCharge:
+                "$rmas.reverseShipment.freightCharge",
+
+              reversePickupScheduledAt:
+                "$rmas.reverseShipment.pickupScheduledAt",
+
+              reverseExpectedPickupAt:
+                "$rmas.reverseShipment.expectedPickupAt",
+
+              reversePickedAt:
+                "$rmas.reverseShipment.pickedAt",
+
+              reverseInTransitAt:
+                "$rmas.reverseShipment.inTransitAt",
+
+              reverseReceivedAt:
+                "$rmas.reverseShipment.receivedAt",
+
+              reverseAwbAssignedAt:
+                "$rmas.reverseShipment.awbAssignedAt",
             },
           },
         },
       },
 
+      /* =====================================================
+         PRODUCT MASTER DATA
+      ===================================================== */
       {
         $lookup: {
           from: Product.collection.name,
@@ -232,80 +596,63 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
 
       {
         $addFields: {
-          productDoc: { $first: "$productDoc" },
+          productDoc: {
+            $first: "$productDoc",
+          },
         },
       },
 
       {
         $addFields: {
           productId: {
-            $ifNull: ["$productDoc._id", "$fallbackProductId"],
+            $ifNull: [
+              "$productDoc._id",
+              "$fallbackProductId",
+            ],
           },
+
           title: {
-            $ifNull: ["$productDoc.title", "$title"],
+            $ifNull: [
+              "$productDoc.title",
+              "$title",
+            ],
           },
+
           image: {
             $ifNull: [
               "$productDoc.thumbnail",
-              { $arrayElemAt: ["$productDoc.images", 0] },
+              {
+                $arrayElemAt: [
+                  "$productDoc.images",
+                  0,
+                ],
+              },
               "$image",
             ],
           },
+
           price: {
-            $ifNull: ["$productDoc.price", "$lastOrderedPrice", 0],
-          },
-          description: {
-            $trim: {
-              input: {
-                $concat: [
-                  { $ifNull: ["$productDoc.shortDescription", ""] },
-                  {
-                    $cond: [
-                      {
-                        $and: [
-                          { $ne: [{ $ifNull: ["$productDoc.shortDescription", ""] }, ""] },
-                          { $ne: [{ $ifNull: ["$productDoc.howToStyle", ""] }, ""] },
-                        ],
-                      },
-                      " ",
-                      "",
-                    ],
-                  },
-                  { $ifNull: ["$productDoc.howToStyle", ""] },
-                  {
-                    $cond: [
-                      {
-                        $and: [
-                          {
-                            $ne: [
-                              {
-                                $concat: [
-                                  { $ifNull: ["$productDoc.shortDescription", ""] },
-                                  { $ifNull: ["$productDoc.howToStyle", ""] },
-                                ],
-                              },
-                              "",
-                            ],
-                          },
-                          { $ne: [{ $ifNull: ["$productDoc.fabricDetails", ""] }, ""] },
-                        ],
-                      },
-                      " ",
-                      "",
-                    ],
-                  },
-                  { $ifNull: ["$productDoc.fabricDetails", ""] },
-                ],
-              },
-            },
+            $ifNull: [
+              "$productDoc.price",
+              "$lastOrderedPrice",
+              0,
+            ],
           },
         },
       },
 
+      /* =====================================================
+         TOTALS + REASON SUMMARY
+      ===================================================== */
       {
         $addFields: {
-          affectedOrdersCount: { $size: "$deliveredOrdersAffected" },
-          affectedCustomersCount: { $size: "$customersAffected" },
+          affectedOrdersCount: {
+            $size: "$deliveredOrdersAffected",
+          },
+
+          affectedCustomersCount: {
+            $size: "$customersAffected",
+          },
 
           reasonSummary: {
             wrong_size: {
@@ -314,7 +661,12 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
                   $filter: {
                     input: "$reasonsRaw",
                     as: "r",
-                    cond: { $eq: ["$$r.reason", "wrong_size"] },
+                    cond: {
+                      $eq: [
+                        "$$r.reason",
+                        "wrong_size",
+                      ],
+                    },
                   },
                 },
               },
@@ -325,22 +677,35 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
                       $filter: {
                         input: "$reasonsRaw",
                         as: "r",
-                        cond: { $eq: ["$$r.reason", "wrong_size"] },
+                        cond: {
+                          $eq: [
+                            "$$r.reason",
+                            "wrong_size",
+                          ],
+                        },
                       },
                     },
-                    as: "x",
-                    in: { $ifNull: ["$$x.qty", 0] },
+                    as: "r",
+                    in: {
+                      $ifNull: ["$$r.qty", 0],
+                    },
                   },
                 },
               },
             },
+
             wrong_item: {
               count: {
                 $size: {
                   $filter: {
                     input: "$reasonsRaw",
                     as: "r",
-                    cond: { $eq: ["$$r.reason", "wrong_item"] },
+                    cond: {
+                      $eq: [
+                        "$$r.reason",
+                        "wrong_item",
+                      ],
+                    },
                   },
                 },
               },
@@ -351,22 +716,35 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
                       $filter: {
                         input: "$reasonsRaw",
                         as: "r",
-                        cond: { $eq: ["$$r.reason", "wrong_item"] },
+                        cond: {
+                          $eq: [
+                            "$$r.reason",
+                            "wrong_item",
+                          ],
+                        },
                       },
                     },
-                    as: "x",
-                    in: { $ifNull: ["$$x.qty", 0] },
+                    as: "r",
+                    in: {
+                      $ifNull: ["$$r.qty", 0],
+                    },
                   },
                 },
               },
             },
+
             damaged: {
               count: {
                 $size: {
                   $filter: {
                     input: "$reasonsRaw",
                     as: "r",
-                    cond: { $eq: ["$$r.reason", "damaged"] },
+                    cond: {
+                      $eq: [
+                        "$$r.reason",
+                        "damaged",
+                      ],
+                    },
                   },
                 },
               },
@@ -377,22 +755,35 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
                       $filter: {
                         input: "$reasonsRaw",
                         as: "r",
-                        cond: { $eq: ["$$r.reason", "damaged"] },
+                        cond: {
+                          $eq: [
+                            "$$r.reason",
+                            "damaged",
+                          ],
+                        },
                       },
                     },
-                    as: "x",
-                    in: { $ifNull: ["$$x.qty", 0] },
+                    as: "r",
+                    in: {
+                      $ifNull: ["$$r.qty", 0],
+                    },
                   },
                 },
               },
             },
+
             defective: {
               count: {
                 $size: {
                   $filter: {
                     input: "$reasonsRaw",
                     as: "r",
-                    cond: { $eq: ["$$r.reason", "defective"] },
+                    cond: {
+                      $eq: [
+                        "$$r.reason",
+                        "defective",
+                      ],
+                    },
                   },
                 },
               },
@@ -403,22 +794,35 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
                       $filter: {
                         input: "$reasonsRaw",
                         as: "r",
-                        cond: { $eq: ["$$r.reason", "defective"] },
+                        cond: {
+                          $eq: [
+                            "$$r.reason",
+                            "defective",
+                          ],
+                        },
                       },
                     },
-                    as: "x",
-                    in: { $ifNull: ["$$x.qty", 0] },
+                    as: "r",
+                    in: {
+                      $ifNull: ["$$r.qty", 0],
+                    },
                   },
                 },
               },
             },
+
             quality_issue: {
               count: {
                 $size: {
                   $filter: {
                     input: "$reasonsRaw",
                     as: "r",
-                    cond: { $eq: ["$$r.reason", "quality_issue"] },
+                    cond: {
+                      $eq: [
+                        "$$r.reason",
+                        "quality_issue",
+                      ],
+                    },
                   },
                 },
               },
@@ -429,22 +833,35 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
                       $filter: {
                         input: "$reasonsRaw",
                         as: "r",
-                        cond: { $eq: ["$$r.reason", "quality_issue"] },
+                        cond: {
+                          $eq: [
+                            "$$r.reason",
+                            "quality_issue",
+                          ],
+                        },
                       },
                     },
-                    as: "x",
-                    in: { $ifNull: ["$$x.qty", 0] },
+                    as: "r",
+                    in: {
+                      $ifNull: ["$$r.qty", 0],
+                    },
                   },
                 },
               },
             },
+
             changed_mind: {
               count: {
                 $size: {
                   $filter: {
                     input: "$reasonsRaw",
                     as: "r",
-                    cond: { $eq: ["$$r.reason", "changed_mind"] },
+                    cond: {
+                      $eq: [
+                        "$$r.reason",
+                        "changed_mind",
+                      ],
+                    },
                   },
                 },
               },
@@ -455,22 +872,35 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
                       $filter: {
                         input: "$reasonsRaw",
                         as: "r",
-                        cond: { $eq: ["$$r.reason", "changed_mind"] },
+                        cond: {
+                          $eq: [
+                            "$$r.reason",
+                            "changed_mind",
+                          ],
+                        },
                       },
                     },
-                    as: "x",
-                    in: { $ifNull: ["$$x.qty", 0] },
+                    as: "r",
+                    in: {
+                      $ifNull: ["$$r.qty", 0],
+                    },
                   },
                 },
               },
             },
+
             other: {
               count: {
                 $size: {
                   $filter: {
                     input: "$reasonsRaw",
                     as: "r",
-                    cond: { $eq: ["$$r.reason", "other"] },
+                    cond: {
+                      $eq: [
+                        "$$r.reason",
+                        "other",
+                      ],
+                    },
                   },
                 },
               },
@@ -481,45 +911,55 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
                       $filter: {
                         input: "$reasonsRaw",
                         as: "r",
-                        cond: { $eq: ["$$r.reason", "other"] },
+                        cond: {
+                          $eq: [
+                            "$$r.reason",
+                            "other",
+                          ],
+                        },
                       },
                     },
-                    as: "x",
-                    in: { $ifNull: ["$$x.qty", 0] },
+                    as: "r",
+                    in: {
+                      $ifNull: ["$$r.qty", 0],
+                    },
                   },
                 },
               },
             },
           },
 
+          /* NO 10 ITEM LIMIT */
           recentRmas: {
-            $slice: [
-              {
-                $sortArray: {
-                  input: "$recentRmas",
-                  sortBy: { createdAt: -1 },
-                },
+            $sortArray: {
+              input: "$recentRmas",
+              sortBy: {
+                rmaCreatedAt: -1,
               },
-              10,
-            ],
+            },
           },
         },
       },
 
+      /* =====================================================
+         RESPONSE
+         DESCRIPTION INTENTIONALLY REMOVED
+      ===================================================== */
       {
         $project: {
           _id: 0,
+
           productId: 1,
           productCode: 1,
           title: 1,
           image: 1,
           price: 1,
-          description: 1,
 
           totalRmaCases: 1,
           totalRmaQty: 1,
           returnCases: 1,
           exchangeCases: 1,
+
           affectedOrdersCount: 1,
           affectedCustomersCount: 1,
 
@@ -530,27 +970,39 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
 
       {
         $sort: {
-          [sortBy]: sortOrder === "asc" ? 1 : -1,
+          [sortBy]:
+            sortOrder === "asc" ? 1 : -1,
           productCode: 1,
         },
       },
 
       {
         $facet: {
-          data: [{ $skip: skip }, { $limit: limit }],
-          meta: [{ $count: "total" }],
+          data: [
+            { $skip: skip },
+            { $limit: limit },
+          ],
+
+          meta: [
+            { $count: "total" },
+          ],
         },
       },
     ];
 
-    const [result] = await Order.aggregate(pipeline);
+    const [result] =
+      await Order.aggregate(pipeline);
 
     const rows = result?.data || [];
-    const total = result?.meta?.[0]?.total || 0;
+    const total =
+      result?.meta?.[0]?.total || 0;
 
     return res.status(200).json({
       success: true,
-      message: "RMA reasons grouped by product code fetched successfully",
+
+      message:
+        "RMA reasons grouped by product code fetched successfully",
+
       filters: {
         startDate: startDate || null,
         endDate: endDate || null,
@@ -559,21 +1011,35 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
         reason: reason || null,
         search: search || "",
       },
+
       pagination: {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit) || 1,
-        hasNextPage: skip + rows.length < total,
-        hasPrevPage: page > 1,
+        totalPages:
+          Math.ceil(total / limit) || 1,
+
+        hasNextPage:
+          skip + rows.length < total,
+
+        hasPrevPage:
+          page > 1,
       },
+
       data: rows,
     });
   } catch (error) {
-    console.error("getRmaReasonsGroupedByProductCode error:", error);
+    console.error(
+      "getRmaReasonsGroupedByProductCode error:",
+      error,
+    );
+
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch RMA reasons grouped by product code",
+
+      message:
+        "Failed to fetch RMA reasons grouped by product code",
+
       error: error.message,
     });
   }
