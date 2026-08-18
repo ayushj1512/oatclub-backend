@@ -2798,9 +2798,38 @@ export const updateOrderStatus = async (req, res) => {
             );
           }
 
-          await consumeReservationsInternalByOrder({
+          // 1. Consume inventory that was actually reserved
+          const consumeSummary =
+            await consumeReservationsInternalByOrder({
+              orderId: order._id,
+              reason: `Consumed on PACKED | orderNumber=${order.orderNumber || ""}`,
+              session,
+            });
+
+          // 2. Pending reservation = stock was never available/reserved.
+          // Order is being packed anyway, so this demand must never revive later.
+          const pendingCleanup =
+            await InventoryReservation.deleteMany(
+              {
+                refType: "order",
+                refId: order._id,
+                status: "pending",
+              },
+              { session },
+            );
+
+          console.log("📦 [PACKED-INVENTORY]", {
+            orderNumber: order.orderNumber,
+            consumedReservations:
+              consumeSummary?.consumedCount || 0,
+            deletedPendingReservations:
+              pendingCleanup?.deletedCount || 0,
+          });
+
+          // 3. Re-sync order allocation after final reservation cleanup
+          await syncOrderAllocatedQtyFromReservations({
             orderId: order._id,
-            reason: `Consumed on PACKED | orderNumber=${order.orderNumber || ""}`,
+            debug: false,
             session,
           });
 
@@ -2808,7 +2837,7 @@ export const updateOrderStatus = async (req, res) => {
 
           if (!order) {
             throw new Error(
-              "Order not found after reservation consume",
+              "Order not found after packed inventory cleanup",
             );
           }
         }
