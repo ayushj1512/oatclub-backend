@@ -1922,6 +1922,11 @@ export const getAllOrders = async (req, res) => {
       createdAt: 1,
       orderDate: 1,
       "fulfillmentDates.packedAt": 1,
+      "fulfillmentDates.deliveredAt": 1,
+      "shipment.deliveredAt": 1,
+      "trackingDetails.deliveredAt": 1,
+      "eligibleForRma": 1,
+      "reviewRequest": 1,
 
       orderType: 1,
 
