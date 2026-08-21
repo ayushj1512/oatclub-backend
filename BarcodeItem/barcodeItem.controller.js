@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import bwipjs from "bwip-js";
 import Product from "../Products/Products.js";
+import { reconcileBackordersForVariant } from "../inventoryUtility/reconcileBackordersForVariant.js";
 
 import {
   BarcodeItem,
@@ -283,6 +284,48 @@ function buildInventoryResponse(
             0,
         }
       : null,
+  };
+}
+
+async function reconcileAndRefreshInventory({
+  productId,
+  variantId = null,
+}) {
+  let reconcile = null;
+
+  try {
+    reconcile =
+      await reconcileBackordersForVariant({
+        productId,
+        variantId,
+      });
+  } catch (error) {
+    console.error(
+      "⚠️ Vendor inventory reconcile failed:",
+      error?.message || error
+    );
+  }
+
+  const freshProduct =
+    await Product.findById(productId);
+
+  if (!freshProduct) {
+    return {
+      reconcile,
+      inventory: null,
+    };
+  }
+
+  const freshVariant = variantId
+    ? freshProduct.variants?.id(variantId) || null
+    : null;
+
+  return {
+    reconcile,
+    inventory: buildInventoryResponse(
+      freshProduct,
+      freshVariant
+    ),
   };
 }
 
@@ -2319,6 +2362,9 @@ export async function scanInventoryBarcode(
 
     let responseData = null;
 
+    let reconcileProductId = null;
+    let reconcileVariantId = null;
+
     await session.withTransaction(
       async () => {
         const item =
@@ -2337,16 +2383,16 @@ export async function scanInventoryBarcode(
 
         const barcodeMatches =
           item.productCode ===
-            parsed.productCode &&
+          parsed.productCode &&
           item.size === parsed.size &&
           item.sequence ===
-            parsed.sequence &&
+          parsed.sequence &&
           item.uniqueId ===
-            parsed.uniqueId &&
+          parsed.uniqueId &&
           item.pieceSku ===
-            parsed.pieceSku &&
+          parsed.pieceSku &&
           item.barcode ===
-            parsed.barcode;
+          parsed.barcode;
 
         if (!barcodeMatches) {
           const error = new Error(
@@ -2357,10 +2403,6 @@ export async function scanInventoryBarcode(
           throw error;
         }
 
-        /*
-         * Notes marker prevents duplicate stock increment
-         * without adding any new model field.
-         */
         if (
           containsInventoryMarker(
             item.notes
@@ -2371,6 +2413,7 @@ export async function scanInventoryBarcode(
           );
 
           error.statusCode = 409;
+
           error.details = {
             barcode: item.barcode,
             productCode:
@@ -2434,10 +2477,6 @@ export async function scanInventoryBarcode(
             session,
           });
 
-        /*
-         * Reuse existing BarcodeItem fields.
-         * No schema changes needed.
-         */
         item.product =
           updatedProduct._id;
 
@@ -2455,6 +2494,7 @@ export async function scanInventoryBarcode(
 
         item.source = "vendor";
         item.inwardAt = new Date();
+
         item.notes =
           appendInventoryMarker(
             item.notes
@@ -2465,11 +2505,18 @@ export async function scanInventoryBarcode(
           validateBeforeSave: true,
         });
 
+        reconcileProductId =
+          updatedProduct._id;
+
+        reconcileVariantId =
+          variant?._id || null;
+
         responseData = {
           barcodeItem: {
             _id: item._id,
             barcode: item.barcode,
-            pieceSku: item.pieceSku,
+            pieceSku:
+              item.pieceSku,
             productCode:
               item.productCode,
             size: item.size,
@@ -2478,19 +2525,35 @@ export async function scanInventoryBarcode(
             inwardAt:
               item.inwardAt,
           },
-          inventory:
-            buildInventoryResponse(
-              updatedProduct,
-              variant
-            ),
+
           incrementedBy: 1,
         };
       }
     );
 
+    /*
+     * Transaction complete first.
+     * Then reconcile reservations.
+     */
+    const reconciled =
+      await reconcileAndRefreshInventory({
+        productId:
+          reconcileProductId,
+
+        variantId:
+          reconcileVariantId,
+      });
+
+    responseData.inventory =
+      reconciled.inventory;
+
+    responseData.reconcile =
+      reconciled.reconcile;
+
     return sendSuccess(res, {
       message:
-        "Barcode scanned and inventory increased successfully",
+        "Barcode scanned, inventory increased and reservations reconciled",
+
       data: responseData,
     });
   } catch (error) {
@@ -2502,8 +2565,10 @@ export async function scanInventoryBarcode(
     return sendError(
       res,
       error?.statusCode || 400,
+
       error?.message ||
-        "Failed to scan inventory barcode",
+      "Failed to scan inventory barcode",
+
       error?.details
     );
   } finally {
@@ -2593,21 +2658,43 @@ export async function addManualProductInventory(
         quantity: incrementBy,
       });
 
+    /*
+     * Stock updated.
+     * Now reserve pending orders
+     * and fetch fresh inventory.
+     */
+    const reconciled =
+      await reconcileAndRefreshInventory({
+        productId:
+          updatedProduct._id,
+
+        variantId:
+          variant?._id || null,
+      });
+
     return sendSuccess(res, {
       message: hasVariants
         ? `${incrementBy} unit(s) added to size ${normalizeUppercase(
-            size
-          )}`
-        : `${incrementBy} unit(s) added to product inventory`,
+          size
+        )} and reconciled`
+        : `${incrementBy} unit(s) added and reconciled`,
+
       data: {
         inventory:
+          reconciled.inventory ||
           buildInventoryResponse(
             updatedProduct,
             variant
           ),
+
+        reconcile:
+          reconciled.reconcile,
+
         incrementedBy:
           incrementBy,
+
         method: "manual",
+
         vendorId:
           getVendorId(req),
       },
@@ -2621,8 +2708,9 @@ export async function addManualProductInventory(
     return sendError(
       res,
       400,
+
       error?.message ||
-        "Failed to add manual inventory"
+      "Failed to add manual inventory"
     );
   }
 }
