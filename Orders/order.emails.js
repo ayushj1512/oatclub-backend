@@ -4,9 +4,7 @@ import User from "../Customer/Customer.js";
 /**
  * ✅ Admin recipients
  */
-const ADMIN_ORDER_ALERT_EMAILS = [
-  "oatclub.in@gmail.com",
-].filter(Boolean);
+const ADMIN_ORDER_ALERT_EMAILS = [];
 
 /* ============================================================
    ✅ Helpers
