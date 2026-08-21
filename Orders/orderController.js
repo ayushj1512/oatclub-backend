@@ -3071,7 +3071,7 @@ export const updateOrderStatus = async (req, res) => {
 
             status: reverseAwb
               ? "pickup_scheduled"
-              : "return_created",
+              : "return_order_created",
 
             lastUpdatedAt: now,
           };
