@@ -611,3 +611,85 @@ export const updateVendorPatternStatus = async (req, res) => {
     });
   }
 };
+
+/* =========================================================
+   VENDOR BESTSELLER INVENTORY ALERTS
+========================================================= */
+
+const getVariantSize = (variant = {}) =>
+  String(
+    (variant.attributes || []).find(
+      (a) => String(a?.key || "").toLowerCase() === "size"
+    )?.value || ""
+  )
+    .trim()
+    .toUpperCase();
+
+export const getVendorBestsellerInventoryAlerts = async (req, res) => {
+  try {
+    const threshold = Math.max(1, Number(req.query.threshold) || 5);
+
+    const products = await Product.find({
+      isBestSeller: true,
+      isActive: true,
+      isDraft: { $ne: true },
+    })
+      .select(
+        "title slug productCode thumbnail images variants stock reservedStock updatedAt"
+      )
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const alerts = products
+      .map((product) => {
+        const inventory = (product.variants || [])
+          .map((variant) => {
+            const size = getVariantSize(variant);
+            const stock = Math.max(0, Number(variant.stock) || 0);
+            const reservedStock = Math.max(
+              0,
+              Number(variant.reservedStock) || 0
+            );
+            const availableStock = Math.max(0, stock - reservedStock);
+
+            return {
+              size,
+              stock,
+              reservedStock,
+              availableStock,
+              lowStock: availableStock < threshold,
+            };
+          })
+          .filter((item) => item.size);
+
+        const lowStockSizes = inventory
+          .filter((item) => item.lowStock)
+          .map((item) => item.size);
+
+        return {
+          _id: product._id,
+          title: product.title,
+          productCode: product.productCode,
+          thumbnail: product.thumbnail || product.images?.[0] || "",
+          inventory,
+          lowStockSizes,
+          hasLowStock: lowStockSizes.length > 0,
+        };
+      })
+      .filter((product) => product.hasLowStock);
+
+    return res.json({
+      success: true,
+      threshold,
+      total: alerts.length,
+      alerts,
+    });
+  } catch (error) {
+    console.error("getVendorBestsellerInventoryAlerts error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to fetch inventory alerts",
+    });
+  }
+};
