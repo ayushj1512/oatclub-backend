@@ -7,6 +7,56 @@ import { creditOrderWalletRewardInternal } from "../Customer/orderWalletReward.s
 
 import { reserveInventoryForOrderNumberInternal } from "../InventoryReservation/inventoryWebhook.js";
 
+import {
+  sendPrepaidOrderConfirmationWhatsapp,
+} from "../fast2sms/index.js";
+
+import {
+  triggerOrderEmails,
+} from "../Orders/order.emails.js";
+
+
+const triggerPrepaidConfirmation = (order) => {
+  if (!order?._id) return;
+
+  setImmediate(async () => {
+    try {
+      triggerOrderEmails(order);
+    } catch (err) {
+      console.error(
+        "⚠️ Prepaid confirmation email failed:",
+        err?.message || err
+      );
+    }
+
+    try {
+      const result =
+        await sendPrepaidOrderConfirmationWhatsapp({
+          order,
+        });
+
+      if (!result?.success) {
+        console.error(
+          "⚠️ Prepaid Fast2SMS failed:",
+          result?.error || result?.data || result
+        );
+        return;
+      }
+
+      console.log(
+        "✅ Prepaid Fast2SMS sent:",
+        order.orderNumber
+      );
+    } catch (err) {
+      console.error(
+        "⚠️ Prepaid Fast2SMS error:",
+        err?.message || err
+      );
+    }
+  });
+};
+
+
 const debitWalletAfterRazorpaySuccess = async (order) => {
   if (
     order?.walletCredit?.used === true &&
@@ -128,15 +178,24 @@ export const verifyRazorpayPayment = async (req, res, next) => {
       });
     }
 
-    if (order.paymentStatus === "paid") {
-  await debitWalletAfterRazorpaySuccess(order);
-  await order.save();
-  await creditOrderWalletRewardInternal({ orderId: order._id }).catch((e) => {
-    console.error("⚠️ Wallet reward credit failed:", e?.message || e);
-  });
+    const alreadyPaid =
+      String(order.paymentStatus || "").toLowerCase() === "paid";
 
-  return res.json({ success: true });
-}
+    if (alreadyPaid) {
+      await debitWalletAfterRazorpaySuccess(order);
+      await order.save();
+
+      await creditOrderWalletRewardInternal({
+        orderId: order._id,
+      }).catch((e) => {
+        console.error(
+          "⚠️ Wallet reward credit failed:",
+          e?.message || e
+        );
+      });
+
+      return res.json({ success: true });
+    }
 
     const body = `${razorpay_order_id}|${razorpay_payment_id}`;
 
@@ -155,20 +214,71 @@ export const verifyRazorpayPayment = async (req, res, next) => {
     order.paymentStatus = "paid";
     order.paymentMethod = "razorpay";
 
+    order.isConfirmed = true;
+    order.confirmedAt = order.confirmedAt || new Date();
+    order.confirmedBy = order.confirmedBy || "auto";
+
     order.razorpay = order.razorpay || {};
-    order.razorpay.orderId = razorpay_order_id || order.razorpay.orderId;
+    order.razorpay.orderId =
+      razorpay_order_id || order.razorpay.orderId;
     order.razorpay.paymentId = razorpay_payment_id;
     order.razorpay.signature = razorpay_signature;
-    order.razorpay.paidAt = new Date();
+    order.razorpay.paidAt =
+      order.razorpay.paidAt || new Date();
 
     await debitWalletAfterRazorpaySuccess(order);
-
     await order.save();
-    await creditOrderWalletRewardInternal({ orderId: order._id }).catch((e) => {
-      console.error("⚠️ Wallet reward credit failed:", e?.message || e);
+
+    await creditOrderWalletRewardInternal({
+      orderId: order._id,
+    }).catch((e) => {
+      console.error(
+        "⚠️ Wallet reward credit failed:",
+        e?.message || e
+      );
     });
 
-    const orderNumber = String(order.orderNumber || "").trim();
+    const finalOrder = await Order.findById(order._id)
+      .populate("customerId", "name email phone")
+      .lean();
+
+    setImmediate(async () => {
+      try {
+        triggerOrderEmails(finalOrder);
+      } catch (err) {
+        console.error(
+          "⚠️ Prepaid confirmation email failed:",
+          err?.message || err
+        );
+      }
+
+      try {
+        const result =
+          await sendPrepaidOrderConfirmationWhatsapp({
+            order: finalOrder,
+          });
+
+        if (!result?.success) {
+          console.error(
+            "⚠️ Prepaid Fast2SMS failed:",
+            result?.error || result?.data || result
+          );
+        } else {
+          console.log(
+            "✅ Prepaid Fast2SMS sent:",
+            finalOrder?.orderNumber
+          );
+        }
+      } catch (err) {
+        console.error(
+          "⚠️ Prepaid Fast2SMS error:",
+          err?.message || err
+        );
+      }
+    });
+
+    const orderNumber =
+      String(order.orderNumber || "").trim();
 
     if (orderNumber) {
       setImmediate(async () => {
@@ -284,6 +394,57 @@ export const razorpayWebhook = async (req, res) => {
   } catch (err) {
     console.error("❌ Webhook error:", err);
     return res.status(500).send("Webhook error");
+  }
+};
+
+// RazorpayController.js
+
+export const resendPrepaidConfirmation = async (req, res, next) => {
+  try {
+    const { orderId } = req.params;
+
+    const order = await Order.findById(orderId)
+      .populate("customerId", "name email phone")
+      .lean();
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    if (
+      String(order.paymentMethod || "").toLowerCase() !== "razorpay" ||
+      String(order.paymentStatus || "").toLowerCase() !== "paid"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Only paid Razorpay orders are allowed",
+      });
+    }
+
+    try {
+      triggerOrderEmails(order);
+    } catch (err) {
+      console.error(
+        "⚠️ Manual prepaid email failed:",
+        err?.message || err
+      );
+    }
+
+    const whatsapp =
+      await sendPrepaidOrderConfirmationWhatsapp({
+        order,
+      });
+
+    return res.json({
+      success: true,
+      message: "Confirmation triggered",
+      whatsappSuccess: whatsapp?.success === true,
+    });
+  } catch (err) {
+    next(err);
   }
 };
 

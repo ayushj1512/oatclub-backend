@@ -1,8 +1,10 @@
 import express from "express";
+
 import {
   createRazorpayOrder,
   verifyRazorpayPayment,
   razorpayWebhook,
+  resendPrepaidConfirmation,
 } from "./razorpay.controller.js";
 
 import {
@@ -29,6 +31,7 @@ const router = express.Router();
 ========================================================= */
 
 router.post("/create-order", createRazorpayOrder);
+
 router.post("/verify", verifyRazorpayPayment);
 
 /**
@@ -38,37 +41,84 @@ router.post("/verify", verifyRazorpayPayment);
 router.post("/webhook", razorpayWebhook);
 
 /* =========================================================
+   ADMIN - MANUAL PREPAID CONFIRMATION
+========================================================= */
+
+router.post(
+  "/admin/resend-confirmation/:orderId",
+  resendPrepaidConfirmation
+);
+
+/* =========================================================
    ADMIN REFUNDS
 ========================================================= */
 
 // refund queue
-router.get("/admin/refunds/pending-orders", getRefundPendingOrders);
+router.get(
+  "/admin/refunds/pending-orders",
+  getRefundPendingOrders
+);
 
 // create refund record from refund_pending order
-router.post("/admin/refunds/order/:orderId/create", createRefundFromOrder);
+router.post(
+  "/admin/refunds/order/:orderId/create",
+  createRefundFromOrder
+);
 
 // process created refund via Razorpay
-router.post("/admin/refunds/:refundId/process", processRazorpayRefund);
+router.post(
+  "/admin/refunds/:refundId/process",
+  processRazorpayRefund
+);
 
 // fetch Razorpay refund status
-router.get("/admin/refunds/:refundId/status", fetchRazorpayRefundStatus);
+router.get(
+  "/admin/refunds/:refundId/status",
+  fetchRazorpayRefundStatus
+);
 
 /* =========================================================
    REPORTS / TRANSACTIONS
 ========================================================= */
 
-router.get("/reports/transactions", getAllTransactions);
-router.get("/reports/receipt/:receipt", getTransactionsByReceipt);
-router.get("/reports/summary", getTransactionSummary);
+router.get(
+  "/reports/transactions",
+  getAllTransactions
+);
+
+router.get(
+  "/reports/receipt/:receipt",
+  getTransactionsByReceipt
+);
+
+router.get(
+  "/reports/summary",
+  getTransactionSummary
+);
 
 /* =========================================================
    REPORTS / SETTLEMENTS / REMITTANCE
 ========================================================= */
 
 // keep specific routes before dynamic :id
-router.get("/reports/settlements/recon", getSettlementRecon);
-router.get("/reports/remittance", getRemittanceReport);
-router.get("/reports/settlements", getAllSettlements);
-router.get("/reports/settlements/:id", getSettlementById);
+router.get(
+  "/reports/settlements/recon",
+  getSettlementRecon
+);
+
+router.get(
+  "/reports/remittance",
+  getRemittanceReport
+);
+
+router.get(
+  "/reports/settlements",
+  getAllSettlements
+);
+
+router.get(
+  "/reports/settlements/:id",
+  getSettlementById
+);
 
 export default router;
