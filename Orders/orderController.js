@@ -3733,73 +3733,7 @@ export const duplicateExchangeOrder = async (req, res) => {
               items: normalizedItems,
 
               // ✅ exchange order RMA
-              rmas: [
-                {
-                  rmaNumber:
-                    rmaNumber || undefined,
-
-                  type: "exchange",
-                  status: "approved",
-
-                  isExchangeOrderCreated:
-                    true,
-
-                  items:
-                    normalizedItems.map(
-                      (it, idx) => ({
-                        orderLineId:
-                          it.lineId,
-
-                        orderItemIndex:
-                          idx,
-
-                        quantity: Number(
-                          it.quantity || 1,
-                        ),
-
-                        productId:
-                          it.productId ||
-                          null,
-
-                        productCode:
-                          it
-                            ?.productSnapshot
-                            ?.productCode ||
-                          "",
-
-                        title:
-                          it
-                            ?.productSnapshot
-                            ?.title || "",
-
-                        variantSku:
-                          it?.variant?.sku ||
-                          "",
-                      }),
-                    ),
-
-                  reason,
-
-                  customerNote:
-                    str(customerNote),
-
-                  adminNote:
-                    str(adminNote),
-
-                  resolution,
-
-                  exchangeRequest: {
-                    note:
-                      "Replacement order created",
-                  },
-
-                  fee: {
-                    amount: 0,
-                    currency: "INR",
-                    status: "waived",
-                  },
-                },
-              ],
+              rmas: [],
 
               subtotal:
                 exchangeSubtotal,
@@ -3896,8 +3830,8 @@ export const duplicateExchangeOrder = async (req, res) => {
           );
 
       if (targetRma) {
-        targetRma.isExchangeOrderCreated =
-          true;
+        targetRma.isExchangeOrderCreated = true;
+        targetRma.status = "approved";
 
         original.markModified("rmas");
 
