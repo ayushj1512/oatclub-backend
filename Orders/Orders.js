@@ -730,6 +730,12 @@ const orderSchema = new mongoose.Schema(
       index: true,
     },
 
+    hasExchangeOrder: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     deliveryMethod: {
       type: String,
       enum: [

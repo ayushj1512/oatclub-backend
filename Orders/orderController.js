@@ -3763,6 +3763,8 @@ export const duplicateExchangeOrder = async (req, res) => {
                 "processing",
 
               // ✅ MAIN ORDER FLAG
+              // ✅ MAIN ORDER FLAGS
+              hasExchangeOrder: false,
               isExchangeOrder: true,
 
               source: "manual",
@@ -3832,6 +3834,9 @@ export const duplicateExchangeOrder = async (req, res) => {
       if (targetRma) {
         targetRma.isExchangeOrderCreated = true;
         targetRma.status = "approved";
+
+        // ✅ original order now has a replacement exchange order
+        original.hasExchangeOrder = true;
 
         original.markModified("rmas");
 

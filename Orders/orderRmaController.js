@@ -1064,8 +1064,18 @@ export const getAllRmasAdmin = async (req, res) => {
         allRmas.push({
           ...rma,
 
-          // Old RMAs without field become false
+          // RMA flags
           isFulfilled: rma?.isFulfilled === true,
+
+          isExchangeOrderCreated:
+            rma?.isExchangeOrderCreated === true,
+
+          // Order exchange flags
+          hasExchangeOrder:
+            order?.hasExchangeOrder === true,
+
+          isExchangeOrder:
+            order?.isExchangeOrder === true,
 
           // Order relation
           orderId: order._id,
