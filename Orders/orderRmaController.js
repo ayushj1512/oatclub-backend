@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 import Product from "../Products/Products.js";
 import Order from "./Orders.js";
 import { triggerRmaEmails } from "./order.emails.js";
+import { createReturnOrder } from "../shiprocket/shiprocket.return.js";
+import { buildReverseShiprocketPayload } from "../shiprocket/shiprocket.reverse.payload.js";
 
 /* ============================================================
    RMA POLICY
@@ -635,10 +637,76 @@ export const createRma = async (req, res) => {
 
     await order.save();
 
-    const created =
-      order.rmas[
-      order.rmas.length - 1
-      ];
+    const created = order.rmas[order.rmas.length - 1];
+
+    /* AUTO SHIPROCKET REVERSE PICKUP */
+    try {
+      const payload = buildReverseShiprocketPayload({
+        order,
+        rma: created,
+      });
+
+      // QC OFF
+      payload.order_items = (payload.order_items || []).map(
+        ({
+          qc_enable,
+          qc_product_name,
+          qc_brand,
+          qc_product_image,
+          ...item
+        }) => item
+      );
+
+      const result = await createReturnOrder(payload);
+
+      const orderId = String(result?.order_id || result?.id || "");
+      const shipmentId = String(
+        result?.shipment_id || result?.shipment?.id || ""
+      );
+      const awb = String(
+        result?.awb_code ||
+        result?.awb ||
+        result?.shipment?.awb_code ||
+        ""
+      );
+
+      if (!orderId && !shipmentId) {
+        throw new Error(
+          result?.message ||
+          result?.error ||
+          "Shiprocket return creation failed"
+        );
+      }
+
+      created.reverseShipment = {
+        provider: "shiprocket",
+        orderId,
+        shipmentId,
+        awb,
+        courierName: String(
+          result?.courier_name || result?.courier || ""
+        ),
+        trackingUrl: String(result?.tracking_url || ""),
+        status: awb ? "pickup_scheduled" : "return_order_created",
+        pickupScheduledAt: awb ? new Date() : null,
+        lastUpdatedAt: new Date(),
+      };
+
+      if (awb) created.status = "pickup_scheduled";
+
+      await order.save();
+
+      console.log("✅ Auto reverse pickup created:", {
+        orderNumber: order.orderNumber,
+        rmaNumber: created.rmaNumber,
+        awb: awb || "pending",
+      });
+    } catch (e) {
+      console.error(
+        "⚠️ Auto reverse pickup failed:",
+        e?.response?.data || e?.message || e
+      );
+    }
 
     console.log(
       "✅ [CREATE RMA] RMA Created:",

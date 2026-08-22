@@ -177,6 +177,12 @@ const rmaSchema = new mongoose.Schema(
       index: true,
     },
 
+    isExchangeOrderCreated: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     // ✅ NEW: Exchange details (this is what was missing!)
     exchangeRequest: {
       productId: {
@@ -713,6 +719,12 @@ const orderSchema = new mongoose.Schema(
     },
 
     eligibleForRma: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    isExchangeOrder: {
       type: Boolean,
       default: false,
       index: true,
