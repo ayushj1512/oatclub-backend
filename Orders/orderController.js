@@ -1459,6 +1459,8 @@ export const getAllOrders = async (req, res) => {
       confirmFilter,
       priority,
       isExchangeOrder,
+      eligibleForRefund,
+      isRefunded,
 
       // ✅ Added
       orderType,
@@ -1590,6 +1592,26 @@ export const getAllOrders = async (req, res) => {
         filters.isExchangeOrder = true;
       } else if (value === "false") {
         filters.isExchangeOrder = { $ne: true };
+      }
+    }
+
+    if (eligibleForRefund != null) {
+      const value = toLower(eligibleForRefund);
+
+      if (value === "true") {
+        filters.eligibleForRefund = true;
+      } else if (value === "false") {
+        filters.eligibleForRefund = { $ne: true };
+      }
+    }
+
+    if (isRefunded != null) {
+      const value = toLower(isRefunded);
+
+      if (value === "true") {
+        filters.isRefunded = true;
+      } else if (value === "false") {
+        filters.isRefunded = { $ne: true };
       }
     }
 
@@ -2791,17 +2813,31 @@ export const updateOrderStatus = async (req, res) => {
         if (fulfillmentStatus === "refunded") {
           const allowedPrev = [
             "returned",
+            "return_pickup_completed",
             "cancelled",
             "rto",
           ];
 
           if (!allowedPrev.includes(currentStatus)) {
             throw new Error(
-              "Refunded can be marked only after returned/cancelled/rto",
+              "Refunded can be marked only after return pickup completed/returned/cancelled/rto",
             );
           }
 
           order.paymentStatus = "refunded";
+          order.eligibleForRefund = false;
+          order.isRefunded = true;
+
+          order.refundSummary = {
+            ...(order.refundSummary || {}),
+            status: "refunded",
+            refundedAmount:
+              Number(order.refundSummary?.eligibleAmount || 0) ||
+              Number(order.finalPayable || 0),
+            pendingAmount: 0,
+            refundedAt:
+              order.refundSummary?.refundedAt || new Date(),
+          };
         }
 
         if (becomingPacked && !isParent) {
@@ -2859,6 +2895,74 @@ export const updateOrderStatus = async (req, res) => {
         }
 
         order.fulfillmentStatus = fulfillmentStatus;
+
+        // ============================================================
+        // ✅ RETURN PICKUP COMPLETED
+        // Return  -> refund eligible
+        // Exchange -> no refund; exchange order can be created manually
+        // ============================================================
+
+        if (fulfillmentStatus === "return_pickup_completed") {
+          const activeRmas = [...(order.rmas || [])]
+            .filter(
+              (rma) =>
+                rma &&
+                !["rejected", "closed"].includes(lower(rma.status)),
+            )
+            .sort(
+              (a, b) =>
+                new Date(b?.createdAt || 0).getTime() -
+                new Date(a?.createdAt || 0).getTime(),
+            );
+
+          const activeRma = activeRmas[0];
+
+          if (activeRma) {
+            activeRma.status = "picked";
+
+            activeRma.reverseShipment =
+              activeRma.reverseShipment || {};
+
+            activeRma.reverseShipment.status = "picked";
+
+            if (!activeRma.reverseShipment.pickedAt) {
+              activeRma.reverseShipment.pickedAt = new Date();
+            }
+
+            // ✅ ONLY RETURNS become refund eligible
+            if (lower(activeRma.type) === "return") {
+              const refundAmount =
+                Number(activeRma?.refund?.amount || 0) ||
+                Number(order.finalPayable || 0);
+
+              order.eligibleForRefund = true;
+              order.isRefunded = false;
+
+              order.refundSummary = {
+                ...(order.refundSummary || {}),
+                status: "eligible",
+                eligibleAmount: refundAmount,
+                pendingAmount: refundAmount,
+                refundedAmount:
+                  Number(order.refundSummary?.refundedAmount || 0),
+                markedEligibleAt:
+                  order.refundSummary?.markedEligibleAt ||
+                  new Date(),
+                reason:
+                  order.refundSummary?.reason ||
+                  `Return pickup completed - ${activeRma.rmaNumber || "RMA"}`,
+              };
+            }
+
+            // ✅ Exchange = pickup completed only
+            // Exchange order creation remains through existing button/API.
+            if (lower(activeRma.type) === "exchange") {
+              order.eligibleForRefund = false;
+            }
+
+            order.markModified("rmas");
+          }
+        }
 
         if (fulfillmentStatus === "shipped") {
           order.trackingDetails =
@@ -8248,6 +8352,17 @@ const ADVANCED_PAYMENT_STATUSES = new Set([
   "not_applicable",
 ]);
 
+const ADVANCED_REFUND_STATUSES = new Set([
+  "not_eligible",
+  "eligible",
+  "refund_pending",
+  "processing",
+  "refunded",
+  "partially_refunded",
+  "failed",
+  "manual_required",
+]);
+
 const ADVANCED_PAYMENT_METHODS = new Set([
   "cod",
   "razorpay",
@@ -8263,9 +8378,15 @@ const ADVANCED_FULFILLMENT_STATUSES = new Set([
   "shipped",
   "out_for_delivery",
   "delivered",
+
   "pickup_initiated",
   "return_requested",
   "exchange_requested",
+
+  // ✅ ADD
+  "return_pickup_completed",
+  "delivery_failed",
+
   "returned",
   "refunded",
   "exchanged",
@@ -8297,6 +8418,13 @@ const ADVANCED_ORDER_LIST_FIELDS = {
   paymentMethod: 1,
   paymentStatus: 1,
   fulfillmentStatus: 1,
+  eligibleForRefund: 1,
+  isRefunded: 1,
+  eligibleForRma: 1,
+
+  refundSummary: 1,
+  fulfillmentDates: 1,
+  rmas: 1,
 
   isConfirmed: 1,
   isInfluencerOrder: 1,
@@ -8404,6 +8532,15 @@ export const getAdvancedFilteredOrders = async (
       exclude: query.excludePaymentMethod,
       lowercase: true,
       allowed: ADVANCED_PAYMENT_METHODS,
+    });
+
+    advancedFilterAddInNin({
+      clauses,
+      field: "refundSummary.status",
+      include: query.refundStatus,
+      exclude: query.excludeRefundStatus,
+      lowercase: true,
+      allowed: ADVANCED_REFUND_STATUSES,
     });
 
     /* ---------------- Status filters ---------------- */
@@ -8529,6 +8666,44 @@ export const getAdvancedFilteredOrders = async (
     }
 
     /* ---------------- Order filters ---------------- */
+
+    const eligibleForRefundValue =
+      advancedFilterBoolean(
+        query.eligibleForRefund,
+      );
+
+    if (eligibleForRefundValue === true) {
+      clauses.push({
+        eligibleForRefund: true,
+      });
+    }
+
+    if (eligibleForRefundValue === false) {
+      clauses.push({
+        eligibleForRefund: {
+          $ne: true,
+        },
+      });
+    }
+
+    const isRefundedValue =
+      advancedFilterBoolean(
+        query.isRefunded,
+      );
+
+    if (isRefundedValue === true) {
+      clauses.push({
+        isRefunded: true,
+      });
+    }
+
+    if (isRefundedValue === false) {
+      clauses.push({
+        isRefunded: {
+          $ne: true,
+        },
+      });
+    }
 
     const exchangeOrderValue =
       advancedFilterBoolean(query.isExchangeOrder);

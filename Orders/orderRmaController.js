@@ -923,31 +923,74 @@ export const getRmasByOrder = async (req, res) => {
 
     const rmas = (order.rmas || []).map((rma) => ({
       ...rma,
+
+      // RMA
       isFulfilled: Boolean(rma?.isFulfilled),
+
+      // Order status
+      fulfillmentStatus:
+        order?.fulfillmentStatus || "",
+
+      fulfillmentDates:
+        order?.fulfillmentDates || null,
+
+      // Refund automation
+      eligibleForRefund:
+        order?.eligibleForRefund === true,
+
+      isRefunded:
+        order?.isRefunded === true,
+
+      refundSummary:
+        order?.refundSummary || null,
+
+      refundEligibleAmount:
+        Number(
+          order?.refundSummary?.eligibleAmount ||
+          rma?.refund?.amount ||
+          0
+        ),
+
+      // Reverse pickup automation
+      returnPickupCompleted:
+        Boolean(
+          order?.fulfillmentDates
+            ?.returnPickupCompletedAt ||
+          order?.fulfillmentStatus ===
+          "return_pickup_completed"
+        ),
+
+      returnPickupCompletedAt:
+        order?.fulfillmentDates
+          ?.returnPickupCompletedAt || null,
     }));
 
-    return res.status(200).json({ rmas });
+    return res.status(200).json({
+      rmas,
+    });
   } catch (err) {
     return res.status(500).json({
       message: err.message || "Server error",
     });
   }
-};
+};;
 
 /* ============================================================
    ✅ GET single RMA
 ============================================================ */
 export const getRmaByNumber = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id).lean();
+    const order = await Order.findById(
+      req.params.id
+    ).lean();
 
     if (!order) {
       return notFound(res, "Order not found");
     }
 
     const rma = (order.rmas || []).find(
-      (r) =>
-        String(r.rmaNumber) ===
+      (item) =>
+        String(item.rmaNumber) ===
         String(req.params.rmaNumber)
     );
 
@@ -958,7 +1001,48 @@ export const getRmaByNumber = async (req, res) => {
     return res.status(200).json({
       rma: {
         ...rma,
-        isFulfilled: Boolean(rma?.isFulfilled),
+
+        // RMA
+        isFulfilled:
+          Boolean(rma?.isFulfilled),
+
+        // Order status
+        fulfillmentStatus:
+          order?.fulfillmentStatus || "",
+
+        fulfillmentDates:
+          order?.fulfillmentDates || null,
+
+        // Refund automation
+        eligibleForRefund:
+          order?.eligibleForRefund === true,
+
+        isRefunded:
+          order?.isRefunded === true,
+
+        refundSummary:
+          order?.refundSummary || null,
+
+        refundEligibleAmount:
+          Number(
+            order?.refundSummary
+              ?.eligibleAmount ||
+            rma?.refund?.amount ||
+            0
+          ),
+
+        // Reverse pickup automation
+        returnPickupCompleted:
+          Boolean(
+            order?.fulfillmentDates
+              ?.returnPickupCompletedAt ||
+            order?.fulfillmentStatus ===
+            "return_pickup_completed"
+          ),
+
+        returnPickupCompletedAt:
+          order?.fulfillmentDates
+            ?.returnPickupCompletedAt || null,
       },
     });
   } catch (err) {
@@ -1004,7 +1088,10 @@ export const getAllRmasAdmin = async (req, res) => {
     }
 
     const orders = await Order.find(match)
-      .populate("customerId", "name email phone")
+      .populate(
+        "customerId",
+        "name email phone payoutDetails credits"
+      )
       .sort({ createdAt: -1 })
       .lean();
 
@@ -1043,7 +1130,7 @@ export const getAllRmasAdmin = async (req, res) => {
         if (search) {
           const q = normalize(search);
 
-          const searchable = [
+          const values = [
             order.orderNumber,
             rma.rmaNumber,
             order.customerId?.name,
@@ -1054,68 +1141,126 @@ export const getAllRmasAdmin = async (req, res) => {
             order.shippingAddressSnapshot?.phone,
           ]
             .filter(Boolean)
-            .map((value) => normalize(value));
+            .map(normalize);
 
-          if (!searchable.some((value) => value.includes(q))) {
+          if (!values.some((v) => v.includes(q))) {
             continue;
           }
         }
 
+        const returnPickupCompletedAt =
+          order?.fulfillmentDates?.returnPickupCompletedAt ||
+          rma?.reverseShipment?.pickedAt ||
+          null;
+
+        const returnPickupCompleted = Boolean(
+          returnPickupCompletedAt ||
+          order?.fulfillmentStatus ===
+          "return_pickup_completed"
+        );
+
+        const refundEligibleAmount = Number(
+          order?.refundSummary?.eligibleAmount ||
+          rma?.refund?.amount ||
+          0
+        );
+
         allRmas.push({
           ...rma,
 
-          // RMA flags
-          isFulfilled: rma?.isFulfilled === true,
+          // RMA
+          isFulfilled:
+            rma?.isFulfilled === true,
 
           isExchangeOrderCreated:
             rma?.isExchangeOrderCreated === true,
 
-          // Order exchange flags
+          // Exchange
           hasExchangeOrder:
             order?.hasExchangeOrder === true,
 
           isExchangeOrder:
             order?.isExchangeOrder === true,
 
-          // Order relation
+          // Order
           orderId: order._id,
           orderNumber: order.orderNumber,
 
           // Customer
-          customer: order.customerId || null,
+          customer:
+            order.customerId || null,
+
           shippingAddressSnapshot:
             order.shippingAddressSnapshot || null,
 
-          // Original order items
-          orderItems: order.items || [],
+          // Items
+          orderItems:
+            order.items || [],
 
           // Money
-          subtotal: Number(order.subtotal || 0),
-          discount: Number(order.discount || 0),
-          shippingFee: Number(order.shippingFee || 0),
-          tax: Number(order.tax || 0),
-          totalAmount: Number(order.totalAmount || 0),
-          finalPayable: Number(order.finalPayable || 0),
-          currency: order.currency || "INR",
+          subtotal:
+            Number(order.subtotal || 0),
+
+          discount:
+            Number(order.discount || 0),
+
+          shippingFee:
+            Number(order.shippingFee || 0),
+
+          tax:
+            Number(order.tax || 0),
+
+          totalAmount:
+            Number(order.totalAmount || 0),
+
+          finalPayable:
+            Number(order.finalPayable || 0),
+
+          currency:
+            order.currency || "INR",
 
           // Payment
-          paymentMethod: order.paymentMethod || "",
-          paymentStatus: order.paymentStatus || "",
+          paymentMethod:
+            order.paymentMethod || "",
 
-          // Order status
+          paymentStatus:
+            order.paymentStatus || "",
+
+          // Fulfillment
           fulfillmentStatus:
             order.fulfillmentStatus || "",
+
           fulfillmentDates:
             order.fulfillmentDates || null,
 
-          // Shipment
-          shipment: order.shipment || null,
+          // Refund
+          eligibleForRefund:
+            order?.eligibleForRefund === true,
+
+          isRefunded:
+            order?.isRefunded === true,
+
+          refundSummary:
+            order?.refundSummary || null,
+
+          refundEligibleAmount,
+
+          // Pickup
+          returnPickupCompleted,
+          returnPickupCompletedAt,
+
+          // Shipping
+          shipment:
+            order.shipment || null,
+
           trackingDetails:
             order.trackingDetails || null,
 
           // Dates
           orderDate:
-            order.orderDate || order.createdAt,
+            order.orderDate ||
+            order.createdAt,
+
           orderCreatedAt:
             order.createdAt,
         });
@@ -1133,10 +1278,14 @@ export const getAllRmasAdmin = async (req, res) => {
       count: allRmas.length,
     });
   } catch (err) {
-    console.error("❌ Fetch All RMAs Error:", err);
+    console.error(
+      "❌ Fetch All RMAs Error:",
+      err
+    );
 
     return res.status(500).json({
-      message: err.message || "Server error",
+      message:
+        err.message || "Server error",
     });
   }
 };

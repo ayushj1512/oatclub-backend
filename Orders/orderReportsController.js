@@ -444,10 +444,26 @@ export const getProductSalesReport = async (req, res) => {
       qty_asc: { totalQtySold: 1, productName: 1 },
       name_asc: { productName: 1, totalQtySold: -1 },
       name_desc: { productName: -1, totalQtySold: -1 },
-      revenue_desc: { totalRevenue: -1, totalQtySold: -1, productName: 1 },
-      revenue_asc: { totalRevenue: 1, totalQtySold: -1, productName: 1 },
-      price_desc: { avgSellingPrice: -1, totalQtySold: -1, productName: 1 },
-      price_asc: { avgSellingPrice: 1, totalQtySold: -1, productName: 1 },
+      revenue_desc: {
+        totalRevenue: -1,
+        totalQtySold: -1,
+        productName: 1,
+      },
+      revenue_asc: {
+        totalRevenue: 1,
+        totalQtySold: -1,
+        productName: 1,
+      },
+      price_desc: {
+        avgSellingPrice: -1,
+        totalQtySold: -1,
+        productName: 1,
+      },
+      price_asc: {
+        avgSellingPrice: 1,
+        totalQtySold: -1,
+        productName: 1,
+      },
       code_asc: { productCode: 1, totalQtySold: -1 },
       code_desc: { productCode: -1, totalQtySold: -1 },
     };
@@ -474,6 +490,7 @@ export const getProductSalesReport = async (req, res) => {
                 items: { $ifNull: ["$items", []] },
               },
             },
+
             { $unwind: "$items" },
 
             {
@@ -485,7 +502,10 @@ export const getProductSalesReport = async (req, res) => {
                   $trim: {
                     input: {
                       $toString: {
-                        $ifNull: ["$items.productSnapshot.productCode", ""],
+                        $ifNull: [
+                          "$items.productSnapshot.productCode",
+                          "",
+                        ],
                       },
                     },
                   },
@@ -495,7 +515,10 @@ export const getProductSalesReport = async (req, res) => {
                   $trim: {
                     input: {
                       $toString: {
-                        $ifNull: ["$items.productSnapshot.title", ""],
+                        $ifNull: [
+                          "$items.productSnapshot.title",
+                          "",
+                        ],
                       },
                     },
                   },
@@ -504,10 +527,20 @@ export const getProductSalesReport = async (req, res) => {
                 productImage: {
                   $let: {
                     vars: {
-                      thumb: { $ifNull: ["$items.productSnapshot.thumbnail", ""] },
+                      thumb: {
+                        $ifNull: [
+                          "$items.productSnapshot.thumbnail",
+                          "",
+                        ],
+                      },
                       firstImage: {
                         $arrayElemAt: [
-                          { $ifNull: ["$items.productSnapshot.images", []] },
+                          {
+                            $ifNull: [
+                              "$items.productSnapshot.images",
+                              [],
+                            ],
+                          },
                           0,
                         ],
                       },
@@ -522,17 +555,58 @@ export const getProductSalesReport = async (req, res) => {
                   },
                 },
 
-                quantity: { $ifNull: ["$items.quantity", 0] },
-                price: { $ifNull: ["$items.price", 0] },
+                // ✅ SIZE
+                selectedSize: {
+                  $trim: {
+                    input: {
+                      $toString: {
+                        $ifNull: ["$items.selectedSize", ""],
+                      },
+                    },
+                  },
+                },
+
+                quantity: {
+                  $ifNull: ["$items.quantity", 0],
+                },
+
+                price: {
+                  $ifNull: ["$items.price", 0],
+                },
 
                 subtotal: {
                   $cond: [
-                    { $gt: [{ $ifNull: ["$items.subtotal", 0] }, 0] },
-                    { $ifNull: ["$items.subtotal", 0] },
+                    {
+                      $gt: [
+                        {
+                          $ifNull: [
+                            "$items.subtotal",
+                            0,
+                          ],
+                        },
+                        0,
+                      ],
+                    },
+                    {
+                      $ifNull: [
+                        "$items.subtotal",
+                        0,
+                      ],
+                    },
                     {
                       $multiply: [
-                        { $ifNull: ["$items.price", 0] },
-                        { $ifNull: ["$items.quantity", 0] },
+                        {
+                          $ifNull: [
+                            "$items.price",
+                            0,
+                          ],
+                        },
+                        {
+                          $ifNull: [
+                            "$items.quantity",
+                            0,
+                          ],
+                        },
                       ],
                     },
                   ],
@@ -549,92 +623,186 @@ export const getProductSalesReport = async (req, res) => {
 
             ...(search
               ? [
-                  {
-                    $match: {
-                      $or: [
-                        {
-                          productCode: {
-                            $regex: escapeRegex(search),
-                            $options: "i",
-                          },
+                {
+                  $match: {
+                    $or: [
+                      {
+                        productCode: {
+                          $regex:
+                            escapeRegex(search),
+                          $options: "i",
                         },
-                        {
-                          productName: {
-                            $regex: escapeRegex(search),
-                            $options: "i",
-                          },
+                      },
+                      {
+                        productName: {
+                          $regex:
+                            escapeRegex(search),
+                          $options: "i",
                         },
-                      ],
-                    },
+                      },
+                    ],
                   },
-                ]
+                },
+              ]
               : []),
 
             {
               $group: {
                 _id: "$productCode",
 
-                productCode: { $first: "$productCode" },
-                productId: { $first: "$productId" },
-                variantId: { $first: "$variantId" },
+                productCode: {
+                  $first: "$productCode",
+                },
 
-                productName: { $first: "$productName" },
-                productImage: { $first: "$productImage" },
+                productId: {
+                  $first: "$productId",
+                },
 
-                totalQtySold: { $sum: "$quantity" },
-                totalRevenue: { $sum: "$subtotal" },
+                variantId: {
+                  $first: "$variantId",
+                },
+
+                productName: {
+                  $first: "$productName",
+                },
+
+                productImage: {
+                  $first: "$productImage",
+                },
+
+                totalQtySold: {
+                  $sum: "$quantity",
+                },
+
+                totalRevenue: {
+                  $sum: "$subtotal",
+                },
 
                 priceQtyValue: {
                   $sum: {
-                    $multiply: ["$price", "$quantity"],
+                    $multiply: [
+                      "$price",
+                      "$quantity",
+                    ],
                   },
                 },
 
-                names: { $addToSet: "$productName" },
-                images: { $addToSet: "$productImage" },
+                // ✅ collect size + quantity
+                sizeRows: {
+                  $push: {
+                    size: "$selectedSize",
+                    quantity: "$quantity",
+                  },
+                },
+
+                names: {
+                  $addToSet: "$productName",
+                },
+
+                images: {
+                  $addToSet: "$productImage",
+                },
               },
             },
 
             {
               $project: {
                 _id: 0,
+
                 productId: 1,
                 variantId: 1,
                 productCode: 1,
 
                 productName: {
                   $cond: [
-                    { $ne: ["$productName", ""] },
+                    {
+                      $ne: [
+                        "$productName",
+                        "",
+                      ],
+                    },
                     "$productName",
-                    { $ifNull: [{ $arrayElemAt: ["$names", 0] }, ""] },
+                    {
+                      $ifNull: [
+                        {
+                          $arrayElemAt: [
+                            "$names",
+                            0,
+                          ],
+                        },
+                        "",
+                      ],
+                    },
                   ],
                 },
 
                 productImage: {
                   $cond: [
-                    { $ne: ["$productImage", ""] },
+                    {
+                      $ne: [
+                        "$productImage",
+                        "",
+                      ],
+                    },
                     "$productImage",
-                    { $ifNull: [{ $arrayElemAt: ["$images", 0] }, ""] },
+                    {
+                      $ifNull: [
+                        {
+                          $arrayElemAt: [
+                            "$images",
+                            0,
+                          ],
+                        },
+                        "",
+                      ],
+                    },
                   ],
                 },
 
-                totalQtySold: { $ifNull: ["$totalQtySold", 0] },
-                totalRevenue: {
-                  $round: [{ $ifNull: ["$totalRevenue", 0] }, 2],
+                totalQtySold: {
+                  $ifNull: [
+                    "$totalQtySold",
+                    0,
+                  ],
                 },
 
-                avgSellingPrice: {
+                totalRevenue: {
                   $round: [
                     {
-                      $cond: [
-                        { $gt: ["$totalQtySold", 0] },
-                        { $divide: ["$priceQtyValue", "$totalQtySold"] },
+                      $ifNull: [
+                        "$totalRevenue",
                         0,
                       ],
                     },
                     2,
                   ],
                 },
+
+                avgSellingPrice: {
+                  $round: [
+                    {
+                      $cond: [
+                        {
+                          $gt: [
+                            "$totalQtySold",
+                            0,
+                          ],
+                        },
+                        {
+                          $divide: [
+                            "$priceQtyValue",
+                            "$totalQtySold",
+                          ],
+                        },
+                        0,
+                      ],
+                    },
+                    2,
+                  ],
+                },
+
+                // ✅ send raw size rows
+                sizeRows: 1,
               },
             },
           ],
@@ -644,8 +812,17 @@ export const getProductSalesReport = async (req, res) => {
       {
         $project: {
           totalOrders: {
-            $ifNull: [{ $arrayElemAt: ["$orderStats.totalOrders", 0] }, 0],
+            $ifNull: [
+              {
+                $arrayElemAt: [
+                  "$orderStats.totalOrders",
+                  0,
+                ],
+              },
+              0,
+            ],
           },
+
           productRows: 1,
         },
       },
@@ -653,14 +830,22 @@ export const getProductSalesReport = async (req, res) => {
       {
         $project: {
           totalOrders: 1,
-          totalProducts: { $size: "$productRows" },
+
+          totalProducts: {
+            $size: "$productRows",
+          },
 
           totalQtySold: {
             $sum: {
               $map: {
                 input: "$productRows",
                 as: "row",
-                in: { $ifNull: ["$$row.totalQtySold", 0] },
+                in: {
+                  $ifNull: [
+                    "$$row.totalQtySold",
+                    0,
+                  ],
+                },
               },
             },
           },
@@ -670,7 +855,12 @@ export const getProductSalesReport = async (req, res) => {
               $map: {
                 input: "$productRows",
                 as: "row",
-                in: { $ifNull: ["$$row.totalRevenue", 0] },
+                in: {
+                  $ifNull: [
+                    "$$row.totalRevenue",
+                    0,
+                  ],
+                },
               },
             },
           },
@@ -691,16 +881,90 @@ export const getProductSalesReport = async (req, res) => {
       },
     ];
 
-    const [result] = await Order.aggregate(pipeline).allowDiskUse(true);
+    const [result] = await Order.aggregate(
+      pipeline
+    ).allowDiskUse(true);
 
-    const rows = Array.isArray(result?.rows) ? result.rows : [];
-    const total = Number(result?.totalProducts || 0);
-    const totalQtySold = Number(result?.totalQtySold || 0);
-    const totalRevenue = Number(result?.totalRevenue || 0);
-    const totalOrders = Number(result?.totalOrders || 0);
+    // ✅ Merge duplicate sizes
+    const rows = (
+      Array.isArray(result?.rows)
+        ? result.rows
+        : []
+    ).map((row) => {
+      const sizeMap = {};
+
+      for (const item of row.sizeRows || []) {
+        const size = String(
+          item?.size || ""
+        )
+          .trim()
+          .toUpperCase();
+
+        if (!size) continue;
+
+        sizeMap[size] =
+          (sizeMap[size] || 0) +
+          Number(item?.quantity || 0);
+      }
+
+      const sizeOrder = [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL",
+        "3XL",
+        "4XL",
+        "5XL",
+        "FREE",
+      ];
+
+      const sizes = Object.entries(sizeMap)
+        .map(([size, quantity]) => ({
+          size,
+          quantity,
+        }))
+        .sort((a, b) => {
+          const ai = sizeOrder.indexOf(a.size);
+          const bi = sizeOrder.indexOf(b.size);
+
+          if (ai === -1 && bi === -1)
+            return a.size.localeCompare(b.size);
+
+          if (ai === -1) return 1;
+          if (bi === -1) return -1;
+
+          return ai - bi;
+        });
+
+      const { sizeRows, ...cleanRow } = row;
+
+      return {
+        ...cleanRow,
+        sizes,
+      };
+    });
+
+    const total = Number(
+      result?.totalProducts || 0
+    );
+
+    const totalQtySold = Number(
+      result?.totalQtySold || 0
+    );
+
+    const totalRevenue = Number(
+      result?.totalRevenue || 0
+    );
+
+    const totalOrders = Number(
+      result?.totalOrders || 0
+    );
 
     return res.status(200).json({
       success: true,
+
       filters: {
         month: monthRange ? month : "",
         search,
@@ -708,27 +972,41 @@ export const getProductSalesReport = async (req, res) => {
         page,
         limit,
       },
+
       summary: {
         totalProducts: total,
         totalQtySold,
-        totalRevenue: Number(totalRevenue.toFixed(2)),
+        totalRevenue: Number(
+          totalRevenue.toFixed(2)
+        ),
         totalOrders,
       },
+
       pagination: {
         page,
         limit,
         total,
-        totalPages: total > 0 ? Math.ceil(total / limit) : 0,
+        totalPages:
+          total > 0
+            ? Math.ceil(total / limit)
+            : 0,
         hasNext: page * limit < total,
         hasPrev: page > 1,
       },
+
       rows,
     });
   } catch (error) {
-    console.error("getProductSalesReport error:", error);
+    console.error(
+      "getProductSalesReport error:",
+      error
+    );
+
     return res.status(500).json({
       success: false,
-      message: error?.message || "Failed to fetch product sales report",
+      message:
+        error?.message ||
+        "Failed to fetch product sales report",
     });
   }
 };

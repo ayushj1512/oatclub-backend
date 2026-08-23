@@ -718,6 +718,12 @@ const orderSchema = new mongoose.Schema(
       index: true,
     },
 
+    isRefunded: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     eligibleForRma: {
       type: Boolean,
       default: false,
@@ -833,8 +839,11 @@ const orderSchema = new mongoose.Schema(
         "cancelled",
         "rto",
 
-        // ✅ NEW
         "failed",
+
+        // ✅ ADD ONLY
+        "delivery_failed",
+        "return_pickup_completed",
       ],
       default: "processing",
       index: true,
@@ -856,6 +865,10 @@ const orderSchema = new mongoose.Schema(
       rtoAt: { type: Date, default: null },
       failedAt: { type: Date, default: null },
       cancelledAt: { type: Date, default: null },
+
+      // ✅ ADD ONLY
+      deliveryFailedAt: { type: Date, default: null },
+      returnPickupCompletedAt: { type: Date, default: null },
     },
     cancellation: {
       isCancelled: { type: Boolean, default: false },
@@ -1793,6 +1806,10 @@ const FULFILLMENT_DATE_FIELD = {
   cancelled: "cancelledAt",
   rto: "rtoAt",
   failed: "failedAt",
+
+  // ✅ ADD ONLY
+  delivery_failed: "deliveryFailedAt",
+  return_pickup_completed: "returnPickupCompletedAt",
 };
 
 orderSchema.pre("validate", function (next) {
