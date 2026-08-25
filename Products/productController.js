@@ -6618,3 +6618,168 @@ export const completeProductLifecycle = async (req, res) => {
     });
   }
 };
+
+
+/* ============================================================
+   UPDATE FABRIC + AVG FABRIC CONSUMPTION
+   SINGLE + BULK — SAME CONTROLLER
+
+   SINGLE:
+   PATCH /api/products/:id/fabric-consumption
+
+   BULK:
+   PATCH /api/products/bulk/fabric-consumption
+============================================================ */
+export const updateFabricConsumption = async (req, res) => {
+  try {
+    const s = (v) => String(v ?? "").trim();
+
+    /* ---------------- ids: single + bulk ---------------- */
+    const rawIds = req.params?.id
+      ? [req.params.id]
+      : req.body?.ids ?? req.body?.productIds ?? [];
+
+    const ids = (Array.isArray(rawIds) ? rawIds : [rawIds])
+      .map((id) => s(id))
+      .filter(Boolean);
+
+    if (!ids.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Product id/ids required",
+      });
+    }
+
+    const invalidIds = ids.filter(
+      (id) => !mongoose.Types.ObjectId.isValid(id),
+    );
+
+    if (invalidIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product id",
+        invalidIds,
+      });
+    }
+
+    const update = {};
+
+    /* ---------------- fabrics ---------------- */
+    if (req.body.fabrics !== undefined) {
+      const allowedRoles = new Set([
+        "main",
+        "lining",
+        "contrast",
+        "padding",
+        "other",
+      ]);
+
+      const rawFabrics = Array.isArray(req.body.fabrics)
+        ? req.body.fabrics
+        : [req.body.fabrics];
+
+      const fabrics = rawFabrics
+        .map((fabric) => {
+          if (typeof fabric === "string") {
+            return {
+              fabricName: s(fabric),
+              fabricCode: "",
+              fabricColor: "",
+              role: "main",
+            };
+          }
+
+          const fabricName = s(fabric?.fabricName);
+          const fabricCode = s(fabric?.fabricCode);
+          const fabricColor = s(fabric?.fabricColor);
+
+          const rawRole = s(fabric?.role || "main").toLowerCase();
+
+          return {
+            fabricName: fabricName || fabricCode,
+            fabricCode,
+            fabricColor,
+            role: allowedRoles.has(rawRole) ? rawRole : "main",
+          };
+        })
+        .filter((fabric) => fabric.fabricName);
+
+      update.fabrics = fabrics;
+    }
+
+    /* ---------------- avg consumption ---------------- */
+    if (
+      req.body.avgFabricConsumption !== undefined ||
+      req.body.value !== undefined
+    ) {
+      const raw =
+        req.body.avgFabricConsumption ?? {
+          value: req.body.value,
+          unit: req.body.unit,
+        };
+
+      const value = Number(raw?.value);
+      const unit = s(raw?.unit || "meter").toLowerCase();
+
+      if (!Number.isFinite(value) || value < 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Average fabric consumption must be 0 or greater",
+        });
+      }
+
+      if (!["meter", "gram"].includes(unit)) {
+        return res.status(400).json({
+          success: false,
+          message: "Unit must be meter or gram",
+        });
+      }
+
+      update.avgFabricConsumption = {
+        value,
+        unit,
+      };
+    }
+
+    if (!Object.keys(update).length) {
+      return res.status(400).json({
+        success: false,
+        message: "fabrics or avgFabricConsumption required",
+      });
+    }
+
+    const uniqueIds = [...new Set(ids)];
+
+    const result = await Product.updateMany(
+      { _id: { $in: uniqueIds } },
+      { $set: update },
+      { runValidators: true },
+    );
+
+    const products = await Product.find({
+      _id: { $in: uniqueIds },
+    })
+      .select(
+        "_id title productCode thumbnail fabrics avgFabricConsumption",
+      )
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      message:
+        uniqueIds.length === 1
+          ? "Fabric details updated successfully"
+          : `${products.length} products updated successfully`,
+      matched: result.matchedCount,
+      modified: result.modifiedCount,
+      products,
+    });
+  } catch (error) {
+    console.error("❌ Update Fabric Consumption Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update fabric consumption",
+    });
+  }
+};

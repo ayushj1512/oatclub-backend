@@ -45,6 +45,7 @@ import {
   exportProductsExcel,
   advanceProductLifecycle,
   completeProductLifecycle,
+  updateFabricConsumption,
 } from "./productController.js";
 
 import { searchProductsForCard } from "./product.search.controller.js";
@@ -185,6 +186,11 @@ router.post("/bulk/metadata/preview", previewBulkProductMetadata);
 router.patch("/bulk/metadata/confirm", confirmBulkProductMetadata);
 
 router.patch(
+  "/bulk/fabric-consumption",
+  updateFabricConsumption
+);
+
+router.patch(
   "/bulk/variant-stock/zero-all",
   zeroAllVariantStock
 );
@@ -225,6 +231,11 @@ router.post("/", createProduct);
 ========================================================= */
 
 router.patch("/primary-status", updatePrimaryProductStatus);
+
+router.patch(
+  "/:id/fabric-consumption",
+  updateFabricConsumption
+);
 
 router.patch(
   "/:id/association-group",
