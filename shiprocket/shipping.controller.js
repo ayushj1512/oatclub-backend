@@ -763,3 +763,508 @@ export async function checkShiprocketServiceabilityApi(req, res) {
     return sendShiprocketError(res, err, "Failed to check serviceability");
   }
 }
+
+
+export async function syncReversePickup(req, res) {
+  try {
+    const { orderId, rmaNumber } = req.params;
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    const rma = order.rmas?.find(
+      (x) => String(x?.rmaNumber) === String(rmaNumber)
+    );
+
+    if (!rma) {
+      return res.status(404).json({
+        success: false,
+        message: "RMA not found",
+      });
+    }
+
+    const reverse = rma.reverseShipment || {};
+    const shipmentId = s(reverse.shipmentId);
+    const shiprocketOrderId = s(reverse.orderId);
+
+    if (!shipmentId && !shiprocketOrderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Reverse shipmentId/orderId missing",
+      });
+    }
+
+    const now = new Date();
+
+    let rawTrack = null;
+    let rawShow = null;
+
+    let awb = s(reverse.awb);
+    let courierName = s(reverse.courierName);
+    let trackingUrl = s(reverse.trackingUrl);
+    let rawStatus = s(reverse.rawStatus);
+    let statusCode = s(reverse.statusCode);
+
+    let activities = [];
+
+    /* ==============================
+       1. TRACK REVERSE SHIPMENT
+    ============================== */
+
+    if (shipmentId) {
+      try {
+        rawTrack = await shiprocketApi({
+          method: "GET",
+          url: `/courier/track/shipment/${encodeURIComponent(shipmentId)}`,
+          timeout: 20000,
+        });
+
+        const td = rawTrack?.tracking_data || {};
+
+        const track = Array.isArray(td?.shipment_track)
+          ? td.shipment_track[0] || {}
+          : td?.shipment_track || {};
+
+        activities = Array.isArray(td?.shipment_track_activities)
+          ? td.shipment_track_activities
+          : [];
+
+        awb = s(
+          track?.awb_code ||
+          td?.awb_code ||
+          awb
+        );
+
+        courierName = s(
+          track?.courier_name ||
+          td?.courier_name ||
+          courierName
+        );
+
+        trackingUrl = s(
+          track?.tracking_url ||
+          td?.tracking_url ||
+          trackingUrl
+        );
+
+        rawStatus = s(
+          track?.current_status ||
+          track?.status ||
+          track?.shipment_status ||
+          td?.shipment_status ||
+          td?.current_status ||
+          rawStatus
+        );
+
+        statusCode = s(
+          track?.current_status_id ||
+          track?.shipment_status_id ||
+          track?.status_code ||
+          td?.shipment_status_id ||
+          td?.current_status_id ||
+          statusCode
+        );
+
+        const latest =
+          activities.length > 0
+            ? activities[activities.length - 1]
+            : null;
+
+        if (!rawStatus && latest) {
+          rawStatus = s(
+            latest?.["sr-status-label"] ||
+            latest?.activity ||
+            latest?.status
+          );
+        }
+
+        if (!statusCode && latest) {
+          statusCode = s(
+            latest?.["sr-status"] ||
+            latest?.status_code
+          );
+        }
+      } catch (err) {
+        console.warn(
+          "⚠️ Reverse tracking failed:",
+          getShiprocketError(err)
+        );
+      }
+    }
+
+    /* ==============================
+       2. ORDER DETAILS FALLBACK
+    ============================== */
+
+    if ((!awb || !courierName) && shiprocketOrderId) {
+      try {
+        rawShow = await shiprocketApi({
+          method: "GET",
+          url: `/orders/show/${encodeURIComponent(shiprocketOrderId)}`,
+          timeout: 20000,
+        });
+
+        awb = s(
+          rawShow?.awb_code ||
+          rawShow?.awb ||
+          rawShow?.shipment?.awb_code ||
+          rawShow?.shipment?.awb ||
+          awb
+        );
+
+        courierName = s(
+          rawShow?.courier_name ||
+          rawShow?.courier ||
+          rawShow?.shipment?.courier_name ||
+          rawShow?.shipment?.courier ||
+          courierName
+        );
+
+        trackingUrl = s(
+          rawShow?.tracking_url ||
+          rawShow?.shipment?.tracking_url ||
+          trackingUrl
+        );
+      } catch (err) {
+        console.warn(
+          "⚠️ Reverse orders/show failed:",
+          getShiprocketError(err)
+        );
+      }
+    }
+
+    if (!trackingUrl && awb) {
+      trackingUrl =
+        `https://shiprocket.co/tracking/${encodeURIComponent(awb)}`;
+    }
+
+    /* ==============================
+       3. STATUS DETECTION
+    ============================== */
+
+    const statusText = s(rawStatus)
+      .toLowerCase()
+      .replace(/[_-]+/g, " ");
+
+    const findActivity = (matcher) =>
+      activities.find((item) => {
+        const text = [
+          item?.status,
+          item?.activity,
+          item?.["sr-status-label"],
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        const code = Number(
+          item?.["sr-status"] ||
+          item?.status_code ||
+          item?.current_status_id
+        );
+
+        return matcher({ text, code });
+      });
+
+    const pickedActivity = findActivity(
+      ({ text, code }) =>
+        code === 42 ||
+        text.includes("picked up") ||
+        text.includes("picked successfully")
+    );
+
+    const inTransitActivity = findActivity(
+      ({ text }) =>
+        text.includes("in transit") ||
+        text.includes("received at hub") ||
+        text.includes("received at dc")
+    );
+
+    const receivedActivity = findActivity(
+      ({ text }) =>
+        text.includes("delivered to seller") ||
+        text.includes("return delivered") ||
+        text.includes("received by seller")
+    );
+
+    const pickupCompleted =
+      Boolean(pickedActivity) ||
+      Number(statusCode) === 42 ||
+      statusText.includes("picked up") ||
+      statusText === "picked";
+
+    const isInTransit =
+      Boolean(inTransitActivity) ||
+      statusText.includes("in transit");
+
+    const isReceived =
+      Boolean(receivedActivity) ||
+      statusText.includes("delivered to seller") ||
+      statusText.includes("return delivered") ||
+      statusText.includes("received by seller");
+
+    let reverseStatus =
+      s(reverse.status) || "return_order_created";
+
+    if (
+      awb &&
+      reverseStatus === "return_order_created"
+    ) {
+      reverseStatus = "pickup_scheduled";
+    }
+
+    if (pickupCompleted) {
+      reverseStatus = "picked";
+    }
+
+    if (pickupCompleted && isInTransit) {
+      reverseStatus = "in_transit";
+    }
+
+    if (isReceived) {
+      reverseStatus = "received";
+    }
+
+    /* ==============================
+       4. SAVE SHIPMENT
+    ============================== */
+
+    rma.reverseShipment.awb = awb;
+    rma.reverseShipment.courierName = courierName;
+    rma.reverseShipment.trackingUrl = trackingUrl;
+    rma.reverseShipment.rawStatus = rawStatus;
+    rma.reverseShipment.statusCode = statusCode;
+    rma.reverseShipment.status = reverseStatus;
+
+    rma.reverseShipment.lastSyncedAt = now;
+    rma.reverseShipment.lastTrackAt = now;
+    rma.reverseShipment.lastTrack =
+      rawTrack || rawShow || null;
+
+    if (awb && !rma.reverseShipment.awbAssignedAt) {
+      rma.reverseShipment.awbAssignedAt = now;
+    }
+
+    if (
+      reverseStatus === "pickup_scheduled" &&
+      rma.status === "requested"
+    ) {
+      rma.status = "pickup_scheduled";
+    }
+
+    if (pickupCompleted) {
+      rma.reverseShipment.pickedAt =
+        rma.reverseShipment.pickedAt || now;
+
+      rma.status = "picked";
+    }
+
+    if (isInTransit) {
+      rma.reverseShipment.inTransitAt =
+        rma.reverseShipment.inTransitAt || now;
+
+      rma.status = "in_transit";
+    }
+
+    if (isReceived) {
+      rma.reverseShipment.receivedAt =
+        rma.reverseShipment.receivedAt || now;
+
+      rma.status = "received";
+    }
+
+    /* ==============================
+       5. RMA REFUND AMOUNT
+    ============================== */
+
+    const refundAmount = Number(
+      (rma.items || [])
+        .reduce((total, rmaItem) => {
+          const item = (order.items || []).find(
+            (x) =>
+              String(x?.lineId) ===
+              String(rmaItem?.orderLineId)
+          );
+
+          if (!item) return total;
+
+          const orderedQty = Math.max(
+            1,
+            Number(item.quantity || 1)
+          );
+
+          const returnQty = Math.min(
+            orderedQty,
+            Math.max(1, Number(rmaItem.quantity || 1))
+          );
+
+          const unitPrice =
+            Number(item.subtotal || 0) / orderedQty;
+
+          return total + unitPrice * returnQty;
+        }, 0)
+        .toFixed(2)
+    );
+
+    /* ==============================
+       6. PICKUP DONE → RMA ELIGIBLE
+    ============================== */
+
+    if (pickupCompleted) {
+      rma.returnPickupCompleted = true;
+      rma.eligibleForRefund = true;
+
+      rma.refund.amount = refundAmount;
+
+      if (rma.refund.status === "not_started") {
+        rma.refund.status = "not_started";
+      }
+
+      // Order only says "some refund is pending".
+      // Order fulfillment status remains untouched.
+      order.eligibleForRefund = true;
+
+      const eligibleRmas = (order.rmas || []).filter(
+        (x) =>
+          x?.eligibleForRefund === true &&
+          x?.refund?.status !== "completed"
+      );
+
+      const totalEligibleAmount = Number(
+        eligibleRmas
+          .reduce(
+            (sum, x) =>
+              sum + Number(x?.refund?.amount || 0),
+            0
+          )
+          .toFixed(2)
+      );
+
+      const refundedAmount = Number(
+        order.refundSummary?.refundedAmount || 0
+      );
+
+      const pendingAmount = Math.max(
+        0,
+        Number(
+          (totalEligibleAmount - refundedAmount).toFixed(2)
+        )
+      );
+
+      order.refundSummary = {
+        ...(order.refundSummary?.toObject?.() ||
+          order.refundSummary ||
+          {}),
+
+        status:
+          pendingAmount > 0
+            ? "refund_pending"
+            : "refunded",
+
+        refundType:
+          totalEligibleAmount <
+            Number(order.finalPayable || 0)
+            ? "partial"
+            : "full",
+
+        eligibleAmount: totalEligibleAmount,
+        refundedAmount,
+        pendingAmount,
+
+        reason: "Return pickup completed",
+
+        markedEligibleAt:
+          order.refundSummary?.markedEligibleAt || now,
+
+        refundRequestedAt:
+          order.refundSummary?.refundRequestedAt || now,
+      };
+
+      if (
+        order.paymentMethod === "razorpay" &&
+        pendingAmount > 0 &&
+        ![
+          "refunded",
+          "partially_refunded",
+        ].includes(order.paymentStatus)
+      ) {
+        order.paymentStatus = "refund_pending";
+      }
+    }
+
+    await order.save();
+
+    return res.status(200).json({
+      success: true,
+
+      message: pickupCompleted
+        ? "Return pickup completed. RMA is eligible for refund."
+        : awb
+          ? "Reverse shipment synced successfully"
+          : "Reverse shipment synced. AWB pending.",
+
+      orderNumber: order.orderNumber,
+      rmaNumber: rma.rmaNumber,
+
+      reverseShipment: {
+        orderId: shiprocketOrderId,
+        shipmentId,
+        awb,
+        courierName,
+        trackingUrl,
+
+        status: reverseStatus,
+        rawStatus: rawStatus || "Pending",
+        statusCode,
+
+        pickupCompleted:
+          rma.returnPickupCompleted === true,
+
+        pickedAt:
+          rma.reverseShipment?.pickedAt || null,
+
+        inTransitAt:
+          rma.reverseShipment?.inTransitAt || null,
+
+        receivedAt:
+          rma.reverseShipment?.receivedAt || null,
+
+        lastSyncedAt: now,
+      },
+
+      refund: {
+        eligibleForRefund:
+          rma.eligibleForRefund === true,
+
+        amount:
+          Number(rma.refund?.amount || 0),
+
+        status:
+          rma.refund?.status || "not_started",
+
+        orderRefundStatus:
+          order.refundSummary?.status,
+
+        orderPendingAmount:
+          Number(order.refundSummary?.pendingAmount || 0),
+      },
+    });
+  } catch (err) {
+    console.error(
+      "❌ Reverse Pickup Sync Error:",
+      getShiprocketError(err)
+    );
+
+    return sendShiprocketError(
+      res,
+      err,
+      "Reverse pickup sync failed"
+    );
+  }
+}

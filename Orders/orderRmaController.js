@@ -4,6 +4,9 @@ import Order from "./Orders.js";
 import { triggerRmaEmails } from "./order.emails.js";
 import { createReturnOrder } from "../shiprocket/shiprocket.return.js";
 import { buildReverseShiprocketPayload } from "../shiprocket/shiprocket.reverse.payload.js";
+import Customer from "../Customer/Customer.js";
+import { Mailer } from "../nodemailer/mailer.js";
+import { sendCustomerCreditWhatsapp } from "../fast2sms/fast2sms.whatsapp.js";
 
 /* ============================================================
    RMA POLICY
@@ -1148,22 +1151,19 @@ export const getAllRmasAdmin = async (req, res) => {
           }
         }
 
+        // ✅ RMA-level pickup
         const returnPickupCompletedAt =
-          order?.fulfillmentDates?.returnPickupCompletedAt ||
-          rma?.reverseShipment?.pickedAt ||
-          null;
+          rma?.reverseShipment?.pickedAt || null;
 
-        const returnPickupCompleted = Boolean(
-          returnPickupCompletedAt ||
-          order?.fulfillmentStatus ===
-          "return_pickup_completed"
-        );
+        const returnPickupCompleted =
+          rma?.returnPickupCompleted === true;
 
-        const refundEligibleAmount = Number(
-          order?.refundSummary?.eligibleAmount ||
-          rma?.refund?.amount ||
-          0
-        );
+        // ✅ RMA-level refund
+        const eligibleForRefund =
+          rma?.eligibleForRefund === true;
+
+        const refundEligibleAmount =
+          Number(rma?.refund?.amount || 0);
 
         allRmas.push({
           ...rma,
@@ -1174,6 +1174,12 @@ export const getAllRmasAdmin = async (req, res) => {
 
           isExchangeOrderCreated:
             rma?.isExchangeOrderCreated === true,
+
+          returnPickupCompleted,
+          returnPickupCompletedAt,
+
+          eligibleForRefund,
+          refundEligibleAmount,
 
           // Exchange
           hasExchangeOrder:
@@ -1226,28 +1232,20 @@ export const getAllRmasAdmin = async (req, res) => {
           paymentStatus:
             order.paymentStatus || "",
 
-          // Fulfillment
+          // Order fulfillment stays separate
           fulfillmentStatus:
             order.fulfillmentStatus || "",
 
           fulfillmentDates:
             order.fulfillmentDates || null,
 
-          // Refund
-          eligibleForRefund:
-            order?.eligibleForRefund === true,
-
-          isRefunded:
-            order?.isRefunded === true,
-
+          // Order-level refund summary
           refundSummary:
             order?.refundSummary || null,
 
-          refundEligibleAmount,
-
-          // Pickup
-          returnPickupCompleted,
-          returnPickupCompletedAt,
+          isRefunded:
+            rma?.refund?.status === "completed" ||
+            order?.isRefunded === true,
 
           // Shipping
           shipment:
@@ -1258,8 +1256,7 @@ export const getAllRmasAdmin = async (req, res) => {
 
           // Dates
           orderDate:
-            order.orderDate ||
-            order.createdAt,
+            order.orderDate || order.createdAt,
 
           orderCreatedAt:
             order.createdAt,
@@ -1286,6 +1283,233 @@ export const getAllRmasAdmin = async (req, res) => {
     return res.status(500).json({
       message:
         err.message || "Server error",
+    });
+  }
+};
+
+
+export const refundRmaToCredit = async (req, res) => {
+  try {
+    const { id, rmaNumber } = req.params;
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        message: "Order not found",
+      });
+    }
+
+    const rma = order.rmas?.find(
+      (x) => String(x?.rmaNumber) === String(rmaNumber)
+    );
+
+    if (!rma) {
+      return res.status(404).json({
+        message: "RMA not found",
+      });
+    }
+
+    if (!rma.returnPickupCompleted) {
+      return res.status(400).json({
+        message: "Return pickup is not completed",
+      });
+    }
+
+    if (!rma.eligibleForRefund) {
+      return res.status(400).json({
+        message: "RMA is not eligible for refund",
+      });
+    }
+
+    if (rma.refund?.status === "completed") {
+      return res.status(400).json({
+        message: "This RMA is already refunded",
+      });
+    }
+
+    const eligibleAmount = Number(
+      rma?.refund?.amount || 0
+    );
+
+    const requestedDeduction = Math.max(
+      0,
+      Number(req.body?.deduction || 0)
+    );
+
+    const deduction = Math.min(
+      requestedDeduction,
+      eligibleAmount
+    );
+
+    const refundAmount = Math.max(
+      0,
+      eligibleAmount - deduction
+    );
+
+    if (refundAmount <= 0) {
+      return res.status(400).json({
+        message: "Refund amount is zero after deduction",
+      });
+    }
+
+    const customer = await Customer.findById(
+      order.customerId
+    );
+
+    if (!customer) {
+      return res.status(404).json({
+        message: "Customer not found",
+      });
+    }
+
+    customer.credits = customer.credits || {};
+
+    customer.credits.balance = Number(
+      customer.credits.balance || 0
+    );
+
+    customer.credits.totalCredited = Number(
+      customer.credits.totalCredited || 0
+    );
+
+    customer.credits.totalRefundCredits = Number(
+      customer.credits.totalRefundCredits || 0
+    );
+
+    customer.credits.logs = Array.isArray(
+      customer.credits.logs
+    )
+      ? customer.credits.logs
+      : [];
+
+    const now = new Date();
+
+    const creditId =
+      `CR-${Date.now()}-${Math.floor(
+        Math.random() * 10000
+      )}`;
+
+    const newBalance =
+      customer.credits.balance + refundAmount;
+
+    customer.credits.balance = newBalance;
+    customer.credits.totalCredited += refundAmount;
+    customer.credits.totalRefundCredits += refundAmount;
+    customer.credits.lastCreditAt = now;
+
+    customer.credits.logs.unshift({
+      creditId,
+      transactionType: "credit",
+      type: "refund",
+
+      amount: refundAmount,
+      balanceAfterTransaction: newBalance,
+
+      reason: "RMA refund",
+
+      notes:
+        deduction > 0
+          ? `RMA ${rma.rmaNumber} | ₹${deduction} deduction`
+          : `RMA ${rma.rmaNumber} | No deduction`,
+
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+
+      addedBy: "admin",
+      createdAt: now,
+    });
+
+    customer.credits.logs =
+      customer.credits.logs.slice(0, 300);
+
+    /* ==============================
+       RMA REFUND COMPLETE
+    ============================== */
+
+    rma.refund.amount = refundAmount;
+    rma.refund.mode = "source";
+    rma.refund.status = "completed";
+    rma.refund.referenceId = creditId;
+
+    rma.status = "refund_completed";
+    rma.eligibleForRefund = false;
+
+    await customer.save();
+    await order.save();
+
+    /* ==============================
+       NOTIFICATIONS
+    ============================== */
+
+    const jobs = [];
+
+    if (customer.email) {
+      jobs.push(
+        Mailer.sendCustomerCreditCredited({
+          to: customer.email,
+          name: customer.name || "Customer",
+
+          amount: refundAmount,
+          balance: newBalance,
+
+          orderNumber: order.orderNumber,
+          creditId,
+
+          reason: "Refund",
+          creditedAt: now,
+
+          ctaUrl:
+            `${process.env.CLIENT_URL || "https://oatclub.in"}/account`,
+        })
+      );
+    }
+
+    if (customer.phone) {
+      jobs.push(
+        sendCustomerCreditWhatsapp({
+          phone: customer.phone,
+
+          customerName:
+            customer.name || "Customer",
+
+          amount: refundAmount,
+          creditId,
+        })
+      );
+    }
+
+    if (jobs.length) {
+      Promise.allSettled(jobs).catch(() => { });
+    }
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        `₹${refundAmount} refunded to customer credit`,
+
+      refund: {
+        eligibleAmount,
+        deduction,
+        refundAmount,
+        creditId,
+        status: "completed",
+      },
+
+      credits: {
+        balance: newBalance,
+      },
+    });
+  } catch (err) {
+    console.error(
+      "❌ RMA Credit Refund Error:",
+      err
+    );
+
+    return res.status(500).json({
+      message:
+        err.message || "Refund failed",
     });
   }
 };

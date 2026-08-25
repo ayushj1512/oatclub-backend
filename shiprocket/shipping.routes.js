@@ -4,6 +4,7 @@ import {
   createReversePickup,
   syncShiprocketTrackingFlex,
   checkShiprocketServiceabilityApi,
+  syncReversePickup,
 } from "./shipping.controller.js";
 import { shiprocketWebhook } from "./shiprocket.webhook.js";
 
@@ -38,8 +39,15 @@ router.post(
   createReversePickup
 );
 
-router.post("/shiprocket/reverse/:orderId/:rmaNumber", createReversePickup);
+router.post(
+  "/return/:orderId/:rmaNumber/sync",
+  syncReversePickup
+);
 
+router.post(
+  "/shiprocket/return/:orderId/:rmaNumber/sync",
+  syncReversePickup
+);
 /* ============================================================
    TRACKING SYNC
 ============================================================ */

@@ -86,6 +86,7 @@ import {
   getRmaByNumber,
   getRmasByOrder,
   updateRma,
+  refundRmaToCredit,
 } from "./orderRmaController.js";
 
 import { getRmaReasonsGroupedByProductCode } from "./order.rma.controller.js";
@@ -431,6 +432,11 @@ router.post(
 router.post(
   "/repair-split-original",
   repairSplitOrderToOriginal,
+);
+
+router.post(
+  "/:id/rma/:rmaNumber/refund-credit",
+  refundRmaToCredit
 );
 
 

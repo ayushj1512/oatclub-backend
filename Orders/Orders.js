@@ -124,6 +124,18 @@ const rmaSchema = new mongoose.Schema(
 
     type: { type: String, enum: ["return", "exchange"], default: "return" },
 
+    returnPickupCompleted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    eligibleForRefund: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     status: {
       type: String,
       enum: [
