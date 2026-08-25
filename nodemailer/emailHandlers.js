@@ -9,6 +9,7 @@ import { orderConfirmationTemplate } from "./OrderConfirmationTemplate.js";
 import { orderReceivedTemplate } from "./OrderReceivedTemplate.js";
 import { rmaCreatedTemplate } from "./events/RmaEmailTemplate.js";
 import { orderPaymentPendingTemplate } from "./events/OrderPaymentPendingTemplate.js";
+import { customerCreditCreditedTemplate } from "./events/CustomerCreditCreditedTemplate.js";
 
 // Fixed recipients for internal ORDER_RECEIVED emails
 const ORDER_RECEIVED_RECIPIENTS = [
@@ -523,6 +524,87 @@ eventBus.on(
     } catch (err) {
       console.error(
         "❌ RMA_REQUESTED email failed:",
+        err.message
+      );
+    }
+  }
+);
+
+/* =========================================================
+   CUSTOMER CREDIT CREDITED → Customer Credit Email
+
+   Event payload:
+   {
+     email,
+     name?,
+     amount,
+     balance,
+     orderNumber?,
+     creditId?,
+     reason?,
+     creditedAt?,
+     ctaUrl?
+   }
+========================================================= */
+
+eventBus.on(
+  EVENTS.CUSTOMER_CREDIT_CREDITED,
+  async ({
+    email,
+    name,
+    amount,
+    balance,
+    orderNumber,
+    creditId,
+    reason,
+    creditedAt,
+    ctaUrl,
+  }) => {
+    try {
+      if (!email) {
+        throw new Error(
+          "Missing email in CUSTOMER_CREDIT_CREDITED event"
+        );
+      }
+
+      if (Number(amount) <= 0) {
+        throw new Error(
+          "Invalid amount in CUSTOMER_CREDIT_CREDITED event"
+        );
+      }
+
+      const { subject, text, html } =
+        customerCreditCreditedTemplate({
+          name: name || "Customer",
+          amount,
+          balance,
+          orderNumber,
+          creditId,
+          reason: reason || "Refund",
+          creditedAt: creditedAt || new Date(),
+          ctaUrl: ctaUrl || "https://oatclub.in",
+        });
+
+      await sendMail({
+        to: email,
+        subject,
+        text,
+        html,
+      });
+
+      console.log(
+        "✅ CUSTOMER_CREDIT_CREDITED email sent:",
+        {
+          email,
+          amount,
+          balance,
+          orderNumber,
+          creditId,
+        }
+      );
+    } catch (err) {
+      console.error(
+        "❌ CUSTOMER_CREDIT_CREDITED email failed:",
         err.message
       );
     }

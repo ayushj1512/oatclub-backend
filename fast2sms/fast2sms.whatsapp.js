@@ -274,3 +274,37 @@ export const sendOrderConfirmationWhatsapp =
       order,
     });
   };
+
+
+/* =========================================================
+ CUSTOMER WALLET CREDIT
+========================================================= */
+
+export const sendCustomerCreditWhatsapp =
+  async ({
+    phone,
+    customerName = "Customer",
+    amount,
+    creditId = "",
+  }) => {
+    const template =
+      getApprovedFast2SmsTemplate(
+        "CUSTOMER_CREDITS_UPDATE",
+      );
+
+    const variables =
+      template.buildVariables({
+        customerName,
+        amount,
+      });
+
+    return sendFast2SmsWhatsappTemplate({
+      phone,
+      templateKey:
+        "CUSTOMER_CREDITS_UPDATE",
+      variables,
+
+      udf1: creditId,
+      udf2: "customer_wallet_credit",
+    });
+  };

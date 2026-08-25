@@ -13,6 +13,7 @@ import { orderPaymentPendingTemplate } from "./events/OrderPaymentPendingTemplat
 import {
   adminUserTaskEmailTemplate,
 } from "./events/AdminUserTaskEmailTemplate.js";
+import { customerCreditCreditedTemplate } from "./events/CustomerCreditCreditedTemplate.js";
 
 const MAIL_ENABLED = String(process.env.MAIL_ENABLED).toLowerCase() !== "false";
 
@@ -405,3 +406,34 @@ function patchShipment(order, awb, courierName, trackingLink) {
     },
   };
 }
+
+sendCustomerCreditCredited: async ({
+  to,
+  name,
+  amount,
+  balance,
+  orderNumber,
+  creditId,
+  reason,
+  creditedAt,
+  ctaUrl,
+}) => {
+  const { subject, text, html } =
+    customerCreditCreditedTemplate({
+      name,
+      amount,
+      balance,
+      orderNumber,
+      creditId,
+      reason,
+      creditedAt,
+      ctaUrl,
+    });
+
+  return sendMail({
+    to,
+    subject,
+    text,
+    html,
+  });
+},

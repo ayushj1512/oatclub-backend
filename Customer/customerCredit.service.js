@@ -12,6 +12,56 @@ const str = (v) => (v == null ? "" : String(v).trim());
 const makeCreditId = () =>
   `CR-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
+const notifyRefundCredit = async ({
+  customer,
+  amount,
+  balance,
+  log,
+  orderNumber = "",
+}) => {
+  const jobs = [];
+
+  if (customer?.email) {
+    jobs.push(
+      Mailer.sendCustomerCreditCredited({
+        to: customer.email,
+        name: customer.name || "Customer",
+        amount,
+        balance,
+        orderNumber,
+        creditId: log?.creditId || "",
+        reason: "Refund",
+        creditedAt: log?.createdAt || new Date(),
+        ctaUrl: `${process.env.CLIENT_URL || "https://oatclub.in"}/account`,
+      }),
+    );
+  }
+
+  if (customer?.phone) {
+    jobs.push(
+      sendCustomerCreditWhatsapp({
+        phone: customer.phone,
+        customerName: customer.name || "Customer",
+        amount,
+        creditId: log?.creditId || "",
+      }),
+    );
+  }
+
+  if (!jobs.length) return;
+
+  const results = await Promise.allSettled(jobs);
+
+  results.forEach((result) => {
+    if (result.status === "rejected") {
+      console.error(
+        "❌ Refund credit notification failed:",
+        result.reason?.message || result.reason,
+      );
+    }
+  });
+};
+
 const getCustomerById = async ({ customerId, session = null }) => {
   const query = Customer.findById(customerId);
   if (session) query.session(session);
@@ -250,7 +300,7 @@ export const creditWalletForRefundInternal = async ({
   adminId = null,
   session = null,
 }) => {
-  return addCustomerCreditInternal({
+  const result = await addCustomerCreditInternal({
     customerId,
     amount,
     type: "refund",
@@ -263,6 +313,23 @@ export const creditWalletForRefundInternal = async ({
     adminId,
     session,
   });
+
+  /*
+   * Important:
+   * Don't send external notifications from inside an
+   * uncommitted Mongo transaction.
+   */
+  if (!session) {
+    await notifyRefundCredit({
+      customer: result.customer,
+      amount: result.log.amount,
+      balance: result.balance,
+      log: result.log,
+      orderNumber,
+    });
+  }
+
+  return result;
 };
 
 export const rollbackOrderWalletDebitInternal = async ({

@@ -77,6 +77,27 @@ export const FAST2SMS_TEMPLATES = Object.freeze({
     language: "en",
     status: "NOT_CONFIGURED",
   },
+
+  CUSTOMER_CREDITS_UPDATE: {
+    key: "CUSTOMER_CREDITS_UPDATE",
+
+    messageId: 30308,
+    templateId: "27980122948283343",
+    templateName: "oatclub_credits_update",
+
+    language: "en",
+
+    // Approval aate hi APPROVED kar dena
+    status: "APPROVED",
+
+    buildVariables: ({
+      customerName,
+      amount,
+    } = {}) => [
+        clean(customerName, "Customer"),
+        cleanAmount(amount),
+      ],
+  },
 });
 
 export const getFast2SmsTemplate = (
