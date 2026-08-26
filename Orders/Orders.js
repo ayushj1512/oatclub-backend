@@ -878,6 +878,17 @@ const orderSchema = new mongoose.Schema(
       index: true,
     },
 
+    isRtoReceived: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    rtoReceivedAt: {
+      type: Date,
+      default: null,
+    },
+
     fulfillmentDates: {
       processingAt: { type: Date, default: Date.now },
       packedAt: { type: Date, default: null },
@@ -2169,6 +2180,28 @@ orderSchema.pre("validate", function (next) {
     next();
   } catch (error) {
     next(error);
+  }
+});
+
+
+// ========================================================================================
+// ✅ AUTO-SET RTO RECEIVED TIME
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    if (this.isModified("isRtoReceived")) {
+      if (this.isRtoReceived === true && !this.rtoReceivedAt) {
+        this.rtoReceivedAt = new Date();
+      }
+
+      if (this.isRtoReceived === false) {
+        this.rtoReceivedAt = null;
+      }
+    }
+
+    next();
+  } catch (err) {
+    next(err);
   }
 });
 

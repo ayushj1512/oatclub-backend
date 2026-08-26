@@ -41,7 +41,9 @@ import {
   updateOrderPaymentStatus,
   updateOrderStatus,
   updateTracking,
-  repairSplitOrderToOriginal
+  repairSplitOrderToOriginal,
+  updateRtoReceivedStatus,
+
 } from "./orderController.js";
 
 import {
@@ -437,6 +439,11 @@ router.post(
 router.post(
   "/:id/rma/:rmaNumber/refund-credit",
   refundRmaToCredit
+);
+
+router.patch(
+  "/:id/rto-received",
+  updateRtoReceivedStatus
 );
 
 

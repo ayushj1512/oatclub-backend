@@ -2186,6 +2186,7 @@ export const getAllOrders = async (req, res) => {
       maxAmount,
       paymentMethod,
       customerName,
+      isRtoReceived,
 
       // ✅ Universal attribution filters
       attributionSource,
@@ -2323,6 +2324,18 @@ export const getAllOrders = async (req, res) => {
         filters.isRefunded = true;
       } else if (value === "false") {
         filters.isRefunded = { $ne: true };
+      }
+    }
+
+    // ✅ RTO RECEIVED FILTER
+    if (isRtoReceived != null) {
+      const value = toLower(isRtoReceived);
+
+      if (["true", "1", "yes"].includes(value)) {
+        filters.isRtoReceived = true;
+      } else if (["false", "0", "no"].includes(value)) {
+        // old orders may not have the field at all
+        filters.isRtoReceived = { $ne: true };
       }
     }
 
@@ -2574,54 +2587,85 @@ export const getAllOrders = async (req, res) => {
           orderNumber: rx,
         },
 
-        // Customer
+        // Customer - Shipping
         {
-          "shippingAddressSnapshot.fullName":
-            rx,
+          "shippingAddressSnapshot.fullName": rx,
         },
         {
-          "shippingAddressSnapshot.email":
-            rx,
+          "shippingAddressSnapshot.email": rx,
         },
         {
-          "shippingAddressSnapshot.phone":
-            rx,
+          "shippingAddressSnapshot.phone": rx,
+        },
+        {
+          "shippingAddressSnapshot.city": rx,
+        },
+        {
+          "shippingAddressSnapshot.state": rx,
+        },
+        {
+          "shippingAddressSnapshot.pincode": rx,
         },
 
-        // ✅ Product
+        // Customer - Billing
         {
-          "items.productSnapshot.productCode":
-            rx,
+          "billingAddressSnapshot.fullName": rx,
         },
         {
-          "items.productSnapshot.title":
-            rx,
+          "billingAddressSnapshot.email": rx,
         },
         {
-          "items.variant.sku":
-            rx,
+          "billingAddressSnapshot.phone": rx,
+        },
+
+        // ✅ AWB / Courier
+        {
+          "shipment.awb": rx,
+        },
+        {
+          "shipment.courierName": rx,
+        },
+        {
+          "shipment.orderId": rx,
+        },
+        {
+          "shipment.shipmentId": rx,
+        },
+
+        // ✅ Shiprocket fallback
+        {
+          "shipment.shiprocket.awb": rx,
+        },
+        {
+          "shipment.shiprocket.courierName": rx,
+        },
+
+        // Product
+        {
+          "items.productSnapshot.productCode": rx,
+        },
+        {
+          "items.productSnapshot.title": rx,
+        },
+        {
+          "items.variant.sku": rx,
         },
 
         // Attribution
         {
-          "attribution.source":
-            rx,
+          "attribution.source": rx,
         },
         {
-          "attribution.medium":
-            rx,
+          "attribution.medium": rx,
         },
         {
-          "attribution.campaign":
-            rx,
+          "attribution.campaign": rx,
         },
         {
-          "attribution.campaignSlug":
-            rx,
+          "attribution.campaignSlug": rx,
         },
         {
-          "attribution.shortCode":
-            rx,
+          "attribution.shortCode": rx,
         },
       ];
     }
@@ -2667,6 +2711,11 @@ export const getAllOrders = async (req, res) => {
       orderDate: 1,
       "fulfillmentDates.packedAt": 1,
       "fulfillmentDates.deliveredAt": 1,
+      "fulfillmentDates.rtoAt": 1,
+
+      // ✅ RTO warehouse receipt
+      isRtoReceived: 1,
+      rtoReceivedAt: 1,
       "shipment.deliveredAt": 1,
       "trackingDetails.deliveredAt": 1,
       "eligibleForRma": 1,
@@ -12922,5 +12971,104 @@ export const repairSplitOrderToOriginal = async (req, res) => {
     });
   } finally {
     await session.endSession();
+  }
+};
+
+
+
+// ========================================================================================
+// ✅ MARK / UNMARK RTO RECEIVED
+// - Tracks whether physical RTO parcel reached warehouse
+// - Automatically stores exact received time
+// ========================================================================================
+
+export const updateRtoReceivedStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isRtoReceived } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order id",
+      });
+    }
+
+    if (typeof isRtoReceived !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "isRtoReceived must be true or false",
+      });
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    const now = new Date();
+
+    /* =========================================================
+       MARK RTO RECEIVED
+    ========================================================= */
+
+    if (isRtoReceived) {
+      order.isRtoReceived = true;
+
+      // Don't overwrite original received timestamp
+      order.rtoReceivedAt =
+        order.rtoReceivedAt || now;
+
+      // ✅ Physical packet received = order is now RTO
+      order.fulfillmentStatus = "rto";
+
+      // ✅ Keep normal fulfillment date tracking consistent
+      order.fulfillmentDates =
+        order.fulfillmentDates || {};
+
+      order.fulfillmentDates.rtoAt =
+        order.fulfillmentDates.rtoAt || now;
+    }
+
+    /* =========================================================
+       UNDO ONLY RECEIVED MARK
+       - Do NOT revert fulfillmentStatus automatically
+    ========================================================= */
+
+    if (!isRtoReceived) {
+      order.isRtoReceived = false;
+      order.rtoReceivedAt = null;
+
+      // Intentionally NOT changing fulfillmentStatus.
+      // We don't safely know the previous status.
+    }
+
+    const updatedOrder = await order.save();
+
+    return res.status(200).json({
+      success: true,
+
+      message: isRtoReceived
+        ? "RTO received and fulfillment marked as RTO"
+        : "RTO received status removed",
+
+      order: updatedOrder,
+    });
+  } catch (error) {
+    console.error(
+      "❌ updateRtoReceivedStatus error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to update RTO received status",
+      error: error.message,
+    });
   }
 };
