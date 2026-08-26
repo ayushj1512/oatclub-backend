@@ -2063,13 +2063,24 @@ export const createOrder = async (req, res) => {
       "createOrder",
     );
 
-    // ❌ No COD confirmation WhatsApp here.
-    // Partial COD confirmation comes only after upfront payment succeeds.
+    const finalPaymentMethod = String(
+      finalOrder?.paymentMethod || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    if (
+      finalPaymentMethod === "cod" &&
+      finalOrder?.isConfirmed !== true
+    ) {
+      await triggerFast2SmsSafe({
+        type: "cod_confirmation",
+        order: finalOrder,
+      });
+    }
 
     try {
-      triggerOrderEmails(
-        finalOrder,
-      );
+      await triggerOrderEmails(finalOrder);
     } catch (error) {
       console.error(
         "⚠️ triggerOrderEmails failed:",
