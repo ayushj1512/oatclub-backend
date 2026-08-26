@@ -2153,6 +2153,144 @@ const istEndExclusiveUtcFromYMD = (ymd) => {
   return new Date(start.getTime() + 24 * 60 * 60 * 1000);
 };
 
+const applyInventoryPackabilityFilter = async (
+  baseFilter = {},
+  rawPackability = ""
+) => {
+  const packability = String(rawPackability || "")
+    .trim()
+    .toLowerCase();
+
+  if (!["packable", "unpackable"].includes(packability)) {
+    return baseFilter;
+  }
+
+  // pehle current filters ke matching orders nikalo
+  const candidateOrders = await Order.find(baseFilter)
+    .select({
+      _id: 1,
+      "items.productId": 1,
+      "items.productModel": 1,
+      "items.variant.variantId": 1,
+      "items.quantity": 1,
+    })
+    .lean();
+
+  if (!candidateOrders.length) {
+    return {
+      $and: [
+        baseFilter,
+        { _id: { $in: [] } },
+      ],
+    };
+  }
+
+  const orderIds = candidateOrders.map((order) => order._id);
+
+  // sirf actually reserved inventory count hogi
+  const reservations = await InventoryReservation.find({
+    refType: "order",
+    refId: { $in: orderIds },
+    status: "reserved",
+  })
+    .select({
+      refId: 1,
+      productModel: 1,
+      productId: 1,
+      variantId: 1,
+      qty: 1,
+    })
+    .lean();
+
+  const toId = (value) =>
+    value == null ? "" : String(value);
+
+  const makeKey = ({
+    orderId,
+    productModel,
+    productId,
+    variantId,
+  }) =>
+    [
+      toId(orderId),
+      String(productModel || "Product"),
+      toId(productId),
+      toId(variantId),
+    ].join(":");
+
+  // actual reserved qty
+  const reservedQtyMap = new Map();
+
+  for (const reservation of reservations) {
+    const key = makeKey({
+      orderId: reservation.refId,
+      productModel: reservation.productModel,
+      productId: reservation.productId,
+      variantId: reservation.variantId,
+    });
+
+    reservedQtyMap.set(
+      key,
+      (reservedQtyMap.get(key) || 0) +
+      Number(reservation.qty || 0)
+    );
+  }
+
+  const packableOrderIds = [];
+  const unpackableOrderIds = [];
+
+  for (const order of candidateOrders) {
+    const requiredQtyMap = new Map();
+
+    for (const item of order.items || []) {
+      const qty = Number(item?.quantity || 0);
+
+      if (!item?.productId || qty <= 0) continue;
+
+      const key = makeKey({
+        orderId: order._id,
+        productModel: item?.productModel || "Product",
+        productId: item.productId,
+        variantId: item?.variant?.variantId || null,
+      });
+
+      requiredQtyMap.set(
+        key,
+        (requiredQtyMap.get(key) || 0) + qty
+      );
+    }
+
+    const isPackable =
+      requiredQtyMap.size > 0 &&
+      [...requiredQtyMap.entries()].every(
+        ([key, requiredQty]) =>
+          (reservedQtyMap.get(key) || 0) >= requiredQty
+      );
+
+    if (isPackable) {
+      packableOrderIds.push(order._id);
+    } else {
+      unpackableOrderIds.push(order._id);
+    }
+  }
+
+  const matchingIds =
+    packability === "packable"
+      ? packableOrderIds
+      : unpackableOrderIds;
+
+  return {
+    $and: [
+      baseFilter,
+      {
+        _id: {
+          $in: matchingIds,
+        },
+      },
+    ],
+  };
+};
+
 // ✅ Updated: getAllOrders
 // - supports array query params (fulfillmentStatus, paymentStatus, paymentMethod, priority)
 // - safer parsing + sanitization
@@ -2187,6 +2325,7 @@ export const getAllOrders = async (req, res) => {
       paymentMethod,
       customerName,
       isRtoReceived,
+      packability,
 
       // ✅ Universal attribution filters
       attributionSource,
@@ -2206,8 +2345,7 @@ export const getAllOrders = async (req, res) => {
       includeSum = "false",
     } = req.query;
 
-    const filters = {};
-
+    let filters = {};
     /* ----------------------------
        ✅ helpers
     ---------------------------- */
@@ -2669,6 +2807,14 @@ export const getAllOrders = async (req, res) => {
         },
       ];
     }
+
+    // ✅ Inventory packability filter
+    // ?packability=packable
+    // ?packability=unpackable
+    filters = await applyInventoryPackabilityFilter(
+      filters,
+      packability
+    );
 
     /* ----------------------------
        ✅ Pagination
@@ -10040,7 +10186,7 @@ export const getAdvancedFilteredOrders = async (
 
     /* ---------------- Final Mongo filter ---------------- */
 
-    const mongoFilter =
+    let mongoFilter =
       clauses.length === 0
         ? {}
         : clauses.length === 1
@@ -10048,6 +10194,13 @@ export const getAdvancedFilteredOrders = async (
           : {
             $and: clauses,
           };
+
+
+    // ✅ Inventory packability filter
+    mongoFilter = await applyInventoryPackabilityFilter(
+      mongoFilter,
+      query.packability
+    );
 
     /* ---------------- Pagination ---------------- */
 
