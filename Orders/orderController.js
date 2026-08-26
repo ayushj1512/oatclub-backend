@@ -4222,19 +4222,15 @@ export const duplicateExchangeOrder = async (req, res) => {
   const session = await mongoose.startSession();
 
   const str = (v) => (v == null ? "" : String(v));
-
   const num = (v, d = 0) => {
-    const x = Number(v);
-    return Number.isFinite(x) ? x : d;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : d;
   };
 
   const isObjectId = (v) =>
     mongoose.Types.ObjectId.isValid(String(v || ""));
 
-  const oid = (v) =>
-    new mongoose.Types.ObjectId(String(v));
-
-  const normalizeVariantAttributes = (variant) => {
+  const normalizeAttrs = (variant) => {
     const raw = variant?.attributes;
 
     if (Array.isArray(raw)) {
@@ -4256,52 +4252,17 @@ export const duplicateExchangeOrder = async (req, res) => {
     return [];
   };
 
-  const findVariantById = (product, variantId) => {
-    if (!variantId) return null;
-
-    return (product?.variants || []).find(
-      (v) => String(v._id) === String(variantId),
-    ) || null;
-  };
-
   const pickAttr = (attrs = [], keys = []) => {
-    const wanted = keys.map((k) =>
-      str(k).trim().toLowerCase(),
-    );
+    const wanted = keys.map((k) => str(k).trim().toLowerCase());
 
-    const found = (attrs || []).find((a) =>
-      wanted.includes(
-        str(a?.key).trim().toLowerCase(),
-      ),
+    return str(
+      attrs.find((a) =>
+        wanted.includes(str(a?.key).trim().toLowerCase())
+      )?.value
     );
-
-    return found?.value ? str(found.value) : "";
   };
 
-  const sanitizeSelectedColor = (
-    color,
-    productCode = "",
-  ) => {
-    const c = str(color).trim();
-    const pc = str(productCode).trim();
-
-    if (!c) return "";
-    if (/^[0-9]+$/.test(c)) return "";
-    if (
-      pc &&
-      c.toUpperCase() === pc.toUpperCase()
-    ) {
-      return "";
-    }
-
-    return c;
-  };
-
-  const getSizeFromSku = (sku) => {
-    const parts = str(sku)
-      .toUpperCase()
-      .split("-");
-
+  const getSizeFromSku = (sku = "") => {
     const sizes = [
       "XXS",
       "XS",
@@ -4315,93 +4276,61 @@ export const duplicateExchangeOrder = async (req, res) => {
       "5XL",
     ];
 
-    for (let i = parts.length - 1; i >= 0; i--) {
-      if (sizes.includes(parts[i])) {
-        return parts[i];
-      }
-    }
-
-    return "";
+    return (
+      str(sku)
+        .toUpperCase()
+        .split("-")
+        .reverse()
+        .find((x) => sizes.includes(x)) || ""
+    );
   };
 
-  const getColorFromSku = (
-    sku,
-    productCode = "",
-  ) => {
-    const parts = str(sku)
-      .toUpperCase()
-      .split("-");
+  const getVariantSize = (variant) => {
+    const attrs = normalizeAttrs(variant);
 
+    return (
+      pickAttr(attrs, ["size", "sizes", "shirt_size"]) ||
+      getSizeFromSku(variant?.sku)
+    )
+      .trim()
+      .toUpperCase();
+  };
+
+  const getColor = (variant, productCode = "") => {
+    const attrs = normalizeAttrs(variant);
+
+    const fromAttr = pickAttr(attrs, [
+      "color",
+      "colour",
+      "color_name",
+    ]).trim();
+
+    if (fromAttr) return fromAttr;
+
+    const parts = str(variant?.sku).toUpperCase().split("-");
     if (parts.length < 2) return "";
 
-    const sizes = [
-      "XXS",
-      "XS",
-      "S",
-      "M",
-      "L",
-      "XL",
-      "XXL",
-      "3XL",
-      "4XL",
-      "5XL",
-    ];
-
-    const maybeColor =
-      parts[parts.length - 2];
-
-    if (sizes.includes(maybeColor)) return "";
-    if (/^[0-9]+$/.test(maybeColor)) return "";
+    const value = parts[parts.length - 2];
 
     if (
-      productCode &&
-      maybeColor ===
-      str(productCode).toUpperCase()
+      !value ||
+      /^[0-9]+$/.test(value) ||
+      value === str(productCode).toUpperCase() ||
+      getSizeFromSku(value)
     ) {
       return "";
     }
 
-    return maybeColor.toLowerCase();
-  };
-
-  const computeAllocation = ({
-    stock = 0,
-    reservedStock = 0,
-    qty = 1,
-  }) => {
-    const q = Math.max(1, num(qty, 1));
-
-    const sellable = Math.max(
-      0,
-      num(stock) - num(reservedStock),
-    );
-
-    const allocatedQty = Math.min(
-      q,
-      sellable,
-    );
-
-    const toProduceQty = Math.max(
-      0,
-      q - allocatedQty,
-    );
-
-    return {
-      allocatedQty,
-      toProduceQty,
-    };
+    return value.toLowerCase();
   };
 
   try {
-    const orderId = req.params.orderId;
+    const { orderId } = req.params;
 
     const {
       items,
       rmaNumber,
-      customerNote = "",
-      adminNote = "",
       reason = "other",
-      resolution = "exchange",
     } = req.body || {};
 
     if (!isObjectId(orderId)) {
@@ -4410,456 +4339,330 @@ export const duplicateExchangeOrder = async (req, res) => {
       });
     }
 
-    let newOrderDoc = null;
+    let newOrderDoc;
 
     await session.withTransaction(async () => {
-      const original = await Order.findById(
-        orderId,
-      ).session(session);
+      const original = await Order.findById(orderId).session(session);
 
       if (!original) {
-        throw new Error(
-          "Original order not found",
-        );
+        throw new Error("Original order not found");
       }
 
-      const base = str(
-        original.orderNumber,
-      ).trim();
+      const base = str(original.orderNumber).trim();
 
       if (!base) {
-        throw new Error(
-          "Original orderNumber missing",
-        );
+        throw new Error("Original orderNumber missing");
       }
 
-      // ✅ Exchange order = ORIGINAL-E
       const newOrderNumber = `${base}-E`;
 
-      // ✅ prevent duplicate exchange order
-      const existingExchangeOrder =
-        await Order.findOne({
-          orderNumber: newOrderNumber,
-        })
-          .session(session)
-          .lean();
+      const exists = await Order.findOne({
+        orderNumber: newOrderNumber,
+      })
+        .session(session)
+        .lean();
 
-      if (existingExchangeOrder) {
-        throw new Error(
-          "Exchange order already created",
-        );
+      if (exists) {
+        throw new Error("Exchange order already created");
       }
+
+      // ---------------------------------------------------------
+      // RMA + preferred exchange size
+      // ---------------------------------------------------------
+
+      const targetRma = rmaNumber
+        ? (original.rmas || []).find(
+          (r) => str(r?.rmaNumber) === str(rmaNumber)
+        )
+        : [...(original.rmas || [])]
+          .reverse()
+          .find((r) => r?.type === "exchange");
+
+      if (!targetRma) {
+        throw new Error("Exchange RMA not found");
+      }
+
+      const exchangeRequest =
+        targetRma?.exchangeTo ||
+        targetRma?.exchangeRequest ||
+        {};
+
+      const requestedSize = pickAttr(
+        exchangeRequest?.attributes || [],
+        ["size", "sizes", "shirt_size"]
+      )
+        .trim()
+        .toUpperCase();
 
       const incomingItems =
         Array.isArray(items) && items.length
           ? items
           : null;
 
-      let normalizedItems = [];
+      if (!incomingItems) {
+        throw new Error("Exchange items missing");
+      }
+
+      // ---------------------------------------------------------
+      // Products
+      // ---------------------------------------------------------
+
+      const productIds = [
+        ...new Set(
+          incomingItems
+            .map((item) => str(item?.productId))
+            .filter(Boolean)
+        ),
+      ];
+
+      const badId = productIds.find(
+        (id) => !isObjectId(id)
+      );
+
+      if (badId) {
+        throw new Error(`Invalid productId: ${badId}`);
+      }
+
+      const products = await Product.find({
+        _id: { $in: productIds },
+      })
+        .session(session)
+        .lean();
+
+      const productMap = new Map(
+        products.map((p) => [str(p._id), p])
+      );
+
+      const normalizedItems = [];
       let subtotal = 0;
 
-      if (!incomingItems) {
-        normalizedItems = (
-          original.items || []
-        ).map((it) => {
-          const qty = Math.max(
-            1,
-            Number(it.quantity || 1),
-          );
+      // ---------------------------------------------------------
+      // Build replacement items
+      // ---------------------------------------------------------
 
-          subtotal += Number(
-            it.subtotal ??
-            Number(it.price || 0) * qty,
-          );
-
-          return {
-            ...(it?.toObject?.()
-              ? it.toObject()
-              : it),
-
-            lineId: crypto.randomUUID(),
-
-            fulfillment: {
-              allocatedQty: 0,
-              shippedQty: 0,
-              toProduceQty: qty,
-            },
-          };
-        });
-      } else {
-        const productIds = [
-          ...new Set(
-            incomingItems
-              .map((i) => str(i?.productId))
-              .filter(Boolean),
-          ),
-        ];
-
-        const bad = productIds.find(
-          (id) => !isObjectId(id),
+      for (const item of incomingItems) {
+        const product = productMap.get(
+          str(item?.productId)
         );
 
-        if (bad) {
-          throw new Error(
-            `Invalid productId: ${bad}`,
-          );
+        if (!product) {
+          throw new Error("Product not found");
         }
 
-        const products =
-          await Product.find({
-            _id: {
-              $in: productIds,
-            },
-          })
-            .session(session)
-            .lean();
-
-        const productMap = new Map(
-          products.map((p) => [
-            str(p._id),
-            p,
-          ]),
+        const qty = Math.max(
+          1,
+          num(item?.quantity, 1)
         );
 
-        for (const item of incomingItems) {
-          const pid = str(item?.productId);
+        const isVariable =
+          product.productType === "variable" ||
+          (product.variants || []).length > 0;
 
-          if (!pid) {
+        let variant = null;
+
+        if (isVariable) {
+          // ✅ RMA preferred size gets FIRST priority
+          if (requestedSize) {
+            variant =
+              (product.variants || []).find(
+                (v) =>
+                  getVariantSize(v) === requestedSize
+              ) || null;
+          }
+
+          // fallback only if preferred size unavailable/not supplied
+          if (!variant && item?.variantId) {
+            variant =
+              (product.variants || []).find(
+                (v) =>
+                  str(v?._id) === str(item.variantId)
+              ) || null;
+          }
+
+          if (!variant) {
             throw new Error(
-              "productId missing",
+              requestedSize
+                ? `${product.title} - size ${requestedSize} variant not found`
+                : `${product.title} - variant not found`
             );
           }
+        }
 
-          const qty = num(
-            item?.quantity,
-            0,
-          );
+        const stock = num(
+          variant?.stock ?? product.stock
+        );
 
-          if (qty < 1) {
-            throw new Error(
-              "Invalid quantity",
-            );
-          }
+        const reservedStock = num(
+          variant?.reservedStock ??
+          product.reservedStock
+        );
 
-          const product =
-            productMap.get(pid);
+        const available = Math.max(
+          0,
+          stock - reservedStock
+        );
 
-          if (!product) {
-            throw new Error(
-              "Product not found",
-            );
-          }
+        const allocatedQty = Math.min(
+          qty,
+          available
+        );
 
-          const isVariable =
-            product.productType ===
-            "variable" ||
-            (Array.isArray(
-              product.variants,
-            ) &&
-              product.variants.length > 0);
+        const toProduceQty = Math.max(
+          0,
+          qty - allocatedQty
+        );
 
-          let variant = null;
+        const price = num(product.price);
+        const lineSubtotal = price * qty;
 
-          if (isVariable) {
-            if (!item.variantId) {
-              throw new Error(
-                `${product.title} - variantId missing`,
-              );
-            }
+        subtotal += lineSubtotal;
 
-            variant = findVariantById(
-              product,
-              item.variantId,
-            );
+        const attrs = normalizeAttrs(variant);
 
-            if (!variant) {
-              throw new Error(
-                `${product.title} - variant not found`,
-              );
-            }
-          }
+        normalizedItems.push({
+          lineId: crypto.randomUUID(),
 
-          const {
-            allocatedQty,
-            toProduceQty,
-          } = computeAllocation({
-            stock: variant
-              ? variant.stock
-              : product.stock,
+          productModel: "Product",
+          productId: product._id,
 
-            reservedStock: variant
-              ? variant.reservedStock
-              : product.reservedStock,
+          productSnapshot: {
+            productCode: product.productCode || "",
+            title: product.title || "",
+            slug: product.slug || "",
+            thumbnail: product.thumbnail || "",
+            images: product.images || [],
+            productType:
+              product.productType ||
+              (product.variants?.length
+                ? "variable"
+                : "simple"),
+            sku: product.sku || "",
+            tags: product.tags || [],
+            hsnCode: str(product.hsnCode),
+            weight: num(product.weight),
+            currency: product.currency || "INR",
+          },
 
-            qty,
-          });
+          variant: {
+            variantId: variant?._id || null,
+            sku: variant?.sku || "",
+            attributes: attrs,
+            weight: num(variant?.weight),
+          },
 
-          const unitPrice = num(
-            product.price,
-            0,
-          );
+          selectedSize:
+            getVariantSize(variant),
 
-          const lineSubtotal =
-            unitPrice * qty;
-
-          subtotal += lineSubtotal;
-
-          const attrs =
-            normalizeVariantAttributes(
+          selectedColor:
+            getColor(
               variant,
-            );
+              product.productCode
+            ),
 
-          const selectedSize =
-            pickAttr(attrs, [
-              "size",
-              "sizes",
-              "shirt_size",
-            ]) ||
-            getSizeFromSku(variant?.sku);
+          quantity: qty,
+          price,
+          compareAtPrice:
+            product.compareAtPrice ?? null,
+          subtotal: lineSubtotal,
 
-          const selectedColorRaw =
-            pickAttr(attrs, [
-              "color",
-              "colour",
-              "color_name",
-            ]) ||
-            getColorFromSku(
-              variant?.sku,
-              product.productCode,
-            );
-
-          const selectedColor =
-            sanitizeSelectedColor(
-              selectedColorRaw,
-              product.productCode,
-            );
-
-          normalizedItems.push({
-            lineId: crypto.randomUUID(),
-
-            productModel: "Product",
-            productId: oid(product._id),
-
-            fulfillment: {
-              allocatedQty,
-              shippedQty: 0,
-              toProduceQty,
-            },
-
-            productSnapshot: {
-              productCode:
-                product.productCode || "",
-
-              title: product.title,
-              slug: product.slug || "",
-              thumbnail:
-                product.thumbnail || "",
-
-              images: Array.isArray(
-                product.images,
-              )
-                ? product.images
-                : [],
-
-              productType:
-                product.productType ||
-                (product?.variants?.length
-                  ? "variable"
-                  : "simple"),
-
-              sku: product.sku || "",
-
-              tags: Array.isArray(
-                product.tags,
-              )
-                ? product.tags
-                : [],
-
-              hsnCode: str(
-                product.hsnCode,
-              ),
-
-              weight: num(
-                product.weight,
-                0,
-              ),
-
-              currency:
-                product.currency || "INR",
-            },
-
-            variant: {
-              variantId:
-                variant?._id || null,
-
-              sku: variant?.sku || "",
-
-              attributes: attrs,
-
-              weight: num(
-                variant?.weight,
-                0,
-              ),
-            },
-
-            selectedSize,
-            selectedColor,
-
-            quantity: qty,
-            price: unitPrice,
-
-            compareAtPrice:
-              product?.compareAtPrice ??
-              null,
-
-            subtotal: lineSubtotal,
-          });
-        }
-      }
-
-      const exchangeSubtotal = subtotal;
-      const exchangeDiscount = 0;
-      const exchangeShipping = 0;
-      const exchangeTax = 0;
-
-      const exchangeTotalAmount =
-        exchangeSubtotal;
-
-      const exchangeFinalPayable = 0;
-
-      const [created] =
-        await Order.create(
-          [
-            {
-              customerId:
-                original.customerId,
-
-              shippingAddressSnapshot:
-                original.shippingAddressSnapshot,
-
-              billingAddressSnapshot:
-                original.billingAddressSnapshot,
-
-              items: normalizedItems,
-
-              // ✅ exchange order RMA
-              rmas: [],
-
-              subtotal:
-                exchangeSubtotal,
-
-              discount:
-                exchangeDiscount,
-
-              shippingFee:
-                exchangeShipping,
-
-              tax: exchangeTax,
-
-              totalAmount:
-                exchangeTotalAmount,
-
-              finalPayable:
-                exchangeFinalPayable,
-
-              currency:
-                original.currency || "INR",
-
-              paymentMethod: "exchange",
-              paymentStatus:
-                "not_applicable",
-
-              fulfillmentStatus:
-                "processing",
-
-              // ✅ MAIN ORDER FLAG
-              // ✅ MAIN ORDER FLAGS
-              hasExchangeOrder: false,
-              isExchangeOrder: true,
-
-              source: "manual",
-
-              isGiftOrder:
-                original.isGiftOrder ||
-                false,
-
-              orderType: "shipment",
-
-              parentOrderId:
-                original._id,
-
-              splitSuffix: "E",
-
-              isConfirmed: true,
-              confirmedAt: new Date(),
-
-              confirmedBy:
-                req.user?._id || null,
-
-              adminRemarks:
-                `exchange_replacement_of:${base}`,
-
-              customerSupportRemark:
-                original.customerSupportRemark ||
-                "",
-
-              analytics: {
-                ...(original.analytics ||
-                  {}),
-
-                couponApplied: false,
-                creditsUsed: false,
-
-                onlinePaymentDiscountApplied:
-                  false,
-
-                onlinePaymentDiscountPct:
-                  0,
-
-                onlinePaymentDiscountAmount:
-                  0,
-              },
-
-              orderNumber:
-                newOrderNumber,
-            },
-          ],
-          { session },
-        );
-
-      // ✅ mark ORIGINAL RMA as exchange order created
-      const targetRma = rmaNumber
-        ? (original.rmas || []).find(
-          (r) =>
-            String(r.rmaNumber) ===
-            String(rmaNumber),
-        )
-        : [...(original.rmas || [])]
-          .reverse()
-          .find(
-            (r) =>
-              r.type === "exchange",
-          );
-
-      if (targetRma) {
-        targetRma.isExchangeOrderCreated = true;
-        targetRma.status = "approved";
-
-        // ✅ original order now has a replacement exchange order
-        original.hasExchangeOrder = true;
-
-        original.markModified("rmas");
-
-        await original.save({
-          session,
+          fulfillment: {
+            allocatedQty,
+            shippedQty: 0,
+            toProduceQty,
+          },
         });
       }
+
+      // ---------------------------------------------------------
+      // Create exchange order
+      // ---------------------------------------------------------
+
+      const [created] = await Order.create(
+        [
+          {
+            customerId: original.customerId,
+
+            shippingAddressSnapshot:
+              original.shippingAddressSnapshot,
+
+            billingAddressSnapshot:
+              original.billingAddressSnapshot,
+
+            items: normalizedItems,
+            rmas: [],
+
+            subtotal,
+            discount: 0,
+            shippingFee: 0,
+            tax: 0,
+            totalAmount: subtotal,
+            finalPayable: 0,
+
+            currency:
+              original.currency || "INR",
+
+            paymentMethod: "exchange",
+            paymentStatus: "not_applicable",
+
+            fulfillmentStatus: "processing",
+
+            hasExchangeOrder: false,
+            isExchangeOrder: true,
+
+            source: "manual",
+            orderType: "shipment",
+
+            isGiftOrder:
+              original.isGiftOrder || false,
+
+            parentOrderId: original._id,
+            splitSuffix: "E",
+
+            isConfirmed: true,
+            confirmedAt: new Date(),
+            confirmedBy:
+              req.user?._id || null,
+
+            adminRemarks:
+              `exchange_replacement_of:${base}`,
+
+            customerSupportRemark:
+              original.customerSupportRemark ||
+              "",
+
+            analytics: {
+              ...(original.analytics || {}),
+              couponApplied: false,
+              creditsUsed: false,
+              onlinePaymentDiscountApplied:
+                false,
+              onlinePaymentDiscountPct: 0,
+              onlinePaymentDiscountAmount: 0,
+            },
+
+            orderNumber: newOrderNumber,
+          },
+        ],
+        { session }
+      );
+
+      // ---------------------------------------------------------
+      // Update original RMA
+      // ---------------------------------------------------------
+
+      targetRma.isExchangeOrderCreated = true;
+      targetRma.status = "approved";
+
+      original.hasExchangeOrder = true;
+      original.markModified("rmas");
+
+      await original.save({ session });
 
       newOrderDoc = created;
     });
 
     const fresh = await Order.findById(
-      newOrderDoc._id,
+      newOrderDoc._id
     ).lean();
 
     return res.status(201).json({
@@ -4867,15 +4670,15 @@ export const duplicateExchangeOrder = async (req, res) => {
         "Exchange order created successfully",
       order: fresh,
     });
-  } catch (e) {
+  } catch (error) {
     console.error(
-      "❌ duplicateExchangeOrder error:",
-      e,
+      "❌ duplicateExchangeOrder:",
+      error
     );
 
     return res.status(400).json({
       message:
-        e.message ||
+        error?.message ||
         "Exchange order create failed",
     });
   } finally {
