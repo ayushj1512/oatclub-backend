@@ -65,6 +65,8 @@ const isShipmentOrder = (order) =>
 const ADMIN_ORDER_ALERT_EMAILS = ["oatclub.in@gmail.com"].filter(Boolean);
 
 const RAZORPAY_DISCOUNT_PERCENT = 10;
+const PARTIAL_COD_UPFRONT_PERCENT = 10;
+const COD_FEE = 59;
 
 const triggerFast2SmsSafe = ({
   type,
@@ -436,7 +438,8 @@ export const createOrder = async (req, res) => {
 
   const str = (v) => (v == null ? "" : String(v));
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-  const isObjectId = (v) => mongoose.Types.ObjectId.isValid(String(v || ""));
+  const isObjectId = (v) =>
+    mongoose.Types.ObjectId.isValid(String(v || ""));
   const oid = (v) => new mongoose.Types.ObjectId(String(v));
 
   const normEmail = (v) => str(v).trim().toLowerCase();
@@ -446,31 +449,17 @@ export const createOrder = async (req, res) => {
       .trim()
       .replace(/^\+/, "");
 
-  const isNumericLike = (v) => /^[0-9]+$/.test(str(v).trim());
-
-  const sanitizeSelectedColor = (color, productCode = "") => {
-    const c = str(color).trim();
-    const pc = str(productCode).trim();
-    if (!c) return "";
-    if (isNumericLike(c)) return "";
-    if (pc && c.toUpperCase() === pc.toUpperCase()) return "";
-    return c;
-  };
-
   const buildCouponIdentity = ({ email, phone }) => {
     const e = normEmail(email);
     if (e && e.includes("@")) return `email:${e}`;
+
     const p = normPhone(phone);
-    if (p) return `phone:${p}`;
-    return "";
+    return p ? `phone:${p}` : "";
   };
 
-  const pickAttr = (attrs = [], keys = []) => {
-    const wanted = keys.map((k) => str(k).trim().toLowerCase());
-    const found = (Array.isArray(attrs) ? attrs : []).find((a) =>
-      wanted.includes(str(a?.key).trim().toLowerCase()),
-    );
-    return found?.value ? str(found.value) : "";
+  const normalizePriority = (v) => {
+    const p = str(v).trim().toLowerCase();
+    return ["normal", "medium", "high"].includes(p) ? p : "normal";
   };
 
   const normalizeVariantAttributes = (variant) => {
@@ -479,7 +468,10 @@ export const createOrder = async (req, res) => {
     if (Array.isArray(raw)) {
       return raw
         .filter((a) => a?.key != null && a?.value != null)
-        .map((a) => ({ key: str(a.key), value: str(a.value) }));
+        .map((a) => ({
+          key: str(a.key),
+          value: str(a.value),
+        }));
     }
 
     if (raw && typeof raw === "object") {
@@ -490,6 +482,16 @@ export const createOrder = async (req, res) => {
     }
 
     return [];
+  };
+
+  const pickAttr = (attrs = [], keys = []) => {
+    const wanted = keys.map((k) => str(k).trim().toLowerCase());
+
+    const found = attrs.find((a) =>
+      wanted.includes(str(a?.key).trim().toLowerCase()),
+    );
+
+    return found?.value ? str(found.value) : "";
   };
 
   const getSizeFromSku = (sku) => {
@@ -530,25 +532,39 @@ export const createOrder = async (req, res) => {
       "4XL",
       "5XL",
     ];
-    const maybeColor = parts[parts.length - 2];
 
-    if (sizes.includes(maybeColor)) return "";
-    if (/^[0-9]+$/.test(maybeColor)) return "";
-    if (productCode && maybeColor === str(productCode).toUpperCase()) return "";
+    const color = parts[parts.length - 2];
 
-    return maybeColor.toLowerCase();
+    if (sizes.includes(color)) return "";
+    if (/^[0-9]+$/.test(color)) return "";
+
+    if (
+      productCode &&
+      color === str(productCode).trim().toUpperCase()
+    ) {
+      return "";
+    }
+
+    return color.toLowerCase();
   };
 
-  const normalizePriority = (v) => {
-    const p = str(v).trim().toLowerCase();
-    return ["normal", "medium", "high"].includes(p) ? p : "normal";
+  const sanitizeSelectedColor = (color, productCode = "") => {
+    const c = str(color).trim();
+    const pc = str(productCode).trim();
+
+    if (!c) return "";
+    if (/^[0-9]+$/.test(c)) return "";
+
+    if (pc && c.toUpperCase() === pc.toUpperCase()) {
+      return "";
+    }
+
+    return c;
   };
 
   const isPrimaryItem = (item = {}) =>
     item?.isPrimaryProduct === true ||
     item?.productSnapshot?.isPrimaryProduct === true;
-
-  const isSecondaryItem = (item = {}) => !isPrimaryItem(item);
 
   const getCouponDiscountBase = ({
     couponDoc,
@@ -565,9 +581,13 @@ export const createOrder = async (req, res) => {
 
     const hasRules =
       Array.isArray(couponDoc?.cartRules) &&
-      couponDoc.cartRules.some((rule) => rule?.isActive !== false);
+      couponDoc.cartRules.some(
+        (rule) => rule?.isActive !== false,
+      );
 
-    if (!hasRules || target === "cart") return subtotal;
+    if (!hasRules || target === "cart") {
+      return subtotal;
+    }
 
     if (
       [
@@ -584,296 +604,48 @@ export const createOrder = async (req, res) => {
     return subtotal;
   };
 
-  const normalizeOrderAttribution = (raw = {}) => {
-    const now = new Date();
-
-    const q = req.query || {};
-    const bodyAttr = raw && typeof raw === "object" ? raw : {};
-
-    const firstTouch = bodyAttr.firstTouch || {};
-    const lastTouch = bodyAttr.lastTouch || {};
-    const sessionAttr = bodyAttr.session || {};
-
-    const pick = (...values) => {
-      for (const v of values) {
-        const cleaned = str(v).trim();
-        if (cleaned) return cleaned;
-      }
-      return "";
-    };
-
-    const lowerPick = (...values) => pick(...values).toLowerCase();
-
-    const utmSource = lowerPick(
-      bodyAttr.source,
-      bodyAttr.utm_source,
-      q.utm_source,
-      lastTouch.source,
-      sessionAttr.source,
-      firstTouch.source,
-    );
-
-    const utmMedium = lowerPick(
-      bodyAttr.medium,
-      bodyAttr.utm_medium,
-      q.utm_medium,
-      lastTouch.medium,
-      sessionAttr.medium,
-      firstTouch.medium,
-    );
-
-    const utmCampaign = pick(
-      bodyAttr.campaign,
-      bodyAttr.utm_campaign,
-      q.utm_campaign,
-      lastTouch.campaign,
-      sessionAttr.campaign,
-      firstTouch.campaign,
-    );
-
-    const finalSource = utmSource || "direct";
-    const finalMedium = utmMedium || "direct";
-
-    const referrer = pick(
-      bodyAttr.referrer,
-      req.headers?.referer,
-      req.headers?.referrer,
-      lastTouch.referrer,
-      firstTouch.referrer,
-    );
-
-    const landingUrl = pick(
-      bodyAttr.landingUrl,
-      bodyAttr.firstTouchUrl,
-      firstTouch.landingUrl,
-      firstTouch.pageUrl,
-    );
-
-    const lastTouchUrl = pick(
-      bodyAttr.lastTouchUrl,
-      lastTouch.pageUrl,
-      sessionAttr.pageUrl,
-      bodyAttr.pageUrl,
-    );
-
-    return {
-      source: finalSource,
-      medium: finalMedium,
-      campaign: utmCampaign,
-
-      firstTouch: {
-        source: lowerPick(firstTouch.source, finalSource),
-        medium: lowerPick(firstTouch.medium, finalMedium),
-        campaign: pick(firstTouch.campaign, utmCampaign),
-        campaignSlug: pick(firstTouch.campaignSlug, bodyAttr.campaignSlug),
-        content: pick(firstTouch.content, bodyAttr.utm_content, q.utm_content),
-        term: pick(firstTouch.term, bodyAttr.utm_term, q.utm_term),
-        pageUrl: pick(firstTouch.pageUrl, landingUrl),
-        landingUrl,
-        referrer,
-        capturedAt: firstTouch.capturedAt || bodyAttr.capturedAt || now,
-      },
-
-      lastTouch: {
-        source: lowerPick(lastTouch.source, finalSource),
-        medium: lowerPick(lastTouch.medium, finalMedium),
-        campaign: pick(lastTouch.campaign, utmCampaign),
-        campaignSlug: pick(lastTouch.campaignSlug, bodyAttr.campaignSlug),
-        content: pick(lastTouch.content, bodyAttr.utm_content, q.utm_content),
-        term: pick(lastTouch.term, bodyAttr.utm_term, q.utm_term),
-        pageUrl: lastTouchUrl,
-        landingUrl: pick(lastTouch.landingUrl, landingUrl),
-        referrer,
-        capturedAt: lastTouch.capturedAt || now,
-      },
-
-      session: {
-        source: lowerPick(sessionAttr.source, finalSource),
-        medium: lowerPick(sessionAttr.medium, finalMedium),
-        campaign: pick(sessionAttr.campaign, utmCampaign),
-        campaignSlug: pick(sessionAttr.campaignSlug, bodyAttr.campaignSlug),
-        content: pick(sessionAttr.content, bodyAttr.utm_content, q.utm_content),
-        term: pick(sessionAttr.term, bodyAttr.utm_term, q.utm_term),
-        pageUrl: pick(sessionAttr.pageUrl, lastTouchUrl),
-        landingUrl: pick(sessionAttr.landingUrl, landingUrl),
-        referrer,
-        capturedAt: sessionAttr.capturedAt || now,
-      },
-
-      campaignId: isObjectId(bodyAttr.campaignId || q.campaignId)
-        ? oid(bodyAttr.campaignId || q.campaignId)
-        : null,
-
-      campaignSlug: pick(
-        bodyAttr.campaignSlug,
-        bodyAttr.utm_campaign,
-        q.utm_campaign,
-      ),
-
-      marketingLinkId: pick(bodyAttr.marketingLinkId, bodyAttr.mlid, q.mlid),
-      shortCode: pick(bodyAttr.shortCode, bodyAttr.mcode, q.mcode),
-
-      clickIds: {
-        fbclid: pick(bodyAttr.fbclid, q.fbclid),
-        gclid: pick(bodyAttr.gclid, q.gclid),
-        msclkid: pick(bodyAttr.msclkid, q.msclkid),
-        ttclid: pick(bodyAttr.ttclid, q.ttclid),
-        scClickId: pick(
-          bodyAttr.scClickId,
-          bodyAttr.sc_click_id,
-          q.scClickId,
-          q.sc_click_id,
-        ),
-      },
-
-      visitorId: pick(bodyAttr.visitorId, bodyAttr.vid),
-      sessionId: pick(bodyAttr.sessionId, bodyAttr.sid),
-
-      referrer,
-      landingUrl,
-      firstTouchUrl: pick(bodyAttr.firstTouchUrl, landingUrl),
-      lastTouchUrl,
-
-      device: {
-        type: pick(bodyAttr.device?.type, bodyAttr.deviceType),
-        browser: pick(bodyAttr.device?.browser, bodyAttr.browser),
-        os: pick(bodyAttr.device?.os, bodyAttr.os),
-        userAgent: pick(
-          bodyAttr.device?.userAgent,
-          req.headers?.["user-agent"],
-        ),
-        ip: pick(
-          bodyAttr.device?.ip,
-          req.headers?.["x-forwarded-for"]?.split(",")?.[0],
-          req.ip,
-          req.socket?.remoteAddress,
-        ),
-      },
-
-      raw: bodyAttr,
-      capturedAt: bodyAttr.capturedAt || now,
-      lastUpdatedAt: now,
-    };
-  };
-
-  const validateAndComputeCoupon = async ({
-    code,
-    cartTotal,
-    discountBase = null,
-    identity,
-    couponDocFromBase = null,
-  }) => {
-    if (!code) {
-      return { couponSnapshot: null, couponDiscount: 0, couponDoc: null };
-    }
-
-    const couponCode = str(code).trim().toUpperCase();
-    const couponDoc =
-      couponDocFromBase ||
-      (await Coupon.findOne({ code: couponCode }).session(session));
-
-    if (!couponDoc) throw new Error("Invalid coupon code.");
-    if (!couponDoc.isActive) throw new Error("Coupon is not active.");
-
-    if (couponDoc.validFrom && new Date() < new Date(couponDoc.validFrom)) {
-      throw new Error("Coupon is not active yet.");
-    }
-
-    if (couponDoc.validTill && new Date() > new Date(couponDoc.validTill)) {
-      throw new Error("Coupon has expired.");
-    }
-
-    if (num(cartTotal) < num(couponDoc.minPurchase || 0)) {
-      throw new Error(
-        `Minimum purchase required is ₹${num(couponDoc.minPurchase || 0)}`,
-      );
-    }
-
-    if (
-      num(couponDoc.usageLimit) > 0 &&
-      num(couponDoc.usedCount) >= num(couponDoc.usageLimit)
-    ) {
-      throw new Error("Coupon usage limit has been reached.");
-    }
-
-    const perUserLimit = num(couponDoc.usageLimitPerCustomer || 1);
-    const usedBy = Array.isArray(couponDoc.usedBy) ? couponDoc.usedBy : [];
-    const usedTimes = identity
-      ? usedBy.filter((x) => str(x) === identity).length
-      : 0;
-
-    if (identity && usedTimes >= perUserLimit) {
-      throw new Error("You have already used this coupon.");
-    }
-
-    const baseAmount =
-      discountBase !== null && discountBase !== undefined
-        ? num(discountBase)
-        : num(cartTotal);
-
-    if (baseAmount <= 0) {
-      throw new Error("Coupon is not applicable on this cart.");
-    }
-
-    let discountAmount = 0;
-
-    if (couponDoc.discountType === "percentage") {
-      discountAmount = (baseAmount * num(couponDoc.discountValue)) / 100;
-
-      if (num(couponDoc.maxDiscount) > 0) {
-        discountAmount = Math.min(discountAmount, num(couponDoc.maxDiscount));
-      }
-    } else {
-      discountAmount = Math.min(num(couponDoc.discountValue), baseAmount);
-    }
-
-    discountAmount = Math.max(0, Math.round(discountAmount));
-
-    if (!discountAmount) {
-      throw new Error("Invalid discount calculation.");
-    }
-
-    return {
-      couponSnapshot: {
-        code: couponCode,
-        discount: discountAmount,
-        discountBase: baseAmount,
-      },
-      couponDiscount: discountAmount,
-      couponDoc,
-    };
-  };
-
   const normalizeCheckoutAddress = (address = {}) => {
     const snapshot = {
       fullName: str(address.fullName || address.name).trim(),
 
-      line1: str(address.line1 || address.addressLine1).trim(),
+      line1: str(
+        address.line1 || address.addressLine1,
+      ).trim(),
 
-      line2: str(address.line2 || address.addressLine2).trim(),
+      line2: str(
+        address.line2 || address.addressLine2,
+      ).trim(),
 
       city: str(address.city).trim(),
-
       state: str(address.state).trim(),
 
-      pincode: str(address.pincode || address.postalCode)
+      pincode: str(
+        address.pincode || address.postalCode,
+      )
         .replace(/\D/g, "")
         .slice(0, 6),
 
       phone: normPhone(address.phone).slice(-10),
-
       email: normEmail(address.email),
 
       country: str(address.country || "IN").trim(),
     };
 
-    if (!snapshot.fullName) throw new Error("Full name required");
+    if (!snapshot.fullName) {
+      throw new Error("Full name required");
+    }
 
-    if (!snapshot.line1) throw new Error("Address required");
+    if (!snapshot.line1) {
+      throw new Error("Address required");
+    }
 
-    if (!snapshot.city) throw new Error("City required");
+    if (!snapshot.city) {
+      throw new Error("City required");
+    }
 
-    if (!snapshot.state) throw new Error("State required");
+    if (!snapshot.state) {
+      throw new Error("State required");
+    }
 
     if (!/^\d{6}$/.test(snapshot.pincode)) {
       throw new Error("Invalid pincode");
@@ -886,524 +658,1452 @@ export const createOrder = async (req, res) => {
     return snapshot;
   };
 
+  const normalizeOrderAttribution = (raw = {}) => {
+    const now = new Date();
+    const q = req.query || {};
+    const attr =
+      raw && typeof raw === "object" ? raw : {};
+
+    const first = attr.firstTouch || {};
+    const last = attr.lastTouch || {};
+    const current = attr.session || {};
+
+    const pick = (...values) => {
+      for (const value of values) {
+        const clean = str(value).trim();
+        if (clean) return clean;
+      }
+
+      return "";
+    };
+
+    const lower = (...values) =>
+      pick(...values).toLowerCase();
+
+    const source =
+      lower(
+        attr.source,
+        attr.utm_source,
+        q.utm_source,
+        last.source,
+        current.source,
+        first.source,
+      ) || "direct";
+
+    const medium =
+      lower(
+        attr.medium,
+        attr.utm_medium,
+        q.utm_medium,
+        last.medium,
+        current.medium,
+        first.medium,
+      ) || "direct";
+
+    const campaign = pick(
+      attr.campaign,
+      attr.utm_campaign,
+      q.utm_campaign,
+      last.campaign,
+      current.campaign,
+      first.campaign,
+    );
+
+    const referrer = pick(
+      attr.referrer,
+      req.headers?.referer,
+      req.headers?.referrer,
+      last.referrer,
+      first.referrer,
+    );
+
+    const landingUrl = pick(
+      attr.landingUrl,
+      attr.firstTouchUrl,
+      first.landingUrl,
+      first.pageUrl,
+    );
+
+    const lastTouchUrl = pick(
+      attr.lastTouchUrl,
+      last.pageUrl,
+      current.pageUrl,
+      attr.pageUrl,
+    );
+
+    return {
+      source,
+      medium,
+      campaign,
+
+      firstTouch: {
+        source: lower(first.source, source),
+        medium: lower(first.medium, medium),
+        campaign: pick(first.campaign, campaign),
+        campaignSlug: pick(
+          first.campaignSlug,
+          attr.campaignSlug,
+        ),
+        content: pick(
+          first.content,
+          attr.utm_content,
+          q.utm_content,
+        ),
+        term: pick(
+          first.term,
+          attr.utm_term,
+          q.utm_term,
+        ),
+        pageUrl: pick(first.pageUrl, landingUrl),
+        landingUrl,
+        referrer,
+        capturedAt:
+          first.capturedAt ||
+          attr.capturedAt ||
+          now,
+      },
+
+      lastTouch: {
+        source: lower(last.source, source),
+        medium: lower(last.medium, medium),
+        campaign: pick(last.campaign, campaign),
+        campaignSlug: pick(
+          last.campaignSlug,
+          attr.campaignSlug,
+        ),
+        content: pick(
+          last.content,
+          attr.utm_content,
+          q.utm_content,
+        ),
+        term: pick(
+          last.term,
+          attr.utm_term,
+          q.utm_term,
+        ),
+        pageUrl: lastTouchUrl,
+        landingUrl: pick(
+          last.landingUrl,
+          landingUrl,
+        ),
+        referrer,
+        capturedAt: last.capturedAt || now,
+      },
+
+      session: {
+        source: lower(current.source, source),
+        medium: lower(current.medium, medium),
+        campaign: pick(
+          current.campaign,
+          campaign,
+        ),
+        campaignSlug: pick(
+          current.campaignSlug,
+          attr.campaignSlug,
+        ),
+        content: pick(
+          current.content,
+          attr.utm_content,
+          q.utm_content,
+        ),
+        term: pick(
+          current.term,
+          attr.utm_term,
+          q.utm_term,
+        ),
+        pageUrl: pick(
+          current.pageUrl,
+          lastTouchUrl,
+        ),
+        landingUrl: pick(
+          current.landingUrl,
+          landingUrl,
+        ),
+        referrer,
+        capturedAt: current.capturedAt || now,
+      },
+
+      campaignId: isObjectId(
+        attr.campaignId || q.campaignId,
+      )
+        ? oid(attr.campaignId || q.campaignId)
+        : null,
+
+      campaignSlug: pick(
+        attr.campaignSlug,
+        attr.utm_campaign,
+        q.utm_campaign,
+      ),
+
+      marketingLinkId: pick(
+        attr.marketingLinkId,
+        attr.mlid,
+        q.mlid,
+      ),
+
+      shortCode: pick(
+        attr.shortCode,
+        attr.mcode,
+        q.mcode,
+      ),
+
+      clickIds: {
+        fbclid: pick(attr.fbclid, q.fbclid),
+        gclid: pick(attr.gclid, q.gclid),
+        msclkid: pick(attr.msclkid, q.msclkid),
+        ttclid: pick(attr.ttclid, q.ttclid),
+
+        scClickId: pick(
+          attr.scClickId,
+          attr.sc_click_id,
+          q.scClickId,
+          q.sc_click_id,
+        ),
+      },
+
+      visitorId: pick(
+        attr.visitorId,
+        attr.vid,
+      ),
+
+      sessionId: pick(
+        attr.sessionId,
+        attr.sid,
+      ),
+
+      referrer,
+      landingUrl,
+
+      firstTouchUrl: pick(
+        attr.firstTouchUrl,
+        landingUrl,
+      ),
+
+      lastTouchUrl,
+
+      device: {
+        type: pick(
+          attr.device?.type,
+          attr.deviceType,
+        ),
+
+        browser: pick(
+          attr.device?.browser,
+          attr.browser,
+        ),
+
+        os: pick(
+          attr.device?.os,
+          attr.os,
+        ),
+
+        userAgent: pick(
+          attr.device?.userAgent,
+          req.headers?.["user-agent"],
+        ),
+
+        ip: pick(
+          attr.device?.ip,
+          req.headers?.["x-forwarded-for"]
+            ?.split(",")?.[0],
+          req.ip,
+          req.socket?.remoteAddress,
+        ),
+      },
+
+      raw: attr,
+      capturedAt: attr.capturedAt || now,
+      lastUpdatedAt: now,
+    };
+  };
+
+  const validateCoupon = async ({
+    code,
+    cartTotal,
+    discountBase,
+    identity,
+    couponDoc,
+  }) => {
+    if (!code) {
+      return {
+        couponSnapshot: null,
+        couponDiscount: 0,
+      };
+    }
+
+    if (!couponDoc) {
+      throw new Error("Invalid coupon code.");
+    }
+
+    if (!couponDoc.isActive) {
+      throw new Error("Coupon is not active.");
+    }
+
+    if (
+      couponDoc.validFrom &&
+      new Date() < new Date(couponDoc.validFrom)
+    ) {
+      throw new Error(
+        "Coupon is not active yet.",
+      );
+    }
+
+    if (
+      couponDoc.validTill &&
+      new Date() > new Date(couponDoc.validTill)
+    ) {
+      throw new Error("Coupon has expired.");
+    }
+
+    if (
+      num(cartTotal) <
+      num(couponDoc.minPurchase || 0)
+    ) {
+      throw new Error(
+        `Minimum purchase required is ₹${num(
+          couponDoc.minPurchase || 0,
+        )}`,
+      );
+    }
+
+    if (
+      num(couponDoc.usageLimit) > 0 &&
+      num(couponDoc.usedCount) >=
+      num(couponDoc.usageLimit)
+    ) {
+      throw new Error(
+        "Coupon usage limit has been reached.",
+      );
+    }
+
+    const perUserLimit = num(
+      couponDoc.usageLimitPerCustomer || 1,
+    );
+
+    const usedBy = Array.isArray(
+      couponDoc.usedBy,
+    )
+      ? couponDoc.usedBy
+      : [];
+
+    const usedTimes = identity
+      ? usedBy.filter(
+        (x) => str(x) === identity,
+      ).length
+      : 0;
+
+    if (
+      identity &&
+      usedTimes >= perUserLimit
+    ) {
+      throw new Error(
+        "You have already used this coupon.",
+      );
+    }
+
+    const baseAmount =
+      discountBase != null
+        ? num(discountBase)
+        : num(cartTotal);
+
+    if (baseAmount <= 0) {
+      throw new Error(
+        "Coupon is not applicable on this cart.",
+      );
+    }
+
+    let discount = 0;
+
+    if (
+      couponDoc.discountType ===
+      "percentage"
+    ) {
+      discount =
+        (baseAmount *
+          num(couponDoc.discountValue)) /
+        100;
+
+      if (
+        num(couponDoc.maxDiscount) > 0
+      ) {
+        discount = Math.min(
+          discount,
+          num(couponDoc.maxDiscount),
+        );
+      }
+    } else {
+      discount = Math.min(
+        num(couponDoc.discountValue),
+        baseAmount,
+      );
+    }
+
+    discount = Math.max(
+      0,
+      Math.round(discount),
+    );
+
+    if (!discount) {
+      throw new Error(
+        "Invalid discount calculation.",
+      );
+    }
+
+    return {
+      couponDiscount: discount,
+
+      couponSnapshot: {
+        code,
+        discount,
+        discountBase: baseAmount,
+      },
+    };
+  };
+
   try {
     const {
       customerId,
 
-      // Optional saved address IDs
       shippingAddressId,
       billingAddressId,
 
-      // NEW: direct checkout snapshots
-      shippingAddressSnapshot: incomingShippingAddress = null,
-      billingAddressSnapshot: incomingBillingAddress = null,
+      shippingAddressSnapshot:
+      incomingShippingAddress = null,
+
+      billingAddressSnapshot:
+      incomingBillingAddress = null,
 
       items,
       coupon,
       attribution = {},
+
       shippingFee = 0,
       tax = 0,
-      paymentMethod = "cod",
 
-      // ✅ wallet / customer credit
+      // ✅ COD no longer default
+      paymentMethod = "razorpay",
+
       useWallet = false,
       walletAmount = 0,
 
       source = "website",
       isGiftOrder = false,
       currency = "INR",
+
       customerSupportRemark = "",
       priority = "normal",
     } = req.body;
 
-    const pm = str(paymentMethod).trim().toLowerCase();
-    const finalPriority = normalizePriority(priority);
-    const finalAttribution = normalizeOrderAttribution(attribution);
+    const pm = str(paymentMethod)
+      .trim()
+      .toLowerCase();
+
+    // ============================================================
+    // ✅ PAYMENT POLICY
+    // Full prepaid OR 10% Partial COD.
+    // Pure COD temporarily disabled.
+    // ============================================================
+    // ============================================================
+    // ✅ PAYMENT POLICY
+    // COD / Partial COD / Prepaid / Wallet
+    // ============================================================
+    if (
+      ![
+        "cod",
+        "partial_cod",
+        "razorpay",
+        "wallet",
+      ].includes(pm)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment method.",
+      });
+    }
 
     if (!isObjectId(customerId)) {
-      return res.status(400).json({ message: "Invalid customerId" });
+      return res.status(400).json({
+        message: "Invalid customerId",
+      });
+    }
+
+    if (
+      !Array.isArray(items) ||
+      !items.length
+    ) {
+      return res.status(400).json({
+        message: "Order items missing",
+      });
     }
 
     const hasShippingAddressId =
-      shippingAddressId && isObjectId(shippingAddressId);
+      shippingAddressId &&
+      isObjectId(shippingAddressId);
 
     const hasBillingAddressId =
-      billingAddressId && isObjectId(billingAddressId);
+      billingAddressId &&
+      isObjectId(billingAddressId);
 
-    if (shippingAddressId && !hasShippingAddressId) {
+    if (
+      shippingAddressId &&
+      !hasShippingAddressId
+    ) {
       return res.status(400).json({
-        message: "Invalid shippingAddressId",
+        message:
+          "Invalid shippingAddressId",
       });
     }
 
-    if (billingAddressId && !hasBillingAddressId) {
+    if (
+      billingAddressId &&
+      !hasBillingAddressId
+    ) {
       return res.status(400).json({
-        message: "Invalid billingAddressId",
+        message:
+          "Invalid billingAddressId",
       });
     }
 
-    if (!hasShippingAddressId && !incomingShippingAddress) {
+    if (
+      !hasShippingAddressId &&
+      !incomingShippingAddress
+    ) {
       return res.status(400).json({
-        message: "Shipping address is required.",
+        message:
+          "Shipping address is required.",
       });
     }
 
-    if (!Array.isArray(items) || !items.length) {
-      return res.status(400).json({ message: "Order items missing" });
-    }
+    const finalPriority =
+      normalizePriority(priority);
 
-    if (!["cod", "razorpay", "wallet"].includes(pm)) {
-      return res.status(400).json({
-        message: "Invalid paymentMethod. Allowed: cod | razorpay | wallet",
-      });
-    }
+    const finalAttribution =
+      normalizeOrderAttribution(
+        attribution,
+      );
 
     let createdOrderId = null;
 
-    await session.withTransaction(async () => {
-      let shippingAddressSnapshot;
-      let billingAddressSnapshot;
+    await session.withTransaction(
+      async () => {
+        // ========================================================
+        // ADDRESS
+        // ========================================================
 
-      if (hasShippingAddressId) {
-        const shippingAddress =
-          await Address.findById(shippingAddressId).session(session);
+        let shippingAddressSnapshot;
+        let billingAddressSnapshot;
 
-        if (!shippingAddress) {
-          throw new Error("Shipping address not found");
-        }
+        if (hasShippingAddressId) {
+          const address =
+            await Address.findById(
+              shippingAddressId,
+            ).session(session);
 
-        shippingAddressSnapshot = buildAddressSnapshot(shippingAddress);
-      } else {
-        shippingAddressSnapshot = normalizeCheckoutAddress(
-          incomingShippingAddress,
-        );
-      }
-
-      if (hasBillingAddressId) {
-        const billingAddress =
-          await Address.findById(billingAddressId).session(session);
-
-        if (!billingAddress) {
-          throw new Error("Billing address not found");
-        }
-
-        billingAddressSnapshot = buildAddressSnapshot(billingAddress);
-      } else if (incomingBillingAddress) {
-        billingAddressSnapshot = normalizeCheckoutAddress(
-          incomingBillingAddress,
-        );
-      } else {
-        billingAddressSnapshot = {
-          ...shippingAddressSnapshot,
-        };
-      }
-
-      const blacklistedCustomer = await checkIsBlacklistedCustomer({
-        customerId,
-        email: shippingAddressSnapshot?.email,
-        phone: shippingAddressSnapshot?.phone,
-        session,
-      });
-
-      if (blacklistedCustomer) {
-        const error = new Error(
-          "We couldn't process your order at this time. If you believe this is an error, please contact our support team.",
-        );
-
-        error.code = "ORDER_NOT_AVAILABLE";
-        error.statusCode = 403;
-
-        throw error;
-      }
-
-      const identity = buildCouponIdentity({
-        email: shippingAddressSnapshot?.email,
-        phone: shippingAddressSnapshot?.phone,
-      });
-
-      const productIds = [
-        ...new Set(items.map((i) => str(i?.productId)).filter(Boolean)),
-      ];
-
-      const bad = productIds.find((id) => !isObjectId(id));
-      if (bad) throw new Error(`Invalid productId: ${bad}`);
-
-      const products = await Product.find({ _id: { $in: productIds } })
-        .session(session)
-        .lean();
-
-      const productMap = new Map(products.map((p) => [str(p._id), p]));
-
-      const normalizedItems = [];
-      let subtotal = 0;
-      let totalQty = 0;
-
-      for (const item of items) {
-        const pid = str(item?.productId);
-        if (!pid) throw new Error("productId missing");
-
-        const qty = num(item?.quantity);
-        if (!Number.isFinite(qty) || qty < 1) {
-          throw new Error("Invalid quantity");
-        }
-
-        const product = productMap.get(pid);
-        if (!product) throw new Error("Product not found");
-
-        const isVariable =
-          product.productType === "variable" ||
-          (Array.isArray(product.variants) && product.variants.length > 0);
-
-        let variant = null;
-
-        if (isVariable) {
-          if (!item.variantId) {
-            throw new Error(`${product.title} - variantId missing`);
+          if (!address) {
+            throw new Error(
+              "Shipping address not found",
+            );
           }
 
-          variant = findVariantById(product, item.variantId);
-
-          if (!variant) {
-            throw new Error(`${product.title} - variant not found`);
-          }
+          shippingAddressSnapshot =
+            buildAddressSnapshot(address);
+        } else {
+          shippingAddressSnapshot =
+            normalizeCheckoutAddress(
+              incomingShippingAddress,
+            );
         }
 
-        const frontendPrice = num(
-          item?.price ??
-          item?.itemPrice ??
-          item?.item_price ??
-          item?.salePrice ??
-          item?.productSnapshot?.price,
+        if (hasBillingAddressId) {
+          const address =
+            await Address.findById(
+              billingAddressId,
+            ).session(session);
+
+          if (!address) {
+            throw new Error(
+              "Billing address not found",
+            );
+          }
+
+          billingAddressSnapshot =
+            buildAddressSnapshot(address);
+        } else if (
+          incomingBillingAddress
+        ) {
+          billingAddressSnapshot =
+            normalizeCheckoutAddress(
+              incomingBillingAddress,
+            );
+        } else {
+          billingAddressSnapshot = {
+            ...shippingAddressSnapshot,
+          };
+        }
+
+        // ========================================================
+        // BLACKLIST
+        // ========================================================
+
+        const blacklisted =
+          await checkIsBlacklistedCustomer({
+            customerId,
+            email:
+              shippingAddressSnapshot.email,
+            phone:
+              shippingAddressSnapshot.phone,
+            session,
+          });
+
+        if (
+          blacklisted &&
+          ["cod", "partial_cod"].includes(pm)
+        ) {
+          const error = new Error(
+            "Prepaid payment is required for this order.",
+          );
+
+          error.code = "PREPAID_ONLY";
+          error.statusCode = 403;
+
+          throw error;
+        }
+
+        const identity =
+          buildCouponIdentity({
+            email:
+              shippingAddressSnapshot.email,
+            phone:
+              shippingAddressSnapshot.phone,
+          });
+
+        // ========================================================
+        // PRODUCTS
+        // ========================================================
+
+        const productIds = [
+          ...new Set(
+            items
+              .map((i) =>
+                str(i?.productId),
+              )
+              .filter(Boolean),
+          ),
+        ];
+
+        const invalidProductId =
+          productIds.find(
+            (id) => !isObjectId(id),
+          );
+
+        if (invalidProductId) {
+          throw new Error(
+            `Invalid productId: ${invalidProductId}`,
+          );
+        }
+
+        const products =
+          await Product.find({
+            _id: {
+              $in: productIds,
+            },
+          })
+            .session(session)
+            .lean();
+
+        const productMap = new Map(
+          products.map((p) => [
+            str(p._id),
+            p,
+          ]),
         );
 
-        const dbPrice = num(product.price);
-        const unitPrice = frontendPrice > 0 ? frontendPrice : dbPrice;
-        const lineSubtotal = unitPrice * qty;
+        const normalizedItems = [];
 
-        subtotal += lineSubtotal;
-        totalQty += qty;
+        let subtotal = 0;
+        let totalQty = 0;
 
-        const attrs = normalizeVariantAttributes(variant);
+        for (const rawItem of items) {
+          const productId = str(
+            rawItem?.productId,
+          );
 
-        const selectedSize =
-          str(item?.selectedSize || item?.size).trim() ||
-          pickAttr(attrs, ["size", "sizes", "shirt_size"]) ||
-          getSizeFromSku(variant?.sku);
+          const quantity = num(
+            rawItem?.quantity,
+          );
 
-        const selectedColorRaw =
-          str(item?.selectedColor || item?.color).trim() ||
-          pickAttr(attrs, ["color", "colour", "color_name"]) ||
-          getColorFromSku(variant?.sku, product.productCode);
+          if (!productId) {
+            throw new Error(
+              "productId missing",
+            );
+          }
 
-        const selectedColor = sanitizeSelectedColor(
-          selectedColorRaw,
-          product.productCode,
-        );
+          if (quantity < 1) {
+            throw new Error(
+              "Invalid quantity",
+            );
+          }
 
-        normalizedItems.push({
-          lineId: crypto.randomUUID(),
-          productModel: "Product",
-          productId: oid(product._id),
-          fulfillment: {
-            allocatedQty: 0,
-            shippedQty: 0,
-            toProduceQty: qty,
-          },
-          productSnapshot: {
-            productCode:
-              item?.productSnapshot?.productCode || product.productCode || "",
-            title: item?.productSnapshot?.title || item?.name || product.title,
-            slug: item?.productSnapshot?.slug || product.slug || "",
-            thumbnail:
-              item?.productSnapshot?.thumbnail ||
-              item?.productSnapshot?.image ||
-              item?.image ||
-              product.thumbnail ||
-              "",
-            images: Array.isArray(item?.productSnapshot?.images)
-              ? item.productSnapshot.images
-              : Array.isArray(product.images)
-                ? product.images
+          const product =
+            productMap.get(productId);
+
+          if (!product) {
+            throw new Error(
+              "Product not found",
+            );
+          }
+
+          const isVariable =
+            product.productType ===
+            "variable" ||
+            (Array.isArray(
+              product.variants,
+            ) &&
+              product.variants.length > 0);
+
+          let variant = null;
+
+          if (isVariable) {
+            if (!rawItem.variantId) {
+              throw new Error(
+                `${product.title} - variantId missing`,
+              );
+            }
+
+            variant =
+              findVariantById(
+                product,
+                rawItem.variantId,
+              );
+
+            if (!variant) {
+              throw new Error(
+                `${product.title} - variant not found`,
+              );
+            }
+          }
+
+          const frontendPrice = num(
+            rawItem?.price ??
+            rawItem?.itemPrice ??
+            rawItem?.item_price ??
+            rawItem?.salePrice ??
+            rawItem
+              ?.productSnapshot?.price,
+          );
+
+          const unitPrice =
+            frontendPrice > 0
+              ? frontendPrice
+              : num(product.price);
+
+          const lineSubtotal =
+            unitPrice * quantity;
+
+          subtotal += lineSubtotal;
+          totalQty += quantity;
+
+          const attrs =
+            normalizeVariantAttributes(
+              variant,
+            );
+
+          const selectedSize =
+            str(
+              rawItem?.selectedSize ||
+              rawItem?.size,
+            ).trim() ||
+            pickAttr(attrs, [
+              "size",
+              "sizes",
+              "shirt_size",
+            ]) ||
+            getSizeFromSku(
+              variant?.sku,
+            );
+
+          const selectedColor =
+            sanitizeSelectedColor(
+              str(
+                rawItem?.selectedColor ||
+                rawItem?.color,
+              ).trim() ||
+              pickAttr(attrs, [
+                "color",
+                "colour",
+                "color_name",
+              ]) ||
+              getColorFromSku(
+                variant?.sku,
+                product.productCode,
+              ),
+
+              product.productCode,
+            );
+
+          normalizedItems.push({
+            lineId:
+              crypto.randomUUID(),
+
+            productModel: "Product",
+            productId: oid(
+              product._id,
+            ),
+
+            fulfillment: {
+              allocatedQty: 0,
+              shippedQty: 0,
+              toProduceQty: quantity,
+            },
+
+            productSnapshot: {
+              productCode:
+                rawItem
+                  ?.productSnapshot
+                  ?.productCode ||
+                product.productCode ||
+                "",
+
+              title:
+                rawItem
+                  ?.productSnapshot
+                  ?.title ||
+                rawItem?.name ||
+                product.title,
+
+              slug:
+                rawItem
+                  ?.productSnapshot
+                  ?.slug ||
+                product.slug ||
+                "",
+
+              thumbnail:
+                rawItem
+                  ?.productSnapshot
+                  ?.thumbnail ||
+                rawItem
+                  ?.productSnapshot
+                  ?.image ||
+                rawItem?.image ||
+                product.thumbnail ||
+                "",
+
+              images: Array.isArray(
+                rawItem
+                  ?.productSnapshot
+                  ?.images,
+              )
+                ? rawItem
+                  .productSnapshot
+                  .images
+                : Array.isArray(
+                  product.images,
+                )
+                  ? product.images
+                  : [],
+
+              productType:
+                product.productType ||
+                (product?.variants?.length
+                  ? "variable"
+                  : "simple"),
+
+              sku:
+                rawItem
+                  ?.productSnapshot
+                  ?.sku ||
+                product.sku ||
+                "",
+
+              tags: Array.isArray(
+                product.tags,
+              )
+                ? product.tags
                 : [],
-            productType:
-              product.productType ||
-              (product?.variants?.length ? "variable" : "simple"),
-            sku: item?.productSnapshot?.sku || product.sku || "",
-            tags: Array.isArray(product.tags) ? product.tags : [],
-            hsnCode: str(product.hsnCode),
-            weight: num(product.weight),
-            currency: product.currency || currency,
-            isPrimaryProduct: isPrimaryItem(item),
-          },
-          variant: {
-            variantId: variant?._id || item?.variantId || null,
-            sku: variant?.sku || item?.variant?.sku || "",
-            attributes: attrs,
-            weight: num(variant?.weight),
-          },
-          selectedSize,
-          selectedColor,
-          quantity: qty,
-          price: unitPrice,
-          compareAtPrice: product?.compareAtPrice ?? null,
-          subtotal: lineSubtotal,
-        });
-      }
 
-      const couponCode =
-        coupon && typeof coupon === "object"
-          ? str(coupon.code).trim().toUpperCase()
-          : "";
+              hsnCode: str(
+                product.hsnCode,
+              ),
 
-      const hasPrimaryProduct = items.some(isPrimaryItem);
+              weight: num(
+                product.weight,
+              ),
 
-      const eligibleCouponBase = normalizedItems.reduce(
-        (sum, orderItem, index) => {
-          const rawItem = items[index];
+              currency:
+                product.currency ||
+                currency,
 
-          return hasPrimaryProduct && isSecondaryItem(rawItem)
-            ? sum + num(orderItem.subtotal)
-            : sum;
-        },
-        0,
-      );
+              isPrimaryProduct:
+                isPrimaryItem(rawItem),
+            },
 
-      const couponDocForBase = couponCode
-        ? await Coupon.findOne({ code: couponCode }).session(session)
-        : null;
+            variant: {
+              variantId:
+                variant?._id ||
+                rawItem?.variantId ||
+                null,
 
-      const discountBase = couponDocForBase
-        ? getCouponDiscountBase({
-          couponDoc: couponDocForBase,
-          subtotal,
-          eligibleCouponBase,
-        })
-        : null;
+              sku:
+                variant?.sku ||
+                rawItem?.variant?.sku ||
+                "",
 
-      console.log("🎟️ CREATE ORDER COUPON DEBUG:", {
-        couponCode,
-        subtotal,
-        eligibleCouponBase,
-        discountTarget:
-          couponDocForBase?.discountTarget ||
-          couponDocForBase?.cartRule?.discountTarget ||
-          "cart",
-        discountBaseUsed: discountBase,
-        attribution: {
-          source: finalAttribution.source,
-          medium: finalAttribution.medium,
-          campaign: finalAttribution.campaign,
-        },
-      });
+              attributes: attrs,
 
-      const totalAmount = subtotal + num(shippingFee) + num(tax);
+              weight: num(
+                variant?.weight,
+              ),
+            },
 
-      const { couponSnapshot, couponDiscount, couponDoc } =
-        await validateAndComputeCoupon({
+            selectedSize,
+            selectedColor,
+
+            quantity,
+            price: unitPrice,
+
+            compareAtPrice:
+              product?.compareAtPrice ??
+              null,
+
+            subtotal: lineSubtotal,
+          });
+        }
+
+        // ========================================================
+        // COUPON
+        // ========================================================
+
+        const couponCode =
+          coupon &&
+            typeof coupon === "object"
+            ? str(coupon.code)
+              .trim()
+              .toUpperCase()
+            : "";
+
+        const couponDoc =
+          couponCode
+            ? await Coupon.findOne({
+              code: couponCode,
+            }).session(session)
+            : null;
+
+        const hasPrimaryProduct =
+          items.some(isPrimaryItem);
+
+        const eligibleCouponBase =
+          normalizedItems.reduce(
+            (sum, item, index) => {
+              const rawItem =
+                items[index];
+
+              return (
+                hasPrimaryProduct &&
+                  !isPrimaryItem(rawItem)
+                  ? sum +
+                  num(item.subtotal)
+                  : sum
+              );
+            },
+            0,
+          );
+
+        const discountBase =
+          couponDoc
+            ? getCouponDiscountBase({
+              couponDoc,
+              subtotal,
+              eligibleCouponBase,
+            })
+            : null;
+
+        const {
+          couponSnapshot,
+          couponDiscount,
+        } = await validateCoupon({
           code: couponCode,
           cartTotal: subtotal,
           discountBase,
           identity,
-          couponDocFromBase: couponDocForBase,
+          couponDoc,
         });
 
-      const afterCouponPayable = Math.max(
-        0,
-        totalAmount - Math.min(num(couponDiscount), totalAmount),
-      );
+        // ========================================================
+        // TOTAL
+        // Normal COD = + ₹59
+        // ========================================================
 
-      const requestedWalletAmount =
-        useWallet === true || num(walletAmount) > 0 || pm === "wallet"
-          ? Math.max(0, num(walletAmount))
-          : 0;
+        const COD_FEE = 59;
 
-      const actualWalletAmount =
-        requestedWalletAmount > 0 || pm === "wallet"
-          ? Math.min(
-            requestedWalletAmount || afterCouponPayable,
-            afterCouponPayable,
+        const finalShippingFee =
+          num(shippingFee) +
+          (pm === "cod" ? COD_FEE : 0);
+
+        const totalAmount =
+          subtotal +
+          finalShippingFee +
+          num(tax);
+
+        const afterCouponPayable =
+          Math.max(
+            0,
+            totalAmount -
+            Math.min(
+              num(couponDiscount),
+              totalAmount,
+            ),
+          );
+
+        // ========================================================
+        // WALLET
+        // ========================================================
+
+        const requestedWalletAmount =
+          useWallet === true ||
+            num(walletAmount) > 0 ||
+            pm === "wallet"
+            ? Math.max(
+              0,
+              num(walletAmount),
+            )
+            : 0;
+
+        const actualWalletAmount =
+          requestedWalletAmount > 0 ||
+            pm === "wallet"
+            ? Math.min(
+              requestedWalletAmount ||
+              afterCouponPayable,
+              afterCouponPayable,
+            )
+            : 0;
+
+        const amountAfterWallet =
+          Math.max(
+            0,
+            afterCouponPayable -
+            actualWalletAmount,
+          );
+
+        // ========================================================
+        // FULL PREPAID DISCOUNT
+        // Partial COD DOES NOT receive this discount.
+        // ========================================================
+
+        const razorpayExtraDiscount =
+          pm === "razorpay"
+            ? Math.min(
+              amountAfterWallet,
+              Math.round(
+                (amountAfterWallet *
+                  RAZORPAY_DISCOUNT_PERCENT) /
+                100,
+              ),
+            )
+            : 0;
+
+        let finalDiscount =
+          num(couponDiscount) +
+          razorpayExtraDiscount;
+
+        finalDiscount = Math.min(
+          finalDiscount,
+          totalAmount,
+        );
+
+        const finalPayable =
+          Math.max(
+            0,
+            amountAfterWallet -
+            razorpayExtraDiscount,
+          );
+
+        const effectivePaymentMethod =
+          actualWalletAmount > 0 &&
+            finalPayable === 0
+            ? "wallet"
+            : pm;
+
+        const effectivePaymentStatus =
+          effectivePaymentMethod ===
+            "wallet"
+            ? "paid"
+            : "pending";
+
+        // ========================================================
+        // PARTIAL COD
+        // 10% online + 90% COD
+        // ========================================================
+
+        const isPartialCod =
+          effectivePaymentMethod ===
+          "partial_cod";
+
+        const upfrontAmount =
+          isPartialCod &&
+            finalPayable > 0
+            ? Math.min(
+              finalPayable,
+              Math.max(
+                1,
+                Math.round(
+                  (finalPayable *
+                    PARTIAL_COD_UPFRONT_PERCENT) /
+                  100,
+                ),
+              ),
+            )
+            : 0;
+
+        const codAmount =
+          isPartialCod
+            ? Math.max(
+              0,
+              finalPayable -
+              upfrontAmount,
+            )
+            : 0;
+
+        // ========================================================
+        // ANALYTICS
+        // ========================================================
+
+        const analytics = {
+          totalItems: totalQty,
+
+          averageItemPrice:
+            totalQty
+              ? subtotal / totalQty
+              : 0,
+
+          couponApplied:
+            Boolean(
+              couponSnapshot?.code,
+            ),
+
+          creditsUsed:
+            actualWalletAmount > 0,
+
+          categoryBreakdown:
+            computeCategoryBreakdown(
+              normalizedItems,
+            ),
+
+          tagsUsed: uniqStrings(
+            normalizedItems.flatMap(
+              (item) =>
+                item.productSnapshot
+                  ?.tags || [],
+            ),
+          ),
+
+          onlinePaymentDiscountApplied:
+            pm === "razorpay",
+
+          onlinePaymentDiscountPct:
+            pm === "razorpay"
+              ? RAZORPAY_DISCOUNT_PERCENT
+              : 0,
+
+          onlinePaymentDiscountAmount:
+            razorpayExtraDiscount,
+
+          couponIdentity:
+            identity || "",
+        };
+
+        // ========================================================
+        // CREATE ORDER
+        // ========================================================
+
+        const [order] =
+          await Order.create(
+            [
+              {
+                customerId:
+                  oid(customerId),
+
+                shippingAddressSnapshot,
+                billingAddressSnapshot,
+
+                items:
+                  normalizedItems,
+
+                priority:
+                  finalPriority,
+
+                customerSupportRemark:
+                  str(
+                    customerSupportRemark,
+                  ).trim(),
+
+                subtotal,
+                discount:
+                  finalDiscount,
+
+                coupon:
+                  couponSnapshot
+                    ? {
+                      ...couponSnapshot,
+                      identity,
+                    }
+                    : null,
+
+                shippingFee:
+                  finalShippingFee,
+
+                tax: num(tax),
+
+                totalAmount,
+                finalPayable,
+                currency,
+
+                // ===============================
+                // WALLET
+                // ===============================
+
+                walletCredit: {
+                  used:
+                    actualWalletAmount >
+                    0,
+
+                  amount:
+                    actualWalletAmount,
+
+                  transactionId: "",
+
+                  // Partial/Razorpay payment not successful yet.
+                  debitedAt:
+                    actualWalletAmount >
+                      0 &&
+                      ![
+                        "razorpay",
+                        "partial_cod",
+                      ].includes(
+                        effectivePaymentMethod,
+                      )
+                      ? new Date()
+                      : null,
+
+                  balanceAfterDebit: 0,
+                },
+
+                // ===============================
+                // BREAKDOWN
+                // ===============================
+
+                paymentBreakdown: {
+                  walletAmount:
+                    actualWalletAmount,
+
+                  razorpayAmount:
+                    effectivePaymentMethod ===
+                      "razorpay"
+                      ? finalPayable
+                      : isPartialCod
+                        ? upfrontAmount
+                        : 0,
+
+                  codAmount:
+                    effectivePaymentMethod === "cod"
+                      ? finalPayable
+                      : isPartialCod
+                        ? codAmount
+                        : 0,
+                },
+
+                // ===============================
+                // PARTIAL COD
+                // ===============================
+
+                partialPayment: {
+                  enabled:
+                    isPartialCod,
+
+                  upfrontPercent:
+                    isPartialCod
+                      ? PARTIAL_COD_UPFRONT_PERCENT
+                      : 0,
+
+                  upfrontAmount:
+                    isPartialCod
+                      ? upfrontAmount
+                      : 0,
+
+                  remainingCodAmount:
+                    isPartialCod
+                      ? codAmount
+                      : 0,
+
+                  upfrontPaid: false,
+                  upfrontPaidAt: null,
+
+                  razorpayOrderId: "",
+                  razorpayPaymentId: "",
+                },
+
+                paymentMethod:
+                  effectivePaymentMethod,
+
+                paymentStatus:
+                  effectivePaymentStatus,
+
+                isConfirmed:
+                  effectivePaymentMethod ===
+                  "wallet",
+
+                confirmedAt:
+                  effectivePaymentMethod ===
+                    "wallet"
+                    ? new Date()
+                    : null,
+
+                confirmedBy:
+                  effectivePaymentMethod ===
+                    "wallet"
+                    ? "auto"
+                    : null,
+
+                fulfillmentStatus:
+                  "processing",
+
+                source,
+                attribution:
+                  finalAttribution,
+
+                isGiftOrder,
+                analytics,
+                rmas: [],
+              },
+            ],
+            { session },
+          );
+
+        // ========================================================
+        // WALLET-ONLY ORDER
+        // Razorpay / Partial COD wallet debit happens after payment.
+        // ========================================================
+
+        if (
+          actualWalletAmount > 0 &&
+          ![
+            "razorpay",
+            "partial_cod",
+          ].includes(
+            effectivePaymentMethod,
           )
-          : 0;
+        ) {
+          const debitResult =
+            await debitWalletForOrderInternal({
+              customerId,
 
-      const amountAfterWallet = Math.max(
-        0,
-        afterCouponPayable - actualWalletAmount,
-      );
+              amount:
+                actualWalletAmount,
 
-      const razorpayExtraDiscount =
-        pm === "razorpay"
-          ? Math.min(
-            amountAfterWallet,
-            Math.round((amountAfterWallet * RAZORPAY_DISCOUNT_PERCENT) / 100),
-          )
-          : 0;
+              orderId:
+                order._id,
 
-      let finalDiscount = num(couponDiscount) + num(razorpayExtraDiscount);
-      if (finalDiscount > totalAmount) finalDiscount = totalAmount;
+              orderNumber:
+                order.orderNumber,
 
-      const finalPayable = Math.max(
-        0,
-        amountAfterWallet - razorpayExtraDiscount,
-      );
+              session,
+            });
 
-      const effectivePaymentMethod =
-        actualWalletAmount > 0 && finalPayable === 0 ? "wallet" : pm;
+          order.walletCredit.transactionId =
+            debitResult?.log?.creditId ||
+            "";
 
-      const effectivePaymentStatus =
-        effectivePaymentMethod === "wallet" ? "paid" : "pending";
+          order.walletCredit.balanceAfterDebit =
+            debitResult?.balance || 0;
 
-      const analytics = {
-        totalItems: totalQty,
-        averageItemPrice: totalQty ? subtotal / totalQty : 0,
-        couponApplied: Boolean(couponSnapshot?.code),
-        creditsUsed: actualWalletAmount > 0,
-        categoryBreakdown: computeCategoryBreakdown(normalizedItems),
-        tagsUsed: uniqStrings(
-          normalizedItems.flatMap((it) => it.productSnapshot?.tags || []),
-        ),
-        onlinePaymentDiscountApplied: pm === "razorpay",
-        onlinePaymentDiscountPct:
-          pm === "razorpay" ? RAZORPAY_DISCOUNT_PERCENT : 0,
-        onlinePaymentDiscountAmount: razorpayExtraDiscount,
-        couponIdentity: identity || "",
-      };
+          order.walletCredit.debitedAt =
+            new Date();
 
-      const [order] = await Order.create(
-        [
-          {
-            customerId: oid(customerId),
-            shippingAddressSnapshot,
-            billingAddressSnapshot,
-            items: normalizedItems,
-            priority: finalPriority,
-            customerSupportRemark: str(customerSupportRemark).trim(),
-            subtotal,
-            discount: finalDiscount,
-            coupon: couponSnapshot ? { ...couponSnapshot, identity } : null,
-            shippingFee,
-            tax,
-            totalAmount,
-            finalPayable,
-            currency,
-
-            walletCredit: {
-              used: actualWalletAmount > 0,
-              amount: actualWalletAmount,
-              transactionId: "",
-              debitedAt:
-                actualWalletAmount > 0 && effectivePaymentMethod !== "razorpay"
-                  ? new Date()
-                  : null,
-              balanceAfterDebit: 0,
-            },
-
-            paymentBreakdown: {
-              walletAmount: actualWalletAmount,
-              razorpayAmount:
-                effectivePaymentMethod === "razorpay" ? finalPayable : 0,
-              codAmount: effectivePaymentMethod === "cod" ? finalPayable : 0,
-            },
-
-            paymentMethod: effectivePaymentMethod,
-            paymentStatus: effectivePaymentStatus,
-
-            isConfirmed: effectivePaymentMethod === "wallet",
-            confirmedAt:
-              effectivePaymentMethod === "wallet" ? new Date() : null,
-            confirmedBy: effectivePaymentMethod === "wallet" ? "auto" : null,
-
-            fulfillmentStatus: "processing",
-            source,
-            attribution: finalAttribution,
-            isGiftOrder,
-            analytics,
-            rmas: [],
-          },
-        ],
-        { session },
-      );
-
-      if (actualWalletAmount > 0 && effectivePaymentMethod !== "razorpay") {
-        const debitResult = await debitWalletForOrderInternal({
-          customerId,
-          amount: actualWalletAmount,
-          orderId: order._id,
-          orderNumber: order.orderNumber,
-          session,
-        });
-
-        order.walletCredit.transactionId = debitResult?.log?.creditId || "";
-        order.walletCredit.balanceAfterDebit = debitResult?.balance || 0;
-        order.walletCredit.debitedAt = new Date();
-
-        await order.save({ session });
-      }
-
-      if (
-        couponDoc &&
-        couponSnapshot?.code &&
-        identity &&
-        effectivePaymentMethod === "cod"
-      ) {
-        couponDoc.usedBy = Array.isArray(couponDoc.usedBy)
-          ? couponDoc.usedBy
-          : [];
-
-        if (!couponDoc.usedBy.includes(identity)) {
-          couponDoc.usedBy.push(identity);
-          couponDoc.usedCount = num(couponDoc.usedCount) + 1;
-          await couponDoc.save({ session });
+          await order.save({
+            session,
+          });
         }
-      }
 
-      createdOrderId = order._id;
-    });
+        // IMPORTANT:
+        // Coupon is NOT consumed here for Razorpay / Partial COD.
+        // Consume coupon only after successful online payment.
 
-    await creditOrderWalletRewardInternal({ orderId: createdOrderId }).catch(
-      (e) => {
-        console.error("⚠️ Wallet reward credit failed:", e?.message || e);
+        createdOrderId =
+          order._id;
       },
     );
 
-    const finalOrder = await Order.findById(createdOrderId)
-      .populate("customerId", "name email phone")
-      .lean();
+    // ============================================================
+    // POST CREATE
+    // ============================================================
+
+    await creditOrderWalletRewardInternal({
+      orderId: createdOrderId,
+    }).catch((error) => {
+      console.error(
+        "⚠️ Wallet reward credit failed:",
+        error?.message || error,
+      );
+    });
+
+    const finalOrder =
+      await Order.findById(
+        createdOrderId,
+      )
+        .populate(
+          "customerId",
+          "name email phone",
+        )
+        .lean();
 
     syncCustomerAnalyticsSafe(
-      finalOrder?.customerId?._id || finalOrder?.customerId,
+      finalOrder?.customerId?._id ||
+      finalOrder?.customerId,
       "createOrder",
     );
 
-    if (
-      String(
-        finalOrder?.paymentMethod || "",
-      ).toLowerCase() === "cod" &&
-      finalOrder?.isConfirmed !== true
-    ) {
-      triggerFast2SmsSafe({
-        type: "cod_confirmation",
-        order: finalOrder,
-      });
-    }
+    // ❌ No COD confirmation WhatsApp here.
+    // Partial COD confirmation comes only after upfront payment succeeds.
 
     try {
-      triggerOrderEmails(finalOrder);
-    } catch (e) {
-      console.error("⚠️ triggerOrderEmails failed:", e?.message || e);
+      triggerOrderEmails(
+        finalOrder,
+      );
+    } catch (error) {
+      console.error(
+        "⚠️ triggerOrderEmails failed:",
+        error?.message || error,
+      );
     }
 
     return res.status(201).json({
-      message: "Order created successfully",
+      success: true,
+      message:
+        "Order created successfully",
       order: finalOrder,
     });
   } catch (error) {
-    console.error("❌ Create Order Error:", error);
+    console.error(
+      "❌ Create Order Error:",
+      error,
+    );
 
-    return res.status(error.statusCode || 400).json({
-      success: false,
-      code: error.code || "ORDER_CREATION_FAILED",
-      message: error.message || "Order creation failed",
-    });
+    return res
+      .status(
+        error.statusCode || 400,
+      )
+      .json({
+        success: false,
+
+        code:
+          error.code ||
+          "ORDER_CREATION_FAILED",
+
+        message:
+          error.message ||
+          "Order creation failed",
+      });
   } finally {
     session.endSession();
   }
@@ -4538,10 +5238,10 @@ async function performOrderCancellation({ orderId, reason = "", session }) {
 async function autoBookShiprocketForOrder(order) {
   const TAG = "🚀[AUTO-SHIPROCKET]";
 
-  const clean = (value) => String(value ?? "").trim();
-  const lower = (value) => clean(value).toLowerCase();
-  const num = (value) => {
-    const n = Number(value);
+  const clean = (v) => String(v ?? "").trim();
+  const lower = (v) => clean(v).toLowerCase();
+  const num = (v) => {
+    const n = Number(v);
     return Number.isFinite(n) ? n : 0;
   };
 
@@ -4655,6 +5355,49 @@ async function autoBookShiprocketForOrder(order) {
     await saveOrder();
   };
 
+  const alignItemsToTotal = (payload, targetTotal) => {
+    if (!Array.isArray(payload.order_items) || !payload.order_items.length) {
+      return;
+    }
+
+    const currentTotal = payload.order_items.reduce(
+      (sum, item) =>
+        sum +
+        num(item?.selling_price) *
+        Math.max(1, num(item?.units)),
+      0,
+    );
+
+    if (Math.abs(currentTotal - targetTotal) < 0.01) {
+      return;
+    }
+
+    const sourceItems = order.items || [];
+    let allocated = 0;
+
+    payload.order_items = payload.order_items.map((item, index) => {
+      const units = Math.max(1, num(item?.units));
+
+      let lineTotal =
+        num(sourceItems[index]?.subtotal) ||
+        num(item?.selling_price) * units;
+
+      if (index === payload.order_items.length - 1) {
+        lineTotal = Math.max(0, targetTotal - allocated);
+      } else {
+        allocated += lineTotal;
+      }
+
+      return {
+        ...item,
+        selling_price: String(
+          Number((Math.max(0, lineTotal) / units).toFixed(2)),
+        ),
+        discount: "0",
+      };
+    });
+  };
+
   /* ============================================================
      BASIC GUARDS
   ============================================================ */
@@ -4677,14 +5420,25 @@ async function autoBookShiprocketForOrder(order) {
   }
 
   try {
+    const paymentMethod = lower(order?.paymentMethod);
+    const paymentStatus = lower(order?.paymentStatus);
+
+    const isPartialCod = paymentMethod === "partial_cod";
+    const isNormalCod = paymentMethod === "cod";
+    const isComplimentary = paymentMethod === "complimentary";
+
     log("START", {
       orderNumber: order?.orderNumber,
       orderId: order?._id?.toString(),
-      paymentMethod: order?.paymentMethod,
-      paymentStatus: order?.paymentStatus,
+      paymentMethod,
+      paymentStatus,
       finalPayable: order?.finalPayable,
       tax: order?.tax,
     });
+
+    /* ============================================================
+       REQUIRED DATA
+    ============================================================ */
 
     if (!clean(order?.shippingAddressSnapshot?.pincode)) {
       return log("❌ SKIP: shipping pincode missing");
@@ -4698,11 +5452,28 @@ async function autoBookShiprocketForOrder(order) {
       return log("❌ SKIP: SHIPROCKET_PICKUP_LOCATION missing");
     }
 
+    /* ============================================================
+       PAYMENT GUARDS
+    ============================================================ */
+
     if (
-      lower(order?.paymentMethod) === "razorpay" &&
-      lower(order?.paymentStatus) !== "paid"
+      paymentMethod === "razorpay" &&
+      paymentStatus !== "paid"
     ) {
       return log("⏳ SKIP: Razorpay payment not paid");
+    }
+
+    if (
+      isPartialCod &&
+      (
+        paymentStatus !== "partially_paid" ||
+        order?.partialPayment?.upfrontPaid !== true
+      )
+    ) {
+      return log("⏳ SKIP: Partial COD upfront not paid", {
+        paymentStatus,
+        upfrontPaid: order?.partialPayment?.upfrontPaid,
+      });
     }
 
     ensureShipment();
@@ -4732,11 +5503,11 @@ async function autoBookShiprocketForOrder(order) {
       clean(order.shipment.shiprocket.shipmentId);
 
     if (existingShipmentId) {
-      log("Shipment exists. Assigning AWB...", {
-        shipmentId: existingShipmentId,
-      });
-
       try {
+        log("Shipment exists. Assigning AWB...", {
+          shipmentId: existingShipmentId,
+        });
+
         const assigned = await assignAwb(existingShipmentId);
 
         const awb = clean(
@@ -4780,147 +5551,122 @@ async function autoBookShiprocketForOrder(order) {
     }
 
     /* ============================================================
-       SERVICEABILITY
+       BUILD PAYLOAD
     ============================================================ */
-
-    // const totalWeight =
-    //   order.items?.reduce((total, item) => {
-    //     const weight =
-    //       num(item?.variant?.weight) ||
-    //       num(item?.productSnapshot?.weight) ||
-    //       0.5;
-
-    //     return total + weight * num(item?.quantity || 1);
-    //   }, 0) || 0.5;
-
-    // const isCOD = lower(order?.paymentMethod) === "cod";
-
-    // const couriers = await checkServiceability({
-    //   pickupPincode: clean(process.env.SHIPROCKET_PICKUP_PINCODE),
-    //   deliveryPincode: clean(order.shippingAddressSnapshot.pincode),
-    //   weight: totalWeight,
-    //   cod: isCOD ? 1 : 0,
-    // });
-
-    // if (!Array.isArray(couriers) || !couriers.length) {
-    //   return log("⚠️ SKIP: no courier available");
-    // }
-
-    /* ============================================================
-       SHIPROCKET PAYLOAD
-
-       IMPORTANT:
-       item.price/subtotal already contain GST.
-       taxableValue + taxAmount = selling value.
-
-       Therefore NEVER subtract order.tax again.
-    ============================================================ */
-
-    const isCOD =
-      String(order?.paymentMethod || "")
-        .trim()
-        .toLowerCase() === "cod";
 
     const payload = buildShiprocketPayload(order);
 
-    const finalPayable = Math.max(0, num(order.finalPayable));
-    const shippingFee = Math.max(0, num(order.shippingFee));
+    const finalPayable = Math.max(
+      0,
+      num(order.finalPayable),
+    );
 
-    // Goods value INCLUDING GST.
+    const shippingFee = Math.max(
+      0,
+      num(order.shippingFee),
+    );
+
     const goodsPayable = Math.max(
       0,
       finalPayable - shippingFee,
     );
 
-    payload.payment_method = isCOD ? "COD" : "Prepaid";
     payload.shipping_charges = shippingFee;
 
-    // ✅ Actual amount customer has to pay.
-    payload.collectable_amount = isCOD
-      ? finalPayable
-      : 0;
+    /* ============================================================
+       PARTIAL COD
+       ₹899 order
+       ₹90 already paid
+       ₹809 COD
+    ============================================================ */
+
+    if (isPartialCod) {
+      const remainingCodAmount = Math.max(
+        0,
+        num(
+          order?.partialPayment?.remainingCodAmount ??
+          order?.paymentBreakdown?.codAmount,
+        ),
+      );
+
+      if (remainingCodAmount <= 0) {
+        throw new Error(
+          "Partial COD remaining amount is invalid",
+        );
+      }
+
+      payload.payment_method = "COD";
+
+      // ✅ This is the ONLY amount Shiprocket should collect
+      payload.sub_total = remainingCodAmount;
+
+      // Remove fields that caused misleading/double calculations
+      delete payload.collectable_amount;
+      delete payload.total_discount;
+
+      // No advance discount inside Shiprocket items
+      payload.order_items = (
+        payload.order_items || []
+      ).map((item) => ({
+        ...item,
+        discount: "0",
+      }));
+
+      log("🛡️ Partial COD payload locked", {
+        finalPayable,
+        upfrontPaid:
+          num(order?.partialPayment?.upfrontAmount),
+        shiprocketCodAmount: payload.sub_total,
+      });
+    }
+
+    /* ============================================================
+       NORMAL COD
+    ============================================================ */
+
+    else if (isNormalCod) {
+      payload.payment_method = "COD";
+      payload.sub_total = goodsPayable;
+      payload.collectable_amount = finalPayable;
+
+      alignItemsToTotal(payload, goodsPayable);
+    }
+
+    /* ============================================================
+       COMPLIMENTARY
+       NEVER COLLECT MONEY
+    ============================================================ */
+
+    else if (isComplimentary) {
+      payload.payment_method = "Prepaid";
+      payload.collectable_amount = 0;
+
+      if (num(payload.collectable_amount) !== 0) {
+        throw new Error(
+          "Complimentary shipment collection safety check failed",
+        );
+      }
+    }
+
+    /* ============================================================
+       OTHER PREPAID METHODS
+    ============================================================ */
+
+    else {
+      payload.payment_method = "Prepaid";
+      payload.collectable_amount = 0;
+    }
 
     if (payload.transaction_charges == null) {
       payload.transaction_charges = 0;
     }
 
     /* ============================================================
-       COD FIX
-       DO NOT subtract tax from finalPayable.
+       FINAL SAFETY CHECK
     ============================================================ */
 
-    if (isCOD) {
-      payload.sub_total = goodsPayable;
 
-      /*
-       * Keep Shiprocket item total aligned with sub_total.
-       * Existing item price already contains GST, so only adjust
-       * when mapper total is different from actual goods payable.
-       */
-      if (
-        Array.isArray(payload.order_items) &&
-        payload.order_items.length
-      ) {
-        const currentItemsTotal =
-          payload.order_items.reduce(
-            (total, item) =>
-              total +
-              num(item?.selling_price) *
-              Math.max(1, num(item?.units)),
-            0,
-          );
 
-        if (Math.abs(currentItemsTotal - goodsPayable) >= 0.01) {
-          const sourceItems = order.items || [];
-
-          let allocated = 0;
-
-          payload.order_items = payload.order_items.map(
-            (item, index) => {
-              const units = Math.max(
-                1,
-                num(item?.units),
-              );
-
-              const orderItem = sourceItems[index];
-
-              let lineTotal =
-                num(orderItem?.subtotal) ||
-                num(item?.selling_price) * units;
-
-              // Last item gets rounding remainder.
-              if (
-                index ===
-                payload.order_items.length - 1
-              ) {
-                lineTotal = Math.max(
-                  0,
-                  goodsPayable - allocated,
-                );
-              } else {
-                allocated += lineTotal;
-              }
-
-              return {
-                ...item,
-
-                // GST-inclusive per-unit selling value
-                selling_price: String(
-                  Math.max(
-                    0,
-                    Number(
-                      (lineTotal / units).toFixed(2),
-                    ),
-                  ),
-                ),
-
-                discount: "0",
-              };
-            },
-          );
-        }
-      }
-    }
 
     log("💰 Shiprocket amount check", {
       finalPayable,
@@ -4940,7 +5686,7 @@ async function autoBookShiprocketForOrder(order) {
       subTotal: payload?.sub_total,
       shippingCharges: payload?.shipping_charges,
       collectableAmount: payload?.collectable_amount,
-      weight: payload?.weight || totalWeight,
+      weight: payload?.weight || 0.5,
       items: payload?.order_items?.length || 0,
     });
 
@@ -7530,14 +8276,7 @@ export const markOrderAsInfluencer = async (req, res) => {
       ? { _id: idOrNumber }
       : { orderNumber: idOrNumber };
 
-    const order = await Order.findOneAndUpdate(
-      query,
-      { $set: { isInfluencerOrder } },
-      {
-        new: true,
-        runValidators: true,
-      },
-    );
+    const order = await Order.findOne(query);
 
     if (!order) {
       return res.status(404).json({
@@ -7546,19 +8285,69 @@ export const markOrderAsInfluencer = async (req, res) => {
       });
     }
 
+    // Don't change payment semantics after shipment booking
+    if (
+      isInfluencerOrder === true &&
+      (
+        order?.shipment?.awb ||
+        order?.shipment?.shiprocket?.awb ||
+        order?.shipment?.shipmentId ||
+        order?.shipment?.shiprocket?.shipmentId
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Shipment already exists. Cannot convert order to complimentary.",
+      });
+    }
+
+    order.isInfluencerOrder = isInfluencerOrder;
+
+    // ✅ Explicitly force complimentary
+    if (isInfluencerOrder === true) {
+      order.paymentMethod = "complimentary";
+      order.paymentStatus = "not_applicable";
+
+      order.paymentBreakdown =
+        order.paymentBreakdown || {};
+
+      order.paymentBreakdown.codAmount = 0;
+      order.paymentBreakdown.razorpayAmount = 0;
+
+      if (order.partialPayment) {
+        order.partialPayment.enabled = false;
+        order.partialPayment.upfrontPercent = 0;
+        order.partialPayment.upfrontAmount = 0;
+        order.partialPayment.remainingCodAmount = 0;
+        order.partialPayment.upfrontPaid = false;
+        order.partialPayment.upfrontPaidAt = null;
+        order.partialPayment.razorpayOrderId = "";
+        order.partialPayment.razorpayPaymentId = "";
+      }
+    }
+
+    // ✅ save() triggers all document middleware too
+    await order.save();
+
     return res.status(200).json({
       success: true,
       message: isInfluencerOrder
-        ? "Order marked as influencer order"
+        ? "Order marked as influencer complimentary"
         : "Order removed from influencer orders",
       order,
     });
   } catch (error) {
-    console.error("❌ Influencer Order Update Error:", error);
+    console.error(
+      "❌ Influencer Order Update Error:",
+      error,
+    );
 
     return res.status(500).json({
       success: false,
-      message: error.message || "Unable to update influencer order",
+      message:
+        error.message ||
+        "Unable to update influencer order",
     });
   }
 };

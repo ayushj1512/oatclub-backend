@@ -695,15 +695,31 @@ const orderSchema = new mongoose.Schema(
       balanceAfterCredit: { type: Number, default: 0 },
     },
 
-    paymentBreakdown: {
-      walletAmount: { type: Number, default: 0, min: 0 },
-      razorpayAmount: { type: Number, default: 0, min: 0 },
-      codAmount: { type: Number, default: 0, min: 0 },
+    partialPayment: {
+      enabled: { type: Boolean, default: false, index: true },
+
+      upfrontPercent: { type: Number, default: 0 },
+      upfrontAmount: { type: Number, default: 0 },
+      remainingCodAmount: { type: Number, default: 0 },
+
+      upfrontPaid: { type: Boolean, default: false },
+      upfrontPaidAt: { type: Date, default: null },
+
+      razorpayOrderId: { type: String, default: "" },
+      razorpayPaymentId: { type: String, default: "" },
     },
 
     paymentMethod: {
       type: String,
-      enum: ["cod", "razorpay", "exchange", "wallet", "manual_prepaid"],
+      enum: [
+        "cod",
+        "partial_cod",
+        "razorpay",
+        "exchange",
+        "wallet",
+        "manual_prepaid",
+        "complimentary",
+      ],
       default: "cod",
       index: true,
     },
@@ -713,6 +729,7 @@ const orderSchema = new mongoose.Schema(
       type: String,
       enum: [
         "pending",
+        "partially_paid",
         "paid",
         "failed",
         "refunded",
@@ -1215,17 +1232,60 @@ const hasChildren = async (orderId) => {
 };
 
 // ========================================================================================
-// ✅ AUTO-CONFIRM if Razorpay payment is paid
+// 🎁 INFLUENCER ORDER → AUTO COMPLIMENTARY
+// No payment / no COD collection
+// ========================================================================================
+orderSchema.pre("validate", function (next) {
+  try {
+    if (this.isInfluencerOrder === true) {
+      this.paymentMethod = "complimentary";
+      this.paymentStatus = "not_applicable";
+
+      // Never keep COD / Razorpay collection amounts
+      if (this.paymentBreakdown) {
+        this.paymentBreakdown.codAmount = 0;
+        this.paymentBreakdown.razorpayAmount = 0;
+      }
+
+      // Disable any old Partial COD state
+      if (this.partialPayment) {
+        this.partialPayment.enabled = false;
+        this.partialPayment.upfrontPercent = 0;
+        this.partialPayment.upfrontAmount = 0;
+        this.partialPayment.remainingCodAmount = 0;
+        this.partialPayment.upfrontPaid = false;
+        this.partialPayment.upfrontPaidAt = null;
+        this.partialPayment.razorpayOrderId = "";
+        this.partialPayment.razorpayPaymentId = "";
+      }
+    }
+
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
+
+// ========================================================================================
+// ✅ AUTO-CONFIRM
+// - Full Razorpay payment -> auto confirm
+// - Partial COD -> auto confirm only after upfront payment is received
 // ========================================================================================
 orderSchema.pre("validate", function (next) {
   try {
     const isRazorpayPaid =
-      this.paymentMethod === "razorpay" && this.paymentStatus === "paid";
+      this.paymentMethod === "razorpay" &&
+      this.paymentStatus === "paid";
 
-    if (isRazorpayPaid && !this.isConfirmed) {
+    const isPartialCodPaid =
+      this.paymentMethod === "partial_cod" &&
+      this.paymentStatus === "partially_paid" &&
+      this.partialPayment?.upfrontPaid === true;
+
+    if ((isRazorpayPaid || isPartialCodPaid) && !this.isConfirmed) {
       this.isConfirmed = true;
       this.confirmedAt = new Date();
-      this.confirmedBy = "auto"; // ✅
+      this.confirmedBy = "auto";
     }
 
     next();
@@ -2088,6 +2148,28 @@ orderSchema.post("save", function (doc) {
       console.error("❌ Review WhatsApp auto-send failed:", err.message);
     }
   });
+});
+
+
+orderSchema.pre("validate", function (next) {
+  try {
+    if (this.paymentMethod === "complimentary") {
+      this.paymentStatus = "not_applicable";
+
+      if (this.paymentBreakdown) {
+        this.paymentBreakdown.codAmount = 0;
+        this.paymentBreakdown.razorpayAmount = 0;
+      }
+
+      if (this.partialPayment) {
+        this.partialPayment.remainingCodAmount = 0;
+      }
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Core list performance
