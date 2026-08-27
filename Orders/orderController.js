@@ -13028,3 +13028,165 @@ export const updateRtoReceivedStatus = async (req, res) => {
     });
   }
 };
+
+
+export const cancelChildOrder = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid child order id",
+      });
+    }
+
+    let cancelledChildId = null;
+    let releasedReservations = 0;
+
+    await session.withTransaction(async () => {
+      let child = await Order.findById(id).session(session);
+
+      if (!child) {
+        throw new Error("Child order not found");
+      }
+
+      // Must REALLY be a split child
+      if (!child.parentOrderId) {
+        throw new Error("This is not a split child order");
+      }
+
+      if (
+        String(child.orderType || "").toLowerCase() !== "shipment"
+      ) {
+        throw new Error("Invalid split child order");
+      }
+
+      const currentStatus = String(
+        child.fulfillmentStatus || "processing"
+      ).toLowerCase();
+
+      if (currentStatus === "cancelled") {
+        cancelledChildId = child._id;
+        return;
+      }
+
+      // Keep child cancellation safe
+      const blockedStatuses = [
+        "picked",
+        "shipped",
+        "out_for_delivery",
+        "delivered",
+        "rto",
+        "returned",
+        "refunded",
+      ];
+
+      if (blockedStatuses.includes(currentStatus)) {
+        throw new Error(
+          `Child order cannot be cancelled in ${currentStatus} status`
+        );
+      }
+
+      // ---------------------------------------------------------
+      // 1. Cancel ONLY this child's Shiprocket shipment
+      // ---------------------------------------------------------
+      const shipmentId =
+        child?.shipment?.shiprocket?.shipmentId ||
+        child?.shipment?.shipmentId ||
+        "";
+
+      if (shipmentId) {
+        try {
+          await cancelShiprocketShipment(shipmentId);
+        } catch (error) {
+          console.error(
+            "Child Shiprocket cancellation failed:",
+            error?.response?.data || error?.message
+          );
+        }
+      }
+
+      // ---------------------------------------------------------
+      // 2. Release ONLY this child's reservations
+      // ---------------------------------------------------------
+      const releaseResult =
+        await cancelReservationsInternalByOrder({
+          orderId: child._id,
+          reason: `Split child cancelled | ${child.orderNumber}`,
+          nextStatus: "released",
+          session,
+        });
+
+      releasedReservations = Number(
+        releaseResult?.count ||
+        releaseResult?.releasedCount ||
+        0
+      );
+
+      // reservation function may update order allocation
+      child = await Order.findById(id).session(session);
+
+      if (!child) {
+        throw new Error(
+          "Child order not found after reservation release"
+        );
+      }
+
+      const now = new Date();
+
+      child.fulfillmentStatus = "cancelled";
+
+      child.fulfillmentDates =
+        child.fulfillmentDates || {};
+
+      child.fulfillmentDates.cancelledAt = now;
+
+      child.cancellation =
+        child.cancellation || {};
+
+      child.cancellation.isCancelled = true;
+      child.cancellation.cancelledAt = now;
+      child.cancellation.cancelledBy = "admin";
+      child.cancellation.reason =
+        String(req.body?.reason || "").trim() ||
+        "Split child cancelled by admin";
+
+      child.adminRemarks = "cancelled_by_admin";
+
+      if (!child.shipment) {
+        child.shipment = {};
+      }
+
+      child.shipment.status = "cancelled";
+
+      await child.save({ session });
+
+      cancelledChildId = child._id;
+    });
+
+    const child = cancelledChildId
+      ? await Order.findById(cancelledChildId).lean()
+      : null;
+
+    return res.status(200).json({
+      success: true,
+      message: "Child order cancelled successfully",
+      releasedReservations,
+      order: child,
+    });
+  } catch (error) {
+    console.error("❌ CHILD ORDER CANCEL ERROR:", error);
+
+    return res.status(400).json({
+      success: false,
+      message:
+        error?.message ||
+        "Unable to cancel child order",
+    });
+  } finally {
+    await session.endSession();
+  }
+};

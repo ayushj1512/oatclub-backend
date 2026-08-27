@@ -43,6 +43,7 @@ import {
   updateTracking,
   repairSplitOrderToOriginal,
   updateRtoReceivedStatus,
+  cancelChildOrder,
 
 } from "./orderController.js";
 
@@ -359,6 +360,11 @@ router.get(
 );
 
 router.post("/:id/cancel", cancelOrder);
+
+router.post(
+  "/:id/cancel-child",
+  cancelChildOrder
+);
 
 router.post("/:orderId/duplicate-exchange", duplicateExchangeOrder);
 
