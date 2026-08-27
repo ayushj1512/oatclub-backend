@@ -7,6 +7,9 @@ import { buildReverseShiprocketPayload } from "../shiprocket/shiprocket.reverse.
 import Customer from "../Customer/Customer.js";
 import { Mailer } from "../nodemailer/mailer.js";
 import { sendCustomerCreditWhatsapp } from "../fast2sms/fast2sms.whatsapp.js";
+import {
+  createExchangeOrderFromRmaInternal,
+} from "./OrderController.js";
 
 /* ============================================================
    RMA POLICY
@@ -623,7 +626,9 @@ export const createRma = async (req, res) => {
       status: "requested",
       resolution: "pending",
 
+      isApproved: false,
       isFulfilled: false,
+      isExchangeOrderCreated: false,
 
       fee,
       exchangeRequest,
@@ -642,74 +647,7 @@ export const createRma = async (req, res) => {
 
     const created = order.rmas[order.rmas.length - 1];
 
-    /* AUTO SHIPROCKET REVERSE PICKUP */
-    try {
-      const payload = buildReverseShiprocketPayload({
-        order,
-        rma: created,
-      });
 
-      // QC OFF
-      payload.order_items = (payload.order_items || []).map(
-        ({
-          qc_enable,
-          qc_product_name,
-          qc_brand,
-          qc_product_image,
-          ...item
-        }) => item
-      );
-
-      const result = await createReturnOrder(payload);
-
-      const orderId = String(result?.order_id || result?.id || "");
-      const shipmentId = String(
-        result?.shipment_id || result?.shipment?.id || ""
-      );
-      const awb = String(
-        result?.awb_code ||
-        result?.awb ||
-        result?.shipment?.awb_code ||
-        ""
-      );
-
-      if (!orderId && !shipmentId) {
-        throw new Error(
-          result?.message ||
-          result?.error ||
-          "Shiprocket return creation failed"
-        );
-      }
-
-      created.reverseShipment = {
-        provider: "shiprocket",
-        orderId,
-        shipmentId,
-        awb,
-        courierName: String(
-          result?.courier_name || result?.courier || ""
-        ),
-        trackingUrl: String(result?.tracking_url || ""),
-        status: awb ? "pickup_scheduled" : "return_order_created",
-        pickupScheduledAt: awb ? new Date() : null,
-        lastUpdatedAt: new Date(),
-      };
-
-      if (awb) created.status = "pickup_scheduled";
-
-      await order.save();
-
-      console.log("✅ Auto reverse pickup created:", {
-        orderNumber: order.orderNumber,
-        rmaNumber: created.rmaNumber,
-        awb: awb || "pending",
-      });
-    } catch (e) {
-      console.error(
-        "⚠️ Auto reverse pickup failed:",
-        e?.response?.data || e?.message || e
-      );
-    }
 
     console.log(
       "✅ [CREATE RMA] RMA Created:",
@@ -778,19 +716,31 @@ export const createRma = async (req, res) => {
 ============================================================ */
 export const updateRma = async (req, res) => {
   try {
-    const orderId = req.params.id;
-    const rmaNumber = String(req.params.rmaNumber || "").trim();
+    const { id, rmaNumber } = req.params;
 
-    if (!isObjectId(orderId)) return badRequest(res, "Invalid order id");
-    if (!rmaNumber) return badRequest(res, "rmaNumber missing");
+    if (!isObjectId(id)) {
+      return badRequest(res, "Invalid order id");
+    }
 
-    const order = await Order.findById(orderId);
-    if (!order) return notFound(res, "Order not found");
+    if (!rmaNumber) {
+      return badRequest(res, "rmaNumber missing");
+    }
 
-    const idx = (order.rmas || []).findIndex((r) => String(r.rmaNumber) === rmaNumber);
-    if (idx === -1) return notFound(res, "RMA not found");
+    const order = await Order.findById(id);
 
-    const rma = order.rmas[idx];
+    if (!order) {
+      return notFound(res, "Order not found");
+    }
+
+    const rma = (order.rmas || []).find(
+      (r) =>
+        String(r?.rmaNumber) ===
+        String(rmaNumber)
+    );
+
+    if (!rma) {
+      return notFound(res, "RMA not found");
+    }
 
     const prevStatus = String(rma.status || "");
     const prevResolution = String(rma.resolution || "");
@@ -805,111 +755,266 @@ export const updateRma = async (req, res) => {
       reverseShipment,
       fee,
       isFulfilled,
-    } = req.body;
-    // Fee update
-    if (fee && typeof fee === "object") {
-      rma.fee = rma.fee || { amount: 0, currency: "INR", status: "waived" };
-      if (fee.amount != null) rma.fee.amount = Number(fee.amount || 0);
-      if (fee.currency != null) rma.fee.currency = String(fee.currency || "INR");
-      if (fee.status != null) rma.fee.status = normalize(fee.status || "waived");
+    } = req.body || {};
+
+    const requestedStatus = normalize(status);
+
+    /* ---------------------------------------------------------
+       Approval must ONLY happen through approveRma controller
+    --------------------------------------------------------- */
+    if (requestedStatus === "approved") {
+      return badRequest(
+        res,
+        "Use the dedicated RMA approval endpoint"
+      );
     }
 
-    // Fee gating for exchange
+    /* ---------------------------------------------------------
+       Actions requiring approval
+    --------------------------------------------------------- */
+    const postApprovalStatuses = [
+      "pickup_scheduled",
+      "picked",
+      "in_transit",
+      "received",
+      "qc_pass",
+      "qc_fail",
+      "refund_initiated",
+      "refund_completed",
+      "replacement_shipped",
+      "closed",
+    ];
+
+    const requiresApproval =
+      postApprovalStatuses.includes(requestedStatus) ||
+      refund != null ||
+      reverseShipment != null ||
+      typeof isFulfilled === "boolean";
+
+    if (
+      requiresApproval &&
+      rma.isApproved !== true
+    ) {
+      return badRequest(
+        res,
+        "RMA must be approved before performing this action"
+      );
+    }
+
+    /* ---------------------------------------------------------
+       Fee update
+    --------------------------------------------------------- */
+    if (fee && typeof fee === "object") {
+      rma.fee = rma.fee || {
+        amount: 0,
+        currency: "INR",
+        status: "waived",
+      };
+
+      if (fee.amount != null) {
+        rma.fee.amount = Number(fee.amount || 0);
+      }
+
+      if (fee.currency != null) {
+        rma.fee.currency =
+          String(fee.currency || "INR");
+      }
+
+      if (fee.status != null) {
+        rma.fee.status =
+          normalize(fee.status || "waived");
+      }
+    }
+
+    /* ---------------------------------------------------------
+       Exchange fee safety
+    --------------------------------------------------------- */
     if (
       rma.type === "exchange" &&
       Number(rma?.fee?.amount || 0) > 0 &&
       normalize(rma?.fee?.status) !== "paid"
     ) {
-      const blocked = [
-        "approved",
+      const blockedStatuses = [
         "pickup_scheduled",
         "picked",
         "in_transit",
         "received",
+        "qc_pass",
+        "qc_fail",
         "replacement_shipped",
         "closed",
       ];
-      if (status && blocked.includes(normalize(status))) {
-        return badRequest(res, "Exchange fee unpaid. Cannot proceed until paid.");
+
+      if (
+        requestedStatus &&
+        blockedStatuses.includes(requestedStatus)
+      ) {
+        return badRequest(
+          res,
+          "Exchange fee unpaid. Cannot proceed until paid."
+        );
       }
     }
 
-    // Main updates
-    if (status) {
-      rma.status = normalize(status);
+    /* ---------------------------------------------------------
+       Main status
+    --------------------------------------------------------- */
+    if (requestedStatus === "rejected") {
+      rma.status = "rejected";
+      rma.isApproved = false;
+      rma.statusUpdatedAt = new Date();
+    } else if (status) {
+      rma.status = requestedStatus;
       rma.statusUpdatedAt = new Date();
     }
 
+    /* ---------------------------------------------------------
+       Admin note
+    --------------------------------------------------------- */
     if (adminNote != null) {
-      rma.adminNote = String(adminNote || "");
+      rma.adminNote =
+        String(adminNote || "");
     }
 
+    /* ---------------------------------------------------------
+       Resolution
+    --------------------------------------------------------- */
     if (resolution) {
-      rma.resolution = normalize(resolution);
+      rma.resolution =
+        normalize(resolution);
     }
 
+    /* ---------------------------------------------------------
+       Fulfilled
+    --------------------------------------------------------- */
     if (typeof isFulfilled === "boolean") {
       rma.isFulfilled = isFulfilled;
     }
 
-    if (adminNote != null) rma.adminNote = String(adminNote || "");
-    if (resolution) rma.resolution = normalize(resolution);
-
-    // Refund object
+    /* ---------------------------------------------------------
+       Refund
+    --------------------------------------------------------- */
     if (refund && typeof refund === "object") {
       rma.refund = rma.refund || {};
-      if (refund.amount != null) rma.refund.amount = Number(refund.amount || 0);
-      if (refund.mode != null) rma.refund.mode = String(refund.mode || "");
-      if (refund.status != null) rma.refund.status = String(refund.status || "");
-      if (refund.referenceId != null) rma.refund.referenceId = String(refund.referenceId || "");
+
+      if (refund.amount != null) {
+        rma.refund.amount =
+          Number(refund.amount || 0);
+      }
+
+      if (refund.mode != null) {
+        rma.refund.mode =
+          String(refund.mode || "");
+      }
+
+      if (refund.status != null) {
+        rma.refund.status =
+          String(refund.status || "");
+      }
+
+      if (refund.referenceId != null) {
+        rma.refund.referenceId =
+          String(refund.referenceId || "");
+      }
     }
 
-    // Reverse pickup object
-    if (reverseShipment && typeof reverseShipment === "object") {
-      rma.reverseShipment = rma.reverseShipment || {};
-      ["orderId", "shipmentId", "awb", "courierName", "trackingUrl"].forEach((f) => {
-        if (reverseShipment[f] != null) rma.reverseShipment[f] = String(reverseShipment[f] || "");
+    /* ---------------------------------------------------------
+       Reverse shipment manual updates
+    --------------------------------------------------------- */
+    if (
+      reverseShipment &&
+      typeof reverseShipment === "object"
+    ) {
+      rma.reverseShipment =
+        rma.reverseShipment || {};
+
+      [
+        "orderId",
+        "shipmentId",
+        "awb",
+        "courierName",
+        "trackingUrl",
+      ].forEach((field) => {
+        if (reverseShipment[field] != null) {
+          rma.reverseShipment[field] =
+            String(reverseShipment[field] || "");
+        }
       });
 
-      ["pickupScheduledAt", "pickedAt", "receivedAt"].forEach((df) => {
-        if (reverseShipment[df] != null) rma.reverseShipment[df] = safeDate(reverseShipment[df]);
+      [
+        "pickupScheduledAt",
+        "pickedAt",
+        "receivedAt",
+      ].forEach((field) => {
+        if (reverseShipment[field] != null) {
+          rma.reverseShipment[field] =
+            safeDate(reverseShipment[field]);
+        }
       });
     }
+
+    order.markModified("rmas");
 
     await order.save();
 
-    const didStatusChange = status && prevStatus !== rma.status;
-    const didResolutionChange = resolution && prevResolution !== rma.resolution;
+    const didStatusChange =
+      status &&
+      prevStatus !== String(rma.status || "");
+
+    const didResolutionChange =
+      resolution &&
+      prevResolution !==
+      String(rma.resolution || "");
+
     const didFeeChange =
       fee &&
-      (prevFeeStatus !== String(rma?.fee?.status || "") ||
-        prevFeeAmount !== Number(rma?.fee?.amount || 0));
+      (
+        prevFeeStatus !==
+        String(rma?.fee?.status || "") ||
+        prevFeeAmount !==
+        Number(rma?.fee?.amount || 0)
+      );
 
-    console.log("✅ [UPDATE RMA] Updated:", {
-      orderNumber: order.orderNumber,
-      rmaNumber,
-      status: rma.status,
-      resolution: rma.resolution,
-    });
-
-    // ✅ Trigger emails only if meaningful changes happened
-    if (didStatusChange || didResolutionChange || didFeeChange) {
+    if (
+      didStatusChange ||
+      didResolutionChange ||
+      didFeeChange
+    ) {
       try {
-        console.log("📩 [UPDATE RMA] Triggering RMA emails...");
-        triggerRmaEmails({ order: order.toObject(), rma: rma.toObject(), policy: RMA_POLICY });
+        triggerRmaEmails({
+          order: order.toObject(),
+          rma:
+            typeof rma.toObject === "function"
+              ? rma.toObject()
+              : rma,
+          policy: RMA_POLICY,
+        });
       } catch (e) {
-        console.error("⚠️ [UPDATE RMA] triggerRmaEmails failed:", e?.message || e);
+        console.error(
+          "⚠️ [UPDATE RMA] triggerRmaEmails failed:",
+          e?.message || e
+        );
       }
     }
 
     return res.status(200).json({
+      success: true,
       message: "RMA updated",
-      rma: order.rmas[idx],
+      rma,
       order,
     });
   } catch (err) {
-    console.error("❌ Update RMA Error:", err);
-    return res.status(500).json({ message: err.message || "Server error" });
+    console.error(
+      "❌ Update RMA Error:",
+      err
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        err?.message ||
+        "RMA update failed",
+    });
   }
 };
 
@@ -928,8 +1033,9 @@ export const getRmasByOrder = async (req, res) => {
       ...rma,
 
       // RMA
+      // RMA
+      isApproved: rma?.isApproved === true,
       isFulfilled: Boolean(rma?.isFulfilled),
-
       // Order status
       fulfillmentStatus:
         order?.fulfillmentStatus || "",
@@ -1169,6 +1275,14 @@ export const getAllRmasAdmin = async (req, res) => {
           ...rma,
 
           // RMA
+          // RMA
+          isApproved:
+            rma?.isApproved === true,
+
+          // RMA
+          isApproved:
+            rma?.isApproved === true,
+
           isFulfilled:
             rma?.isFulfilled === true,
 
@@ -1294,9 +1408,16 @@ export const refundRmaToCredit = async (req, res) => {
 
     const order = await Order.findById(id);
 
-    if (!order) {
+    if (!rma) {
       return res.status(404).json({
-        message: "Order not found",
+        message: "RMA not found",
+      });
+    }
+
+    if (rma.isApproved !== true) {
+      return res.status(400).json({
+        success: false,
+        message: "RMA must be approved before refund",
       });
     }
 
@@ -1510,6 +1631,348 @@ export const refundRmaToCredit = async (req, res) => {
     return res.status(500).json({
       message:
         err.message || "Refund failed",
+    });
+  }
+};
+
+
+/* ============================================================
+   ✅ APPROVE RMA
+   - Admin approval gate
+   - Reverse pickup starts ONLY after approval
+============================================================ */
+/* ============================================================
+   ✅ APPROVE RMA
+   RETURN:
+   - approve
+   - reverse pickup
+
+   EXCHANGE:
+   - approve
+   - reverse pickup
+   - create duplicate -E order
+============================================================ */
+export const approveRma = async (req, res) => {
+  try {
+    const { id, rmaNumber } = req.params;
+
+    if (!isObjectId(id)) {
+      return badRequest(res, "Invalid order id");
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return notFound(res, "Order not found");
+    }
+
+    const rma = (order.rmas || []).find(
+      (r) =>
+        String(r?.rmaNumber) ===
+        String(rmaNumber)
+    );
+
+    if (!rma) {
+      return notFound(res, "RMA not found");
+    }
+
+    if (rma.status === "rejected") {
+      return badRequest(
+        res,
+        "Rejected RMA cannot be approved"
+      );
+    }
+
+    if (
+      rma.type === "exchange" &&
+      Number(rma?.fee?.amount || 0) > 0 &&
+      normalize(rma?.fee?.status) !== "paid"
+    ) {
+      return badRequest(
+        res,
+        "Exchange fee must be paid before approval"
+      );
+    }
+
+    /* ========================================================
+       1. APPROVE RMA
+    ======================================================== */
+
+    if (rma.isApproved !== true) {
+      rma.isApproved = true;
+      rma.status = "approved";
+      rma.statusUpdatedAt = new Date();
+
+      if (req.body?.adminNote != null) {
+        rma.adminNote = String(
+          req.body.adminNote || ""
+        );
+      }
+
+      order.markModified("rmas");
+      await order.save();
+    }
+
+    /* ========================================================
+       2. CREATE REVERSE PICKUP
+       BOTH RETURN + EXCHANGE
+    ======================================================== */
+
+    let pickupResult = {
+      success: false,
+      alreadyCreated: false,
+    };
+
+    const alreadyBooked =
+      rma?.reverseShipment?.orderId ||
+      rma?.reverseShipment?.shipmentId ||
+      rma?.reverseShipment?.awb;
+
+    if (alreadyBooked) {
+      pickupResult = {
+        success: true,
+        alreadyCreated: true,
+        awb: rma?.reverseShipment?.awb || "",
+      };
+    } else {
+      try {
+        const payload =
+          buildReverseShiprocketPayload({
+            order,
+            rma,
+          });
+
+        // ✅ QC OFF
+        payload.order_items = (
+          payload.order_items || []
+        ).map(
+          ({
+            qc_enable,
+            qc_product_name,
+            qc_brand,
+            qc_product_image,
+            ...item
+          }) => item
+        );
+
+        const result =
+          await createReturnOrder(payload);
+
+        const reverseOrderId = String(
+          result?.order_id ||
+          result?.id ||
+          ""
+        );
+
+        const shipmentId = String(
+          result?.shipment_id ||
+          result?.shipment?.id ||
+          ""
+        );
+
+        const awb = String(
+          result?.awb_code ||
+          result?.awb ||
+          result?.shipment?.awb_code ||
+          ""
+        );
+
+        if (!reverseOrderId && !shipmentId) {
+          throw new Error(
+            result?.message ||
+            result?.error ||
+            "Reverse pickup creation failed"
+          );
+        }
+
+        const now = new Date();
+
+        rma.reverseShipment =
+          rma.reverseShipment || {};
+
+        rma.reverseShipment.provider =
+          "shiprocket";
+
+        rma.reverseShipment.orderId =
+          reverseOrderId;
+
+        rma.reverseShipment.shipmentId =
+          shipmentId;
+
+        rma.reverseShipment.awb = awb;
+
+        rma.reverseShipment.courierName =
+          String(
+            result?.courier_name ||
+            result?.courier ||
+            ""
+          );
+
+        rma.reverseShipment.trackingUrl =
+          String(
+            result?.tracking_url || ""
+          );
+
+        rma.reverseShipment.status =
+          awb
+            ? "pickup_scheduled"
+            : "return_order_created";
+
+        rma.reverseShipment.pickupScheduledAt =
+          awb ? now : null;
+
+        rma.reverseShipment.lastSyncedAt = now;
+
+        if (awb) {
+          rma.status = "pickup_scheduled";
+        }
+
+        order.markModified("rmas");
+        await order.save();
+
+        pickupResult = {
+          success: true,
+          alreadyCreated: false,
+          orderId: reverseOrderId,
+          shipmentId,
+          awb,
+        };
+      } catch (error) {
+        console.error(
+          "⚠️ Reverse pickup creation failed:",
+          error?.response?.data ||
+          error?.message ||
+          error
+        );
+
+        rma.reverseShipment =
+          rma.reverseShipment || {};
+
+        rma.reverseShipment.status =
+          "booking_failed";
+
+        rma.reverseShipment.bookingError = {
+          step: "create_return_order",
+          message:
+            error?.response?.data?.message ||
+            error?.message ||
+            "Reverse pickup failed",
+          occurredAt: new Date(),
+        };
+
+        order.markModified("rmas");
+        await order.save();
+
+        pickupResult = {
+          success: false,
+          error:
+            error?.response?.data?.message ||
+            error?.message ||
+            "Reverse pickup failed",
+        };
+      }
+    }
+
+    /* ========================================================
+       3. EXCHANGE ONLY → CREATE -E ORDER
+    ======================================================== */
+
+    let exchangeOrder = null;
+    let exchangeOrderError = null;
+
+    if (
+      rma.type === "exchange" &&
+      rma.isExchangeOrderCreated !== true
+    ) {
+      try {
+        exchangeOrder =
+          await createExchangeOrderFromRmaInternal({
+            orderId: order._id,
+            rmaNumber: rma.rmaNumber,
+            adminId:
+              req.user?._id || "admin",
+          });
+
+        console.log(
+          "✅ Exchange replacement created:",
+          exchangeOrder?.orderNumber
+        );
+      } catch (error) {
+        exchangeOrderError =
+          error?.message ||
+          "Exchange order creation failed";
+
+        console.error(
+          "⚠️ Exchange order creation failed:",
+          error
+        );
+      }
+    }
+
+    /* ========================================================
+       4. RETURN DOES NOTHING ELSE
+    ======================================================== */
+
+    const freshOrder = await Order.findById(
+      order._id
+    ).lean();
+
+    const freshRma = (
+      freshOrder?.rmas || []
+    ).find(
+      (x) =>
+        String(x?.rmaNumber) ===
+        String(rmaNumber)
+    );
+
+    try {
+      triggerRmaEmails({
+        order: freshOrder,
+        rma: freshRma,
+        policy: RMA_POLICY,
+      });
+    } catch (error) {
+      console.error(
+        "⚠️ RMA approval email failed:",
+        error?.message || error
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        rma.type === "exchange"
+          ? "Exchange RMA approved"
+          : "Return RMA approved",
+
+      type: rma.type,
+
+      rma: freshRma,
+
+      reversePickup: pickupResult,
+
+      exchangeOrder:
+        rma.type === "exchange"
+          ? exchangeOrder
+          : null,
+
+      exchangeOrderError:
+        rma.type === "exchange"
+          ? exchangeOrderError
+          : null,
+    });
+  } catch (error) {
+    console.error(
+      "❌ Approve RMA Error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error?.message ||
+        "Failed to approve RMA",
     });
   }
 };

@@ -89,6 +89,7 @@ import {
   getRmaByNumber,
   getRmasByOrder,
   updateRma,
+  approveRma,
   refundRmaToCredit,
 } from "./orderRmaController.js";
 
@@ -388,7 +389,19 @@ router.get("/:id/rma", getRmasByOrder);
 
 router.get("/:id/rma/:rmaNumber", getRmaByNumber);
 
-router.patch("/:id/rma/:rmaNumber", updateRma);
+// ✅ Approve RMA
+// Return   → reverse pickup
+// Exchange → reverse pickup + duplicate exchange order
+router.patch(
+  "/:id/rma/:rmaNumber/approve",
+  approveRma
+);
+
+// Normal admin RMA update
+router.patch(
+  "/:id/rma/:rmaNumber",
+  updateRma
+);
 
 /* ============================================================
    ORDER UPDATE ROUTES

@@ -4217,8 +4217,11 @@ export const updateOrderStatus = async (req, res) => {
    - paymentMethod: exchange
    - paymentStatus: not_applicable
 ============================================================ */
-
-export const duplicateExchangeOrder = async (req, res) => {
+export const createExchangeOrderFromRmaInternal = async ({
+  orderId,
+  rmaNumber,
+  adminId = null,
+}) => {
   const session = await mongoose.startSession();
 
   const str = (v) => (v == null ? "" : String(v));
@@ -4226,9 +4229,6 @@ export const duplicateExchangeOrder = async (req, res) => {
     const n = Number(v);
     return Number.isFinite(n) ? n : d;
   };
-
-  const isObjectId = (v) =>
-    mongoose.Types.ObjectId.isValid(String(v || ""));
 
   const normalizeAttrs = (variant) => {
     const raw = variant?.attributes;
@@ -4244,7 +4244,7 @@ export const duplicateExchangeOrder = async (req, res) => {
 
     if (raw && typeof raw === "object") {
       return Object.entries(raw).map(([key, value]) => ({
-        key: str(key),
+        key,
         value: str(value),
       }));
     }
@@ -4253,94 +4253,36 @@ export const duplicateExchangeOrder = async (req, res) => {
   };
 
   const pickAttr = (attrs = [], keys = []) => {
-    const wanted = keys.map((k) => str(k).trim().toLowerCase());
+    const wanted = keys.map((x) => str(x).trim().toLowerCase());
 
-    return str(
-      attrs.find((a) =>
-        wanted.includes(str(a?.key).trim().toLowerCase())
-      )?.value
+    const found = (attrs || []).find((a) =>
+      wanted.includes(
+        str(a?.key || "")
+          .trim()
+          .toLowerCase()
+      )
     );
+
+    return found?.value ? str(found.value) : "";
   };
 
-  const getSizeFromSku = (sku = "") => {
-    const sizes = [
-      "XXS",
-      "XS",
-      "S",
-      "M",
-      "L",
-      "XL",
-      "XXL",
-      "3XL",
-      "4XL",
-      "5XL",
-    ];
-
-    return (
-      str(sku)
-        .toUpperCase()
-        .split("-")
-        .reverse()
-        .find((x) => sizes.includes(x)) || ""
-    );
-  };
-
-  const getVariantSize = (variant) => {
-    const attrs = normalizeAttrs(variant);
-
-    return (
-      pickAttr(attrs, ["size", "sizes", "shirt_size"]) ||
-      getSizeFromSku(variant?.sku)
+  const getVariantSize = (variant) =>
+    pickAttr(
+      normalizeAttrs(variant),
+      ["size", "sizes", "shirt_size"]
     )
       .trim()
       .toUpperCase();
-  };
 
-  const getColor = (variant, productCode = "") => {
-    const attrs = normalizeAttrs(variant);
+  const getColor = (variant) =>
+    pickAttr(
+      normalizeAttrs(variant),
+      ["color", "colour"]
+    );
 
-    const fromAttr = pickAttr(attrs, [
-      "color",
-      "colour",
-      "color_name",
-    ]).trim();
-
-    if (fromAttr) return fromAttr;
-
-    const parts = str(variant?.sku).toUpperCase().split("-");
-    if (parts.length < 2) return "";
-
-    const value = parts[parts.length - 2];
-
-    if (
-      !value ||
-      /^[0-9]+$/.test(value) ||
-      value === str(productCode).toUpperCase() ||
-      getSizeFromSku(value)
-    ) {
-      return "";
-    }
-
-    return value.toLowerCase();
-  };
+  let createdOrder = null;
 
   try {
-    const { orderId } = req.params;
-
-    const {
-      items,
-      rmaNumber,
-      reason = "other",
-    } = req.body || {};
-
-    if (!isObjectId(orderId)) {
-      return res.status(400).json({
-        message: "Invalid orderId",
-      });
-    }
-
-    let newOrderDoc;
-
     await session.withTransaction(async () => {
       const original = await Order.findById(orderId).session(session);
 
@@ -4348,44 +4290,67 @@ export const duplicateExchangeOrder = async (req, res) => {
         throw new Error("Original order not found");
       }
 
-      const base = str(original.orderNumber).trim();
-
-      if (!base) {
-        throw new Error("Original orderNumber missing");
-      }
-
-      const newOrderNumber = `${base}-E`;
-
-      const exists = await Order.findOne({
-        orderNumber: newOrderNumber,
-      })
-        .session(session)
-        .lean();
-
-      if (exists) {
-        throw new Error("Exchange order already created");
-      }
-
-      // ---------------------------------------------------------
-      // RMA + preferred exchange size
-      // ---------------------------------------------------------
-
-      const targetRma = rmaNumber
-        ? (original.rmas || []).find(
-          (r) => str(r?.rmaNumber) === str(rmaNumber)
-        )
-        : [...(original.rmas || [])]
-          .reverse()
-          .find((r) => r?.type === "exchange");
+      const targetRma = (original.rmas || []).find(
+        (r) => str(r?.rmaNumber) === str(rmaNumber)
+      );
 
       if (!targetRma) {
         throw new Error("Exchange RMA not found");
       }
 
+      if (targetRma.type !== "exchange") {
+        throw new Error("RMA is not an exchange request");
+      }
+
+      // ✅ MAIN APPROVAL GATE
+      if (targetRma.isApproved !== true) {
+        throw new Error(
+          "RMA must be approved before creating exchange order"
+        );
+      }
+
+      // ✅ Duplicate protection
+      if (targetRma.isExchangeOrderCreated === true) {
+        throw new Error("Exchange order already created");
+      }
+
+      // ✅ Exchange fee safety
+      if (
+        Number(targetRma?.fee?.amount || 0) > 0 &&
+        String(targetRma?.fee?.status || "").toLowerCase() !== "paid"
+      ) {
+        throw new Error(
+          "Exchange fee unpaid. Cannot create exchange order"
+        );
+      }
+
+      const base = str(original.orderNumber).trim();
+
+      if (!base) {
+        throw new Error("Original order number missing");
+      }
+
+      const newOrderNumber = `${base}-E`;
+
+      const existing = await Order.findOne({
+        orderNumber: newOrderNumber,
+      })
+        .session(session)
+        .lean();
+
+      if (existing) {
+        targetRma.isExchangeOrderCreated = true;
+        original.hasExchangeOrder = true;
+        original.markModified("rmas");
+
+        await original.save({ session });
+
+        createdOrder = existing;
+        return;
+      }
+
       const exchangeRequest =
-        targetRma?.exchangeTo ||
-        targetRma?.exchangeRequest ||
-        {};
+        targetRma?.exchangeRequest || {};
 
       const requestedSize = pickAttr(
         exchangeRequest?.attributes || [],
@@ -4394,34 +4359,39 @@ export const duplicateExchangeOrder = async (req, res) => {
         .trim()
         .toUpperCase();
 
-      const incomingItems =
-        Array.isArray(items) && items.length
-          ? items
-          : null;
-
-      if (!incomingItems) {
-        throw new Error("Exchange items missing");
+      if (!requestedSize) {
+        throw new Error("Preferred exchange size missing");
       }
 
-      // ---------------------------------------------------------
-      // Products
-      // ---------------------------------------------------------
+      /*
+        Build items from RMA itself.
+        Frontend does NOT need to send duplicate items anymore.
+      */
+      const incomingItems = (targetRma.items || []).map((rmaItem) => ({
+        productId:
+          exchangeRequest?.productId ||
+          rmaItem?.productId,
+
+        quantity: Math.max(
+          1,
+          Number(rmaItem?.quantity || 1)
+        ),
+
+        variantId:
+          exchangeRequest?.variantId || null,
+      }));
+
+      if (!incomingItems.length) {
+        throw new Error("Exchange items missing");
+      }
 
       const productIds = [
         ...new Set(
           incomingItems
-            .map((item) => str(item?.productId))
+            .map((item) => str(item.productId))
             .filter(Boolean)
         ),
       ];
-
-      const badId = productIds.find(
-        (id) => !isObjectId(id)
-      );
-
-      if (badId) {
-        throw new Error(`Invalid productId: ${badId}`);
-      }
 
       const products = await Product.find({
         _id: { $in: productIds },
@@ -4436,22 +4406,18 @@ export const duplicateExchangeOrder = async (req, res) => {
       const normalizedItems = [];
       let subtotal = 0;
 
-      // ---------------------------------------------------------
-      // Build replacement items
-      // ---------------------------------------------------------
-
       for (const item of incomingItems) {
         const product = productMap.get(
-          str(item?.productId)
+          str(item.productId)
         );
 
         if (!product) {
-          throw new Error("Product not found");
+          throw new Error("Exchange product not found");
         }
 
         const qty = Math.max(
           1,
-          num(item?.quantity, 1)
+          num(item.quantity, 1)
         );
 
         const isVariable =
@@ -4461,29 +4427,26 @@ export const duplicateExchangeOrder = async (req, res) => {
         let variant = null;
 
         if (isVariable) {
-          // ✅ RMA preferred size gets FIRST priority
-          if (requestedSize) {
-            variant =
-              (product.variants || []).find(
-                (v) =>
-                  getVariantSize(v) === requestedSize
-              ) || null;
-          }
+          // ✅ RMA preferred size FIRST
+          variant =
+            (product.variants || []).find(
+              (v) =>
+                getVariantSize(v) === requestedSize
+            ) || null;
 
-          // fallback only if preferred size unavailable/not supplied
-          if (!variant && item?.variantId) {
+          // fallback
+          if (!variant && item.variantId) {
             variant =
               (product.variants || []).find(
                 (v) =>
-                  str(v?._id) === str(item.variantId)
+                  str(v?._id) ===
+                  str(item.variantId)
               ) || null;
           }
 
           if (!variant) {
             throw new Error(
-              requestedSize
-                ? `${product.title} - size ${requestedSize} variant not found`
-                : `${product.title} - variant not found`
+              `${product.title} - size ${requestedSize} variant not found`
             );
           }
         }
@@ -4531,11 +4494,13 @@ export const duplicateExchangeOrder = async (req, res) => {
             slug: product.slug || "",
             thumbnail: product.thumbnail || "",
             images: product.images || [],
+
             productType:
               product.productType ||
               (product.variants?.length
                 ? "variable"
                 : "simple"),
+
             sku: product.sku || "",
             tags: product.tags || [],
             hsnCode: str(product.hsnCode),
@@ -4550,19 +4515,15 @@ export const duplicateExchangeOrder = async (req, res) => {
             weight: num(variant?.weight),
           },
 
-          selectedSize:
-            getVariantSize(variant),
-
-          selectedColor:
-            getColor(
-              variant,
-              product.productCode
-            ),
+          selectedSize: getVariantSize(variant),
+          selectedColor: getColor(variant),
 
           quantity: qty,
           price,
+
           compareAtPrice:
             product.compareAtPrice ?? null,
+
           subtotal: lineSubtotal,
 
           fulfillment: {
@@ -4572,10 +4533,6 @@ export const duplicateExchangeOrder = async (req, res) => {
           },
         });
       }
-
-      // ---------------------------------------------------------
-      // Create exchange order
-      // ---------------------------------------------------------
 
       const [created] = await Order.create(
         [
@@ -4595,6 +4552,7 @@ export const duplicateExchangeOrder = async (req, res) => {
             discount: 0,
             shippingFee: 0,
             tax: 0,
+
             totalAmount: subtotal,
             finalPayable: 0,
 
@@ -4606,36 +4564,33 @@ export const duplicateExchangeOrder = async (req, res) => {
 
             fulfillmentStatus: "processing",
 
-            hasExchangeOrder: false,
             isExchangeOrder: true,
+            hasExchangeOrder: false,
 
             source: "manual",
             orderType: "shipment",
 
-            isGiftOrder:
-              original.isGiftOrder || false,
-
             parentOrderId: original._id,
             splitSuffix: "E",
 
+            isGiftOrder:
+              original.isGiftOrder || false,
+
             isConfirmed: true,
             confirmedAt: new Date(),
-            confirmedBy:
-              req.user?._id || null,
+            confirmedBy: adminId || "admin",
 
             adminRemarks:
               `exchange_replacement_of:${base}`,
 
             customerSupportRemark:
-              original.customerSupportRemark ||
-              "",
+              original.customerSupportRemark || "",
 
             analytics: {
               ...(original.analytics || {}),
               couponApplied: false,
               creditsUsed: false,
-              onlinePaymentDiscountApplied:
-                false,
+              onlinePaymentDiscountApplied: false,
               onlinePaymentDiscountPct: 0,
               onlinePaymentDiscountAmount: 0,
             },
@@ -4646,29 +4601,35 @@ export const duplicateExchangeOrder = async (req, res) => {
         { session }
       );
 
-      // ---------------------------------------------------------
-      // Update original RMA
-      // ---------------------------------------------------------
-
       targetRma.isExchangeOrderCreated = true;
-      targetRma.status = "approved";
-
       original.hasExchangeOrder = true;
+
       original.markModified("rmas");
 
       await original.save({ session });
 
-      newOrderDoc = created;
+      createdOrder = created;
     });
 
-    const fresh = await Order.findById(
-      newOrderDoc._id
-    ).lean();
+    return createdOrder;
+  } finally {
+    await session.endSession();
+  }
+};
+
+
+export const duplicateExchangeOrder = async (req, res) => {
+  try {
+    const order = await createExchangeOrderFromRmaInternal({
+      orderId: req.params.orderId,
+      rmaNumber: req.body?.rmaNumber,
+      adminId: req.user?._id || "admin",
+    });
 
     return res.status(201).json({
-      message:
-        "Exchange order created successfully",
-      order: fresh,
+      success: true,
+      message: "Exchange order created successfully",
+      order,
     });
   } catch (error) {
     console.error(
@@ -4677,14 +4638,15 @@ export const duplicateExchangeOrder = async (req, res) => {
     );
 
     return res.status(400).json({
+      success: false,
       message:
         error?.message ||
         "Exchange order create failed",
     });
-  } finally {
-    session.endSession();
   }
 };
+
+
 
 /* ============================================================
    ✅ CONFIRM ORDER (ADMIN / COD)

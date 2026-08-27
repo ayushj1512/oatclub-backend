@@ -157,6 +157,12 @@ const rmaSchema = new mongoose.Schema(
       index: true,
     },
 
+    isApproved: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     items: { type: [rmaItemSchema], required: true },
 
     reason: {
