@@ -9,7 +9,7 @@ import { Mailer } from "../nodemailer/mailer.js";
 import { sendCustomerCreditWhatsapp } from "../fast2sms/fast2sms.whatsapp.js";
 import {
   createExchangeOrderFromRmaInternal,
-} from "./OrderController.js";
+} from "./orderController.js";
 
 /* ============================================================
    RMA POLICY
