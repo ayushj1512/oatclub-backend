@@ -7040,9 +7040,11 @@ export const updateOrderPaymentStatus = async (req, res) => {
 
     const allowedStatuses = [
       "pending",
+      "partially_paid",
       "paid",
       "failed",
       "refunded",
+      "partially_refunded",
       "refund_pending",
       "not_applicable",
     ];
