@@ -4136,34 +4136,39 @@ export const updateOrderStatus = async (req, res) => {
 
     // Book only after MongoDB transaction commits.
     // Shiprocket failure will not rollback packed status or inventory consume.
-    if (finalOrder && shouldBookShiprocket) {
-      try {
-        const freshOrderDoc = await Order.findById(
-          finalOrder._id,
-        );
 
-        if (!freshOrderDoc) {
-          throw new Error(
-            "Order not found before Shiprocket auto booking",
-          );
-        }
+    // ============================================================
+    // 🚫 SHIPROCKET AUTO BOOKING DISABLED
+    // Manual booking only.
+    // ============================================================
+    // if (finalOrder && shouldBookShiprocket) {
+    //   try {
+    //     const freshOrderDoc = await Order.findById(
+    //       finalOrder._id,
+    //     );
 
-        const alreadyBooked =
-          freshOrderDoc?.shipment?.shiprocket?.awb ||
-          freshOrderDoc?.shipment?.shiprocket?.shipmentId;
+    //     if (!freshOrderDoc) {
+    //       throw new Error(
+    //         "Order not found before Shiprocket auto booking",
+    //       );
+    //     }
 
-        if (!alreadyBooked) {
-          await autoBookShiprocketForOrder(freshOrderDoc);
-        }
-      } catch (error) {
-        console.error(
-          "⚠️ Auto Shiprocket booking failed:",
-          error?.response?.data ||
-          error?.message ||
-          error,
-        );
-      }
-    }
+    //     const alreadyBooked =
+    //       freshOrderDoc?.shipment?.shiprocket?.awb ||
+    //       freshOrderDoc?.shipment?.shiprocket?.shipmentId;
+
+    //     if (!alreadyBooked) {
+    //       await autoBookShiprocketForOrder(freshOrderDoc);
+    //     }
+    //   } catch (error) {
+    //     console.error(
+    //       "⚠️ Auto Shiprocket booking failed:",
+    //       error?.response?.data ||
+    //       error?.message ||
+    //       error,
+    //     );
+    //   }
+    // }
 
     if (finalOrder && shouldSendShippedEmail) {
       sendOrderMailNonBlocking({
