@@ -182,6 +182,39 @@ const rmaSchema = new mongoose.Schema(
     customerNote: { type: String, default: "" },
     adminNote: { type: String, default: "" },
 
+    media: [
+      {
+        url: {
+          type: String,
+          required: true,
+          trim: true,
+        },
+
+        publicId: {
+          type: String,
+          default: "",
+          trim: true,
+        },
+
+        resourceType: {
+          type: String,
+          enum: ["image", "video"],
+          default: "image",
+        },
+
+        evidenceType: {
+          type: String,
+          enum: ["front", "back", "tag"],
+          required: true,
+        },
+
+        uploadedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+
     resolution: {
       type: String,
       enum: ["pending", "refund", "exchange", "store_credit", "reject"],

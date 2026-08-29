@@ -186,12 +186,14 @@ export const createRma = async (req, res) => {
       customerNote = "",
       items,
       exchangeTo,
-    } = req.body;
+      media = [], // ✅ NEW
+    } = req.body || {};
 
     console.log("📦 [CREATE RMA] Request:", {
       orderId,
       type,
       reason,
+      mediaCount: Array.isArray(media) ? media.length : 0,
     });
 
     if (!isObjectId(orderId)) {
@@ -206,17 +208,73 @@ export const createRma = async (req, res) => {
       return badRequest(res, "Invalid RMA type");
     }
 
+    /* ============================================================
+       ✅ QC MEDIA
+    ============================================================ */
+
+    const normalizedMedia = Array.isArray(media)
+      ? media
+        .filter((m) => String(m?.url || "").trim())
+        .map((m) => ({
+          url: String(m.url).trim(),
+          publicId: String(m?.publicId || "").trim(),
+          resourceType:
+            String(m?.resourceType || "image").trim().toLowerCase() ===
+              "video"
+              ? "video"
+              : "image",
+          evidenceType: String(m?.evidenceType || "")
+            .trim()
+            .toLowerCase(),
+          uploadedAt: new Date(),
+        }))
+      : [];
+
+    /*
+     * Return requires:
+     * front + back + tag
+     *
+     * Exchange is intentionally not forced here yet,
+     * so existing exchange flow does not break.
+     */
+    if (type === "return") {
+      const requiredEvidence = ["front", "back", "tag"];
+
+      const hasAllImages = requiredEvidence.every((evidenceType) =>
+        normalizedMedia.some(
+          (m) =>
+            m.evidenceType === evidenceType &&
+            m.resourceType === "image" &&
+            m.url
+        )
+      );
+
+      if (!hasAllImages) {
+        return badRequest(
+          res,
+          "Front, back and tag images are required for return QC"
+        );
+      }
+
+      // Keep exactly one image of each required type
+      const orderedMedia = requiredEvidence.map((evidenceType) =>
+        normalizedMedia.find(
+          (m) => m.evidenceType === evidenceType
+        )
+      );
+
+      normalizedMedia.splice(
+        0,
+        normalizedMedia.length,
+        ...orderedMedia
+      );
+    }
+
     const order = await Order.findById(orderId);
 
     if (!order) {
       return notFound(res, "Order not found");
     }
-
-    console.log("✅ [CREATE RMA] Order found:", {
-      orderNumber: order?.orderNumber,
-      fulfillmentStatus: order?.fulfillmentStatus,
-      customerEmail: order?.shippingAddressSnapshot?.email,
-    });
 
     if (order.fulfillmentStatus !== "delivered") {
       return badRequest(
@@ -234,22 +292,6 @@ export const createRma = async (req, res) => {
       order?.shipment?.deliveredAt ||
       order?.trackingDetails?.deliveredAt;
 
-    console.log("📦 [RMA DELIVERY CHECK]", {
-      orderNumber: order?.orderNumber,
-
-      fulfillmentDeliveredAt:
-        order?.fulfillmentDates?.deliveredAt || null,
-
-      shipmentDeliveredAt:
-        order?.shipment?.deliveredAt || null,
-
-      trackingDeliveredAt:
-        order?.trackingDetails?.deliveredAt || null,
-
-      resolvedDeliveredAt:
-        deliveredAt || null,
-    });
-
     if (!deliveredAt) {
       return badRequest(
         res,
@@ -257,8 +299,7 @@ export const createRma = async (req, res) => {
       );
     }
 
-    const deliveredTime =
-      new Date(deliveredAt).getTime();
+    const deliveredTime = new Date(deliveredAt).getTime();
 
     if (!Number.isFinite(deliveredTime)) {
       return badRequest(
@@ -278,24 +319,9 @@ export const createRma = async (req, res) => {
 
     const expiresAt =
       deliveredTime +
-      RMA_POLICY.windowDays *
-      24 *
-      60 *
-      60 *
-      1000;
+      RMA_POLICY.windowDays * 24 * 60 * 60 * 1000;
 
     if (now > expiresAt) {
-      console.log("❌ [RMA WINDOW EXPIRED]", {
-        orderNumber: order?.orderNumber,
-        deliveredAt: new Date(
-          deliveredTime
-        ).toISOString(),
-        expiresAt: new Date(
-          expiresAt
-        ).toISOString(),
-        now: new Date(now).toISOString(),
-      });
-
       return badRequest(
         res,
         `Return/Exchange window expired. Allowed within ${RMA_POLICY.windowDays} days.`
@@ -303,23 +329,18 @@ export const createRma = async (req, res) => {
     }
 
     /* ============================================================
-       VALIDATE RMA ITEMS
+       VALIDATE ITEMS
     ============================================================ */
 
-    const remaining =
-      computeRemainingQtyByLineId(order);
+    const remaining = computeRemainingQtyByLineId(order);
 
     for (const ri of items) {
       const lineId = String(
         ri?.orderLineId || ""
       ).trim();
 
-      const qty = Number(
-        ri?.quantity || 0
-      );
-
-      const rem =
-        remaining.get(lineId);
+      const qty = Number(ri?.quantity || 0);
+      const rem = remaining.get(lineId);
 
       if (!lineId) {
         return badRequest(
@@ -335,10 +356,7 @@ export const createRma = async (req, res) => {
         );
       }
 
-      if (
-        !Number.isFinite(qty) ||
-        qty < 1
-      ) {
+      if (!Number.isFinite(qty) || qty < 1) {
         return badRequest(
           res,
           "Invalid RMA quantity"
@@ -354,10 +372,7 @@ export const createRma = async (req, res) => {
     }
 
     const rmaItemsSnapshots =
-      buildRmaItemsSnapshots(
-        order,
-        items
-      );
+      buildRmaItemsSnapshots(order, items);
 
     let fee = {
       amount: 0,
@@ -368,152 +383,36 @@ export const createRma = async (req, res) => {
     let exchangeRequest = null;
 
     /* ============================================================
-       EXCHANGE HELPERS
-    ============================================================ */
-
-    const normalize = (s) =>
-      String(s || "")
-        .trim()
-        .toLowerCase();
-
-    const attrKey = (a) =>
-      normalize(
-        a?.key ||
-        a?.attributeName ||
-        a?.name ||
-        ""
-      );
-
-    const attrVal = (a) =>
-      normalize(
-        a?.value ||
-        a?.val ||
-        ""
-      );
-
-    const normalizeWantedAttrs = (
-      attrs = []
-    ) => {
-      const wanted = {};
-
-      (attrs || []).forEach(
-        (a) => {
-          const k = attrKey(a);
-          const v = attrVal(a);
-
-          if (k && v) {
-            wanted[k] = v;
-          }
-        }
-      );
-
-      return wanted;
-    };
-
-    const variantAttrMap = (
-      variant
-    ) => {
-      const map = {};
-
-      const attrs =
-        Array.isArray(
-          variant?.attributes
-        )
-          ? variant.attributes
-          : [];
-
-      attrs.forEach((a) => {
-        const k = attrKey(a);
-        const v = attrVal(a);
-
-        if (k && v) {
-          map[k] = v;
-        }
-      });
-
-      return map;
-    };
-
-    const findVariantByAttrs = (
-      variants = [],
-      wantedAttrs = {}
-    ) => {
-      const keys =
-        Object.keys(
-          wantedAttrs || {}
-        );
-
-      if (!keys.length) {
-        return null;
-      }
-
-      for (const v of variants || []) {
-        const map =
-          variantAttrMap(v);
-
-        let matched = true;
-
-        for (const key of keys) {
-          if (
-            map[key] !==
-            wantedAttrs[key]
-          ) {
-            matched = false;
-            break;
-          }
-        }
-
-        if (matched) {
-          return v;
-        }
-      }
-
-      return null;
-    };
-
-    /* ============================================================
        EXCHANGE
     ============================================================ */
 
     if (type === "exchange") {
-      const ex =
-        exchangeTo || {};
+      const ex = exchangeTo || {};
 
-      const productId =
-        String(
-          ex?.productId || ""
-        ).trim();
+      const productId = String(
+        ex?.productId || ""
+      ).trim();
 
-      if (
-        !isObjectId(productId)
-      ) {
+      if (!isObjectId(productId)) {
         return badRequest(
           res,
           "exchangeTo.productId missing/invalid for exchange"
         );
       }
 
-      let resolvedVariantId =
-        String(
-          ex?.variantId || ""
-        ).trim();
+      let resolvedVariantId = String(
+        ex?.variantId || ""
+      ).trim();
 
-      let resolvedVariantSku =
-        String(
-          ex?.variantSku || ""
-        ).trim();
+      let resolvedVariantSku = String(
+        ex?.variantSku || ""
+      ).trim();
 
-      const attrs =
-        Array.isArray(
-          ex?.attributes
-        )
-          ? ex.attributes
-          : [];
+      const attrs = Array.isArray(ex?.attributes)
+        ? ex.attributes
+        : [];
 
-      const wanted =
-        normalizeWantedAttrs(
-          attrs
-        );
+      const wanted = normalizeWantedAttrs(attrs);
 
       if (!wanted.size) {
         return badRequest(
@@ -522,17 +421,10 @@ export const createRma = async (req, res) => {
         );
       }
 
-      if (
-        !isObjectId(
-          resolvedVariantId
-        )
-      ) {
-        const prod =
-          await Product.findById(
-            productId
-          )
-            .select("variants")
-            .lean();
+      if (!isObjectId(resolvedVariantId)) {
+        const prod = await Product.findById(productId)
+          .select("variants")
+          .lean();
 
         if (!prod) {
           return notFound(
@@ -541,11 +433,10 @@ export const createRma = async (req, res) => {
           );
         }
 
-        const matched =
-          findVariantByAttrs(
-            prod?.variants || [],
-            wanted
-          );
+        const matched = findVariantByAttrs(
+          prod?.variants || [],
+          wanted
+        );
 
         if (!matched?._id) {
           return badRequest(
@@ -563,11 +454,7 @@ export const createRma = async (req, res) => {
         }
       }
 
-      if (
-        !isObjectId(
-          resolvedVariantId
-        )
-      ) {
+      if (!isObjectId(resolvedVariantId)) {
         return badRequest(
           res,
           "exchangeTo.variantId missing for exchange"
@@ -575,14 +462,10 @@ export const createRma = async (req, res) => {
       }
 
       const prevExchanges =
-        countPreviousExchanges(
-          order
-        );
+        countPreviousExchanges(order);
 
       const amount =
-        computeExchangeFee(
-          prevExchanges
-        );
+        computeExchangeFee(prevExchanges);
 
       fee = {
         amount,
@@ -595,14 +478,10 @@ export const createRma = async (req, res) => {
 
       exchangeRequest = {
         productId,
-        variantId:
-          resolvedVariantId,
-        variantSku:
-          resolvedVariantSku,
+        variantId: resolvedVariantId,
+        variantSku: resolvedVariantSku,
         attributes: attrs,
-        note: String(
-          ex?.note || ""
-        ),
+        note: String(ex?.note || ""),
       };
     }
 
@@ -610,18 +489,20 @@ export const createRma = async (req, res) => {
        CREATE RMA
     ============================================================ */
 
-    const rmaNumber =
-      makeRmaNumber();
+    const rmaNumber = makeRmaNumber();
 
-    order.rmas =
-      order.rmas || [];
+    order.rmas = order.rmas || [];
 
     order.rmas.push({
       rmaNumber,
       type,
       reason,
       customerNote,
+
       items: rmaItemsSnapshots,
+
+      // ✅ SAVE QC IMAGES
+      media: normalizedMedia,
 
       status: "requested",
       resolution: "pending",
@@ -634,10 +515,6 @@ export const createRma = async (req, res) => {
       exchangeRequest,
     });
 
-    /* ============================================================
-       UPDATE ORDER
-    ============================================================ */
-
     order.fulfillmentStatus =
       type === "exchange"
         ? "exchange_requested"
@@ -645,36 +522,22 @@ export const createRma = async (req, res) => {
 
     await order.save();
 
-    const created = order.rmas[order.rmas.length - 1];
+    const created =
+      order.rmas[order.rmas.length - 1];
 
-
-
-    console.log(
-      "✅ [CREATE RMA] RMA Created:",
-      {
-        orderNumber:
-          order.orderNumber,
-        rmaNumber:
-          created?.rmaNumber,
-        customerEmail:
-          order
-            ?.shippingAddressSnapshot
-            ?.email,
-      }
-    );
+    console.log("✅ [CREATE RMA] Created:", {
+      orderNumber: order.orderNumber,
+      rmaNumber: created?.rmaNumber,
+      mediaCount: created?.media?.length || 0,
+    });
 
     /* ============================================================
        EMAIL
     ============================================================ */
 
     try {
-      console.log(
-        "📩 [CREATE RMA] Triggering RMA emails..."
-      );
-
       triggerRmaEmails({
-        order:
-          order.toObject(),
+        order: order.toObject(),
         rma: created,
         policy: RMA_POLICY,
       });
@@ -685,28 +548,25 @@ export const createRma = async (req, res) => {
       );
     }
 
-    return res
-      .status(201)
-      .json({
-        message: "RMA created",
-        rma: created,
-        orderId: order._id,
-        order,
-        policy: RMA_POLICY,
-      });
+    return res.status(201).json({
+      success: true,
+      message: "RMA created",
+      rma: created,
+      orderId: order._id,
+      order,
+      policy: RMA_POLICY,
+    });
   } catch (err) {
     console.error(
       "❌ Create RMA Error:",
       err
     );
 
-    return res
-      .status(500)
-      .json({
-        message:
-          err.message ||
-          "Server error",
-      });
+    return res.status(500).json({
+      success: false,
+      message:
+        err?.message || "Server error",
+    });
   }
 };
 
