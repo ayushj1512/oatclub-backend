@@ -290,6 +290,8 @@ const rmaSchema = new mongoose.Schema(
         default: "",
       },
 
+
+
       shipmentId: {
         type: String,
         default: "",
@@ -1029,6 +1031,62 @@ const orderSchema = new mongoose.Schema(
       lastWebhook: { type: mongoose.Schema.Types.Mixed, default: null },
       lastTrack: { type: mongoose.Schema.Types.Mixed, default: null },
 
+      bookedAt: {
+        type: Date,
+        default: null,
+      },
+
+      bookedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "AdminUser",
+        default: null,
+      },
+
+      selectedCourierId: {
+        type: String,
+        default: "",
+      },
+
+      selectedRate: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      history: {
+        type: [
+          {
+            provider: { type: String, default: "" },
+            awb: { type: String, default: "" },
+            courierName: { type: String, default: "" },
+
+            orderId: { type: String, default: "" },
+            shipmentId: { type: String, default: "" },
+
+            trackingUrl: { type: String, default: "" },
+            labelUrl: { type: String, default: "" },
+
+            status: { type: String, default: "" },
+
+            changedAt: {
+              type: Date,
+              default: Date.now,
+            },
+
+            cancelledAt: {
+              type: Date,
+              default: null,
+            },
+
+            cancellationReason: {
+              type: String,
+              default: "",
+            },
+          },
+        ],
+        default: [],
+      },
+
       shiprocket: {
         orderId: { type: String, default: "" },
         shipmentId: { type: String, default: "" },
@@ -1052,6 +1110,43 @@ const orderSchema = new mongoose.Schema(
           type: String,
           default: "",
           index: true,
+        },
+
+        awb: {
+          type: String,
+          default: "",
+          index: true,
+        },
+
+        shipmentId: {
+          type: String,
+          default: "",
+          index: true,
+        },
+
+        status: {
+          type: String,
+          default: "",
+        },
+
+        bookedAt: {
+          type: Date,
+          default: null,
+        },
+
+        lastSyncedAt: {
+          type: Date,
+          default: null,
+        },
+
+        lastWebhookAt: {
+          type: Date,
+          default: null,
+        },
+
+        lastTrackAt: {
+          type: Date,
+          default: null,
         },
 
         courierName: {
