@@ -2,24 +2,18 @@ import express from "express";
 
 import {
   serviceabilityController,
-
   createShipmentController,
   updateShipmentController,
   cancelShipmentController,
-
   trackingController,
   bulkTrackingController,
   referenceTrackingController,
-
   labelController,
   bulkLabelController,
   documentController,
-
   waybillController,
-
   warehouseController,
   updateWarehouseController,
-
   pickupController,
   syncAllDelhiveryTrackingController,
 } from "./controller.js";
@@ -28,23 +22,45 @@ import {
   delhiveryWebhook,
 } from "./webhook.js";
 
-const router = express.Router();
+const router =
+  express.Router();
 
 // Serviceability
 router.get(
   "/serviceability/:pincode",
-  serviceabilityController
+  serviceabilityController,
 );
 
 // Shipment
 router.post(
   "/shipments",
-  createShipmentController
+  createShipmentController,
 );
 
 router.patch(
   "/shipments/:waybill",
-  updateShipmentController
+  updateShipmentController,
+);
+
+router.post(
+  "/shipments/:waybill/cancel",
+  cancelShipmentController,
+);
+
+// Tracking
+router.get(
+  "/tracking/:waybill",
+  trackingController,
+);
+
+router.get(
+  "/tracking/reference/:referenceId",
+  referenceTrackingController,
+);
+
+router.post(
+  "/tracking/bulk",
+  bulkTrackingController,
 );
 
 router.post(
@@ -52,71 +68,50 @@ router.post(
   syncAllDelhiveryTrackingController,
 );
 
-router.post(
-  "/shipments/:waybill/cancel",
-  cancelShipmentController
-);
-
-// Tracking
-router.get(
-  "/tracking/:waybill",
-  trackingController
-);
-
-router.get(
-  "/tracking/reference/:referenceId",
-  referenceTrackingController
-);
-
-router.post(
-  "/tracking/bulk",
-  bulkTrackingController
-);
-
-// Label
+// Labels
 router.get(
   "/label/:waybill",
-  labelController
+  labelController,
 );
 
 router.post(
   "/labels/bulk",
-  bulkLabelController
+  bulkLabelController,
 );
 
 // Document
 router.get(
   "/document/:waybill",
-  documentController
+  documentController,
 );
 
 // Waybill
 router.get(
   "/waybills",
-  waybillController
+  waybillController,
 );
 
 // Warehouse
 router.post(
   "/warehouse",
-  warehouseController
+  warehouseController,
 );
 
 router.patch(
   "/warehouse",
-  updateWarehouseController
+  updateWarehouseController,
 );
 
 // Pickup
 router.post(
   "/pickup",
-  pickupController
+  pickupController,
 );
 
 // Webhook
 router.post(
   "/webhook",
-  delhiveryWebhook
+  delhiveryWebhook,
 );
 
 export default router;

@@ -36,11 +36,12 @@ import {
 
 import Order from "../Orders/Orders.js";
 
+import { PDFDocument } from "pdf-lib";
 
 const send = async (
   res,
   promise,
-  status = 200
+  status = 200,
 ) => {
   try {
     const data = await promise;
@@ -61,7 +62,7 @@ const send = async (
       null;
 
     console.error(
-      "\n========== DELHIVERY API ERROR =========="
+      "\n========== DELHIVERY API ERROR ==========",
     );
 
     console.error({
@@ -77,18 +78,16 @@ const send = async (
     });
 
     console.error(
-      "==========================================\n"
+      "==========================================\n",
     );
 
     return res.status(statusCode).json({
       success: false,
-
       message:
         response?.message ||
         response?.rmk ||
         error?.message ||
         "Delhivery request failed.",
-
       error: response,
     });
   }
@@ -96,46 +95,46 @@ const send = async (
 
 export const serviceabilityController = (
   req,
-  res
+  res,
 ) =>
   send(
     res,
     checkServiceability(
-      req.params.pincode
-    )
+      req.params.pincode,
+    ),
   );
 
 export const createShipmentController = (
   req,
-  res
+  res,
 ) =>
   send(
     res,
     createShipment(req.body),
-    201
+    201,
   );
 
 export const updateShipmentController = (
   req,
-  res
+  res,
 ) =>
   send(
     res,
     updateShipment(
       req.params.waybill,
-      req.body
-    )
+      req.body,
+    ),
   );
 
 export const cancelShipmentController = (
   req,
-  res
+  res,
 ) =>
   send(
     res,
     cancelShipment(
-      req.params.waybill
-    )
+      req.params.waybill,
+    ),
   );
 
 export const trackingController = async (
@@ -194,192 +193,397 @@ export const bulkTrackingController = async (
   }
 };
 
-export const syncAllDelhiveryTrackingController = async (
+export const syncAllDelhiveryTrackingController =
+  async (req, res) => {
+    try {
+      const orders = await Order.find({
+        "shipment.provider": "delhivery",
+        $or: [
+          {
+            "shipment.delhivery.waybill": {
+              $exists: true,
+              $ne: "",
+            },
+          },
+          {
+            "shipment.delhivery.awb": {
+              $exists: true,
+              $ne: "",
+            },
+          },
+          {
+            "shipment.awb": {
+              $exists: true,
+              $ne: "",
+            },
+          },
+        ],
+      })
+        .select(
+          "_id orderNumber fulfillmentStatus shipment",
+        )
+        .lean();
+
+      const waybills = [
+        ...new Set(
+          orders
+            .map(
+              (order) =>
+                order?.shipment?.delhivery
+                  ?.waybill ||
+                order?.shipment?.delhivery
+                  ?.awb ||
+                order?.shipment?.awb,
+            )
+            .map((value) =>
+              String(value || "").trim(),
+            )
+            .filter(Boolean),
+        ),
+      ];
+
+      if (!waybills.length) {
+        return res.json({
+          success: true,
+          totalShipments: 0,
+          synced: 0,
+          changed: 0,
+          failed: 0,
+          message:
+            "No Delhivery shipments found.",
+        });
+      }
+
+      const batches = [];
+
+      for (
+        let i = 0;
+        i < waybills.length;
+        i += 50
+      ) {
+        batches.push(
+          waybills.slice(i, i + 50),
+        );
+      }
+
+      const results = [];
+
+      for (const batch of batches) {
+        try {
+          const trackingData =
+            await trackShipments(batch);
+
+          const syncResults =
+            await syncDelhiveryPayload(
+              trackingData,
+              "tracking",
+            );
+
+          results.push(
+            ...syncResults,
+          );
+        } catch (error) {
+          batch.forEach((awb) => {
+            results.push({
+              success: false,
+              awb,
+              reason:
+                error?.response?.data
+                  ?.message ||
+                error?.message ||
+                "Tracking sync failed.",
+            });
+          });
+        }
+      }
+
+      const synced =
+        results.filter(
+          (item) => item.success,
+        ).length;
+
+      const failed =
+        results.filter(
+          (item) => !item.success,
+        ).length;
+
+      const changed =
+        results.filter(
+          (item) =>
+            item.success &&
+            item.fulfillmentChanged,
+        ).length;
+
+      return res.json({
+        success: true,
+        totalShipments:
+          waybills.length,
+        synced,
+        changed,
+        failed,
+        results,
+      });
+    } catch (error) {
+      console.error(
+        "Sync all Delhivery tracking error:",
+        error,
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          error?.message ||
+          "Unable to sync Delhivery shipments.",
+      });
+    }
+  };
+
+export const referenceTrackingController = (
+  req,
+  res,
+) =>
+  send(
+    res,
+    trackByReferenceId(
+      req.params.referenceId,
+    ),
+  );
+
+export const labelController = async (
   req,
   res,
 ) => {
   try {
-    const orders = await Order.find({
-      "shipment.provider": "delhivery",
-      $or: [
-        {
-          "shipment.delhivery.waybill": {
-            $exists: true,
-            $ne: "",
-          },
-        },
-        {
-          "shipment.delhivery.awb": {
-            $exists: true,
-            $ne: "",
-          },
-        },
-        {
-          "shipment.awb": {
-            $exists: true,
-            $ne: "",
-          },
-        },
-      ],
-    })
-      .select(
-        "_id orderNumber fulfillmentStatus shipment",
-      )
-      .lean();
+    const waybill = String(
+      req.params.waybill || "",
+    ).trim();
 
+    if (!waybill) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Waybill is required.",
+      });
+    }
+
+    const data =
+      await getShippingLabel(
+        waybill,
+        {
+          pdf: true,
+        },
+      );
+
+    return res.json({
+      success: true,
+      waybill,
+      data,
+    });
+  } catch (error) {
+    return send(
+      res,
+      Promise.reject(error),
+    );
+  }
+};
+
+export const bulkLabelController = async (
+  req,
+  res,
+) => {
+  try {
     const waybills = [
       ...new Set(
-        orders
-          .map(
-            (order) =>
-              order?.shipment?.delhivery?.waybill ||
-              order?.shipment?.delhivery?.awb ||
-              order?.shipment?.awb,
-          )
-          .map((value) =>
-            String(value || "").trim(),
+        (req.body?.waybills || [])
+          .map((awb) =>
+            String(awb || "").trim(),
           )
           .filter(Boolean),
       ),
     ];
 
     if (!waybills.length) {
-      return res.json({
-        success: true,
-        totalShipments: 0,
-        synced: 0,
-        failed: 0,
+      return res.status(400).json({
+        success: false,
         message:
-          "No Delhivery shipments found.",
+          "At least one waybill is required.",
       });
     }
 
-    const batches = [];
-
-    for (
-      let i = 0;
-      i < waybills.length;
-      i += 50
-    ) {
-      batches.push(
-        waybills.slice(i, i + 50),
+    const results =
+      await getShippingLabels(
+        waybills,
+        { pdf: true },
       );
-    }
 
-    const results = [];
+    const mergedPdf =
+      await PDFDocument.create();
 
-    for (const batch of batches) {
+    let generated = 0;
+    const failed = [];
+
+    for (const item of results) {
       try {
-        const trackingData =
-          await trackShipments(batch);
+        if (!item?.success) {
+          throw new Error(
+            item?.error ||
+            "Label generation failed.",
+          );
+        }
 
-        const syncResults =
-          await syncDelhiveryPayload(
-            trackingData,
-            "tracking",
+        const labelData =
+          item?.data;
+
+        const findPdfUrl = (value) => {
+          if (!value) return "";
+
+          if (typeof value === "string") {
+            const url = value.trim();
+
+            if (
+              /^https?:\/\//i.test(url) &&
+              (
+                /\.pdf($|\?)/i.test(url) ||
+                /label|packing|waybill|download/i.test(url)
+              )
+            ) {
+              return url;
+            }
+
+            return "";
+          }
+
+          if (Array.isArray(value)) {
+            for (const child of value) {
+              const url =
+                findPdfUrl(child);
+
+              if (url) return url;
+            }
+
+            return "";
+          }
+
+          if (
+            typeof value === "object"
+          ) {
+            for (const [
+              key,
+              child,
+            ] of Object.entries(value)) {
+              if (
+                /logo|image|icon|banner|static/i.test(
+                  key,
+                )
+              ) {
+                continue;
+              }
+
+              const url =
+                findPdfUrl(child);
+
+              if (url) return url;
+            }
+          }
+
+          return "";
+        };
+
+        const pdfUrl =
+          findPdfUrl(labelData);
+
+        if (!pdfUrl) {
+          throw new Error(
+            "Label PDF URL not found.",
+          );
+        }
+
+        const pdfResponse =
+          await fetch(pdfUrl);
+
+        if (!pdfResponse.ok) {
+          throw new Error(
+            `Unable to download label PDF (${pdfResponse.status}).`,
+          );
+        }
+
+        const pdfBytes =
+          new Uint8Array(
+            await pdfResponse.arrayBuffer(),
           );
 
-        results.push(...syncResults);
+        const sourcePdf =
+          await PDFDocument.load(
+            pdfBytes,
+          );
+
+        const pages =
+          await mergedPdf.copyPages(
+            sourcePdf,
+            sourcePdf.getPageIndices(),
+          );
+
+        pages.forEach((page) =>
+          mergedPdf.addPage(page),
+        );
+
+        generated += 1;
       } catch (error) {
-        batch.forEach((awb) => {
-          results.push({
-            success: false,
-            awb,
-            reason:
-              error?.response?.data?.message ||
-              error?.message ||
-              "Tracking sync failed.",
-          });
+        failed.push({
+          waybill: item?.waybill,
+          message:
+            error?.message ||
+            "Label merge failed.",
         });
       }
     }
 
-    const synced = results.filter(
-      (item) => item.success,
-    ).length;
+    if (!generated) {
+      return res.status(500).json({
+        success: false,
+        message:
+          "Unable to generate any Delhivery labels.",
+        failed,
+      });
+    }
 
-    const failed = results.filter(
-      (item) => !item.success,
-    ).length;
+    const mergedBytes =
+      await mergedPdf.save();
 
-    const changed = results.filter(
-      (item) =>
-        item.success &&
-        item.fulfillmentChanged,
-    ).length;
-
-    return res.json({
-      success: true,
-      totalShipments: waybills.length,
-      synced,
-      changed,
-      failed,
-      results,
-    });
-  } catch (error) {
-    console.error(
-      "Sync all Delhivery tracking error:",
-      error,
+    res.setHeader(
+      "Content-Type",
+      "application/pdf",
     );
 
-    return res.status(500).json({
-      success: false,
-      message:
-        error?.message ||
-        "Unable to sync Delhivery shipments.",
-    });
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="Delhivery-Labels-${generated}.pdf"`,
+    );
+
+    res.setHeader(
+      "X-Labels-Generated",
+      String(generated),
+    );
+
+    res.setHeader(
+      "X-Labels-Failed",
+      String(failed.length),
+    );
+
+    return res.send(
+      Buffer.from(mergedBytes),
+    );
+  } catch (error) {
+    return send(
+      res,
+      Promise.reject(error),
+    );
   }
 };
 
-
-
-export const referenceTrackingController = (
-  req,
-  res
-) =>
-  send(
-    res,
-    trackByReferenceId(
-      req.params.referenceId
-    )
-  );
-
-export const labelController = (
-  req,
-  res
-) =>
-  send(
-    res,
-    getShippingLabel(
-      req.params.waybill,
-      {
-        pdf:
-          String(
-            req.query.pdf || ""
-          ).toLowerCase() ===
-          "true",
-      }
-    )
-  );
-
-export const bulkLabelController = (
-  req,
-  res
-) =>
-  send(
-    res,
-    getShippingLabels(
-      req.body?.waybills || [],
-      {
-        pdf:
-          req.body?.pdf === true,
-      }
-    )
-  );
-
 export const documentController = (
   req,
-  res
+  res,
 ) =>
   send(
     res,
@@ -388,45 +592,45 @@ export const documentController = (
         req.params.waybill,
       docType:
         req.query.doc_type,
-    })
+    }),
   );
 
 export const waybillController = (
   req,
-  res
+  res,
 ) =>
   send(
     res,
     fetchWaybills(
-      req.query.count
-    )
+      req.query.count,
+    ),
   );
 
 export const warehouseController = (
   req,
-  res
+  res,
 ) =>
   send(
     res,
     createWarehouse(req.body),
-    201
+    201,
   );
 
 export const updateWarehouseController = (
   req,
-  res
+  res,
 ) =>
   send(
     res,
-    updateWarehouse(req.body)
+    updateWarehouse(req.body),
   );
 
 export const pickupController = (
   req,
-  res
+  res,
 ) =>
   send(
     res,
     createPickup(req.body),
-    201
+    201,
   );
