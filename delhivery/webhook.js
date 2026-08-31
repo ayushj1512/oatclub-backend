@@ -1,15 +1,35 @@
 import Order from "../Orders/Orders.js";
 
-const s = (v) => String(v || "").trim();
+const s = (v) => String(v ?? "").trim();
 
-const normalizeStatus = (value) =>
-  s(value)
+const normalize = (v) =>
+  s(v)
     .toLowerCase()
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ");
 
-const mapFulfillmentStatus = (rawStatus) => {
-  const status = normalizeStatus(rawStatus);
+const mapStatus = ({ rawStatus, statusType }) => {
+  const status = normalize(rawStatus);
+  const type = normalize(statusType);
+
+  // Reverse / RTO movement
+  if (
+    type === "rt" &&
+    (
+      status.includes("in transit") ||
+      status.includes("rto") ||
+      status.includes("return")
+    )
+  ) {
+    return "rto";
+  }
+
+  if (
+    status === "rto" ||
+    status.includes("returned to origin")
+  ) {
+    return "rto";
+  }
 
   if (
     status === "delivered" ||
@@ -18,7 +38,9 @@ const mapFulfillmentStatus = (rawStatus) => {
     return "delivered";
   }
 
+  // Delhivery "Dispatched" = out for delivery
   if (
+    status === "dispatched" ||
     status.includes("out for delivery") ||
     status === "ofd"
   ) {
@@ -35,9 +57,8 @@ const mapFulfillmentStatus = (rawStatus) => {
   }
 
   if (
-    status.includes("shipped") ||
     status.includes("in transit") ||
-    status.includes("dispatched") ||
+    status.includes("shipped") ||
     status.includes("picked up")
   ) {
     return "shipped";
@@ -46,56 +67,65 @@ const mapFulfillmentStatus = (rawStatus) => {
   return "";
 };
 
-const getShipmentObjects = (payload) => {
+const getShipments = (payload) => {
   if (Array.isArray(payload?.ShipmentData)) {
     return payload.ShipmentData
-      .map((item) => item?.Shipment || item)
+      .map((x) => x?.Shipment || x)
       .filter(Boolean);
   }
 
-  if (payload?.Shipment) {
-    return [payload.Shipment];
-  }
+  if (payload?.Shipment) return [payload.Shipment];
 
-  return [payload].filter(Boolean);
+  return payload ? [payload] : [];
 };
 
 const extractEvent = (shipment = {}) => {
-  const status = shipment?.Status || {};
+  const status =
+    typeof shipment?.Status === "object"
+      ? shipment.Status
+      : {};
 
   return {
     awb: s(
-      shipment?.AWB ||
-      shipment?.Waybill ||
-      shipment?.waybill ||
-      shipment?.awb,
+      shipment.AWB ||
+      shipment.Waybill ||
+      shipment.waybill ||
+      shipment.awb,
     ),
 
     rawStatus: s(
-      status?.Status ||
-      shipment?.status ||
-      shipment?.Status,
+      status.Status ||
+      shipment.status ||
+      (typeof shipment.Status === "string"
+        ? shipment.Status
+        : ""),
+    ),
+
+    statusType: s(
+      status.StatusType ||
+      shipment.StatusType ||
+      shipment.ScanType,
     ),
 
     statusCode: s(
-      status?.StatusType ||
-      status?.NSLCode ||
-      shipment?.status_code,
+      shipment.NSLCode ||
+      status.NSLCode ||
+      shipment.status_code,
     ),
 
     statusDate: s(
-      status?.StatusDateTime ||
-      shipment?.StatusDateTime,
+      status.StatusDateTime ||
+      shipment.StatusDateTime,
     ),
 
     location: s(
-      status?.StatusLocation ||
-      shipment?.StatusLocation,
+      status.StatusLocation ||
+      shipment.StatusLocation,
     ),
 
     instructions: s(
-      status?.Instructions ||
-      shipment?.Instructions,
+      status.Instructions ||
+      shipment.Instructions,
     ),
 
     raw: shipment,
@@ -103,12 +133,11 @@ const extractEvent = (shipment = {}) => {
 };
 
 const canApply = (currentStatus, nextStatus) => {
-  const current = normalizeStatus(currentStatus);
+  const current = normalize(currentStatus);
 
   if (
     [
       "cancelled",
-      "rto",
       "returned",
       "refunded",
       "exchanged",
@@ -121,12 +150,14 @@ const canApply = (currentStatus, nextStatus) => {
     return nextStatus === "delivered";
   }
 
-  // Don't regress OFD / failed back to shipped.
+  // Don't regress advanced forward states back to shipped
   if (
     nextStatus === "shipped" &&
-    ["out for delivery", "out_for_delivery", "delivery failed", "delivery_failed"].includes(
-      current,
-    )
+    [
+      "out for delivery",
+      "delivery failed",
+      "rto",
+    ].includes(current)
   ) {
     return false;
   }
@@ -134,22 +165,18 @@ const canApply = (currentStatus, nextStatus) => {
   return true;
 };
 
-const shipmentStatusFor = (fulfillmentStatus) => {
-  if (fulfillmentStatus === "delivery_failed") {
-    return "failed";
-  }
-
-  return fulfillmentStatus;
+const shipmentStatusFor = (status) => {
+  if (status === "delivery_failed") return "failed";
+  return status;
 };
 
 export const syncDelhiveryPayload = async (
   payload,
   source = "webhook",
 ) => {
-  const shipments = getShipmentObjects(payload);
   const results = [];
 
-  for (const shipment of shipments) {
+  for (const shipment of getShipments(payload)) {
     const event = extractEvent(shipment);
 
     if (!event.awb) {
@@ -178,20 +205,25 @@ export const syncDelhiveryPayload = async (
     }
 
     const now = new Date();
-    const nextStatus = mapFulfillmentStatus(
-      event.rawStatus,
-    );
 
-    // Always save raw courier sync.
+    const nextStatus = mapStatus({
+      rawStatus: event.rawStatus,
+      statusType: event.statusType,
+    });
+
+    // Always store latest Delhivery data
     order.shipment.rawStatus = event.rawStatus;
     order.shipment.statusCode = event.statusCode;
     order.shipment.lastSyncedAt = now;
 
     order.shipment.delhivery.rawStatus =
       event.rawStatus;
+
     order.shipment.delhivery.statusCode =
       event.statusCode;
-    order.shipment.delhivery.lastSyncedAt = now;
+
+    order.shipment.delhivery.lastSyncedAt =
+      now;
 
     if (source === "webhook") {
       order.shipment.lastWebhook = event.raw;
@@ -199,6 +231,7 @@ export const syncDelhiveryPayload = async (
 
       order.shipment.delhivery.lastWebhook =
         event.raw;
+
       order.shipment.delhivery.lastWebhookAt =
         now;
     } else {
@@ -207,6 +240,7 @@ export const syncDelhiveryPayload = async (
 
       order.shipment.delhivery.lastTrack =
         event.raw;
+
       order.shipment.delhivery.lastTrackAt =
         now;
     }
@@ -215,10 +249,7 @@ export const syncDelhiveryPayload = async (
 
     if (
       nextStatus &&
-      canApply(
-        order.fulfillmentStatus,
-        nextStatus,
-      )
+      canApply(order.fulfillmentStatus, nextStatus)
     ) {
       order.fulfillmentStatus = nextStatus;
 
@@ -237,6 +268,8 @@ export const syncDelhiveryPayload = async (
       success: true,
       awb: event.awb,
       rawStatus: event.rawStatus,
+      statusType: event.statusType,
+      statusCode: event.statusCode,
       fulfillmentStatus:
         order.fulfillmentStatus,
       fulfillmentChanged,
@@ -251,11 +284,10 @@ export const delhiveryWebhook = async (
   res,
 ) => {
   try {
-    const results =
-      await syncDelhiveryPayload(
-        req.body,
-        "webhook",
-      );
+    const results = await syncDelhiveryPayload(
+      req.body,
+      "webhook",
+    );
 
     return res.status(200).json({
       success: true,
