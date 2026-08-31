@@ -628,9 +628,20 @@ export const updateWarehouseController = (
 export const pickupController = (
   req,
   res,
-) =>
-  send(
+) => {
+  const {
+    pickupDate,
+    pickupTime,
+    packageCount,
+  } = req.body || {};
+
+  return send(
     res,
-    createPickup(req.body),
+    createPickup({
+      pickupDate,
+      pickupTime,
+      packageCount,
+    }),
     201,
   );
+};
