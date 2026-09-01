@@ -3,6 +3,7 @@ import express from "express";
 import {
   addProductToOrder,
   adjustOrderFinalPayable,
+  cloneOrder,
   adminBookDelhiveryIfMissing,
   adminBookShiprocketIfMissing,
   applyCouponAfterOrderPlaced,
@@ -366,6 +367,9 @@ router.post(
   "/:id/cancel-child",
   cancelChildOrder
 );
+
+router.post("/:id/clone", cloneOrder);
+
 
 router.post("/:orderId/duplicate-exchange", duplicateExchangeOrder);
 

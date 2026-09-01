@@ -13159,3 +13159,307 @@ export const cancelChildOrder = async (req, res) => {
     await session.endSession();
   }
 };
+
+
+/* ============================================================
+   ADMIN: CLONE ORDER
+   000456    -> 000456-C
+   000456-C  -> 000456-C1
+   000456-C1 -> 000456-C2
+============================================================ */
+
+export const cloneOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order id",
+      });
+    }
+
+    const sourceOrder = await Order.findById(id).lean();
+
+    if (!sourceOrder) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    /* --------------------------------------------------------
+       FIND ROOT ORDER NUMBER
+
+       000456       -> 000456
+       000456-C     -> 000456
+       000456-C1    -> 000456
+       000456-C25   -> 000456
+    -------------------------------------------------------- */
+
+    const currentOrderNumber = String(
+      sourceOrder.orderNumber || "",
+    ).trim();
+
+    const rootOrderNumber = currentOrderNumber.replace(
+      /-C\d*$/i,
+      "",
+    );
+
+    /* --------------------------------------------------------
+       FIND NEXT AVAILABLE CLONE NUMBER
+    -------------------------------------------------------- */
+
+    const escapeRegex = (value) =>
+      String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const cloneRegex = new RegExp(
+      `^${escapeRegex(rootOrderNumber)}-C(\\d*)$`,
+      "i",
+    );
+
+    const existingClones = await Order.find({
+      orderNumber: cloneRegex,
+    })
+      .select("orderNumber")
+      .lean();
+
+    let highestCloneNumber = -1;
+
+    for (const clone of existingClones) {
+      const match = String(clone.orderNumber).match(cloneRegex);
+
+      if (!match) continue;
+
+      // -C = clone index 0
+      // -C1 = clone index 1
+      // -C2 = clone index 2
+      const cloneIndex =
+        match[1] === ""
+          ? 0
+          : Number(match[1]);
+
+      if (
+        Number.isFinite(cloneIndex) &&
+        cloneIndex > highestCloneNumber
+      ) {
+        highestCloneNumber = cloneIndex;
+      }
+    }
+
+    const nextCloneIndex = highestCloneNumber + 1;
+
+    const newOrderNumber =
+      nextCloneIndex === 0
+        ? `${rootOrderNumber}-C`
+        : `${rootOrderNumber}-C${nextCloneIndex}`;
+
+    /* --------------------------------------------------------
+       COPY SOURCE ORDER
+    -------------------------------------------------------- */
+
+    const clonePayload = {
+      ...sourceOrder,
+
+      orderNumber: newOrderNumber,
+
+      // fresh order lifecycle
+      orderDate: new Date(),
+
+      // clone should behave as independent shipment order
+      orderType: "shipment",
+      parentOrderId: null,
+      splitSuffix: "",
+
+      /* ------------------------------------------------------
+         FRESH ITEM LINE IDs
+
+         Important because RMA/inventory uses stable lineId.
+      ------------------------------------------------------ */
+      items: (sourceOrder.items || []).map((item) => ({
+        ...item,
+
+        lineId: new mongoose.Types.ObjectId().toString(),
+
+        fulfillment: {
+          allocatedQty: 0,
+          shippedQty: 0,
+          toProduceQty: Number(item.quantity || 0),
+        },
+      })),
+
+      /* ------------------------------------------------------
+         RESET FULFILLMENT
+      ------------------------------------------------------ */
+
+      fulfillmentStatus: "processing",
+
+      fulfillmentDates: {
+        processingAt: new Date(),
+        packedAt: null,
+        pickedAt: null,
+        shippedAt: null,
+        outForDeliveryAt: null,
+        deliveredAt: null,
+        pickupInitiatedAt: null,
+        returnRequestedAt: null,
+        exchangeRequestedAt: null,
+        returnedAt: null,
+        refundedAt: null,
+        exchangedAt: null,
+        rtoAt: null,
+        failedAt: null,
+        cancelledAt: null,
+        deliveryFailedAt: null,
+        returnPickupCompletedAt: null,
+      },
+
+      /* ------------------------------------------------------
+         RESET SHIPPING
+      ------------------------------------------------------ */
+
+      shipment: {
+        provider: "unassigned",
+
+        orderId: "",
+        shipmentId: "",
+        awb: "",
+        courierName: "",
+        trackingUrl: "",
+        labelUrl: "",
+
+        status: "pending",
+        rawStatus: "",
+        statusCode: "",
+
+        shippedAt: null,
+        deliveredAt: null,
+        pickedAt: null,
+        outForDeliveryAt: null,
+        rtoAt: null,
+        cancelledAt: null,
+        failedAt: null,
+
+        lastSyncedAt: null,
+        lastWebhookAt: null,
+        lastTrackAt: null,
+
+        lastWebhook: null,
+        lastTrack: null,
+      },
+
+      /* ------------------------------------------------------
+         RESET RMA / RETURN
+      ------------------------------------------------------ */
+
+      rmas: [],
+
+      eligibleForRefund: false,
+      isRefunded: false,
+      eligibleForRma: false,
+
+      isExchangeOrder: false,
+      hasExchangeOrder: false,
+
+      isRtoReceived: false,
+      rtoReceivedAt: null,
+
+      /* ------------------------------------------------------
+         RESET CANCELLATION
+      ------------------------------------------------------ */
+
+      cancellation: {
+        isCancelled: false,
+        cancelledAt: null,
+        reason: "",
+      },
+
+      /* ------------------------------------------------------
+         DO NOT DUPLICATE PAYMENT TRANSACTION IDS
+      ------------------------------------------------------ */
+
+      razorpay: {
+        orderId: "",
+        paymentId: "",
+        signature: "",
+        amount: 0,
+        currency:
+          sourceOrder.currency || "INR",
+        paidAt: null,
+      },
+
+      /* ------------------------------------------------------
+         REVIEW REQUEST MUST BE FRESH
+      ------------------------------------------------------ */
+
+      reviewRequest: {
+        sent: false,
+        sentAt: null,
+        channel: "fast2sms",
+        token: "",
+        link: "",
+        error: "",
+      },
+    };
+
+    /* --------------------------------------------------------
+       REMOVE MONGOOSE GENERATED FIELDS
+    -------------------------------------------------------- */
+
+    delete clonePayload._id;
+    delete clonePayload.__v;
+    delete clonePayload.createdAt;
+    delete clonePayload.updatedAt;
+
+    /* --------------------------------------------------------
+       CREATE CLONE
+    -------------------------------------------------------- */
+
+    const clonedOrder = await Order.create(clonePayload);
+
+    /* --------------------------------------------------------
+       RESERVE INVENTORY FOR NEW ORDER
+    -------------------------------------------------------- */
+
+    try {
+      await reserveInventoryForOrderNumberInternal(
+        clonedOrder.orderNumber,
+      );
+    } catch (inventoryError) {
+      console.error(
+        "⚠️ Clone inventory reservation failed:",
+        inventoryError?.message || inventoryError,
+      );
+    }
+
+    syncCustomerAnalyticsSafe(
+      clonedOrder.customerId,
+      "cloneOrder",
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: `Order cloned successfully as ${newOrderNumber}`,
+      sourceOrderNumber: sourceOrder.orderNumber,
+      clonedOrderNumber: newOrderNumber,
+      order: clonedOrder,
+    });
+  } catch (error) {
+    console.error("❌ Clone Order Error:", error);
+
+    // duplicate orderNumber race protection
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Clone number already exists. Please try cloning again.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error?.message || "Failed to clone order",
+    });
+  }
+};
