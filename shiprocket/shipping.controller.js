@@ -86,6 +86,17 @@ const sendShiprocketError = (res, err, fallbackMessage) => {
 export async function bookWithShiprocket(req, res) {
   try {
     const orderId = req.params.id;
+    const requestedCourierCompanyId = Number(
+      req.body?.courier_company_id ??
+      req.body?.courierCompanyId ??
+      0,
+    );
+
+    const requestedCourierName = String(
+      req.body?.courier_name ??
+      req.body?.courierName ??
+      "",
+    ).trim();
 
     if (!process.env.SHIPROCKET_PICKUP_PINCODE) {
       return res.status(500).json({
@@ -200,11 +211,82 @@ export async function bookWithShiprocket(req, res) {
       });
     }
 
+    /* ============================================================
+       SELECT EXACT COURIER FROM FRONTEND
+    ============================================================ */
+
+    let selectedCourier = null;
+
+    if (requestedCourierCompanyId) {
+      selectedCourier = couriers.find((courier) => {
+        const id = Number(
+          courier?.courier_company_id ??
+          courier?.courierCompanyId ??
+          courier?.courier_id ??
+          courier?.id ??
+          0,
+        );
+
+        return id === requestedCourierCompanyId;
+      });
+
+      if (!selectedCourier) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Selected Shiprocket courier is no longer serviceable.",
+          courierCompanyId: requestedCourierCompanyId,
+        });
+      }
+    } else {
+      // fallback — cheapest/first courier returned
+      selectedCourier = couriers[0];
+    }
+
+    const selectedCourierCompanyId = Number(
+      selectedCourier?.courier_company_id ??
+      selectedCourier?.courierCompanyId ??
+      selectedCourier?.courier_id ??
+      selectedCourier?.id ??
+      0,
+    );
+
+    const selectedCourierName =
+      requestedCourierName ||
+      String(
+        selectedCourier?.courier_name ??
+        selectedCourier?.courierName ??
+        selectedCourier?.name ??
+        "",
+      ).trim();
+
+    if (!selectedCourierCompanyId) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid Shiprocket courier company id not found.",
+      });
+    }
+
     const payload = buildShiprocketPayload(order);
-    const shipment = await createShipment(payload);
+
+    const shipment = await createShipment({
+      ...payload,
+
+      courier_company_id:
+        selectedCourierCompanyId,
+
+      courierCompanyId:
+        selectedCourierCompanyId,
+
+      courier_id:
+        selectedCourierCompanyId,
+    });
 
     const awb = s(shipment?.awb_code);
-    const courierName = s(shipment?.courier_name);
+    const courierName =
+      s(shipment?.courier_name) ||
+      selectedCourierName ||
+      "Shiprocket";
 
     const shiprocketOrderId = s(shipment?.order_id);
     const shiprocketShipmentId = s(shipment?.shipment_id);
@@ -253,7 +335,12 @@ export async function bookWithShiprocket(req, res) {
         orderId: shiprocketOrderId,
         shipmentId: shiprocketShipmentId,
         awb,
+
+        courierCompanyId:
+          selectedCourierCompanyId,
+
         courierName,
+
         trackingUrl,
       },
     };

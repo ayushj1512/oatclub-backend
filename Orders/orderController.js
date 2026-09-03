@@ -6021,7 +6021,11 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
       .toLowerCase();
 
     const currentAwb = String(
-      order?.shipment?.awb || "",
+      order?.shipment?.awb ||
+      order?.shipment?.shiprocket?.awb ||
+      order?.shipment?.delhivery?.waybill ||
+      order?.shipment?.delhivery?.awb ||
+      "",
     ).trim();
 
     const currentCourierName = String(
@@ -6029,9 +6033,43 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
     ).trim();
 
     const existingWaybill = String(
-      order?.shipment?.delhivery?.waybill || "",
+      order?.shipment?.delhivery?.waybill ||
+      order?.shipment?.delhivery?.awb ||
+      (currentProvider === "delhivery"
+        ? order?.shipment?.awb
+        : "") ||
+      "",
     ).trim();
 
+    const otherProviderAwb =
+      currentProvider !== "delhivery"
+        ? String(
+          order?.shipment?.awb ||
+          order?.shipment?.shiprocket?.awb ||
+          "",
+        ).trim()
+        : "";
+
+    const inactiveShipmentStatuses = [
+      "cancelled",
+      "canceled",
+      "failed",
+      "void",
+    ];
+
+    const currentShipmentStatus = String(
+      order?.shipment?.status || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const hasActiveOtherProviderShipment =
+      Boolean(otherProviderAwb) &&
+      currentProvider &&
+      currentProvider !== "delhivery" &&
+      !inactiveShipmentStatuses.includes(
+        currentShipmentStatus,
+      );
     // Only prevent duplicate active Delhivery booking.
     // Existing Shiprocket booking can be replaced as active provider.
     if (currentProvider === "delhivery" && existingWaybill) {
@@ -12232,38 +12270,95 @@ export const assignCourierToPackedOrder = async (req, res) => {
     const existingAwb =
       order.shipment?.awb ||
       order.shipment?.shiprocket?.awb ||
-      order.shipment?.delhivery?.waybill;
+      order.shipment?.delhivery?.waybill ||
+      order.shipment?.delhivery?.awb ||
+      "";
 
-    if (existingAwb) {
-      return res.status(409).json({
-        success: false,
-        message: "Courier cannot be changed after shipment booking.",
-        provider: order.shipment?.provider,
-        awb: existingAwb,
-      });
-    }
+    const currentProvider = String(
+      order.shipment?.provider || "unassigned",
+    )
+      .trim()
+      .toLowerCase();
+
+    /*
+     * IMPORTANT:
+     *
+     * Existing AWB + SAME provider:
+     * ✅ Allow.
+     *
+     * Example:
+     * Shiprocket currently booked
+     * → select another Shiprocket courier
+     * → Delhivery via Shiprocket
+     *
+     * Existing AWB + DIFFERENT provider:
+     * ❌ Still prevent accidental duplicate booking.
+     *
+     * Shiprocket → Delhivery Direct requires cancellation/rebooking flow.
+     */
+    const providerChanged =
+      currentProvider !== "unassigned" &&
+      currentProvider !== provider;
 
     order.shipment = order.shipment || {};
 
+    if (providerChanged && existingAwb) {
+      const history = Array.isArray(order.shipment.history)
+        ? order.shipment.history
+        : [];
+
+      order.shipment.history = [
+        ...history,
+        {
+          provider: currentProvider,
+          awb: existingAwb,
+          courierName:
+            order.shipment?.courierName || "",
+          orderId:
+            order.shipment?.orderId || "",
+          shipmentId:
+            order.shipment?.shipmentId || "",
+          status:
+            order.shipment?.status || "",
+          changedAt: new Date(),
+        },
+      ];
+    }
+
     order.shipment.provider = provider;
     order.shipment.status = "pending";
+    order.shipment.awb = "";
+    order.shipment.orderId = "";
+    order.shipment.shipmentId = "";
+    order.shipment.courierName = "";
+    order.shipment.trackingUrl = "";
 
     await order.save();
 
     return res.status(200).json({
       success: true,
+
       message:
         provider === "unassigned"
           ? "Courier assignment removed."
-          : `Order assigned to ${provider}.`,
+          : existingAwb && provider === currentProvider
+            ? `Courier provider ${provider} retained. Courier can be changed/rebooked within this provider.`
+            : `Order assigned to ${provider}.`,
+
       order: {
         _id: order._id,
         orderNumber: order.orderNumber,
         fulfillmentStatus: order.fulfillmentStatus,
+
         shipment: {
           provider: order.shipment.provider,
           status: order.shipment.status,
-          awb: order.shipment.awb || "",
+          awb:
+            order.shipment.awb ||
+            order.shipment?.shiprocket?.awb ||
+            order.shipment?.delhivery?.waybill ||
+            order.shipment?.delhivery?.awb ||
+            "",
         },
       },
     });
