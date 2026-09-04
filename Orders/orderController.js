@@ -64,7 +64,7 @@ const isShipmentOrder = (order) =>
 
 const ADMIN_ORDER_ALERT_EMAILS = ["oatclub.in@gmail.com"].filter(Boolean);
 
-const RAZORPAY_DISCOUNT_PERCENT = 10;
+const RAZORPAY_DISCOUNT_PERCENT = 5;
 const PARTIAL_COD_UPFRONT_PERCENT = 10;
 const COD_FEE = 59;
 
