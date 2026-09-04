@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Counter from "../models/Counter.js";
 
+
 /* ------------------------------------------------------------------
 VARIANT SCHEMA (NO IMAGES ❌, NO PRICE ✅)
 ------------------------------------------------------------------- */

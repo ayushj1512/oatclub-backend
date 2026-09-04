@@ -90,6 +90,8 @@ import fabricPriceLogRoutes from "./FabricPriceLog/FabricPriceLogRoutes.js";
 import fabricLogRoutes from "./FabricLog/FabricLogRouter.js";
 import { delhiveryRoutes } from "./delhivery/index.js";
 import productCostingRouter from "./Products/ProductCosting/ProductCostingRouter.js";
+import { connectRedis } from "./config/redis.js";
+
 
 // --------------------------------------------------
 // APP CONFIG
@@ -226,6 +228,17 @@ mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB connected"))
   .catch((error) => console.error("❌ MongoDB connection error:", error));
+
+// --------------------------------------------------
+// REDIS CACHE
+// --------------------------------------------------
+connectRedis().catch((error) => {
+  console.error(
+    "⚠️ Redis startup failed, continuing without cache:",
+    error?.message || error
+  );
+});
+
 
 // --------------------------------------------------
 // API ROUTES

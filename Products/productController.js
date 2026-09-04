@@ -10,6 +10,14 @@ import Category from "../Category/Category.js";
 import Collection from "../Collection/Collection.js";
 import { reconcileBackordersForVariant } from "../inventoryUtility/reconcileBackordersForVariant.js";
 import ExcelJS from "exceljs";
+// productController.js - imports ke paas
+import {
+  getCache,
+  setCache,
+  deleteCache,
+  deleteCacheByPattern,
+} from "../utility/redisCache.js";
+
 
 const SYSTEM_CATEGORIES = new Set([
   "all-clothing",
@@ -535,6 +543,73 @@ const buildProductSort = (
   // Default storefront priority.
   return PRODUCT_PRIORITY_SORT;
 };
+
+const clearProductCache = async (product) => {
+  if (!product) return;
+
+  const keys = [
+    product._id
+      ? `oatclub:product:${String(product._id)}`
+      : null,
+
+    product.slug
+      ? `oatclub:product:${String(
+        product.slug,
+      ).toLowerCase()}`
+      : null,
+
+    product.productCode
+      ? `oatclub:product:${String(
+        product.productCode,
+      )}`
+      : null,
+  ].filter(Boolean);
+
+  await Promise.all(
+    keys.map((key) => deleteCache(key)),
+  );
+};
+
+const clearProductListCache = async () => {
+  try {
+    const deleted = await deleteCacheByPattern(
+      "oatclub:products:list:*",
+    );
+
+    console.log(
+      `🧹 Redis LIST INVALIDATED: ${deleted} key(s) deleted`,
+    );
+
+    return deleted;
+  } catch (error) {
+    console.error(
+      "⚠️ Product list cache clear failed:",
+      error?.message || error,
+    );
+
+    return 0;
+  }
+};
+
+const invalidateProductCache = async (product = null) => {
+  try {
+    await Promise.all([
+      product
+        ? clearProductCache(product)
+        : Promise.resolve(),
+
+      clearProductListCache(),
+    ]);
+  } catch (error) {
+    // Redis should NEVER break product mutations
+    console.error(
+      "⚠️ Product cache invalidation failed:",
+      error?.message || error,
+    );
+  }
+};
+
+
 
 /* ============================================================
    ✅ NEW: GET PRODUCTS BY TAG(S)
@@ -1157,7 +1232,11 @@ export const createProduct = async (req, res) => {
       { $pull: { crossSellProducts: created._id } },
     );
 
-    const full = await pop(Product.findById(created._id));
+    const full = await pop(
+      Product.findById(created._id),
+    );
+
+    await invalidateProductCache(full);
 
     return res.status(201).json({
       message: isBulk
@@ -1256,22 +1335,89 @@ export const getAllProducts = async (req, res) => {
       code,
     } = req.query;
 
+    /* ============================================================
+       REDIS CACHE KEY
+    ============================================================ */
+
+    const normalizedQuery = Object.keys(req.query || {})
+      .sort()
+      .reduce((acc, key) => {
+        const value = req.query[key];
+
+        acc[key] = Array.isArray(value)
+          ? [...value].map(String).sort()
+          : String(value);
+
+        return acc;
+      }, {});
+
+    // Defaults also matter even when query params are absent
+    normalizedQuery.__page = String(page);
+    normalizedQuery.__limit = String(limit);
+
+    const cacheKey = `oatclub:products:list:${Buffer.from(
+      JSON.stringify(normalizedQuery),
+    ).toString("base64url")}`;
+
+    /* ============================================================
+       REDIS CACHE HIT
+    ============================================================ */
+    /* ============================================================
+       REDIS CACHE HIT / MISS TIMING
+    ============================================================ */
+
+    const redisStartedAt = Date.now();
+
+    const cached = await getCache(cacheKey);
+
+    const redisTimeMs =
+      Date.now() - redisStartedAt;
+
+    if (cached) {
+      console.log(
+        `⚡ Redis LIST HIT in ${redisTimeMs}ms:`,
+        cacheKey,
+      );
+
+      return res.json(cached);
+    }
+
+    console.log(
+      `🐢 Redis LIST MISS after ${redisTimeMs}ms:`,
+      cacheKey,
+    );
+
+    /* ============================================================
+       DATABASE FILTERS
+    ============================================================ */
+
     const filters = {};
     const andFilters = [];
 
     const toStr = (v) => String(v ?? "").trim();
+
     const toNum = (v) => {
       const n = Number(v);
       return Number.isFinite(n) ? n : null;
     };
-    const toBool = (v) => String(v).trim().toLowerCase() === "true";
+
+    const toBool = (v) =>
+      String(v)
+        .trim()
+        .toLowerCase() === "true";
+
     const hasVal = (v) =>
-      v !== undefined && v !== null && String(v).trim() !== "";
+      v !== undefined &&
+      v !== null &&
+      String(v).trim() !== "";
 
     const toArray = (v) => {
       if (Array.isArray(v)) {
-        return v.map((x) => String(x).trim()).filter(Boolean);
+        return v
+          .map((x) => String(x).trim())
+          .filter(Boolean);
       }
+
       return String(v ?? "")
         .split(",")
         .map((x) => x.trim())
@@ -1279,28 +1425,59 @@ export const getAllProducts = async (req, res) => {
     };
 
     const escapeRegex = (value = "") =>
-      String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      String(value).replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
 
     const addRange = (field, min, max) => {
       const minNum = toNum(min);
       const maxNum = toNum(max);
-      if (minNum === null && maxNum === null) return;
+
+      if (
+        minNum === null &&
+        maxNum === null
+      ) {
+        return;
+      }
 
       filters[field] = {};
-      if (minNum !== null) filters[field].$gte = minNum;
-      if (maxNum !== null) filters[field].$lte = maxNum;
+
+      if (minNum !== null) {
+        filters[field].$gte = minNum;
+      }
+
+      if (maxNum !== null) {
+        filters[field].$lte = maxNum;
+      }
     };
 
-    const addDateRange = (field, from, to) => {
+    const addDateRange = (
+      field,
+      from,
+      to,
+    ) => {
       const range = {};
-      const fromDate = hasVal(from) ? new Date(from) : null;
-      const toDate = hasVal(to) ? new Date(to) : null;
 
-      if (fromDate && !Number.isNaN(fromDate.getTime())) {
+      const fromDate = hasVal(from)
+        ? new Date(from)
+        : null;
+
+      const toDate = hasVal(to)
+        ? new Date(to)
+        : null;
+
+      if (
+        fromDate &&
+        !Number.isNaN(fromDate.getTime())
+      ) {
         range.$gte = fromDate;
       }
 
-      if (toDate && !Number.isNaN(toDate.getTime())) {
+      if (
+        toDate &&
+        !Number.isNaN(toDate.getTime())
+      ) {
         range.$lte = toDate;
       }
 
@@ -1310,132 +1487,415 @@ export const getAllProducts = async (req, res) => {
     };
 
     /* ---------------- categories ---------------- */
+
+    /* ---------------- categories ---------------- */
+
     if (hasVal(category)) {
-      const cats = toArray(category);
-      if (cats.length) filters.categories = { $in: cats };
+      const requestedCategories = toArray(category);
+
+      const categoryMatches = [];
+
+      for (const rawCategory of requestedCategories) {
+        const raw = String(rawCategory || "")
+          .trim()
+          .toLowerCase();
+
+        if (!raw) continue;
+
+        // storefront aliases:
+        // dresses -> dress
+        // tops -> top
+        // bottoms -> bottom
+        // co-ord-sets -> co-ord-set
+        const candidates = Array.from(
+          new Set([
+            raw,
+
+            raw.endsWith("s")
+              ? raw.slice(0, -1)
+              : raw,
+
+            raw.endsWith("es")
+              ? raw.slice(0, -2)
+              : raw,
+          ]),
+        ).filter(Boolean);
+
+        const catDoc = await Category.findOne({
+          $or: [
+            {
+              slug: {
+                $in: candidates,
+              },
+            },
+            {
+              name: {
+                $in: candidates.map(
+                  (value) =>
+                    new RegExp(
+                      `^${escapeRegex(value)}$`,
+                      "i",
+                    ),
+                ),
+              },
+            },
+          ],
+        })
+          .select("name slug")
+          .lean();
+
+        if (catDoc) {
+          categoryMatches.push(
+            String(catDoc.slug),
+            String(catDoc.name),
+          );
+        } else {
+          // backward compatibility:
+          // some products may directly contain raw category string
+          categoryMatches.push(...candidates);
+        }
+      }
+
+      const uniqueCategoryMatches = [
+        ...new Set(
+          categoryMatches
+            .map((value) => String(value).trim())
+            .filter(Boolean),
+        ),
+      ];
+
+      if (uniqueCategoryMatches.length) {
+        filters.categories = {
+          $in: uniqueCategoryMatches,
+        };
+      }
     }
 
     /* ---------------- collections ---------------- */
+
     if (hasVal(collection)) {
-      const collections = toArray(collection);
-      if (collections.length === 1) filters.collections = collections[0];
-      else if (collections.length > 1)
-        filters.collections = { $in: collections };
+      const collections =
+        toArray(collection);
+
+      if (collections.length === 1) {
+        filters.collections =
+          collections[0];
+      } else if (
+        collections.length > 1
+      ) {
+        filters.collections = {
+          $in: collections,
+        };
+      }
     }
 
     /* ---------------- tags ---------------- */
-    const normalizedTags = tagsNorm(tags);
+
+    const normalizedTags =
+      tagsNorm(tags);
+
     if (normalizedTags.length) {
-      filters.tags = { $in: normalizedTags };
+      filters.tags = {
+        $in: normalizedTags,
+      };
     }
 
     /* ---------------- booleans ---------------- */
-    if (hasVal(isActive)) filters.isActive = toBool(isActive);
-    if (hasVal(isDraft)) filters.isDraft = toBool(isDraft);
-    if (hasVal(isBestSeller)) filters.isBestSeller = toBool(isBestSeller);
-    if (hasVal(isTrending)) filters.isTrending = toBool(isTrending);
-    if (hasVal(isPrimaryProduct))
-      filters.isPrimaryProduct = toBool(isPrimaryProduct);
-    if (hasVal(isFeatured)) filters.isFeatured = toBool(isFeatured);
-    if (hasVal(isPatternReady)) filters.isPatternReady = toBool(isPatternReady);
-    if (hasVal(isSamplingDone)) filters.isSamplingDone = toBool(isSamplingDone);
-    if (hasVal(isInStock)) filters.isInStock = toBool(isInStock);
 
-    /* ---------------- exact/simple filters ---------------- */
-    if (hasVal(productType)) filters.productType = toStr(productType);
-    if (hasVal(currency)) filters.currency = toStr(currency).toUpperCase();
-    if (hasVal(taxClass)) filters.taxClass = toStr(taxClass);
-    if (hasVal(slug)) filters.slug = toStr(slug).toLowerCase();
-    if (hasVal(hsnCode)) filters.hsnCode = toStr(hsnCode).replace(/[^\d]/g, "");
-    if (hasVal(externalURL)) filters.externalURL = toStr(externalURL);
-    if (hasVal(originalProductLink))
-      filters.originalProductLink = toStr(originalProductLink);
-    if (hasVal(wordpressId) && toNum(wordpressId) !== null) {
-      filters.wordpressId = toNum(wordpressId);
+    if (hasVal(isActive)) {
+      filters.isActive =
+        toBool(isActive);
     }
 
-    /* ---------------- arrays / nested string filters ---------------- */
-    const colorList = [...toArray(colors), ...toArray(color)].map((x) =>
+    if (hasVal(isDraft)) {
+      filters.isDraft =
+        toBool(isDraft);
+    }
+
+    if (hasVal(isBestSeller)) {
+      filters.isBestSeller =
+        toBool(isBestSeller);
+    }
+
+    if (hasVal(isTrending)) {
+      filters.isTrending =
+        toBool(isTrending);
+    }
+
+    if (hasVal(isPrimaryProduct)) {
+      filters.isPrimaryProduct =
+        toBool(isPrimaryProduct);
+    }
+
+    if (hasVal(isDispatchReady)) {
+      filters.isDispatchReady =
+        toBool(isDispatchReady);
+    }
+
+    if (hasVal(isFeatured)) {
+      filters.isFeatured =
+        toBool(isFeatured);
+    }
+
+    if (hasVal(isPatternReady)) {
+      filters.isPatternReady =
+        toBool(isPatternReady);
+    }
+
+    if (hasVal(isSamplingDone)) {
+      filters.isSamplingDone =
+        toBool(isSamplingDone);
+    }
+
+    if (hasVal(isInStock)) {
+      filters.isInStock =
+        toBool(isInStock);
+    }
+
+    /* ---------------- exact/simple filters ---------------- */
+
+    if (hasVal(productType)) {
+      filters.productType =
+        toStr(productType);
+    }
+
+    if (hasVal(currency)) {
+      filters.currency =
+        toStr(currency).toUpperCase();
+    }
+
+    if (hasVal(taxClass)) {
+      filters.taxClass =
+        toStr(taxClass);
+    }
+
+    if (hasVal(slug)) {
+      filters.slug =
+        toStr(slug).toLowerCase();
+    }
+
+    if (hasVal(hsnCode)) {
+      filters.hsnCode = toStr(
+        hsnCode,
+      ).replace(/[^\d]/g, "");
+    }
+
+    if (hasVal(externalURL)) {
+      filters.externalURL =
+        toStr(externalURL);
+    }
+
+    if (
+      hasVal(originalProductLink)
+    ) {
+      filters.originalProductLink =
+        toStr(originalProductLink);
+    }
+
+    if (
+      hasVal(wordpressId) &&
+      toNum(wordpressId) !== null
+    ) {
+      filters.wordpressId =
+        toNum(wordpressId);
+    }
+
+    /* ---------------- arrays / nested filters ---------------- */
+
+    const colorList = [
+      ...toArray(colors),
+      ...toArray(color),
+    ].map((x) =>
       x.toLowerCase(),
     );
-    if (colorList.length) filters.colors = { $in: [...new Set(colorList)] };
+
+    if (colorList.length) {
+      filters.colors = {
+        $in: [
+          ...new Set(colorList),
+        ],
+      };
+    }
 
     if (hasVal(fabricName)) {
       filters["fabrics.fabricName"] = {
-        $regex: escapeRegex(toStr(fabricName)),
+        $regex: escapeRegex(
+          toStr(fabricName),
+        ),
         $options: "i",
       };
     }
 
     if (hasVal(fabricCode)) {
       filters["fabrics.fabricCode"] = {
-        $regex: escapeRegex(toStr(fabricCode)),
+        $regex: escapeRegex(
+          toStr(fabricCode),
+        ),
         $options: "i",
       };
     }
 
     if (hasVal(fabricColor)) {
       filters["fabrics.fabricColor"] = {
-        $regex: escapeRegex(toStr(fabricColor)),
+        $regex: escapeRegex(
+          toStr(fabricColor),
+        ),
         $options: "i",
       };
     }
 
     if (hasVal(role)) {
-      filters["fabrics.role"] = toStr(role).toLowerCase();
+      filters["fabrics.role"] =
+        toStr(role).toLowerCase();
     }
 
-    /* ---------------- SKU exact / partial ---------------- */
+    /* ---------------- SKU ---------------- */
+
     if (hasVal(sku)) {
       const skuVal = toStr(sku);
+
       andFilters.push({
         $or: [
-          { sku: skuVal },
-          { "variants.sku": skuVal },
-          { sku: { $regex: escapeRegex(skuVal), $options: "i" } },
-          { "variants.sku": { $regex: escapeRegex(skuVal), $options: "i" } },
+          {
+            sku: skuVal,
+          },
+          {
+            "variants.sku":
+              skuVal,
+          },
+          {
+            sku: {
+              $regex:
+                escapeRegex(
+                  skuVal,
+                ),
+              $options: "i",
+            },
+          },
+          {
+            "variants.sku": {
+              $regex:
+                escapeRegex(
+                  skuVal,
+                ),
+              $options: "i",
+            },
+          },
         ],
       });
     }
 
-    /* ---------------- productCode helper (existing safe) ---------------- */
-    applyProductCodeFilter(filters, { q, title, productCode, code, search });
+    /* ---------------- product code ---------------- */
+
+    applyProductCodeFilter(
+      filters,
+      {
+        q,
+        title,
+        productCode,
+        code,
+        search,
+      },
+    );
 
     /* ---------------- exact title ---------------- */
+
     if (hasVal(titleExact)) {
       filters.title = {
-        $regex: `^${escapeRegex(toStr(titleExact))}$`,
+        $regex: `^${escapeRegex(
+          toStr(titleExact),
+        )}$`,
         $options: "i",
       };
     }
 
-    /* ---------------- price / stock / analytics ranges ---------------- */
-    addRange("price", minPrice, maxPrice);
-    addRange("stock", minStock, maxStock);
-    addRange("reservedStock", minReservedStock, maxReservedStock);
-    addRange("averageRating", minRating, maxRating);
+    /* ---------------- ranges ---------------- */
 
-    addRange("analytics.views", minViews, maxViews);
-    addRange("analytics.purchases", minPurchases, maxPurchases);
-    addRange("analytics.cartAdds", minCartAdds, maxCartAdds);
-    addRange("analytics.wishlistCount", minWishlistCount, maxWishlistCount);
+    addRange(
+      "price",
+      minPrice,
+      maxPrice,
+    );
+
+    addRange(
+      "stock",
+      minStock,
+      maxStock,
+    );
+
+    addRange(
+      "reservedStock",
+      minReservedStock,
+      maxReservedStock,
+    );
+
+    addRange(
+      "averageRating",
+      minRating,
+      maxRating,
+    );
+
+    addRange(
+      "analytics.views",
+      minViews,
+      maxViews,
+    );
+
+    addRange(
+      "analytics.purchases",
+      minPurchases,
+      maxPurchases,
+    );
+
+    addRange(
+      "analytics.cartAdds",
+      minCartAdds,
+      maxCartAdds,
+    );
+
+    addRange(
+      "analytics.wishlistCount",
+      minWishlistCount,
+      maxWishlistCount,
+    );
+
     addRange(
       "analytics.searchAppearances",
       minSearchAppearances,
       maxSearchAppearances,
     );
 
-    /* ---------------- date ranges ---------------- */
-    addDateRange("createdAt", createdFrom, createdTo);
-    addDateRange("updatedAt", updatedFrom, updatedTo);
-    addDateRange("publishAt", publishFrom, publishTo);
+    /* ---------------- dates ---------------- */
 
-    /* ---------------- generic text search ---------------- */
+    addDateRange(
+      "createdAt",
+      createdFrom,
+      createdTo,
+    );
+
+    addDateRange(
+      "updatedAt",
+      updatedFrom,
+      updatedTo,
+    );
+
+    addDateRange(
+      "publishAt",
+      publishFrom,
+      publishTo,
+    );
+
+    /* ---------------- generic search ---------------- */
+
     const qStr = toStr(q);
-    const titleStr = toStr(title);
-    const searchStr = toStr(search);
-    const pcStr = toStr(productCode);
-    const codeStr = toStr(code);
+    const titleStr =
+      toStr(title);
+    const searchStr =
+      toStr(search);
+    const pcStr =
+      toStr(productCode);
+    const codeStr =
+      toStr(code);
 
     const isCodeQuery =
       isDigitsOnly(qStr) ||
@@ -1444,38 +1904,92 @@ export const getAllProducts = async (req, res) => {
       isDigitsOnly(pcStr) ||
       isDigitsOnly(codeStr);
 
-    const searchText = !isCodeQuery ? searchStr || qStr || titleStr : "";
+    const searchText =
+      !isCodeQuery
+        ? searchStr ||
+        qStr ||
+        titleStr
+        : "";
 
     if (searchText) {
-      const rx = { $regex: escapeRegex(searchText), $options: "i" };
+      const rx = {
+        $regex:
+          escapeRegex(
+            searchText,
+          ),
+        $options: "i",
+      };
 
       andFilters.push({
         $or: [
           { title: rx },
           { slug: rx },
-          { shortDescription: rx },
-          { howToStyle: rx },
-          { fabricDetails: rx },
+          {
+            shortDescription:
+              rx,
+          },
+          {
+            howToStyle: rx,
+          },
+          {
+            fabricDetails:
+              rx,
+          },
           { sku: rx },
-          { productCode: rx },
-          { hsnCode: rx },
+          {
+            productCode: rx,
+          },
+          {
+            hsnCode: rx,
+          },
           { tags: rx },
-          { colors: rx },
-          { keyFeatures: rx },
-          { "variants.sku": rx },
-          { "variants.barcode": rx },
-          { "variants.patternNumber": rx },
-          { "fabrics.fabricName": rx },
-          { "fabrics.fabricCode": rx },
-          { "fabrics.fabricColor": rx },
-          { "specifications.key": rx },
-          { "specifications.value": rx },
+          {
+            colors: rx,
+          },
+          {
+            keyFeatures: rx,
+          },
+          {
+            "variants.sku":
+              rx,
+          },
+          {
+            "variants.barcode":
+              rx,
+          },
+          {
+            "variants.patternNumber":
+              rx,
+          },
+          {
+            "fabrics.fabricName":
+              rx,
+          },
+          {
+            "fabrics.fabricCode":
+              rx,
+          },
+          {
+            "fabrics.fabricColor":
+              rx,
+          },
+          {
+            "specifications.key":
+              rx,
+          },
+          {
+            "specifications.value":
+              rx,
+          },
         ],
       });
     }
 
-    /* ---------------- final query ---------------- */
-    let finalFilters = { ...filters };
+    /* ---------------- final filters ---------------- */
+
+    let finalFilters = {
+      ...filters,
+    };
 
     if (andFilters.length) {
       finalFilters = {
@@ -1485,23 +1999,71 @@ export const getAllProducts = async (req, res) => {
     }
 
     /* ---------------- sorting ---------------- */
+
     const sortMap = {
-      price_asc: { price: 1 },
-      price_desc: { price: -1 },
-      newest: { createdAt: -1 },
-      oldest: { createdAt: 1 },
-      updated_desc: { updatedAt: -1 },
-      updated_asc: { updatedAt: 1 },
-      rating: { averageRating: -1 },
-      popularity: { "analytics.views": -1 },
-      views_desc: { "analytics.views": -1 },
-      views_asc: { "analytics.views": 1 },
-      purchases_desc: { "analytics.purchases": -1 },
-      purchases_asc: { "analytics.purchases": 1 },
-      title_asc: { title: 1 },
-      title_desc: { title: -1 },
-      stock_asc: { stock: 1 },
-      stock_desc: { stock: -1 },
+      price_asc: {
+        price: 1,
+      },
+
+      price_desc: {
+        price: -1,
+      },
+
+      newest: {
+        createdAt: -1,
+      },
+
+      oldest: {
+        createdAt: 1,
+      },
+
+      updated_desc: {
+        updatedAt: -1,
+      },
+
+      updated_asc: {
+        updatedAt: 1,
+      },
+
+      rating: {
+        averageRating: -1,
+      },
+
+      popularity: {
+        "analytics.views": -1,
+      },
+
+      views_desc: {
+        "analytics.views": -1,
+      },
+
+      views_asc: {
+        "analytics.views": 1,
+      },
+
+      purchases_desc: {
+        "analytics.purchases": -1,
+      },
+
+      purchases_asc: {
+        "analytics.purchases": 1,
+      },
+
+      title_asc: {
+        title: 1,
+      },
+
+      title_desc: {
+        title: -1,
+      },
+
+      stock_asc: {
+        stock: 1,
+      },
+
+      stock_desc: {
+        stock: -1,
+      },
     };
 
     let sortObj = sort
@@ -1510,56 +2072,137 @@ export const getAllProducts = async (req, res) => {
       : PRODUCT_PRIORITY_SORT;
 
     if (hasVal(sortKey)) {
-      const dir = String(sortDir).toLowerCase() === "asc" ? 1 : -1;
+      const dir =
+        String(
+          sortDir,
+        ).toLowerCase() ===
+          "asc"
+          ? 1
+          : -1;
 
-      const allowedSortKeys = new Set([
-        "title",
-        "slug",
-        "price",
-        "compareAtPrice",
-        "stock",
-        "reservedStock",
-        "averageRating",
-        "totalReviews",
-        "createdAt",
-        "updatedAt",
-        "publishAt",
-        "productCode",
-        "sku",
-        "wordpressId",
-        "analytics.views",
-        "analytics.purchases",
-        "analytics.cartAdds",
-        "analytics.wishlistCount",
-        "analytics.searchAppearances",
-      ]);
+      const allowedSortKeys =
+        new Set([
+          "title",
+          "slug",
+          "price",
+          "compareAtPrice",
+          "stock",
+          "reservedStock",
+          "averageRating",
+          "totalReviews",
+          "createdAt",
+          "updatedAt",
+          "publishAt",
+          "productCode",
+          "sku",
+          "wordpressId",
+          "analytics.views",
+          "analytics.purchases",
+          "analytics.cartAdds",
+          "analytics.wishlistCount",
+          "analytics.searchAppearances",
+        ]);
 
-      if (allowedSortKeys.has(sortKey)) {
-        sortObj = { [sortKey]: dir };
+      if (
+        allowedSortKeys.has(
+          sortKey,
+        )
+      ) {
+        sortObj = {
+          [sortKey]: dir,
+        };
       }
     }
 
-    const safeLimit = Math.min(200, Math.max(1, Number(limit) || 20));
-    const safePage = Math.max(1, Number(page) || 1);
-    const skip = (safePage - 1) * safeLimit;
+    /* ---------------- pagination ---------------- */
 
-    const query = Product.find(finalFilters)
-      .sort(sortObj)
-      .skip(skip)
-      .limit(safeLimit);
+    const safeLimit =
+      Math.min(
+        200,
+        Math.max(
+          1,
+          Number(limit) || 20,
+        ),
+      );
 
-    const docs = await pop(query);
-    const total = await Product.countDocuments(finalFilters);
+    const safePage =
+      Math.max(
+        1,
+        Number(page) || 1,
+      );
 
-    return res.json({
+    const skip =
+      (safePage - 1) *
+      safeLimit;
+
+    /* ============================================================
+       DATABASE QUERY
+    ============================================================ */
+
+    const query =
+      Product.find(
+        finalFilters,
+      )
+        .sort(sortObj)
+        .skip(skip)
+        .limit(safeLimit);
+
+    const [docs, total] =
+      await Promise.all([
+        pop(query),
+        Product.countDocuments(
+          finalFilters,
+        ),
+      ]);
+
+    /* ============================================================
+       RESPONSE
+    ============================================================ */
+
+    const responseData = {
       total,
       page: safePage,
-      pages: Math.ceil(total / safeLimit),
-      products: (docs || []).map(applyStockFromVariants),
+      limit: safeLimit,
+      pages: Math.ceil(
+        total / safeLimit,
+      ),
+      hasNextPage:
+        safePage * safeLimit <
+        total,
+      hasPreviousPage:
+        safePage > 1,
+
+      products: (
+        docs || []
+      ).map(
+        applyStockFromVariants,
+      ),
+    };
+
+    /* ============================================================
+       SAVE TO REDIS
+       120 seconds because product response contains stock
+    ============================================================ */
+
+    await setCache(
+      cacheKey,
+      responseData,
+      120,
+    );
+
+    return res.json({
+      ...responseData,
+      cache: "MISS",
     });
   } catch (e) {
-    console.error("❌ Get All Products Error:", e);
-    return res.status(500).json({ message: e.message });
+    console.error(
+      "❌ Get All Products Error:",
+      e,
+    );
+
+    return res.status(500).json({
+      message: e.message,
+    });
   }
 };
 
@@ -2367,22 +3010,39 @@ export const getProductByIdOrSlug = async (req, res) => {
   try {
     const param = String(req.params.id || "").trim();
 
-    // Helper (keep here or import from utils)
+    const cacheKey = `oatclub:product:${param.toLowerCase()}`;
+
+    // 1. Redis first
+    const cachedProduct = await getCache(cacheKey);
+
+    if (cachedProduct) {
+      return res.json(cachedProduct);
+    }
+
     const buildCodeCandidates = (input) => {
       const raw = String(input || "").trim();
       const digits = raw.replace(/\D/g, "");
+
       if (!digits) return [];
 
       const n = parseInt(digits, 10);
       if (Number.isNaN(n)) return [];
 
-      const padded5 = String(n).padStart(5, "0"); // "00218"
-      return Array.from(new Set([raw, digits, padded5]));
+      const padded5 = String(n).padStart(5, "0");
+
+      return Array.from(
+        new Set([
+          raw,
+          digits,
+          padded5,
+        ]),
+      );
     };
 
     const crossSellPopulate = {
       path: "crossSellProducts",
-      select: "title slug price compareAtPrice thumbnail isActive",
+      select:
+        "title slug price compareAtPrice thumbnail isActive",
       match: { isActive: true },
     };
 
@@ -2390,32 +3050,85 @@ export const getProductByIdOrSlug = async (req, res) => {
 
     // 1) slug
     doc = await pop(
-      Product.findOne({ slug: param }).populate(crossSellPopulate),
+      Product.findOne({
+        slug: param,
+      }).populate(crossSellPopulate),
     );
 
-    // 2) objectId
-    if (!doc && mongoose.Types.ObjectId.isValid(param)) {
-      doc = await pop(Product.findById(param).populate(crossSellPopulate));
-    }
-
-    // 3) productCode (supports /api/products/218 when DB has "00218")
-    // If you only want 3+ digits, change to: /^\d{3,}$/
-    if (!doc && /^\d+$/.test(param)) {
-      const codes = buildCodeCandidates(param);
-
+    // 2) Mongo ObjectId
+    if (
+      !doc &&
+      mongoose.Types.ObjectId.isValid(param)
+    ) {
       doc = await pop(
-        Product.findOne({ productCode: { $in: codes } }).populate(
+        Product.findById(param).populate(
           crossSellPopulate,
         ),
       );
     }
 
-    if (!doc) return res.status(404).json({ message: "Product not found" });
+    // 3) product code
+    if (!doc && /^\d+$/.test(param)) {
+      const codes =
+        buildCodeCandidates(param);
 
-    return res.json(applyStockFromVariants(doc));
+      doc = await pop(
+        Product.findOne({
+          productCode: {
+            $in: codes,
+          },
+        }).populate(crossSellPopulate),
+      );
+    }
+
+    if (!doc) {
+      return res.status(404).json({
+        message: "Product not found",
+      });
+    }
+
+    const product =
+      applyStockFromVariants(doc);
+
+    // 4. Save canonical + alias keys
+    await Promise.all([
+      setCache(
+        `oatclub:product:${String(product._id)}`,
+        product,
+        300,
+      ),
+
+      product.slug
+        ? setCache(
+          `oatclub:product:${String(
+            product.slug,
+          ).toLowerCase()}`,
+          product,
+          300,
+        )
+        : null,
+
+      product.productCode
+        ? setCache(
+          `oatclub:product:${String(
+            product.productCode,
+          )}`,
+          product,
+          300,
+        )
+        : null,
+    ]);
+
+    return res.json(product);
   } catch (e) {
-    console.error("❌ Get Product Error:", e);
-    return res.status(500).json({ message: e.message });
+    console.error(
+      "❌ Get Product Error:",
+      e,
+    );
+
+    return res.status(500).json({
+      message: e.message,
+    });
   }
 };
 
@@ -2827,6 +3540,13 @@ export const updateProduct = async (req, res) => {
       data.isPatternReady = !!finalIsPatternReady;
 
     /* ---------------- apply + save ---------------- */
+
+    const oldCacheIdentity = {
+      _id: existing._id,
+      slug: existing.slug,
+      productCode: existing.productCode,
+    };
+
     existing.set(data);
 
     [
@@ -2870,6 +3590,12 @@ export const updateProduct = async (req, res) => {
       { path: "crossSellProducts" },
       { path: "attributes.attribute" },
       { path: "variants.attributes.attribute" },
+    ]);
+
+    await Promise.all([
+      clearProductCache(oldCacheIdentity),
+      clearProductCache(updated),
+      clearProductListCache(),
     ]);
 
     return res.json({
@@ -3035,27 +3761,81 @@ export const syncProductAssociationGroup = async (req, res) => {
 /* ============================================================
    DELETE / BULK / ANALYTICS / VARIANT STOCK / RATINGS / IMPORT
 ============================================================ */
-export const deleteProduct = async (req, res) => {
+export const deleteProduct = async (
+  req,
+  res,
+) => {
   try {
-    const deleted = await Product.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ message: "Product not found" });
-    res.json({ message: "Product deleted successfully" });
+    const deleted =
+      await Product.findByIdAndDelete(
+        req.params.id,
+      );
+
+    if (!deleted) {
+      return res.status(404).json({
+        message: "Product not found",
+      });
+    }
+
+    await Promise.all([
+      clearProductCache(deleted),
+      clearProductListCache(),
+    ]);
+
+    return res.json({
+      message:
+        "Product deleted successfully",
+    });
   } catch (e) {
-    console.error("❌ Delete Product Error:", e);
-    res.status(500).json({ message: e.message });
+    console.error(
+      "❌ Delete Product Error:",
+      e,
+    );
+
+    return res.status(500).json({
+      message: e.message,
+    });
   }
 };
 
 export const bulkDeleteProducts = async (req, res) => {
   try {
     const { ids } = req.body;
-    if (!ids?.length)
-      return res.status(400).json({ message: "No IDs provided" });
-    await Product.deleteMany({ _id: { $in: ids } });
-    res.json({ message: "Products deleted successfully" });
+
+    if (!ids?.length) {
+      return res.status(400).json({
+        message: "No IDs provided",
+      });
+    }
+
+    const products = await Product.find({
+      _id: { $in: ids },
+    }).select("_id slug productCode");
+
+    const result = await Product.deleteMany({
+      _id: { $in: ids },
+    });
+
+    await Promise.all([
+      ...products.map((product) =>
+        clearProductCache(product),
+      ),
+      clearProductListCache(),
+    ]);
+
+    return res.json({
+      message: "Products deleted successfully",
+      deletedCount: result.deletedCount || 0,
+    });
   } catch (e) {
-    console.error("❌ Bulk Delete Error:", e);
-    res.status(500).json({ message: e.message });
+    console.error(
+      "❌ Bulk Delete Error:",
+      e,
+    );
+
+    return res.status(500).json({
+      message: e.message,
+    });
   }
 };
 
@@ -3150,6 +3930,7 @@ export const updateVariantStock = async (req, res) => {
 
     await product.save({ validateBeforeSave: true });
 
+    await invalidateProductCache(product);
     // ✅ AFTER stock update: (optional) reconcile backorders
     let reconcileSummary = null;
     try {
@@ -3253,8 +4034,15 @@ export const updateProductColors = async (req, res) => {
     product.markModified("colorSwatches");
     product.markModified("colors");
 
-    const saved = await product.save({ validateBeforeSave: true });
-    const full = await pop(Product.findById(saved._id));
+    await product.save({
+      validateBeforeSave: true,
+    });
+
+    await invalidateProductCache(product);
+
+    const full = await pop(
+      Product.findById(product._id),
+    );
 
     return res.json({
       message: "Product colors updated",
@@ -3272,6 +4060,7 @@ export const updateProductRatings = async (req, res) => {
     if (!product) return res.status(404).json({ message: "Product not found" });
 
     await product.updateRatings();
+    await invalidateProductCache(product);
 
     res.json({
       message: "Ratings updated",
@@ -3308,6 +4097,10 @@ export const bulkImportProducts = async (req, res) => {
           message: e?.message || String(e),
         });
       }
+    }
+
+    if (imported.length > 0) {
+      await clearProductListCache();
     }
 
     return res.json({
@@ -3347,6 +4140,21 @@ export const bulkUpdatePricing = async (req, res) => {
     }));
 
     const result = await Product.bulkWrite(ops);
+
+    if ((result.modifiedCount || 0) > 0) {
+      await clearProductListCache();
+
+      // Individual product detail caches may contain old prices.
+      await Promise.all(
+        updates
+          .filter((u) => u?._id)
+          .map((u) =>
+            deleteCache(
+              `oatclub:product:${String(u._id)}`,
+            ),
+          ),
+      );
+    }
 
     return res.json({
       message: "Pricing updated successfully",
@@ -4466,11 +5274,15 @@ export const toggleBestSeller = async (req, res) => {
       ),
     );
 
+    await invalidateProductCache(updated);
+
     return res.json({
       message: `Best Seller ${nextVal ? "enabled" : "disabled"}`,
       isBestSeller: nextVal,
       product: applyStockFromVariants(updated),
     });
+
+
   } catch (e) {
     console.error("❌ toggleBestSeller Error:", e);
     return res.status(500).json({ message: e.message });
@@ -4584,6 +5396,9 @@ export const zeroAllVariantStock = async (req, res) => {
 
     await flush();
 
+    await clearProductListCache();
+
+
     return res.json({
       message: "All product inventory marked as 0 successfully",
       clearReservedStock,
@@ -4634,6 +5449,9 @@ export const toggleTrending = async (req, res) => {
         { new: true, runValidators: true },
       ),
     );
+
+    await invalidateProductCache(updated);
+
 
     return res.json({
       message: `Trending ${nextVal ? "enabled" : "disabled"}`,
@@ -6595,6 +7413,8 @@ export const completeProductLifecycle = async (req, res) => {
     await product.save({
       validateBeforeSave: true,
     });
+
+    await clearProductCache(product);
 
     return res.status(200).json({
       success: true,
