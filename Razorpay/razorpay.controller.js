@@ -8,6 +8,7 @@ import { creditOrderWalletRewardInternal } from "../Customer/orderWalletReward.s
 import { reserveInventoryForOrderNumberInternal } from "../InventoryReservation/inventoryWebhook.js";
 
 import {
+  sendPartialCodConfirmationWhatsapp,
   sendPrepaidOrderConfirmationWhatsapp,
 } from "../fast2sms/index.js";
 
@@ -16,7 +17,7 @@ import {
 } from "../Orders/order.emails.js";
 
 
-const triggerPrepaidConfirmation = (order) => {
+const triggerPaymentConfirmation = (order) => {
   if (!order?._id) return;
 
   setImmediate(async () => {
@@ -24,33 +25,65 @@ const triggerPrepaidConfirmation = (order) => {
       triggerOrderEmails(order);
     } catch (err) {
       console.error(
-        "⚠️ Prepaid confirmation email failed:",
-        err?.message || err
+        "⚠️ Payment confirmation email failed:",
+        err?.message || err,
       );
     }
 
     try {
-      const result =
-        await sendPrepaidOrderConfirmationWhatsapp({
-          order,
-        });
+      const paymentMethod = String(
+        order.paymentMethod || "",
+      ).toLowerCase();
+
+      let result;
+
+      if (paymentMethod === "partial_cod") {
+        const amountPaid = Number(
+          order.partialPayment?.upfrontAmount ??
+          order.paymentBreakdown?.razorpayAmount ??
+          0,
+        );
+
+        const remainingAmount = Number(
+          order.partialPayment?.remainingCodAmount ??
+          order.paymentBreakdown?.codAmount ??
+          0,
+        );
+
+        result =
+          await sendPartialCodConfirmationWhatsapp({
+            order,
+            amountPaid,
+            remainingAmount,
+          });
+      } else {
+        result =
+          await sendPrepaidOrderConfirmationWhatsapp({
+            order,
+          });
+      }
 
       if (!result?.success) {
         console.error(
-          "⚠️ Prepaid Fast2SMS failed:",
-          result?.error || result?.data || result
+          "⚠️ Payment Fast2SMS failed:",
+          result?.error ||
+          result?.data ||
+          result,
         );
         return;
       }
 
       console.log(
-        "✅ Prepaid Fast2SMS sent:",
-        order.orderNumber
+        `✅ ${paymentMethod === "partial_cod"
+          ? "Partial COD"
+          : "Prepaid"
+        } Fast2SMS sent:`,
+        order.orderNumber,
       );
     } catch (err) {
       console.error(
-        "⚠️ Prepaid Fast2SMS error:",
-        err?.message || err
+        "⚠️ Payment Fast2SMS error:",
+        err?.message || err,
       );
     }
   });
@@ -368,7 +401,7 @@ export const verifyRazorpayPayment = async (
         .lean();
 
     // ✅ Confirmation email + WhatsApp
-    triggerPrepaidConfirmation(finalOrder);
+    triggerPaymentConfirmation(finalOrder);
 
     // ✅ Reserve inventory only after payment succeeds
     const orderNumber = String(
@@ -572,7 +605,7 @@ export const razorpayWebhook = async (
             )
             .lean();
 
-        triggerPrepaidConfirmation(
+        triggerPaymentConfirmation(
           finalOrder,
         );
 

@@ -206,6 +206,44 @@ export const sendPrepaidOrderConfirmationWhatsapp =
   };
 
 /* =========================================================
+ PARTIAL COD PAYMENT CONFIRMATION
+========================================================= */
+
+export const sendPartialCodConfirmationWhatsapp =
+  async ({
+    order,
+    amountPaid,
+    remainingAmount,
+  }) => {
+    const orderNumber = getOrderNumber(order);
+
+    const template =
+      getApprovedFast2SmsTemplate(
+        "PARTIAL_COD_CONFIRMATION",
+      );
+
+    const variables =
+      template.buildVariables({
+        customerName:
+          getOrderCustomerName(order),
+        itemSummary:
+          getOrderItemSummary(order),
+        amountPaid,
+        remainingAmount,
+      });
+
+    return sendFast2SmsWhatsappTemplate({
+      phone: getOrderPhone(order),
+      templateKey:
+        "PARTIAL_COD_CONFIRMATION",
+      variables,
+      udf1: orderNumber,
+      udf2: "partial_cod_confirmation",
+      udf3: String(order?._id || ""),
+    });
+  };
+
+/* =========================================================
    PAYMENT COMPLETED ALIAS
    Keeps old controller/import compatible
 ========================================================= */

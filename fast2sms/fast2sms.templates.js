@@ -69,6 +69,27 @@ export const FAST2SMS_TEMPLATES = Object.freeze({
       ],
   },
 
+  PARTIAL_COD_CONFIRMATION: {
+    key: "PARTIAL_COD_CONFIRMATION",
+    messageId: 31627,
+    templateId: "2082877555927327",
+    templateName: "partial_payment_confirmation",
+    language: "en",
+    status: "PENDING", // Approval ke baad APPROVED karna
+
+    buildVariables: ({
+      customerName,
+      itemSummary,
+      amountPaid,
+      remainingAmount,
+    } = {}) => [
+        clean(customerName, "Customer"),
+        clean(itemSummary, "OATCLUB order"),
+        cleanAmount(amountPaid),
+        cleanAmount(remainingAmount),
+      ],
+  },
+
   OTP: {
     key: "OTP",
     messageId: null,
