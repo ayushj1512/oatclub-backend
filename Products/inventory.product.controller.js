@@ -12,9 +12,9 @@ const arr = (v) =>
       ? v
       : typeof v === "string"
         ? v
-            .split(",")
-            .map((x) => String(x || "").trim())
-            .filter(Boolean)
+          .split(",")
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
         : [];
 
 const s = (v) => String(v ?? "").trim();
@@ -510,6 +510,7 @@ export const getInventoryAdminProducts = async (req, res) => {
 
       q = "",
       search = "",
+      size = "",
 
       category = "",
       categories = "",
@@ -543,6 +544,7 @@ export const getInventoryAdminProducts = async (req, res) => {
     const skip = (safePage - 1) * safeLimit;
 
     const searchText = s(search || q);
+    const selectedSize = normalizeSize(size);
 
     const shouldHideFootwear = [
       "true",
@@ -970,6 +972,21 @@ export const getInventoryAdminProducts = async (req, res) => {
         },
       },
 
+      ...(selectedSize
+        ? [
+          {
+            $match: {
+              inventoryVariants: {
+                $elemMatch: {
+                  size: selectedSize,
+                  availableStock: { $gt: 0 },
+                },
+              },
+            },
+          },
+        ]
+        : []),
+
       {
         $addFields: {
           totalInventory: {
@@ -1208,6 +1225,7 @@ export const getInventoryAdminProducts = async (req, res) => {
 
       filtersApplied: {
         search: searchText,
+        size: selectedSize,
         category: s(category),
         categories: categoryList,
         hideFootwear: shouldHideFootwear,
