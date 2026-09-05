@@ -6000,17 +6000,85 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
       });
     }
 
+    const paymentMethod = String(
+      order.paymentMethod || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const paymentStatus = String(
+      order.paymentStatus || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    const isPartialCod =
+      paymentMethod === "partial_cod";
+
+    const isCod =
+      paymentMethod === "cod" ||
+      isPartialCod;
+
     if (
-      String(order.paymentMethod || "")
-        .trim()
-        .toLowerCase() === "razorpay" &&
-      String(order.paymentStatus || "")
-        .trim()
-        .toLowerCase() !== "paid"
+      paymentMethod === "razorpay" &&
+      paymentStatus !== "paid"
     ) {
       return res.status(400).json({
         success: false,
         message: "Prepaid order is not paid.",
+      });
+    }
+
+    if (
+      isPartialCod &&
+      (
+        paymentStatus !== "partially_paid" ||
+        order.partialPayment?.upfrontPaid !== true
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Partial COD upfront payment is not completed.",
+      });
+    }
+
+    const finalPayable = Number(
+      order.finalPayable || 0,
+    );
+
+    const remainingCodAmount = Number(
+      order.partialPayment?.remainingCodAmount || 0,
+    );
+
+    const codAmount = isPartialCod
+      ? remainingCodAmount
+      : paymentMethod === "cod"
+        ? finalPayable
+        : 0;
+
+    if (
+      (paymentMethod === "cod" || isPartialCod) &&
+      (
+        !Number.isFinite(codAmount) ||
+        codAmount <= 0
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Valid COD collection amount is required.",
+      });
+    }
+
+    if (
+      isPartialCod &&
+      codAmount > finalPayable
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Partial COD remaining amount cannot exceed final payable amount.",
       });
     }
 
@@ -6035,20 +6103,13 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
     const existingWaybill = String(
       order?.shipment?.delhivery?.waybill ||
       order?.shipment?.delhivery?.awb ||
-      (currentProvider === "delhivery"
-        ? order?.shipment?.awb
-        : "") ||
+      (
+        currentProvider === "delhivery"
+          ? order?.shipment?.awb
+          : ""
+      ) ||
       "",
     ).trim();
-
-    const otherProviderAwb =
-      currentProvider !== "delhivery"
-        ? String(
-          order?.shipment?.awb ||
-          order?.shipment?.shiprocket?.awb ||
-          "",
-        ).trim()
-        : "";
 
     const inactiveShipmentStatuses = [
       "cancelled",
@@ -6063,73 +6124,91 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
       .trim()
       .toLowerCase();
 
-    const hasActiveOtherProviderShipment =
-      Boolean(otherProviderAwb) &&
-      currentProvider &&
-      currentProvider !== "delhivery" &&
+    if (
+      currentProvider === "delhivery" &&
+      existingWaybill &&
       !inactiveShipmentStatuses.includes(
         currentShipmentStatus,
-      );
-    // Only prevent duplicate active Delhivery booking.
-    // Existing Shiprocket booking can be replaced as active provider.
-    if (currentProvider === "delhivery" && existingWaybill) {
+      )
+    ) {
       return res.status(200).json({
         success: true,
         skipped: true,
-        message: "Delhivery shipment already booked.",
+        message:
+          "Delhivery shipment already booked.",
         waybill: existingWaybill,
       });
     }
 
     const previousShipment =
-      currentProvider && currentProvider !== "delhivery"
+      currentProvider &&
+        currentProvider !== "delhivery"
         ? {
           provider: currentProvider,
           awb: currentAwb,
           courierName: currentCourierName,
-          orderId: String(order?.shipment?.orderId || ""),
-          shipmentId: String(order?.shipment?.shipmentId || ""),
+
+          orderId: String(
+            order?.shipment?.orderId || "",
+          ),
+
+          shipmentId: String(
+            order?.shipment?.shipmentId || "",
+          ),
+
           trackingUrl: String(
             order?.shipment?.trackingUrl || "",
           ),
+
           status: String(
             order?.shipment?.status || "",
           ),
+
           changedAt: new Date(),
         }
         : null;
 
-    const address = order.shippingAddressSnapshot || {};
+    const address =
+      order.shippingAddressSnapshot || {};
 
     const quantity = (order.items || []).reduce(
       (sum, item) =>
-        sum + Math.max(1, Number(item?.quantity || 1)),
+        sum +
+        Math.max(
+          1,
+          Number(item?.quantity || 1),
+        ),
       0,
     );
 
-    const productDescription = (order.items || [])
-      .map((item) => item?.productSnapshot?.title)
+    const productDescription = (
+      order.items || []
+    )
+      .map(
+        (item) =>
+          item?.productSnapshot?.title,
+      )
       .filter(Boolean)
       .join(", ");
 
-    const pincode = String(address?.pincode || "")
+    const pincode = String(
+      address?.pincode || "",
+    )
       .replace(/\D/g, "")
       .slice(0, 6);
 
     if (!/^\d{6}$/.test(pincode)) {
       return res.status(400).json({
         success: false,
-        message: "Valid shipping pincode is required.",
+        message:
+          "Valid shipping pincode is required.",
       });
     }
 
     const serviceability =
-      await checkDelhiveryServiceability(pincode);
-
-    const isCod =
-      String(order.paymentMethod || "")
-        .trim()
-        .toLowerCase() === "cod";
+      await checkDelhiveryServiceability(
+        pincode,
+      );
 
     const canBook = isCod
       ? serviceability?.codAvailable === true
@@ -6141,34 +6220,79 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
+
         message: isCod
           ? "Delhivery COD is unavailable for this pincode."
           : "Delhivery prepaid delivery is unavailable for this pincode.",
       });
     }
 
-    const result = await createDelhiveryShipment({
-      customerName: address.fullName,
-      address: [address.line1, address.line2]
-        .filter(Boolean)
-        .join(", "),
-      city: address.city,
-      state: address.state,
-      pincode,
-      phone: address.phone,
+    const result =
+      await createDelhiveryShipment({
+        customerName: address.fullName,
 
-      orderNumber: order.orderNumber,
-      paymentMode: isCod ? "COD" : "Prepaid",
-      totalAmount: Number(order.finalPayable || 0),
-      quantity: quantity || 1,
-      productDescription:
-        productDescription || "OATCLUB Clothing",
+        address: [
+          address.line1,
+          address.line2,
+        ]
+          .filter(Boolean)
+          .join(", "),
 
-      weight: Number(req.body?.weight || 500),
-      length: Number(req.body?.length || 25),
-      width: Number(req.body?.width || 20),
-      height: Number(req.body?.height || 5),
-    });
+        city: address.city,
+        state: address.state,
+        pincode,
+        phone: address.phone,
+
+        orderNumber: order.orderNumber,
+
+        paymentMethod,
+        paymentStatus,
+
+        partialPayment: {
+          enabled: isPartialCod,
+
+          upfrontPaid:
+            order.partialPayment
+              ?.upfrontPaid === true,
+
+          upfrontAmount: Number(
+            order.partialPayment
+              ?.upfrontAmount || 0,
+          ),
+
+          remainingCodAmount:
+            isPartialCod
+              ? remainingCodAmount
+              : 0,
+        },
+
+        finalPayable,
+        totalAmount: Number(
+          order.totalAmount ?? finalPayable,
+        ),
+
+        quantity: quantity || 1,
+
+        productDescription:
+          productDescription ||
+          "OATCLUB Clothing",
+
+        weight: Number(
+          req.body?.weight || 500,
+        ),
+
+        length: Number(
+          req.body?.length || 25,
+        ),
+
+        width: Number(
+          req.body?.width || 20,
+        ),
+
+        height: Number(
+          req.body?.height || 5,
+        ),
+      });
 
     const packageData =
       result?.packages?.[0] ||
@@ -6187,7 +6311,8 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
     if (!waybill) {
       return res.status(502).json({
         success: false,
-        message: "Delhivery did not return a waybill.",
+        message:
+          "Delhivery did not return a waybill.",
         data: result,
       });
     }
@@ -6206,15 +6331,17 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
       {};
 
     const existingDelhivery =
-      order.shipment?.delhivery?.toObject?.() ||
+      order.shipment?.delhivery
+        ?.toObject?.() ||
       order.shipment?.delhivery ||
       {};
 
-    const existingHistory = Array.isArray(
-      existingShipment?.history,
-    )
-      ? existingShipment.history
-      : [];
+    const existingHistory =
+      Array.isArray(
+        existingShipment?.history,
+      )
+        ? existingShipment.history
+        : [];
 
     order.shipment = {
       ...existingShipment,
@@ -6227,18 +6354,27 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
       trackingUrl,
       labelUrl: "",
       status: "booked",
-      rawStatus: packageData?.status || "booked",
+
+      rawStatus:
+        packageData?.status || "booked",
+
       bookedAt: now,
       lastSyncedAt: now,
 
       history: previousShipment
-        ? [...existingHistory, previousShipment]
+        ? [
+          ...existingHistory,
+          previousShipment,
+        ]
         : existingHistory,
 
       delhivery: {
         ...existingDelhivery,
 
-        orderId: String(order.orderNumber),
+        orderId: String(
+          order.orderNumber,
+        ),
+
         shipmentId: waybill,
         waybill,
         awb: waybill,
@@ -6246,7 +6382,10 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
         trackingUrl,
         labelUrl: "",
         status: "booked",
-        rawStatus: packageData?.status || "booked",
+
+        rawStatus:
+          packageData?.status || "booked",
+
         bookedAt: now,
         lastSyncedAt: now,
         rawBookingResponse: result,
@@ -6254,9 +6393,12 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
     };
 
     order.trackingDetails = {
-      ...(order.trackingDetails?.toObject?.() ||
+      ...(
+        order.trackingDetails
+          ?.toObject?.() ||
         order.trackingDetails ||
-        {}),
+        {}
+      ),
 
       trackingId: waybill,
       awb: waybill,
@@ -6268,13 +6410,16 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
     };
 
     order.markModified("shipment");
-    order.markModified("trackingDetails");
+    order.markModified(
+      "trackingDetails",
+    );
 
     await order.save();
 
     const providerChanged =
       Boolean(previousShipment) &&
-      previousShipment.provider !== "delhivery";
+      previousShipment.provider !==
+      "delhivery";
 
     return res.status(201).json({
       success: true,
@@ -6285,13 +6430,19 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
 
       providerChanged,
 
-      previousShipment: previousShipment
-        ? {
-          provider: previousShipment.provider,
-          awb: previousShipment.awb,
-          courierName: previousShipment.courierName,
-        }
-        : null,
+      previousShipment:
+        previousShipment
+          ? {
+            provider:
+              previousShipment.provider,
+
+            awb:
+              previousShipment.awb,
+
+            courierName:
+              previousShipment.courierName,
+          }
+          : null,
 
       data: {
         orderId: order._id,
@@ -6302,24 +6453,46 @@ export const adminBookDelhiveryIfMissing = async (req, res) => {
         courierName: "Delhivery",
         trackingUrl,
         status: "booked",
+
+        paymentMode:
+          isCod ? "COD" : "Prepaid",
+
+        codAmount,
       },
     });
   } catch (error) {
-    console.error("❌ Delhivery booking error:", {
-      message: error?.message,
-      response: error?.response?.data,
-      stack: error?.stack,
-    });
+    console.error(
+      "❌ Delhivery booking error:",
+      {
+        message: error?.message,
+        response:
+          error?.response?.data ||
+          error?.responseData,
+        stack: error?.stack,
+      },
+    );
 
     return res
-      .status(error?.response?.status || 500)
+      .status(
+        error?.response?.status ||
+        error?.statusCode ||
+        500,
+      )
       .json({
         success: false,
+
         message:
-          error?.response?.data?.message ||
+          error?.response?.data
+            ?.message ||
+          error?.responseData
+            ?.message ||
           error?.message ||
           "Delhivery booking failed",
-        error: error?.response?.data || null,
+
+        error:
+          error?.response?.data ||
+          error?.responseData ||
+          null,
       });
   }
 };
