@@ -21,7 +21,8 @@ import {
 const triggerPaymentConfirmation = (
   order,
   { forceEmail = false } = {},
-) => {  if (!order?._id) return;
+) => {
+  if (!order?._id) return;
 
   setImmediate(async () => {
     try {
@@ -29,7 +30,8 @@ const triggerPaymentConfirmation = (
         forceEmail
           ? { ...order, isConfirmed: false }
           : order,
-      );    } catch (error) {
+      );
+    } catch (error) {
       console.error(
         "⚠️ Confirmation email failed:",
         error?.message || error,
