@@ -8,6 +8,7 @@ import { creditOrderWalletRewardInternal } from "../Customer/orderWalletReward.s
 import { reserveInventoryForOrderNumberInternal } from "../InventoryReservation/inventoryWebhook.js";
 
 import {
+  sendCodOrderConfirmationWhatsapp,
   sendPartialCodConfirmationWhatsapp,
   sendPrepaidOrderConfirmationWhatsapp,
 } from "../fast2sms/index.js";
@@ -17,44 +18,52 @@ import {
 } from "../Orders/order.emails.js";
 
 
-const triggerPaymentConfirmation = (order) => {
-  if (!order?._id) return;
+const triggerPaymentConfirmation = (
+  order,
+  { forceEmail = false } = {},
+) => {  if (!order?._id) return;
 
   setImmediate(async () => {
     try {
-      triggerOrderEmails(order);
-    } catch (err) {
+      await triggerOrderEmails(
+        forceEmail
+          ? { ...order, isConfirmed: false }
+          : order,
+      );    } catch (error) {
       console.error(
-        "⚠️ Payment confirmation email failed:",
-        err?.message || err,
+        "⚠️ Confirmation email failed:",
+        error?.message || error,
       );
     }
 
     try {
-      const paymentMethod = String(
+      const method = String(
         order.paymentMethod || "",
       ).toLowerCase();
 
       let result;
 
-      if (paymentMethod === "partial_cod") {
-        const amountPaid = Number(
-          order.partialPayment?.upfrontAmount ??
-          order.paymentBreakdown?.razorpayAmount ??
-          0,
-        );
-
-        const remainingAmount = Number(
-          order.partialPayment?.remainingCodAmount ??
-          order.paymentBreakdown?.codAmount ??
-          0,
-        );
-
+      if (method === "cod") {
+        result =
+          await sendCodOrderConfirmationWhatsapp({
+            order,
+          });
+      } else if (method === "partial_cod") {
         result =
           await sendPartialCodConfirmationWhatsapp({
             order,
-            amountPaid,
-            remainingAmount,
+
+            amountPaid: Number(
+              order.partialPayment?.upfrontAmount ??
+              order.paymentBreakdown?.razorpayAmount ??
+              0,
+            ),
+
+            remainingAmount: Number(
+              order.partialPayment?.remainingCodAmount ??
+              order.paymentBreakdown?.codAmount ??
+              0,
+            ),
           });
       } else {
         result =
@@ -65,25 +74,14 @@ const triggerPaymentConfirmation = (order) => {
 
       if (!result?.success) {
         console.error(
-          "⚠️ Payment Fast2SMS failed:",
-          result?.error ||
-          result?.data ||
-          result,
+          "⚠️ Confirmation WhatsApp failed:",
+          result?.error || result?.data || result,
         );
-        return;
       }
-
-      console.log(
-        `✅ ${paymentMethod === "partial_cod"
-          ? "Partial COD"
-          : "Prepaid"
-        } Fast2SMS sent:`,
-        order.orderNumber,
-      );
-    } catch (err) {
+    } catch (error) {
       console.error(
-        "⚠️ Payment Fast2SMS error:",
-        err?.message || err,
+        "⚠️ Confirmation WhatsApp error:",
+        error?.message || error,
       );
     }
   });
@@ -662,11 +660,72 @@ export const razorpayWebhook = async (
 
 // RazorpayController.js
 
-export const resendPrepaidConfirmation = async (req, res, next) => {
-  try {
-    const { orderId } = req.params;
+// export const resendPrepaidConfirmation = async (req, res, next) => {
+//   try {
+//     const { orderId } = req.params;
 
-    const order = await Order.findById(orderId)
+//     const order = await Order.findById(orderId)
+//       .populate("customerId", "name email phone")
+//       .lean();
+
+//     if (!order) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Order not found",
+//       });
+//     }
+
+//     if (
+//       String(order.paymentMethod || "").toLowerCase() !== "razorpay" ||
+//       String(order.paymentStatus || "").toLowerCase() !== "paid"
+//     ) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Only paid Razorpay orders are allowed",
+//       });
+//     }
+
+//     try {
+//       triggerOrderEmails(order);
+//     } catch (err) {
+//       console.error(
+//         "⚠️ Manual prepaid email failed:",
+//         err?.message || err
+//       );
+//     }
+
+//     const whatsapp =
+//       await sendPrepaidOrderConfirmationWhatsapp({
+//         order,
+//       });
+
+//     return res.json({
+//       success: true,
+//       message: "Confirmation triggered",
+//       whatsappSuccess: whatsapp?.success === true,
+//     });
+//   } catch (err) {
+//     next(err);
+//   }
+// };
+
+export const resendPaymentConfirmation = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const ref = String(
+      req.params.orderId || "",
+    )
+      .replace(/^#/, "")
+      .trim();
+
+    const order = await Order.findOne(
+      mongoose.Types.ObjectId.isValid(ref)
+        ? { _id: ref }
+        : { orderNumber: ref },
+    )
       .populate("customerId", "name email phone")
       .lean();
 
@@ -677,37 +736,38 @@ export const resendPrepaidConfirmation = async (req, res, next) => {
       });
     }
 
-    if (
-      String(order.paymentMethod || "").toLowerCase() !== "razorpay" ||
-      String(order.paymentStatus || "").toLowerCase() !== "paid"
-    ) {
+    const method = String(
+      order.paymentMethod || "",
+    ).toLowerCase();
+
+    const status = String(
+      order.paymentStatus || "",
+    ).toLowerCase();
+
+    const isEligible =
+      method === "cod" ||
+      (method === "razorpay" && status === "paid") ||
+      (method === "partial_cod" &&
+        status === "partially_paid");
+
+    if (!isEligible) {
       return res.status(400).json({
         success: false,
-        message: "Only paid Razorpay orders are allowed",
+        message:
+          "Order is not eligible for confirmation",
       });
     }
 
-    try {
-      triggerOrderEmails(order);
-    } catch (err) {
-      console.error(
-        "⚠️ Manual prepaid email failed:",
-        err?.message || err
-      );
-    }
-
-    const whatsapp =
-      await sendPrepaidOrderConfirmationWhatsapp({
-        order,
-      });
-
+    triggerPaymentConfirmation(order, {
+      forceEmail: true,
+    });
     return res.json({
       success: true,
-      message: "Confirmation triggered",
-      whatsappSuccess: whatsapp?.success === true,
+      message:
+        "Email and WhatsApp confirmation triggered",
     });
-  } catch (err) {
-    next(err);
+  } catch (error) {
+    next(error);
   }
 };
 

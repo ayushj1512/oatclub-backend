@@ -1,3 +1,5 @@
+// fast2sms sender file
+
 import { FAST2SMS_CONFIG } from "./fast2sms.config.js";
 import { fast2smsRequest } from "./fast2sms.service.js";
 
@@ -20,65 +22,59 @@ import {
    BASE TEMPLATE SENDER
 ========================================================= */
 
-export const sendFast2SmsWhatsappTemplate =
-  async ({
-    phone,
-    templateKey,
-    variables = [],
-    udf1 = "",
-    udf2 = "",
-    udf3 = "",
-  }) => {
-    const template =
-      getApprovedFast2SmsTemplate(templateKey);
+export const sendFast2SmsWhatsappTemplate = async ({
+  phone,
+  templateKey,
+  variables = [],
+  udf1 = "",
+  udf2 = "",
+  udf3 = "",
+}) => {
+  const template =
+    getApprovedFast2SmsTemplate(templateKey);
 
-    const normalizedPhone =
-      normalizeIndianPhone(phone);
+  const normalizedPhone =
+    normalizeIndianPhone(phone);
 
-    const result = await fast2smsRequest({
-      method: "GET",
-      endpoint:
-        FAST2SMS_CONFIG.ENDPOINTS.SEND_SIMPLE,
+  const result = await fast2smsRequest({
+    method: "GET",
+    endpoint:
+      FAST2SMS_CONFIG.ENDPOINTS.SEND_SIMPLE,
 
-      params: {
-        message_id: template.messageId,
+    params: {
+      message_id: template.messageId,
+      phone_number_id:
+        FAST2SMS_CONFIG.PHONE_NUMBER_ID,
+      numbers: normalizedPhone,
 
-        phone_number_id:
-          FAST2SMS_CONFIG.PHONE_NUMBER_ID,
+      ...(variables.length
+        ? {
+          variables_values:
+            joinTemplateVariables(variables),
+        }
+        : {}),
 
-        numbers: normalizedPhone,
+      ...(udf1 ? { udf1 } : {}),
+      ...(udf2 ? { udf2 } : {}),
+      ...(udf3 ? { udf3 } : {}),
+    },
+  });
 
-        ...(variables.length
-          ? {
-            variables_values:
-              joinTemplateVariables(
-                variables,
-              ),
-          }
-          : {}),
+  return {
+    ...result,
 
-        ...(udf1 ? { udf1 } : {}),
-        ...(udf2 ? { udf2 } : {}),
-        ...(udf3 ? { udf3 } : {}),
-      },
-    });
-
-    return {
-      ...result,
-
-      meta: {
-        templateKey,
-        templateName:
-          template.templateName,
-        templateId: template.templateId,
-        messageId: template.messageId,
-        phone: normalizedPhone,
-      },
-    };
+    meta: {
+      templateKey,
+      templateName: template.templateName,
+      templateId: template.templateId,
+      messageId: template.messageId,
+      phone: normalizedPhone,
+    },
   };
+};
 
 /* =========================================================
-   COD ORDER CONFIRMATION REQUEST
+   COD ORDER CONFIRMATION
 ========================================================= */
 
 export const sendCodOrderConfirmationWhatsapp =
@@ -91,16 +87,13 @@ export const sendCodOrderConfirmationWhatsapp =
         "COD_ORDER_CONFIRMATION",
       );
 
-    const variables =
-      template.buildVariables({
-        customerName:
-          getOrderCustomerName(order),
-
-        orderNumber,
-
-        actionLink:
-          buildOrderActionLink(orderNumber),
-      });
+    const variables = template.buildVariables({
+      customerName:
+        getOrderCustomerName(order),
+      orderNumber,
+      actionLink:
+        buildOrderActionLink(orderNumber),
+    });
 
     return sendFast2SmsWhatsappTemplate({
       phone: getOrderPhone(order),
@@ -117,56 +110,51 @@ export const sendCodOrderConfirmationWhatsapp =
    PAYMENT PENDING / FAILED
 ========================================================= */
 
-export const sendPaymentPendingWhatsapp =
-  async ({
-    order,
-    paymentStatus,
-  }) => {
-    const orderNumber =
-      getOrderNumber(order);
+export const sendPaymentPendingWhatsapp = async ({
+  order,
+  paymentStatus,
+}) => {
+  const orderNumber =
+    getOrderNumber(order);
 
-    const normalizedStatus = String(
-      paymentStatus ||
-      order?.paymentStatus ||
-      "pending",
-    )
-      .trim()
-      .toLowerCase();
+  const normalizedStatus = String(
+    paymentStatus ||
+    order?.paymentStatus ||
+    "pending",
+  )
+    .trim()
+    .toLowerCase();
 
-    const statusLabel =
-      normalizedStatus === "failed"
-        ? "Failed"
-        : "Pending";
+  const statusLabel =
+    normalizedStatus === "failed"
+      ? "Failed"
+      : "Pending";
 
-    const template =
-      getApprovedFast2SmsTemplate(
-        "PAYMENT_PENDING",
-      );
+  const template =
+    getApprovedFast2SmsTemplate(
+      "PAYMENT_PENDING",
+    );
 
-    const variables =
-      template.buildVariables({
-        customerName:
-          getOrderCustomerName(order),
+  const variables = template.buildVariables({
+    customerName:
+      getOrderCustomerName(order),
+    orderNumber,
+    paymentStatus: statusLabel,
+    amount: getOrderTotal(order),
+  });
 
-        orderNumber,
-
-        paymentStatus: statusLabel,
-
-        amount: getOrderTotal(order),
-      });
-
-    return sendFast2SmsWhatsappTemplate({
-      phone: getOrderPhone(order),
-      templateKey: "PAYMENT_PENDING",
-      variables,
-      udf1: orderNumber,
-      udf2: `payment_${normalizedStatus}`,
-      udf3: String(order?._id || ""),
-    });
-  };
+  return sendFast2SmsWhatsappTemplate({
+    phone: getOrderPhone(order),
+    templateKey: "PAYMENT_PENDING",
+    variables,
+    udf1: orderNumber,
+    udf2: `payment_${normalizedStatus}`,
+    udf3: String(order?._id || ""),
+  });
+};
 
 /* =========================================================
-   PAYMENT CONFIRMED
+   PREPAID PAYMENT CONFIRMATION
 ========================================================= */
 
 export const sendPrepaidOrderConfirmationWhatsapp =
@@ -179,25 +167,19 @@ export const sendPrepaidOrderConfirmationWhatsapp =
         "PREPAID_ORDER_CONFIRMATION",
       );
 
-    const variables =
-      template.buildVariables({
-        customerName:
-          getOrderCustomerName(order),
-
-        orderNumber,
-
-        itemSummary:
-          getOrderItemSummary(order),
-
-        amount: getOrderTotal(order),
-      });
+    const variables = template.buildVariables({
+      customerName:
+        getOrderCustomerName(order),
+      orderNumber,
+      itemSummary:
+        getOrderItemSummary(order),
+      amount: getOrderTotal(order),
+    });
 
     return sendFast2SmsWhatsappTemplate({
       phone: getOrderPhone(order),
-
       templateKey:
         "PREPAID_ORDER_CONFIRMATION",
-
       variables,
       udf1: orderNumber,
       udf2: "payment_confirmed",
@@ -206,7 +188,7 @@ export const sendPrepaidOrderConfirmationWhatsapp =
   };
 
 /* =========================================================
- PARTIAL COD PAYMENT CONFIRMATION
+   PARTIAL COD PAYMENT CONFIRMATION
 ========================================================= */
 
 export const sendPartialCodConfirmationWhatsapp =
@@ -215,22 +197,21 @@ export const sendPartialCodConfirmationWhatsapp =
     amountPaid,
     remainingAmount,
   }) => {
-    const orderNumber = getOrderNumber(order);
+    const orderNumber =
+      getOrderNumber(order);
 
     const template =
       getApprovedFast2SmsTemplate(
         "PARTIAL_COD_CONFIRMATION",
       );
 
-    const variables =
-      template.buildVariables({
-        customerName:
-          getOrderCustomerName(order),
-        itemSummary:
-          getOrderItemSummary(order),
-        amountPaid,
-        remainingAmount,
-      });
+    const variables = template.buildVariables({
+      customerName: getOrderCustomerName(order),
+      orderNumber,
+      itemSummary: getOrderItemSummary(order),
+      amountPaid,
+      remainingAmount,
+    });
 
     return sendFast2SmsWhatsappTemplate({
       phone: getOrderPhone(order),
@@ -245,7 +226,6 @@ export const sendPartialCodConfirmationWhatsapp =
 
 /* =========================================================
    PAYMENT COMPLETED ALIAS
-   Keeps old controller/import compatible
 ========================================================= */
 
 export const sendPaymentCompletedWhatsapp =
@@ -261,20 +241,17 @@ export const sendPaymentCompletedWhatsapp =
         "PREPAID_ORDER_CONFIRMATION",
       );
 
-    const variables =
-      template.buildVariables({
-        customerName,
-        orderNumber,
-        itemSummary,
-        amount,
-      });
+    const variables = template.buildVariables({
+      customerName,
+      orderNumber,
+      itemSummary,
+      amount,
+    });
 
     return sendFast2SmsWhatsappTemplate({
       phone,
-
       templateKey:
         "PREPAID_ORDER_CONFIRMATION",
-
       variables,
       udf1: orderNumber,
       udf2: "payment_confirmed_manual",
@@ -296,15 +273,35 @@ export const sendOrderConfirmationWhatsapp =
       .trim()
       .toLowerCase();
 
-    const isCod = [
-      "cod",
-      "cash_on_delivery",
-      "cash on delivery",
-    ].includes(paymentMethod);
-
-    if (isCod) {
+    if (
+      [
+        "cod",
+        "cash_on_delivery",
+        "cash on delivery",
+      ].includes(paymentMethod)
+    ) {
       return sendCodOrderConfirmationWhatsapp({
         order,
+      });
+    }
+
+    if (paymentMethod === "partial_cod") {
+      return sendPartialCodConfirmationWhatsapp({
+        order,
+
+        amountPaid: Number(
+          order?.partialPayment?.upfrontAmount ??
+          order?.paymentBreakdown
+            ?.razorpayAmount ??
+          0,
+        ),
+
+        remainingAmount: Number(
+          order?.partialPayment
+            ?.remainingCodAmount ??
+          order?.paymentBreakdown?.codAmount ??
+          0,
+        ),
       });
     }
 
@@ -313,36 +310,32 @@ export const sendOrderConfirmationWhatsapp =
     });
   };
 
-
 /* =========================================================
- CUSTOMER WALLET CREDIT
+   CUSTOMER WALLET CREDIT
 ========================================================= */
 
-export const sendCustomerCreditWhatsapp =
-  async ({
-    phone,
-    customerName = "Customer",
+export const sendCustomerCreditWhatsapp = async ({
+  phone,
+  customerName = "Customer",
+  amount,
+  creditId = "",
+}) => {
+  const template =
+    getApprovedFast2SmsTemplate(
+      "CUSTOMER_CREDITS_UPDATE",
+    );
+
+  const variables = template.buildVariables({
+    customerName,
     amount,
-    creditId = "",
-  }) => {
-    const template =
-      getApprovedFast2SmsTemplate(
-        "CUSTOMER_CREDITS_UPDATE",
-      );
+  });
 
-    const variables =
-      template.buildVariables({
-        customerName,
-        amount,
-      });
-
-    return sendFast2SmsWhatsappTemplate({
-      phone,
-      templateKey:
-        "CUSTOMER_CREDITS_UPDATE",
-      variables,
-
-      udf1: creditId,
-      udf2: "customer_wallet_credit",
-    });
-  };
+  return sendFast2SmsWhatsappTemplate({
+    phone,
+    templateKey:
+      "CUSTOMER_CREDITS_UPDATE",
+    variables,
+    udf1: creditId,
+    udf2: "customer_wallet_credit",
+  });
+};

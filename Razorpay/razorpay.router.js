@@ -4,7 +4,8 @@ import {
   createRazorpayOrder,
   verifyRazorpayPayment,
   razorpayWebhook,
-  resendPrepaidConfirmation,
+  resendPaymentConfirmation,
+  // resendPrepaidConfirmation,
 } from "./razorpay.controller.js";
 
 import {
@@ -44,9 +45,14 @@ router.post("/webhook", razorpayWebhook);
    ADMIN - MANUAL PREPAID CONFIRMATION
 ========================================================= */
 
+// router.post(
+//   "/admin/resend-confirmation/:orderId",
+//   resendPrepaidConfirmation
+// );
+
 router.post(
-  "/admin/resend-confirmation/:orderId",
-  resendPrepaidConfirmation
+  "/resend-payment-confirmation/:orderId",
+  resendPaymentConfirmation,
 );
 
 /* =========================================================

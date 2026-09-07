@@ -1,3 +1,5 @@
+// fast2sms.templates.js
+
 const clean = (value, fallback = "") =>
   String(value ?? fallback).trim();
 
@@ -75,15 +77,17 @@ export const FAST2SMS_TEMPLATES = Object.freeze({
     templateId: "2082877555927327",
     templateName: "partial_payment_confirmation",
     language: "en",
-    status: "PENDING", // Approval ke baad APPROVED karna
+    status: "APPROVED",
 
     buildVariables: ({
       customerName,
+      orderNumber,
       itemSummary,
       amountPaid,
       remainingAmount,
     } = {}) => [
         clean(customerName, "Customer"),
+        clean(orderNumber),
         clean(itemSummary, "OATCLUB order"),
         cleanAmount(amountPaid),
         cleanAmount(remainingAmount),
@@ -101,14 +105,10 @@ export const FAST2SMS_TEMPLATES = Object.freeze({
 
   CUSTOMER_CREDITS_UPDATE: {
     key: "CUSTOMER_CREDITS_UPDATE",
-
     messageId: 30308,
     templateId: "27980122948283343",
     templateName: "oatclub_credits_update",
-
     language: "en",
-
-    // Approval aate hi APPROVED kar dena
     status: "APPROVED",
 
     buildVariables: ({
@@ -121,9 +121,7 @@ export const FAST2SMS_TEMPLATES = Object.freeze({
   },
 });
 
-export const getFast2SmsTemplate = (
-  templateKey,
-) => {
+export const getFast2SmsTemplate = (templateKey) => {
   const key = String(templateKey || "")
     .trim()
     .toUpperCase();
