@@ -99,6 +99,46 @@ const validateCategoryBanners = (banners = []) => {
   return null;
 };
 
+const validateOatGallery = (items = []) => {
+  if (!Array.isArray(items)) {
+    return "oatGallery must be an array";
+  }
+
+  for (const item of items) {
+    if (!item?.image?.trim()) {
+      return "Each oatGallery item must have an image";
+    }
+
+    if (!item?.productCode?.trim()) {
+      return "Each oatGallery item must have a productCode";
+    }
+  }
+
+  return null;
+};
+
+const validateCollectionRowBanners = (items = []) => {
+  if (!Array.isArray(items)) {
+    return "collectionRowBanners must be an array";
+  }
+
+  for (const item of items) {
+    if (!item?.image?.trim()) {
+      return "Each collection row banner must have an image";
+    }
+
+    if (!item?.collection) {
+      return "Each collection row banner must have a collection";
+    }
+
+    if (!item?.collectionName?.trim()) {
+      return "Each collection row banner must have a collectionName";
+    }
+  }
+
+  return null;
+};
+
 /* =========================================================
    NORMALIZATION HELPERS
 ========================================================= */
@@ -171,6 +211,36 @@ const normalizeCategoryBanners = (banners = []) =>
     };
   });
 
+const normalizeOatGallery = (items = []) =>
+  items.map((item, index) => ({
+    image: item?.image?.trim() || "",
+
+    productCode:
+      item?.productCode?.trim().toUpperCase() || "",
+
+    isActive: item?.isActive !== false,
+
+    sortOrder: Number.isFinite(Number(item?.sortOrder))
+      ? Number(item.sortOrder)
+      : index,
+  }));
+
+const normalizeCollectionRowBanners = (items = []) =>
+  items.map((item, index) => ({
+    image: item?.image?.trim() || "",
+
+    collection: item?.collection,
+
+    collectionName:
+      item?.collectionName?.trim() || "",
+
+    isActive: item?.isActive !== false,
+
+    sortOrder: Number.isFinite(Number(item?.sortOrder))
+      ? Number(item.sortOrder)
+      : index,
+  }));
+
 /* =========================================================
    DEFAULT SETTINGS
 ========================================================= */
@@ -187,6 +257,8 @@ const getOrCreateDefaultSettings = async () => {
       mobileHeroBanners: [],
       categoryRow: [],
       categoryBanners: [],
+      collectionRowBanners: [],
+      oatGallery: [],
     });
   }
 
@@ -223,6 +295,13 @@ const formatSettingsResponse = (
 
     categoryBanners: formatItems(
       plainSettings?.categoryBanners || []
+    ),
+
+    collectionRowBanners: formatItems(
+      plainSettings?.collectionRowBanners || []
+    ),
+    oatGallery: formatItems(
+      plainSettings?.oatGallery || []
     ),
   };
 };
@@ -292,7 +371,9 @@ export const updateHomepageSettings = async (req, res) => {
     }
 
     if (isProvided(req.body?.categoryRow)) {
-      const error = validateCategoryRow(req.body.categoryRow);
+      const error = validateCategoryRow(
+        req.body.categoryRow
+      );
 
       if (error) {
         return res.status(400).json({
@@ -318,6 +399,39 @@ export const updateHomepageSettings = async (req, res) => {
 
       updates.categoryBanners = normalizeCategoryBanners(
         req.body.categoryBanners
+      );
+    }
+
+    if (isProvided(req.body?.collectionRowBanners)) {
+      const error = validateCollectionRowBanners(
+        req.body.collectionRowBanners
+      );
+
+      if (error) {
+        return res.status(400).json({
+          message: error,
+        });
+      }
+
+      updates.collectionRowBanners =
+        normalizeCollectionRowBanners(
+          req.body.collectionRowBanners
+        );
+    }
+
+    if (isProvided(req.body?.oatGallery)) {
+      const error = validateOatGallery(
+        req.body.oatGallery
+      );
+
+      if (error) {
+        return res.status(400).json({
+          message: error,
+        });
+      }
+
+      updates.oatGallery = normalizeOatGallery(
+        req.body.oatGallery
       );
     }
 
@@ -348,10 +462,15 @@ export const updateHomepageSettings = async (req, res) => {
       formatSettingsResponse(updatedSettings)
     );
   } catch (error) {
-    console.error("updateHomepageSettings error:", error);
+    console.error(
+      "updateHomepageSettings error:",
+      error
+    );
 
     return res.status(500).json({
-      message: error.message || "Failed to update homepage settings",
+      message:
+        error.message ||
+        "Failed to update homepage settings",
     });
   }
 };
@@ -745,6 +864,243 @@ export const updateCategoryRow = async (req, res) => {
 
     return res.status(500).json({
       message: error.message || "Failed to update category row",
+    });
+  }
+};
+
+
+/* =========================================================
+   GET COLLECTION ROW BANNERS
+========================================================= */
+
+export const getCollectionRowBanners = async (req, res) => {
+  try {
+    const settings = await getOrCreateDefaultSettings();
+
+    return res.status(200).json({
+      collectionRowBanners: getActiveItems(
+        settings.collectionRowBanners || []
+      ),
+    });
+  } catch (error) {
+    console.error(
+      "getCollectionRowBanners error:",
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        error.message ||
+        "Failed to fetch collection row banners",
+    });
+  }
+};
+
+/* =========================================================
+   GET ALL COLLECTION ROW BANNERS FOR ADMIN
+========================================================= */
+
+export const getAdminCollectionRowBanners = async (
+  req,
+  res
+) => {
+  try {
+    const settings = await getOrCreateDefaultSettings();
+
+    return res.status(200).json({
+      collectionRowBanners: sortByOrder(
+        settings.collectionRowBanners || []
+      ),
+    });
+  } catch (error) {
+    console.error(
+      "getAdminCollectionRowBanners error:",
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        error.message ||
+        "Failed to fetch collection row banners",
+    });
+  }
+};
+
+/* =========================================================
+   UPDATE COLLECTION ROW BANNERS
+========================================================= */
+
+export const updateCollectionRowBanners = async (
+  req,
+  res
+) => {
+  try {
+    const { collectionRowBanners } = req.body;
+
+    const error = validateCollectionRowBanners(
+      collectionRowBanners
+    );
+
+    if (error) {
+      return res.status(400).json({
+        message: error,
+      });
+    }
+
+    await getOrCreateDefaultSettings();
+
+    const updateData = {
+      collectionRowBanners:
+        normalizeCollectionRowBanners(
+          collectionRowBanners
+        ),
+    };
+
+    if (req.user?._id) {
+      updateData.updatedBy = req.user._id;
+    }
+
+    const updatedSettings =
+      await HomepageSettings.findOneAndUpdate(
+        {
+          key: "default",
+        },
+        {
+          $set: updateData,
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+    return res.status(200).json({
+      message:
+        "Collection row banners updated successfully",
+
+      collectionRowBanners: sortByOrder(
+        updatedSettings.collectionRowBanners || []
+      ),
+    });
+  } catch (error) {
+    console.error(
+      "updateCollectionRowBanners error:",
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        error.message ||
+        "Failed to update collection row banners",
+    });
+  }
+};
+
+
+/* =========================================================
+   GET OAT GALLERY
+   PUBLIC: ONLY ACTIVE ITEMS
+========================================================= */
+
+export const getOatGallery = async (req, res) => {
+  try {
+    const settings = await getOrCreateDefaultSettings();
+
+    return res.status(200).json({
+      oatGallery: getActiveItems(
+        settings.oatGallery || []
+      ),
+    });
+  } catch (error) {
+    console.error("getOatGallery error:", error);
+
+    return res.status(500).json({
+      message:
+        error.message ||
+        "Failed to fetch OAT Gallery",
+    });
+  }
+};
+
+/* =========================================================
+   GET ALL OAT GALLERY ITEMS
+   ADMIN: ACTIVE + INACTIVE
+========================================================= */
+
+export const getAdminOatGallery = async (req, res) => {
+  try {
+    const settings = await getOrCreateDefaultSettings();
+
+    return res.status(200).json({
+      oatGallery: sortByOrder(
+        settings.oatGallery || []
+      ),
+    });
+  } catch (error) {
+    console.error("getAdminOatGallery error:", error);
+
+    return res.status(500).json({
+      message:
+        error.message ||
+        "Failed to fetch OAT Gallery",
+    });
+  }
+};
+
+/* =========================================================
+   UPDATE OAT GALLERY
+========================================================= */
+
+export const updateOatGallery = async (req, res) => {
+  try {
+    const { oatGallery } = req.body;
+
+    const error = validateOatGallery(oatGallery);
+
+    if (error) {
+      return res.status(400).json({
+        message: error,
+      });
+    }
+
+    await getOrCreateDefaultSettings();
+
+    const updateData = {
+      oatGallery: normalizeOatGallery(oatGallery),
+    };
+
+    if (req.user?._id) {
+      updateData.updatedBy = req.user._id;
+    }
+
+    const updatedSettings =
+      await HomepageSettings.findOneAndUpdate(
+        {
+          key: "default",
+        },
+        {
+          $set: updateData,
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
+
+    return res.status(200).json({
+      message: "OAT Gallery updated successfully",
+
+      oatGallery: sortByOrder(
+        updatedSettings.oatGallery || []
+      ),
+    });
+  } catch (error) {
+    console.error("updateOatGallery error:", error);
+
+    return res.status(500).json({
+      message:
+        error.message ||
+        "Failed to update OAT Gallery",
     });
   }
 };

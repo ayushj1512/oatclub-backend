@@ -155,6 +155,75 @@ const categoryBannerSchema = new mongoose.Schema(
 );
 
 /* =========================================================
+   COLLECTION ROW BANNER
+========================================================= */
+
+const collectionRowBannerSchema = new mongoose.Schema(
+  {
+    image: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    collection: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Collection",
+      required: true,
+    },
+
+    collectionName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+
+    sortOrder: {
+      type: Number,
+      default: 0,
+    },
+  },
+  { _id: true }
+);
+
+/* =========================================================
+   OAT GALLERY ITEM
+========================================================= */
+
+const oatGalleryItemSchema = new mongoose.Schema(
+  {
+    image: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    productCode: {
+      type: String,
+      required: true,
+      trim: true,
+      uppercase: true,
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+
+    sortOrder: {
+      type: Number,
+      default: 0,
+    },
+  },
+  { _id: true }
+);
+
+/* =========================================================
    HOMEPAGE SETTINGS
 ========================================================= */
 
@@ -167,13 +236,6 @@ const homepageSettingsSchema = new mongoose.Schema(
       trim: true,
     },
 
-    /**
-     * Desktop and mobile banners are stored separately.
-     *
-     * Example:
-     * desktopHeroBanners: 3 banners
-     * mobileHeroBanners: 4 banners
-     */
     desktopHeroBanners: {
       type: [heroBannerSchema],
       default: [],
@@ -191,6 +253,16 @@ const homepageSettingsSchema = new mongoose.Schema(
 
     categoryBanners: {
       type: [categoryBannerSchema],
+      default: [],
+    },
+
+    collectionRowBanners: {
+      type: [collectionRowBannerSchema],
+      default: [],
+    },
+
+    oatGallery: {
+      type: [oatGalleryItemSchema],
       default: [],
     },
 
@@ -213,14 +285,33 @@ homepageSettingsSchema.pre("save", function () {
   const sortItems = (items = []) =>
     items.sort(
       (firstItem, secondItem) =>
-        Number(firstItem.sortOrder || 0) -
-        Number(secondItem.sortOrder || 0)
+        Number(firstItem?.sortOrder || 0) -
+        Number(secondItem?.sortOrder || 0)
     );
 
-  this.desktopHeroBanners = sortItems(this.desktopHeroBanners);
-  this.mobileHeroBanners = sortItems(this.mobileHeroBanners);
-  this.categoryRow = sortItems(this.categoryRow);
-  this.categoryBanners = sortItems(this.categoryBanners);
+  this.desktopHeroBanners = sortItems(
+    this.desktopHeroBanners
+  );
+
+  this.mobileHeroBanners = sortItems(
+    this.mobileHeroBanners
+  );
+
+  this.categoryRow = sortItems(
+    this.categoryRow
+  );
+
+  this.categoryBanners = sortItems(
+    this.categoryBanners
+  );
+
+  this.collectionRowBanners = sortItems(
+    this.collectionRowBanners
+  );
+
+  this.oatGallery = sortItems(
+    this.oatGallery
+  );
 });
 
 /* =========================================================
@@ -229,6 +320,9 @@ homepageSettingsSchema.pre("save", function () {
 
 const HomepageSettings =
   mongoose.models.HomepageSettings ||
-  mongoose.model("HomepageSettings", homepageSettingsSchema);
+  mongoose.model(
+    "HomepageSettings",
+    homepageSettingsSchema
+  );
 
 export default HomepageSettings;
