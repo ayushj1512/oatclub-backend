@@ -63,7 +63,9 @@ import {
   getInventoryAdminProducts,
   getInventoryAdminCategories,
   getSingleInventoryAdminProduct,
+  getInventoryHistory,
   updateSingleInventoryAdminProduct,
+  getInventoryHistoryReport,
 } from "./inventory.product.controller.js";
 
 import {
@@ -88,9 +90,18 @@ const uploadSwatches = multer({
 ========================================================= */
 
 router.get("/admin/inventory/categories", getInventoryAdminCategories);
+/* Complete inventory IN/OUT timeline */
+router.get(
+  "/admin/inventory/:id/history",
+  getInventoryHistory
+);
 router.get("/admin/inventory/:id", getSingleInventoryAdminProduct);
 router.patch("/admin/inventory/:id", updateSingleInventoryAdminProduct);
 router.get("/admin/inventory", getInventoryAdminProducts);
+router.get(
+  "/admin/inventory/history/report",
+  getInventoryHistoryReport
+);
 
 /* =========================================================
    VENDOR

@@ -36,6 +36,107 @@ const variantSchema = new mongoose.Schema(
   { _id: true, timestamps: false },
 );
 
+/* ------------------------------------------------------------------
+INVENTORY HISTORY
+Stores complete stock movement timeline
+------------------------------------------------------------------- */
+const inventoryHistorySchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      enum: ["IN", "OUT"],
+      required: true,
+      index: true,
+    },
+
+    scope: {
+      type: String,
+      enum: ["product", "variant"],
+      required: true,
+    },
+
+    variantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+
+    size: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+    },
+
+    sku: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    stockBefore: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    quantityChanged: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+
+    stockAfter: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    source: {
+      type: String,
+      enum: [
+        "manual",
+        "production",
+        "rto",
+        "return",
+        "order",
+        "correction",
+        "bulk_update",
+        "other",
+      ],
+      default: "manual",
+    },
+
+    referenceId: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    note: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "AdminUser",
+      default: null,
+    },
+
+    createdAt: {
+      type: Date,
+      default: Date.now,
+      immutable: true,
+      index: true,
+    },
+  },
+  {
+    _id: true,
+    timestamps: false,
+  },
+);
+
 export const PRODUCT_LIFECYCLE_STAGES = [
   "pattern_in_making",
   "sampling",
@@ -160,6 +261,11 @@ const productSchema = new mongoose.Schema(
       default: 0,
       min: 0,
       set: (v) => Math.max(0, Number(v ?? 0)),
+    },
+    /* COMPLETE INVENTORY MOVEMENT TIMELINE */
+    inventoryHistory: {
+      type: [inventoryHistorySchema],
+      default: [],
     },
 
     /* HSN CODE (numeric-only) */
@@ -690,7 +796,9 @@ productSchema.index({ "variants.sku": 1 }, { sparse: true });
 productSchema.index({ tags: 1 });
 productSchema.index({ "fabrics.fabricCode": 1 });
 productSchema.index({ colors: 1 });
-
+productSchema.index({ "inventoryHistory.createdAt": -1 });
+productSchema.index({ "inventoryHistory.type": 1 });
+productSchema.index({ "inventoryHistory.variantId": 1 });
 // ✅ NEW indexes
 productSchema.index({ isPatternReady: 1 });
 productSchema.index({ originalProductLink: 1 });

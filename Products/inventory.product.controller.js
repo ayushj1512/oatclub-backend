@@ -56,6 +56,65 @@ const getVariantSize = (variant) => {
   return hit?.value ? String(hit.value) : "";
 };
 
+const INVENTORY_SOURCES = new Set([
+  "manual",
+  "production",
+  "rto",
+  "return",
+  "order",
+  "correction",
+  "bulk_update",
+  "other",
+]);
+
+const getInventorySource = (value) => {
+  const source = s(value).toLowerCase();
+  return INVENTORY_SOURCES.has(source) ? source : "manual";
+};
+
+const getInventoryUpdatedBy = (req) => {
+  const id =
+    req.user?._id ||
+    req.adminUser?._id ||
+    req.admin?._id ||
+    null;
+
+  return id && mongoose.Types.ObjectId.isValid(String(id))
+    ? id
+    : null;
+};
+
+const createInventoryHistoryEntry = ({
+  req,
+  scope,
+  variantId = null,
+  size = "",
+  sku = "",
+  stockBefore,
+  stockAfter,
+}) => {
+  const difference = Number(stockAfter) - Number(stockBefore);
+
+  // Same stock dobara save hua toh log nahi banega
+  if (difference === 0) return null;
+
+  return {
+    type: difference > 0 ? "IN" : "OUT",
+    scope,
+    variantId,
+    size,
+    sku,
+    stockBefore: Number(stockBefore),
+    quantityChanged: Math.abs(difference),
+    stockAfter: Number(stockAfter),
+    source: getInventorySource(req.body?.source),
+    referenceId: s(req.body?.referenceId),
+    note: s(req.body?.note),
+    updatedBy: getInventoryUpdatedBy(req),
+    createdAt: new Date(),
+  };
+};
+
 const uniqStrings = (list = []) => {
   const seen = new Set();
   const out = [];
@@ -1360,6 +1419,7 @@ export const getSingleInventoryAdminProduct = async (req, res) => {
 export const updateSingleInventoryAdminProduct = async (req, res) => {
   try {
     const rawId = s(req.params.id);
+
     if (!rawId) {
       return res.status(400).json({
         success: false,
@@ -1367,11 +1427,16 @@ export const updateSingleInventoryAdminProduct = async (req, res) => {
       });
     }
 
-    const nextStock = toNonNegInt(req.body?.stock, -1);
+    const nextStock = toNonNegInt(
+      req.body?.stock,
+      -1
+    );
+
     if (nextStock < 0) {
       return res.status(400).json({
         success: false,
-        message: "stock must be a non-negative integer",
+        message:
+          "stock must be a non-negative integer",
       });
     }
 
@@ -1379,7 +1444,9 @@ export const updateSingleInventoryAdminProduct = async (req, res) => {
       ? { _id: rawId }
       : { productCode: rawId };
 
-    const product = await Product.findOne(findQuery);
+    const product =
+      await Product.findOne(findQuery);
+
     if (!product) {
       return res.status(404).json({
         success: false,
@@ -1387,12 +1454,27 @@ export const updateSingleInventoryAdminProduct = async (req, res) => {
       });
     }
 
-    const variants = Array.isArray(product.variants) ? product.variants : [];
-    const isVariable = product.productType === "variable" || variants.length > 0;
+    const variants = Array.isArray(
+      product.variants
+    )
+      ? product.variants
+      : [];
 
-    const reqSize = normalizeSize(req.body?.size);
-    const reqVariantId = s(req.body?.variantId);
+    const isVariable =
+      product.productType === "variable" ||
+      variants.length > 0;
 
+    const reqSize = normalizeSize(
+      req.body?.size
+    );
+
+    const reqVariantId = s(
+      req.body?.variantId
+    );
+
+    /* ========================================================
+       SIMPLE PRODUCT
+    ======================================================== */
     if (!isVariable) {
       if (reqSize || reqVariantId) {
         return res.status(400).json({
@@ -1402,16 +1484,54 @@ export const updateSingleInventoryAdminProduct = async (req, res) => {
         });
       }
 
+      const stockBefore = Math.max(
+        0,
+        Number(product.stock ?? 0)
+      );
+
+      const historyEntry =
+        createInventoryHistoryEntry({
+          req,
+          scope: "product",
+          sku: product.sku || "",
+          stockBefore,
+          stockAfter: nextStock,
+        });
+
       product.stock = nextStock;
       product.markModified("stock");
 
-      await product.save({ validateBeforeSave: true });
+      if (historyEntry) {
+        if (
+          !Array.isArray(
+            product.inventoryHistory
+          )
+        ) {
+          product.inventoryHistory = [];
+        }
+
+        product.inventoryHistory.push(
+          historyEntry
+        );
+
+        product.markModified(
+          "inventoryHistory"
+        );
+      }
+
+      await product.save({
+        validateBeforeSave: true,
+      });
 
       let reconcileSummary = null;
+
       try {
-        reconcileSummary = await reconcilePendingReservationsInternal({
-          productId: product._id,
-        });
+        reconcileSummary =
+          await reconcilePendingReservationsInternal(
+            {
+              productId: product._id,
+            }
+          );
       } catch (reErr) {
         console.error(
           "⚠️ reconcilePendingReservationsInternal failed (simple):",
@@ -1419,34 +1539,59 @@ export const updateSingleInventoryAdminProduct = async (req, res) => {
         );
       }
 
-      const updated = await Product.findById(
-        product._id,
-        getInventoryProjection()
-      ).lean();
+      const updated =
+        await Product.findById(
+          product._id,
+          getInventoryProjection()
+        ).lean();
 
       return res.json({
         success: true,
-        message: "Simple product inventory updated successfully",
+        message: historyEntry
+          ? `Inventory ${historyEntry.type} recorded successfully`
+          : "Inventory unchanged",
         mode: "simple",
+
         updated: {
           productId: String(product._id),
+          stockBefore,
+          quantityChanged:
+            historyEntry?.quantityChanged || 0,
           stock: nextStock,
         },
+
+        inventoryMovement: historyEntry,
         reconcile: reconcileSummary,
-        product: applyInventoryStockFromVariants(updated),
+
+        product:
+          applyInventoryStockFromVariants(
+            updated
+          ),
       });
     }
 
+    /* ========================================================
+       VARIABLE PRODUCT
+    ======================================================== */
     let targetVariant = null;
 
     if (reqVariantId) {
       targetVariant =
-        variants.find((v) => String(v?._id || "") === reqVariantId) || null;
+        variants.find(
+          (variant) =>
+            String(variant?._id || "") ===
+            reqVariantId
+        ) || null;
     }
 
     if (!targetVariant && reqSize) {
       targetVariant =
-        variants.find((v) => normalizeSize(getVariantSize(v)) === reqSize) || null;
+        variants.find(
+          (variant) =>
+            normalizeSize(
+              getVariantSize(variant)
+            ) === reqSize
+        ) || null;
     }
 
     if (!targetVariant) {
@@ -1457,24 +1602,72 @@ export const updateSingleInventoryAdminProduct = async (req, res) => {
       });
     }
 
+    const stockBefore = Math.max(
+      0,
+      Number(targetVariant.stock ?? 0)
+    );
+
+    const variantSize =
+      getVariantSize(targetVariant) ||
+      targetVariant.size ||
+      "";
+
+    const historyEntry =
+      createInventoryHistoryEntry({
+        req,
+        scope: "variant",
+        variantId: targetVariant._id,
+        size: variantSize,
+        sku: targetVariant.sku || "",
+        stockBefore,
+        stockAfter: nextStock,
+      });
+
     targetVariant.stock = nextStock;
     product.markModified("variants");
 
     const totalStock = variants.reduce(
-      (sum, v) => sum + Number(v?.stock ?? 0),
+      (sum, variant) =>
+        sum +
+        Number(variant?.stock ?? 0),
       0
     );
+
     product.stock = totalStock;
     product.markModified("stock");
 
-    await product.save({ validateBeforeSave: true });
+    if (historyEntry) {
+      if (
+        !Array.isArray(
+          product.inventoryHistory
+        )
+      ) {
+        product.inventoryHistory = [];
+      }
+
+      product.inventoryHistory.push(
+        historyEntry
+      );
+
+      product.markModified(
+        "inventoryHistory"
+      );
+    }
+
+    await product.save({
+      validateBeforeSave: true,
+    });
 
     let reconcileSummary = null;
+
     try {
-      reconcileSummary = await reconcilePendingReservationsInternal({
-        productId: product._id,
-        variantId: targetVariant._id,
-      });
+      reconcileSummary =
+        await reconcilePendingReservationsInternal(
+          {
+            productId: product._id,
+            variantId: targetVariant._id,
+          }
+        );
     } catch (reErr) {
       console.error(
         "⚠️ reconcilePendingReservationsInternal failed (variant):",
@@ -1482,29 +1675,515 @@ export const updateSingleInventoryAdminProduct = async (req, res) => {
       );
     }
 
-    const updated = await Product.findById(
-      product._id,
-      getInventoryProjection()
-    ).lean();
+    const updated =
+      await Product.findById(
+        product._id,
+        getInventoryProjection()
+      ).lean();
 
     return res.json({
       success: true,
-      message: "Variant inventory updated successfully",
+      message: historyEntry
+        ? `Inventory ${historyEntry.type} recorded successfully`
+        : "Inventory unchanged",
       mode: "variant",
+
       updated: {
         productId: String(product._id),
-        variantId: String(targetVariant._id),
-        size: getVariantSize(targetVariant) || targetVariant.size || "",
+        variantId: String(
+          targetVariant._id
+        ),
+        size: variantSize,
+        stockBefore,
+        quantityChanged:
+          historyEntry?.quantityChanged || 0,
         stock: nextStock,
+        totalProductStock: totalStock,
       },
+
+      inventoryMovement: historyEntry,
       reconcile: reconcileSummary,
-      product: applyInventoryStockFromVariants(updated),
+
+      product:
+        applyInventoryStockFromVariants(
+          updated
+        ),
     });
   } catch (e) {
-    console.error("❌ updateSingleInventoryAdminProduct Error:", e);
+    console.error(
+      "❌ updateSingleInventoryAdminProduct Error:",
+      e
+    );
+
     return res.status(500).json({
       success: false,
-      message: e.message || "Failed to update inventory",
+      message:
+        e.message ||
+        "Failed to update inventory",
+    });
+  }
+};
+
+
+/* ============================================================
+   GET INVENTORY HISTORY
+   GET /api/products/admin/inventory/:id/history
+============================================================ */
+export const getInventoryHistory = async (req, res) => {
+  try {
+    const rawId = s(req.params.id);
+
+    if (!rawId) {
+      return res.status(400).json({
+        success: false,
+        message: "Product id is required",
+      });
+    }
+
+    const findQuery = isMongoId(rawId)
+      ? { _id: rawId }
+      : { productCode: rawId };
+
+    const product = await Product.findOne(findQuery)
+      .select(
+        "title productCode sku thumbnail variants inventoryHistory"
+      )
+      .populate(
+        "inventoryHistory.updatedBy",
+        "name email"
+      )
+      .lean();
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    const type = s(req.query?.type).toUpperCase();
+    const variantId = s(req.query?.variantId);
+    const size = normalizeSize(req.query?.size);
+
+    const page = Math.max(
+      1,
+      Number.parseInt(req.query?.page, 10) || 1
+    );
+
+    const limit = Math.min(
+      100,
+      Math.max(
+        1,
+        Number.parseInt(req.query?.limit, 10) || 30
+      )
+    );
+
+    let history = Array.isArray(product.inventoryHistory)
+      ? product.inventoryHistory
+      : [];
+
+    if (type === "IN" || type === "OUT") {
+      history = history.filter(
+        (entry) => entry.type === type
+      );
+    }
+
+    if (variantId) {
+      history = history.filter(
+        (entry) =>
+          String(entry.variantId || "") === variantId
+      );
+    }
+
+    if (size) {
+      history = history.filter(
+        (entry) =>
+          normalizeSize(entry.size) === size
+      );
+    }
+
+    history.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() -
+        new Date(a.createdAt).getTime()
+    );
+
+    const total = history.length;
+    const startIndex = (page - 1) * limit;
+    const paginatedHistory = history.slice(
+      startIndex,
+      startIndex + limit
+    );
+
+    return res.json({
+      success: true,
+      product: {
+        _id: product._id,
+        title: product.title,
+        productCode: product.productCode,
+        sku: product.sku,
+        thumbnail: product.thumbnail,
+      },
+      filters: {
+        type: type || "ALL",
+        variantId: variantId || null,
+        size: size || null,
+      },
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+      history: paginatedHistory,
+    });
+  } catch (e) {
+    console.error("❌ getInventoryHistory Error:", e);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        e.message || "Failed to fetch inventory history",
+    });
+  }
+};
+
+
+/* ============================================================
+   INVENTORY DAILY REPORT
+   GET /api/products/admin/inventory/history/report
+============================================================ */
+export const getInventoryHistoryReport = async (
+  req,
+  res
+) => {
+  try {
+    const page = Math.max(
+      1,
+      Number.parseInt(req.query?.page, 10) || 1
+    );
+
+    const limit = Math.min(
+      100,
+      Math.max(
+        1,
+        Number.parseInt(req.query?.limit, 10) || 30
+      )
+    );
+
+    const search = s(req.query?.search);
+    const type = s(req.query?.type).toUpperCase();
+
+    const todayIndia = new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }
+    ).format(new Date());
+
+    const startDate =
+      s(req.query?.startDate) || todayIndia;
+
+    const endDate =
+      s(req.query?.endDate) || startDate;
+
+    const startAt = new Date(
+      `${startDate}T00:00:00.000+05:30`
+    );
+
+    const endAt = new Date(
+      `${endDate}T23:59:59.999+05:30`
+    );
+
+    if (
+      Number.isNaN(startAt.getTime()) ||
+      Number.isNaN(endAt.getTime())
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid date filter",
+      });
+    }
+
+    const match = {
+      "inventoryHistory.createdAt": {
+        $gte: startAt,
+        $lte: endAt,
+      },
+    };
+
+    if (type === "IN" || type === "OUT") {
+      match["inventoryHistory.type"] = type;
+    }
+
+    if (search) {
+      const escapedSearch = escapeRegex(search);
+
+      match.$or = [
+        {
+          productCode: {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+        {
+          title: {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+        {
+          sku: {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+        {
+          "inventoryHistory.sku": {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+    const [result] = await Product.aggregate([
+      {
+        $unwind: "$inventoryHistory",
+      },
+      {
+        $match: match,
+      },
+      {
+        $facet: {
+          logs: [
+            {
+              $sort: {
+                "inventoryHistory.createdAt": -1,
+                _id: -1,
+              },
+            },
+            {
+              $skip: (page - 1) * limit,
+            },
+            {
+              $limit: limit,
+            },
+            {
+              $project: {
+                _id: "$inventoryHistory._id",
+
+                productId: "$_id",
+                productCode: 1,
+                title: 1,
+                thumbnail: 1,
+                images: 1,
+
+                type: "$inventoryHistory.type",
+                scope: "$inventoryHistory.scope",
+                variantId:
+                  "$inventoryHistory.variantId",
+                size: "$inventoryHistory.size",
+                sku: "$inventoryHistory.sku",
+
+                stockBefore:
+                  "$inventoryHistory.stockBefore",
+
+                quantityChanged:
+                  "$inventoryHistory.quantityChanged",
+
+                stockAfter:
+                  "$inventoryHistory.stockAfter",
+
+                source:
+                  "$inventoryHistory.source",
+
+                referenceId:
+                  "$inventoryHistory.referenceId",
+
+                note: "$inventoryHistory.note",
+
+                updatedBy:
+                  "$inventoryHistory.updatedBy",
+
+                createdAt:
+                  "$inventoryHistory.createdAt",
+              },
+            },
+          ],
+
+          summary: [
+            {
+              $group: {
+                _id: null,
+
+                totalMovements: {
+                  $sum: 1,
+                },
+
+                totalInventoryIn: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          "$inventoryHistory.type",
+                          "IN",
+                        ],
+                      },
+                      "$inventoryHistory.quantityChanged",
+                      0,
+                    ],
+                  },
+                },
+
+                totalInventoryOut: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          "$inventoryHistory.type",
+                          "OUT",
+                        ],
+                      },
+                      "$inventoryHistory.quantityChanged",
+                      0,
+                    ],
+                  },
+                },
+
+                productIds: {
+                  $addToSet: "$_id",
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                totalMovements: 1,
+                totalInventoryIn: 1,
+                totalInventoryOut: 1,
+
+                totalProducts: {
+                  $size: "$productIds",
+                },
+              },
+            },
+          ],
+
+          productSummary: [
+            {
+              $group: {
+                _id: {
+                  productId: "$_id",
+                  productCode: "$productCode",
+                  title: "$title",
+                  thumbnail: "$thumbnail",
+                },
+
+                totalIn: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          "$inventoryHistory.type",
+                          "IN",
+                        ],
+                      },
+                      "$inventoryHistory.quantityChanged",
+                      0,
+                    ],
+                  },
+                },
+
+                totalOut: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          "$inventoryHistory.type",
+                          "OUT",
+                        ],
+                      },
+                      "$inventoryHistory.quantityChanged",
+                      0,
+                    ],
+                  },
+                },
+
+                totalMovements: {
+                  $sum: 1,
+                },
+
+                lastUpdatedAt: {
+                  $max: "$inventoryHistory.createdAt",
+                },
+              },
+            },
+            {
+              $sort: {
+                lastUpdatedAt: -1,
+              },
+            },
+          ],
+        },
+      },
+    ]);
+
+    const summary = result?.summary?.[0] || {
+      totalMovements: 0,
+      totalInventoryIn: 0,
+      totalInventoryOut: 0,
+      totalProducts: 0,
+    };
+
+    const total = Number(
+      summary.totalMovements || 0
+    );
+
+    return res.json({
+      success: true,
+
+      filters: {
+        search,
+        type:
+          type === "IN" || type === "OUT"
+            ? type
+            : "ALL",
+        startDate,
+        endDate,
+      },
+
+      summary,
+
+      productSummary:
+        result?.productSummary || [],
+
+      logs: result?.logs || [],
+
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.max(
+          1,
+          Math.ceil(total / limit)
+        ),
+      },
+    });
+  } catch (error) {
+    console.error(
+      "❌ getInventoryHistoryReport Error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to fetch inventory report",
     });
   }
 };

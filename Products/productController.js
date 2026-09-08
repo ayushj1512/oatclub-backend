@@ -27,6 +27,80 @@ const SYSTEM_CATEGORIES = new Set([
   "party-wear",
 ]);
 
+const INVENTORY_SOURCES = new Set([
+  "manual",
+  "production",
+  "rto",
+  "return",
+  "order",
+  "correction",
+  "bulk_update",
+  "other",
+]);
+
+const getInventoryUpdatedBy = (req) => {
+  const id =
+    req.user?._id ||
+    req.adminUser?._id ||
+    req.admin?._id ||
+    null;
+
+  return id &&
+    mongoose.Types.ObjectId.isValid(String(id))
+    ? id
+    : null;
+};
+
+const createInventoryHistoryEntry = ({
+  req,
+  scope,
+  variantId = null,
+  size = "",
+  sku = "",
+  stockBefore,
+  stockAfter,
+  source = null,
+}) => {
+  const difference =
+    Number(stockAfter) - Number(stockBefore);
+
+  if (difference === 0) return null;
+
+  const requestedSource = String(
+    source || req.body?.source || "manual"
+  )
+    .trim()
+    .toLowerCase();
+
+  return {
+    type: difference > 0 ? "IN" : "OUT",
+    scope,
+    variantId,
+    size,
+    sku,
+    stockBefore: Number(stockBefore),
+    quantityChanged: Math.abs(difference),
+    stockAfter: Number(stockAfter),
+
+    source: INVENTORY_SOURCES.has(
+      requestedSource
+    )
+      ? requestedSource
+      : "manual",
+
+    referenceId: String(
+      req.body?.referenceId || ""
+    ).trim(),
+
+    note: String(
+      req.body?.note || ""
+    ).trim(),
+
+    updatedBy: getInventoryUpdatedBy(req),
+    createdAt: new Date(),
+  };
+};
+
 /* ---------------- tiny helpers ---------------- */
 const arr = (v) =>
   !v
@@ -3869,28 +3943,49 @@ export const incrementProductAnalytics = async (req, res) => {
 // ✅ Only for VARIABLE products
 // PATCH /api/products/:id/variant-stock  { size: "M", stock: 5 }
 // ✅ Only for VARIABLE products
-export const updateVariantStock = async (req, res) => {
+export const updateVariantStock = async (
+  req,
+  res
+) => {
   try {
     const { size, stock } = req.body;
 
     const sz = String(size || "").trim();
+
     if (!sz) {
-      return res.status(400).json({ message: "size is required (e.g., 'M')" });
+      return res.status(400).json({
+        message:
+          "size is required (e.g., 'M')",
+      });
     }
 
     const st = Number(stock);
-    if (!Number.isFinite(st) || st < 0) {
-      return res
-        .status(400)
-        .json({ message: "Invalid stock. Provide a non-negative number." });
+
+    if (
+      !Number.isFinite(st) ||
+      st < 0
+    ) {
+      return res.status(400).json({
+        message:
+          "Invalid stock. Provide a non-negative number.",
+      });
     }
 
-    const product = await Product.findById(req.params.id);
-    if (!product) return res.status(404).json({ message: "Product not found" });
+    const product =
+      await Product.findById(
+        req.params.id
+      );
+
+    if (!product) {
+      return res.status(404).json({
+        message: "Product not found",
+      });
+    }
 
     const isVariable =
       product.productType === "variable" ||
-      (Array.isArray(product.variants) && product.variants.length > 0);
+      (Array.isArray(product.variants) &&
+        product.variants.length > 0);
 
     if (!isVariable) {
       return res.status(400).json({
@@ -3899,11 +3994,15 @@ export const updateVariantStock = async (req, res) => {
       });
     }
 
-    const targetSize = normalizeSize(sz);
+    const targetSize =
+      normalizeSize(sz);
 
     const variant =
       (product.variants || []).find(
-        (v) => normalizeSize(getVariantSize(v)) === targetSize,
+        (item) =>
+          normalizeSize(
+            getVariantSize(item)
+          ) === targetSize
       ) || null;
 
     if (!variant) {
@@ -3914,48 +4013,116 @@ export const updateVariantStock = async (req, res) => {
 
     const variantId = variant._id;
 
-    // ✅ ACTUAL UPDATE (THIS WAS MISSING)
-    variant.stock = st;
+    const stockBefore = Math.max(
+      0,
+      Number(variant.stock ?? 0)
+    );
 
-    // ✅ IMPORTANT: tell mongoose variants array changed (safe)
+    const historyEntry =
+      createInventoryHistoryEntry({
+        req,
+        scope: "variant",
+        variantId,
+        size: targetSize,
+        sku: variant.sku || "",
+        stockBefore,
+        stockAfter: st,
+      });
+
+    variant.stock = st;
     product.markModified("variants");
 
-    // ✅ recompute product totals (physical totals)
-    const totalStock = (product.variants || []).reduce(
-      (sum, v) => sum + Number(v?.stock ?? 0),
-      0,
+    const totalStock = (
+      product.variants || []
+    ).reduce(
+      (sum, item) =>
+        sum +
+        Number(item?.stock ?? 0),
+      0
     );
 
     product.stock = totalStock;
+    product.markModified("stock");
 
-    await product.save({ validateBeforeSave: true });
+    if (historyEntry) {
+      if (
+        !Array.isArray(
+          product.inventoryHistory
+        )
+      ) {
+        product.inventoryHistory = [];
+      }
 
-    await invalidateProductCache(product);
-    // ✅ AFTER stock update: (optional) reconcile backorders
-    let reconcileSummary = null;
-    try {
-      reconcileSummary = await reconcileBackordersForVariant({
-        productId: product._id,
-        variantId,
-      });
-    } catch (reErr) {
-      console.error(
-        "⚠️ reconcileBackordersForVariant failed:",
-        reErr?.message || reErr,
+      product.inventoryHistory.push(
+        historyEntry
+      );
+
+      product.markModified(
+        "inventoryHistory"
       );
     }
 
-    const full = await pop(Product.findById(product._id));
+    await product.save({
+      validateBeforeSave: true,
+    });
+
+    await invalidateProductCache(
+      product
+    );
+
+    let reconcileSummary = null;
+
+    try {
+      reconcileSummary =
+        await reconcileBackordersForVariant(
+          {
+            productId: product._id,
+            variantId,
+          }
+        );
+    } catch (reErr) {
+      console.error(
+        "⚠️ reconcileBackordersForVariant failed:",
+        reErr?.message || reErr
+      );
+    }
+
+    const full = await pop(
+      Product.findById(product._id)
+    );
 
     return res.json({
-      message: "Variant stock updated",
-      product: applyStockFromVariants(full),
-      updated: { size: targetSize, stock: st },
+      message: historyEntry
+        ? `Inventory ${historyEntry.type} recorded successfully`
+        : "Inventory unchanged",
+
+      product:
+        applyStockFromVariants(full),
+
+      updated: {
+        size: targetSize,
+        stockBefore,
+        quantityChanged:
+          historyEntry?.quantityChanged ||
+          0,
+        stock: st,
+        totalProductStock: totalStock,
+      },
+
+      inventoryMovement:
+        historyEntry,
+
       reconcile: reconcileSummary,
     });
   } catch (e) {
-    console.error("❌ updateVariantStock Error:", e);
-    return res.status(500).json({ message: e.message });
+    console.error(
+      "❌ updateVariantStock Error:",
+      e
+    );
+
+    return res.status(500).json({
+      message: e.message,
+    });
   }
 };
 
@@ -5187,25 +5354,41 @@ export const getProductsByCodes = async (req, res) => {
 // ✅ Only for SIMPLE products
 // PATCH /api/products/:id/stock  { stock: number }
 // ✅ Only for SIMPLE products
-export const updateProductStock = async (req, res) => {
+export const updateProductStock = async (
+  req,
+  res
+) => {
   try {
     const { stock } = req.body;
 
     const st = Number(stock);
-    if (!Number.isFinite(st) || st < 0) {
-      return res
-        .status(400)
-        .json({ message: "Invalid stock. Provide a non-negative number." });
+
+    if (
+      !Number.isFinite(st) ||
+      st < 0
+    ) {
+      return res.status(400).json({
+        message:
+          "Invalid stock. Provide a non-negative number.",
+      });
     }
 
-    const product = await Product.findById(req.params.id);
-    if (!product) return res.status(404).json({ message: "Product not found" });
+    const product =
+      await Product.findById(
+        req.params.id
+      );
+
+    if (!product) {
+      return res.status(404).json({
+        message: "Product not found",
+      });
+    }
 
     const isVariable =
       product.productType === "variable" ||
-      (Array.isArray(product.variants) && product.variants.length > 0);
+      (Array.isArray(product.variants) &&
+        product.variants.length > 0);
 
-    // ✅ Rule enforcement
     if (isVariable) {
       return res.status(400).json({
         message:
@@ -5213,27 +5396,81 @@ export const updateProductStock = async (req, res) => {
       });
     }
 
-    // ✅ update physical stock
+    const stockBefore = Math.max(
+      0,
+      Number(product.stock ?? 0)
+    );
+
+    const historyEntry =
+      createInventoryHistoryEntry({
+        req,
+        scope: "product",
+        sku: product.sku || "",
+        stockBefore,
+        stockAfter: st,
+      });
+
     product.stock = st;
+    product.markModified("stock");
 
-    // ✅ inStock = stock > 0 (reservation model is source of truth)
-    // product.isInStock = st > 0;
+    if (historyEntry) {
+      if (
+        !Array.isArray(
+          product.inventoryHistory
+        )
+      ) {
+        product.inventoryHistory = [];
+      }
 
-    // ✅ DO NOT auto-unpublish
-    // if (!product.isInStock) product.isActive = false;
+      product.inventoryHistory.push(
+        historyEntry
+      );
 
-    await product.save({ validateBeforeSave: true });
+      product.markModified(
+        "inventoryHistory"
+      );
+    }
 
-    const full = await pop(Product.findById(product._id));
+    await product.save({
+      validateBeforeSave: true,
+    });
+
+    await invalidateProductCache(
+      product
+    );
+
+    const full = await pop(
+      Product.findById(product._id)
+    );
 
     return res.json({
-      message: "Product stock updated",
-      product: applyStockFromVariants(full),
-      updated: { stock: st },
+      message: historyEntry
+        ? `Inventory ${historyEntry.type} recorded successfully`
+        : "Inventory unchanged",
+
+      updated: {
+        stockBefore,
+        quantityChanged:
+          historyEntry?.quantityChanged ||
+          0,
+        stock: st,
+      },
+
+      inventoryMovement:
+        historyEntry,
+
+      product:
+        applyStockFromVariants(full),
     });
   } catch (e) {
-    console.error("❌ updateProductStock Error:", e);
-    return res.status(500).json({ message: e.message });
+    console.error(
+      "❌ updateProductStock Error:",
+      e
+    );
+
+    return res.status(500).json({
+      message: e.message,
+    });
   }
 };
 
