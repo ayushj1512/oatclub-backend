@@ -211,46 +211,106 @@ const extractVariantKeys = (variant) => {
 };
 
 const applyStockFromVariants = (doc) => {
-  const p = doc?.toObject ? doc.toObject() : doc;
+  const p = doc?.toObject
+    ? doc.toObject()
+    : doc;
+
   if (!p) return p;
 
-  const variants = Array.isArray(p.variants) ? p.variants : [];
-  const isVariable = p.productType === "variable" || variants.length > 0;
+  const stockType =
+    p.stockType === "limited"
+      ? "limited"
+      : "unlimited";
 
-  // ✅ SIMPLE
+  const variants = Array.isArray(p.variants)
+    ? p.variants
+    : [];
+
+  const isVariable =
+    p.productType === "variable" ||
+    variants.length > 0;
+
+  /* SIMPLE PRODUCT */
   if (!isVariable) {
     const stock = Number(p.stock ?? 0);
-    const reserved = Number(p.reservedStock ?? 0);
-    const available = Math.max(0, stock - reserved);
+    const reservedStock = Number(
+      p.reservedStock ?? 0,
+    );
+
+    const availableStock = Math.max(
+      0,
+      stock - reservedStock,
+    );
 
     return {
       ...p,
-      stock, // physical
-      reservedStock: reserved,
-      availableStock: available,
-      isInStock: available > 0,
+      stockType,
+      stock,
+      reservedStock,
+      availableStock,
+      isInStock:
+        stockType === "unlimited" ||
+        availableStock > 0,
     };
   }
 
-  // ✅ VARIABLE
-  const physicalTotal = variants.reduce((s, v) => s + Number(v?.stock ?? 0), 0);
-  const reservedTotal = variants.reduce(
-    (s, v) => s + Number(v?.reservedStock ?? 0),
-    0,
+  /* VARIABLE PRODUCT */
+  const normalizedVariants = variants.map(
+    (variant) => {
+      const stock = Number(
+        variant?.stock ?? 0,
+      );
+
+      const reservedStock = Number(
+        variant?.reservedStock ?? 0,
+      );
+
+      const availableStock = Math.max(
+        0,
+        stock - reservedStock,
+      );
+
+      return {
+        ...variant,
+        stock,
+        reservedStock,
+        availableStock,
+        isInStock:
+          stockType === "unlimited" ||
+          availableStock > 0,
+      };
+    },
   );
 
-  const anyAvailable = variants.some((v) => {
-    const st = Number(v?.stock ?? 0);
-    const rs = Number(v?.reservedStock ?? 0);
-    return Math.max(0, st - rs) > 0;
-  });
+  const physicalTotal =
+    normalizedVariants.reduce(
+      (sum, variant) =>
+        sum + variant.stock,
+      0,
+    );
+
+  const reservedTotal =
+    normalizedVariants.reduce(
+      (sum, variant) =>
+        sum + variant.reservedStock,
+      0,
+    );
 
   return {
     ...p,
-    stock: physicalTotal, // physical total
-    reservedStock: reservedTotal, // total reserved (computed)
-    availableStock: Math.max(0, physicalTotal - reservedTotal),
-    isInStock: anyAvailable,
+    stockType,
+    variants: normalizedVariants,
+    stock: physicalTotal,
+    reservedStock: reservedTotal,
+    availableStock: Math.max(
+      0,
+      physicalTotal - reservedTotal,
+    ),
+    isInStock:
+      stockType === "unlimited" ||
+      normalizedVariants.some(
+        (variant) => variant.isInStock,
+      ),
   };
 };
 
@@ -466,36 +526,122 @@ const resolveCollectionFilter = async (collection) => {
   return { $in: matchedIds };
 };
 
-const mapProductCard = (p) => {
-  const image = p?.thumbnail || p?.images?.[0] || "";
-  const hoverImage = p?.images?.[1] || null;
+const mapProductCard = (product) => {
+  const images = Array.isArray(
+    product?.images,
+  )
+    ? product.images.filter(Boolean)
+    : [];
 
-  const price = toNum(p?.price);
-  const compareAtPrice = toNum(p?.compareAtPrice);
+  const image =
+    product?.thumbnail ||
+    images[0] ||
+    "";
 
-  const categorySlug = getCardCategorySlug(p?.categories);
-  const safeSlug = slugifySafe(p?.slug || p?.title || "product");
-  const productCode = String(p?.productCode || "").trim();
+  const hoverImage =
+    images[1] || null;
+
+  const price = toNum(product?.price);
+  const compareAtPrice = toNum(
+    product?.compareAtPrice,
+  );
+
+  const categories = Array.isArray(
+    product?.categories,
+  )
+    ? product.categories
+    : [];
+
+  const categorySlug =
+    getCardCategorySlug(categories);
+
+  const safeSlug = slugifySafe(
+    product?.slug ||
+    product?.title ||
+    "product",
+  );
+
+  const productCode = String(
+    product?.productCode || "",
+  ).trim();
+
+  const stockType =
+    product?.stockType === "limited"
+      ? "limited"
+      : "unlimited";
 
   return {
-    _id: p._id,
-    title: String(p?.title || "").trim(),
+    _id: product?._id,
+
+    title: String(
+      product?.title || "",
+    ).trim(),
+
     slug: safeSlug,
     productCode,
-    categories: Array.isArray(p?.categories) ? p.categories : [],
+    categories,
+
     thumbnail: image,
     image,
     hoverImage,
+    images,
+
     price,
     compareAtPrice,
-    isBestSeller: !!p?.isBestSeller,
-    isTrending: !p?.isBestSeller && !!p?.isTrending,
-    isPrimaryProduct: !!p?.isPrimaryProduct,
+
+    stockType,
+    stock: toNum(product?.stock),
+    reservedStock: toNum(
+      product?.reservedStock,
+    ),
+
+    isInStock:
+      stockType === "unlimited" ||
+      !!product?.isInStock,
+
+    productType:
+      product?.productType ||
+      (product?.variants?.length
+        ? "variable"
+        : "simple"),
+
+    attributes: Array.isArray(
+      product?.attributes,
+    )
+      ? product.attributes
+      : [],
+
+    variants: Array.isArray(
+      product?.variants,
+    )
+      ? product.variants
+      : [],
+
+    isBestSeller:
+      !!product?.isBestSeller,
+
+    isTrending:
+      !product?.isBestSeller &&
+      !!product?.isTrending,
+
+    isPrimaryProduct:
+      !!product?.isPrimaryProduct,
+
     categorySlug,
-    productLink: `/category/${categorySlug}/${safeSlug}/${encodeURIComponent(productCode)}`,
+
+    productLink:
+      `/category/${categorySlug}/${safeSlug}/${encodeURIComponent(
+        productCode,
+      )}`,
+
     discount:
-      compareAtPrice > price && price > 0
-        ? Math.round(((compareAtPrice - price) / compareAtPrice) * 100)
+      compareAtPrice > price &&
+        price > 0
+        ? Math.round(
+          ((compareAtPrice - price) /
+            compareAtPrice) *
+          100,
+        )
         : 0,
   };
 };
@@ -1057,6 +1203,22 @@ export const createProduct = async (req, res) => {
     };
 
     /* ---------------- normalize basics ---------------- */
+    const stockType = s(
+      data.stockType || "unlimited",
+    ).toLowerCase();
+
+    if (
+      !["unlimited", "limited"].includes(
+        stockType,
+      )
+    ) {
+      return res.status(400).json({
+        message:
+          "stockType must be either unlimited or limited",
+      });
+    }
+
+    data.stockType = stockType;
     data.attributes = json(data.attributes, []);
 
     data.shortDescription = s(data.shortDescription);
@@ -2457,6 +2619,10 @@ export const getAvailableForCollabProducts = async (req, res) => {
 
         sku: product.sku || "",
         productType: product.productType || "simple",
+        stockType:
+          product.stockType === "limited"
+            ? "limited"
+            : "unlimited",
 
         stock: Number(product.stock || 0),
         reservedStock: Number(product.reservedStock || 0),
@@ -3380,6 +3546,24 @@ export const updateProduct = async (req, res) => {
     };
 
     /* ---------------- normalize (only if provided) ---------------- */
+    if (data.stockType !== undefined) {
+      const stockType = s(
+        data.stockType,
+      ).toLowerCase();
+
+      if (
+        !["unlimited", "limited"].includes(
+          stockType,
+        )
+      ) {
+        return res.status(400).json({
+          message:
+            "stockType must be either unlimited or limited",
+        });
+      }
+
+      data.stockType = stockType;
+    }
     if (data.attributes !== undefined)
       data.attributes = json(data.attributes, data.attributes);
 
@@ -5164,6 +5348,7 @@ export const getProductsByCollection = async (req, res) => {
       "slug",
       "productCode",
       "price",
+      "stockType",
       "compareAtPrice",
       "thumbnail",
       "images",
@@ -5861,7 +6046,10 @@ export const updatePrimaryProductStatus = async (req, res) => {
    GET /api/products/cards
    GET /api/products/cards?ids=id1,id2,00218,218
 ============================================================ */
-export const getProductCards = async (req, res) => {
+export const getProductCards = async (
+  req,
+  res,
+) => {
   try {
     const {
       page = 1,
@@ -5881,8 +6069,6 @@ export const getProductCards = async (req, res) => {
       search,
       sort,
       sku,
-
-      // optional aliases
       q,
       title,
       productCode,
@@ -5891,340 +6077,232 @@ export const getProductCards = async (req, res) => {
 
     const filters = {};
 
-    const toBool = (v) =>
-      String(v).trim().toLowerCase() === "true";
+    const toBool = (value) =>
+      String(value).trim().toLowerCase() ===
+      "true";
 
-    /* ---------------- ids / product codes ---------------- */
-    const idList = Array.isArray(ids)
-      ? ids
-      : typeof ids === "string"
-        ? ids
-          .split(",")
-          .map((x) => x.trim())
-          .filter(Boolean)
-        : [];
+    const toList = (value) =>
+      (
+        Array.isArray(value)
+          ? value
+          : String(value || "").split(",")
+      )
+        .map((item) =>
+          String(item || "").trim(),
+        )
+        .filter(Boolean);
+
+    /* IDs / PRODUCT CODES */
+    const idList = toList(ids);
 
     if (idList.length) {
-      const objectIds = [];
-      const codeCandidatesSet = new Set();
+      const objectIds = idList.filter(
+        mongoose.Types.ObjectId.isValid,
+      );
 
-      for (const item of idList) {
-        const raw = String(item || "").trim();
-
-        if (!raw) continue;
-
-        if (mongoose.Types.ObjectId.isValid(raw)) {
-          objectIds.push(raw);
-        }
-
-        buildCodeCandidates(raw).forEach((candidate) =>
-          codeCandidatesSet.add(candidate),
-        );
-      }
-
-      const idOr = [];
-
-      if (objectIds.length) {
-        idOr.push({
-          _id: {
-            $in: objectIds,
-          },
-        });
-      }
-
-      const codeCandidates =
-        Array.from(codeCandidatesSet);
-
-      if (codeCandidates.length) {
-        idOr.push({
-          productCode: {
-            $in: codeCandidates,
-          },
-        });
-      }
-
-      if (idOr.length) {
-        filters.$or = idOr;
-      }
-    }
-
-    /* ---------------- categories ---------------- */
-    if (category) {
-      const cats = Array.isArray(category)
-        ? category
-        : String(category)
-          .split(",")
-          .map((c) => c.trim())
-          .filter(Boolean);
-
-      if (cats.length) {
-        filters.categories = {
-          $in: cats,
-        };
-      }
-    }
-
-    /* ---------------- collections ---------------- */
-    if (collection) {
-      const rawCollections = Array.isArray(collection)
-        ? collection
-        : String(collection)
-          .split(",")
-          .map((c) => c.trim())
-          .filter(Boolean);
-
-      if (rawCollections.length) {
-        const objectIds =
-          rawCollections.filter((c) =>
-            mongoose.Types.ObjectId.isValid(c),
-          );
-
-        const nonIds =
-          rawCollections.filter(
-            (c) =>
-              !mongoose.Types.ObjectId.isValid(c),
-          );
-
-        let matchedCollectionIds = [
-          ...objectIds,
-        ];
-
-        if (nonIds.length) {
-          const escaped =
-            nonIds.map((s) =>
-              String(s).replace(
-                /[.*+?^${}()|[\]\\]/g,
-                "\\$&",
-              ),
-            );
-
-          const matchedCollections =
-            await Collection.find({
-              $or: [
-                {
-                  slug: {
-                    $in: nonIds.map((s) =>
-                      String(s).toLowerCase(),
-                    ),
-                  },
-                },
-                {
-                  name: {
-                    $in: nonIds,
-                  },
-                },
-                {
-                  name: {
-                    $in: escaped.map(
-                      (s) =>
-                        new RegExp(
-                          `^${s}$`,
-                          "i",
-                        ),
-                    ),
-                  },
-                },
-              ],
-            })
-              .select("_id slug name")
-              .lean();
-
-          matchedCollectionIds.push(
-            ...matchedCollections.map(
-              (c) => String(c._id),
-            ),
-          );
-        }
-
-        matchedCollectionIds = Array.from(
-          new Set(
-            matchedCollectionIds.map(
-              String,
-            ),
+      const codes = [
+        ...new Set(
+          idList.flatMap(
+            buildCodeCandidates,
           ),
-        ).filter(Boolean);
+        ),
+      ];
 
-        if (
-          !matchedCollectionIds.length
-        ) {
-          return res.json({
-            total: 0,
-            page: Math.max(
-              1,
-              Number(page) || 1,
-            ),
-            pages: 0,
-            products: [],
-          });
-        }
+      filters.$or = [
+        ...(objectIds.length
+          ? [{ _id: { $in: objectIds } }]
+          : []),
 
-        filters.collections =
-          matchedCollectionIds.length ===
-            1
-            ? matchedCollectionIds[0]
-            : {
-              $in:
-                matchedCollectionIds,
-            };
-      }
+        ...(codes.length
+          ? [
+            {
+              productCode: {
+                $in: codes,
+              },
+            },
+          ]
+          : []),
+      ];
     }
 
-    /* ---------------- tags ---------------- */
-    const t = tagsNorm(tags);
+    /* CATEGORY */
+    const categories = toList(category);
 
-    if (t.length) {
-      filters.tags = {
-        $in: t,
+    if (categories.length) {
+      filters.categories = {
+        $in: categories,
       };
     }
 
-    /* ---------------- booleans ---------------- */
-    if (
-      isActive !== undefined &&
-      String(isActive).trim() !== ""
-    ) {
-      filters.isActive =
-        toBool(isActive);
-    }
+    /* COLLECTION */
+    const collectionValues =
+      toList(collection);
 
-    if (
-      isDraft !== undefined &&
-      String(isDraft).trim() !== ""
-    ) {
-      filters.isDraft =
-        toBool(isDraft);
-    }
+    if (collectionValues.length) {
+      const collectionIds =
+        collectionValues.filter(
+          mongoose.Types.ObjectId.isValid,
+        );
 
-    if (
-      isBestSeller !== undefined &&
-      String(isBestSeller).trim() !== ""
-    ) {
-      filters.isBestSeller =
-        toBool(isBestSeller);
-    }
+      const names = collectionValues.filter(
+        (value) =>
+          !mongoose.Types.ObjectId.isValid(
+            value,
+          ),
+      );
 
-    if (
-      isTrending !== undefined &&
-      String(isTrending).trim() !== ""
-    ) {
-      filters.isTrending =
-        toBool(isTrending);
-    }
+      if (names.length) {
+        const matched =
+          await Collection.find({
+            $or: [
+              {
+                slug: {
+                  $in: names.map((name) =>
+                    name.toLowerCase(),
+                  ),
+                },
+              },
+              {
+                name: {
+                  $in: names.map(
+                    (name) =>
+                      new RegExp(
+                        `^${escapeRegex(name)}$`,
+                        "i",
+                      ),
+                  ),
+                },
+              },
+            ],
+          })
+            .select("_id")
+            .lean();
 
-    if (hasVal(isDispatchReady)) {
-      filters.isDispatchReady =
-        toBool(isDispatchReady);
-    }
+        collectionIds.push(
+          ...matched.map((item) =>
+            String(item._id),
+          ),
+        );
+      }
 
-    if (
-      isPrimaryProduct !== undefined &&
-      String(
-        isPrimaryProduct,
-      ).trim() !== ""
-    ) {
-      filters.isPrimaryProduct =
-        toBool(isPrimaryProduct);
-    }
-
-    /* ---------------- SKU exact ---------------- */
-    if (sku) {
-      const skuOr = [
-        {
-          sku: String(sku),
-        },
-        {
-          "variants.sku":
-            String(sku),
-        },
+      const uniqueCollectionIds = [
+        ...new Set(collectionIds),
       ];
 
-      if (
-        Array.isArray(filters.$or) &&
-        filters.$or.length
-      ) {
+      if (!uniqueCollectionIds.length) {
+        return res.json({
+          total: 0,
+          page: 1,
+          pages: 0,
+          products: [],
+        });
+      }
+
+      filters.collections = {
+        $in: uniqueCollectionIds,
+      };
+    }
+
+    /* TAGS */
+    const normalizedTags = tagsNorm(tags);
+
+    if (normalizedTags.length) {
+      filters.tags = {
+        $in: normalizedTags,
+      };
+    }
+
+    /* BOOLEAN FILTERS */
+    const booleanFilters = {
+      isActive,
+      isDraft,
+      isBestSeller,
+      isTrending,
+      isDispatchReady,
+      isPrimaryProduct,
+    };
+
+    Object.entries(booleanFilters).forEach(
+      ([key, value]) => {
+        if (hasVal(value)) {
+          filters[key] = toBool(value);
+        }
+      },
+    );
+
+    /* SKU */
+    if (sku) {
+      const skuFilter = {
+        $or: [
+          { sku: String(sku).trim() },
+          {
+            "variants.sku":
+              String(sku).trim(),
+          },
+        ],
+      };
+
+      if (filters.$or?.length) {
         filters.$and = [
-          {
-            $or: filters.$or,
-          },
-          {
-            $or: skuOr,
-          },
+          { $or: filters.$or },
+          skuFilter,
         ];
 
         delete filters.$or;
       } else {
-        filters.$or = skuOr;
+        Object.assign(
+          filters,
+          skuFilter,
+        );
       }
     }
 
-    /* ---------------- productCode search ---------------- */
+    /* PRODUCT CODE */
     if (!idList.length) {
-      applyProductCodeFilter(
-        filters,
-        {
-          q,
-          title,
-          productCode,
-          code,
-          search,
-        },
-      );
+      applyProductCodeFilter(filters, {
+        q,
+        title,
+        productCode,
+        code,
+        search,
+      });
     }
 
-    /* ---------------- price ---------------- */
-    if (minPrice || maxPrice) {
+    /* PRICE */
+    if (hasVal(minPrice) || hasVal(maxPrice)) {
       filters.price = {};
 
-      if (minPrice) {
+      if (hasVal(minPrice)) {
         filters.price.$gte =
           Number(minPrice);
       }
 
-      if (maxPrice) {
+      if (hasVal(maxPrice)) {
         filters.price.$lte =
           Number(maxPrice);
       }
     }
 
-    /* ---------------- text search ---------------- */
-    const qStr = String(
-      q ?? "",
-    ).trim();
+    /* TEXT SEARCH */
+    const searchValues = [
+      q,
+      title,
+      search,
+      productCode,
+      code,
+    ].map((value) =>
+      String(value || "").trim(),
+    );
 
-    const titleStr = String(
-      title ?? "",
-    ).trim();
+    const isCodeSearch =
+      searchValues.some(isDigitsOnly);
 
-    const searchStr = String(
-      search ?? "",
-    ).trim();
-
-    const pcStr = String(
-      productCode ?? "",
-    ).trim();
-
-    const codeStr = String(
-      code ?? "",
-    ).trim();
-
-    const isCodeQuery =
-      isDigitsOnly(qStr) ||
-      isDigitsOnly(titleStr) ||
-      isDigitsOnly(searchStr) ||
-      isDigitsOnly(pcStr) ||
-      isDigitsOnly(codeStr);
-
-    let searchText = "";
-
-    if (
-      !idList.length &&
-      !isCodeQuery
-    ) {
-      searchText =
-        searchStr ||
-        qStr ||
-        titleStr;
-    }
+    const searchText =
+      !idList.length && !isCodeSearch
+        ? String(
+          search || q || title || "",
+        ).trim()
+        : "";
 
     if (searchText) {
       filters.$text = {
@@ -6232,12 +6310,7 @@ export const getProductCards = async (req, res) => {
       };
     }
 
-    /* =========================================================
-       SORTING
-       Default:
-       Bestseller -> Trending -> Newest
-    ========================================================= */
-
+    /* SORTING */
     const prioritySort = {
       isBestSeller: -1,
       isTrending: -1,
@@ -6250,34 +6323,23 @@ export const getProductCards = async (req, res) => {
         price: 1,
         _id: -1,
       },
-
       price_desc: {
         price: -1,
         _id: -1,
       },
-
       newest: {
         createdAt: -1,
         _id: -1,
       },
-
       rating: {
         averageRating: -1,
         _id: -1,
       },
-
       popularity: {
         "analytics.views": -1,
         _id: -1,
       },
-
-      bestseller: {
-        isBestSeller: -1,
-        isTrending: -1,
-        createdAt: -1,
-        _id: -1,
-      },
-
+      bestseller: prioritySort,
       trending: {
         isTrending: -1,
         isBestSeller: -1,
@@ -6286,23 +6348,13 @@ export const getProductCards = async (req, res) => {
       },
     };
 
-    const requestedSort = String(
-      sort || "",
-    ).trim();
+    const sortObject =
+      sortMap[String(sort || "").trim()] ||
+      prioritySort;
 
-    const sortObj =
-      requestedSort &&
-        sortMap[requestedSort]
-        ? sortMap[requestedSort]
-        : prioritySort;
-
-    /* ---------------- pagination ---------------- */
     const safeLimit = Math.min(
       200,
-      Math.max(
-        1,
-        Number(limit) || 20,
-      ),
+      Math.max(1, Number(limit) || 20),
     );
 
     const safePage = Math.max(
@@ -6311,133 +6363,93 @@ export const getProductCards = async (req, res) => {
     );
 
     const skip =
-      (safePage - 1) *
-      safeLimit;
+      (safePage - 1) * safeLimit;
 
-    /* ---------------- query ---------------- */
-    const [docs, total] =
+    /* QUERY */
+    const cardFields = [
+      "title",
+      "slug",
+      "productCode",
+      "categories",
+      "price",
+      "compareAtPrice",
+      "thumbnail",
+      "images",
+
+      "stockType",
+      "stock",
+      "reservedStock",
+      "isInStock",
+      "productType",
+
+      "attributes",
+      "variants._id",
+      "variants.attributes",
+      "variants.sku",
+      "variants.stock",
+      "variants.reservedStock",
+      "variants.isInStock",
+
+      "isBestSeller",
+      "isTrending",
+      "isPrimaryProduct",
+      "createdAt",
+    ].join(" ");
+
+    const [documents, total] =
       await Promise.all([
         Product.find(filters)
-          .select(
-            [
-              "title",
-              "slug",
-              "productCode",
-              "categories",
-              "price",
-              "compareAtPrice",
-              "thumbnail",
-              "images",
-              "isBestSeller",
-              "isTrending",
-              "isPrimaryProduct",
-              "createdAt",
-            ].join(" "),
-          )
-          .sort(sortObj)
+          .select(cardFields)
+          .sort(sortObject)
           .skip(skip)
           .limit(safeLimit)
           .lean(),
 
-        Product.countDocuments(
-          filters,
-        ),
+        Product.countDocuments(filters),
       ]);
 
-    let products = (
-      docs || []
-    )
-      .map(mapProductCard)
+    let products = documents
+      .map((document) =>
+        mapProductCard({
+          ...document,
+
+          stockType:
+            document.stockType === "limited"
+              ? "limited"
+              : "unlimited",
+        }),
+      )
       .filter(
-        (p) =>
-          p.image &&
-          p.price > 0 &&
-          p.productCode,
+        (product) =>
+          product.image &&
+          product.price > 0 &&
+          product.productCode,
       );
 
-    /* =========================================================
-       KEEP REQUESTED ORDER WHEN IDS ARE PASSED
-       Do NOT apply bestseller/trending priority here.
-    ========================================================= */
-
+    /* PRESERVE REQUESTED IDS ORDER */
     if (idList.length) {
-      const orderMap =
-        new Map();
+      const order = new Map();
 
-      idList.forEach(
-        (item, index) => {
-          const raw = String(
-            item || "",
-          ).trim();
+      idList.forEach((value, index) => {
+        order.set(value, index);
 
-          if (!raw) return;
+        buildCodeCandidates(value).forEach(
+          (candidate) =>
+            order.set(candidate, index),
+        );
+      });
 
-          orderMap.set(
-            raw,
-            index,
-          );
+      const getOrder = (product) =>
+        order.get(String(product?._id)) ??
+        order.get(
+          String(product?.productCode),
+        ) ??
+        Number.MAX_SAFE_INTEGER;
 
-          buildCodeCandidates(
-            raw,
-          ).forEach(
-            (candidate) => {
-              if (
-                !orderMap.has(
-                  candidate,
-                )
-              ) {
-                orderMap.set(
-                  candidate,
-                  index,
-                );
-              }
-            },
-          );
-        },
+      products.sort(
+        (a, b) =>
+          getOrder(a) - getOrder(b),
       );
-
-      products =
-        products.sort((a, b) => {
-          const aKey1 = String(
-            a?._id || "",
-          );
-
-          const aKey2 = String(
-            a?.productCode || "",
-          );
-
-          const bKey1 = String(
-            b?._id || "",
-          );
-
-          const bKey2 = String(
-            b?.productCode || "",
-          );
-
-          const aIdx =
-            orderMap.has(aKey1)
-              ? orderMap.get(aKey1)
-              : orderMap.has(
-                aKey2,
-              )
-                ? orderMap.get(
-                  aKey2,
-                )
-                : Number.MAX_SAFE_INTEGER;
-
-          const bIdx =
-            orderMap.has(bKey1)
-              ? orderMap.get(bKey1)
-              : orderMap.has(
-                bKey2,
-              )
-                ? orderMap.get(
-                  bKey2,
-                )
-                : Number.MAX_SAFE_INTEGER;
-
-          return aIdx - bIdx;
-        });
     }
 
     return res.json({
@@ -6449,20 +6461,20 @@ export const getProductCards = async (req, res) => {
 
       pages: idList.length
         ? 1
-        : Math.ceil(
-          total / safeLimit,
-        ),
+        : Math.ceil(total / safeLimit),
 
       products,
     });
-  } catch (e) {
+  } catch (error) {
     console.error(
       "❌ Get Product Cards Error:",
-      e,
+      error,
     );
 
     return res.status(500).json({
-      message: e.message,
+      message:
+        error.message ||
+        "Failed to fetch product cards",
     });
   }
 };
@@ -7837,6 +7849,113 @@ export const updateFabricConsumption = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message || "Failed to update fabric consumption",
+    });
+  }
+};
+
+
+/* ============================================================
+   UPDATE PRODUCT STOCK TYPE
+
+   PATCH /api/products/:id/stock-type
+
+   body:
+   {
+     "stockType": "limited"
+   }
+============================================================ */
+export const updateProductStockType = async (
+  req,
+  res,
+) => {
+  try {
+    const productId = String(
+      req.params?.id || "",
+    ).trim();
+
+    const stockType = String(
+      req.body?.stockType || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    if (
+      !mongoose.Types.ObjectId.isValid(
+        productId,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product ID",
+      });
+    }
+
+    if (
+      !["unlimited", "limited"].includes(
+        stockType,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "stockType must be either unlimited or limited",
+      });
+    }
+
+    const product =
+      await Product.findById(productId);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    const previousStockType =
+      product.stockType || "unlimited";
+
+    product.stockType = stockType;
+
+    /*
+     * Product model save hook automatically
+     * recalculates product and variant isInStock.
+     */
+    await product.save({
+      validateBeforeSave: true,
+    });
+
+    await invalidateProductCache(product);
+
+    const updatedProduct = await pop(
+      Product.findById(product._id),
+    );
+
+    return res.status(200).json({
+      success: true,
+      message:
+        stockType === "limited"
+          ? "Product marked as limited stock"
+          : "Product marked as unlimited stock",
+
+      previousStockType,
+      stockType,
+
+      product: applyStockFromVariants(
+        updatedProduct,
+      ),
+    });
+  } catch (error) {
+    console.error(
+      "❌ Update Product Stock Type Error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to update product stock type",
     });
   }
 };

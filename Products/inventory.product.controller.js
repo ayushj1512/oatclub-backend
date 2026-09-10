@@ -152,61 +152,107 @@ const parseNumericRange = ({ min, max }) => {
    INVENTORY VIEW STOCK NORMALIZER
 ============================================================ */
 const applyInventoryStockFromVariants = (doc) => {
-  const p = doc?.toObject ? doc.toObject() : doc;
+  const p = doc?.toObject
+    ? doc.toObject()
+    : doc;
+
   if (!p) return p;
 
-  const variants = Array.isArray(p.variants) ? p.variants : [];
-  const isVariable = p.productType === "variable" || variants.length > 0;
+  const stockType =
+    p.stockType === "limited"
+      ? "limited"
+      : "unlimited";
+
+  const variants = Array.isArray(p.variants)
+    ? p.variants
+    : [];
+
+  const isVariable =
+    p.productType === "variable" ||
+    variants.length > 0;
 
   if (!isVariable) {
     const stock = Number(p.stock ?? 0);
-    const reservedStock = Number(p.reservedStock ?? 0);
-    const availableStock = Math.max(0, stock - reservedStock);
+    const reservedStock = Number(
+      p.reservedStock ?? 0,
+    );
+
+    const availableStock = Math.max(
+      0,
+      stock - reservedStock,
+    );
 
     return {
       ...p,
+      stockType,
       stock,
       reservedStock,
       availableStock,
-      isInStock: availableStock > 0,
+      isInStock:
+        stockType === "unlimited" ||
+        availableStock > 0,
     };
   }
 
-  const normalizedVariants = variants.map((v) => {
-    const stock = Number(v?.stock ?? 0);
-    const reservedStock = Number(v?.reservedStock ?? 0);
-    const availableStock = Math.max(0, stock - reservedStock);
+  const normalizedVariants = variants.map(
+    (variant) => {
+      const stock = Number(
+        variant?.stock ?? 0,
+      );
 
-    return {
-      ...v,
-      stock,
-      reservedStock,
-      availableStock,
-      isInStock: availableStock > 0,
-      size: v?.size || getVariantSize(v) || "",
-    };
-  });
+      const reservedStock = Number(
+        variant?.reservedStock ?? 0,
+      );
+
+      const availableStock = Math.max(
+        0,
+        stock - reservedStock,
+      );
+
+      return {
+        ...variant,
+        stock,
+        reservedStock,
+        availableStock,
+        isInStock:
+          stockType === "unlimited" ||
+          availableStock > 0,
+        size:
+          variant?.size ||
+          getVariantSize(variant) ||
+          "",
+      };
+    },
+  );
 
   const stock = normalizedVariants.reduce(
-    (sum, v) => sum + Number(v.stock || 0),
-    0
+    (sum, variant) =>
+      sum + variant.stock,
+    0,
   );
-  const reservedStock = normalizedVariants.reduce(
-    (sum, v) => sum + Number(v.reservedStock || 0),
-    0
-  );
-  const availableStock = Math.max(0, stock - reservedStock);
-  const isInStock = normalizedVariants.some(
-    (v) => Number(v.availableStock || 0) > 0
-  );
+
+  const reservedStock =
+    normalizedVariants.reduce(
+      (sum, variant) =>
+        sum + variant.reservedStock,
+      0,
+    );
 
   return {
     ...p,
+    stockType,
     variants: normalizedVariants,
     stock,
     reservedStock,
-    availableStock,
-    isInStock,
+    availableStock: Math.max(
+      0,
+      stock - reservedStock,
+    ),
+    isInStock:
+      stockType === "unlimited" ||
+      normalizedVariants.some(
+        (variant) => variant.isInStock,
+      ),
   };
 };
 
@@ -538,6 +584,7 @@ const getInventoryProjection = () => ({
   productCode: 1,
   sku: 1,
   stock: 1,
+  stockType: 1,
   reservedStock: 1,
   isInStock: 1,
   isActive: 1,
@@ -875,7 +922,17 @@ export const getInventoryAdminProducts = async (req, res) => {
       {
         $match: initialMatch,
       },
-
+      {
+        $addFields: {
+          stockType: {
+            $cond: [
+              { $eq: ["$stockType", "limited"] },
+              "limited",
+              "unlimited",
+            ],
+          },
+        },
+      },
       {
         $addFields: {
           inventoryVariants: {
@@ -1008,19 +1065,29 @@ export const getInventoryAdminProducts = async (req, res) => {
                     },
 
                     isInStock: {
-                      $gt: [
+                      $or: [
                         {
-                          $max: [
-                            0,
-                            {
-                              $subtract: [
-                                "$$variant.stock",
-                                "$$variant.reservedStock",
-                              ],
-                            },
+                          $eq: [
+                            "$stockType",
+                            "unlimited",
                           ],
                         },
-                        0,
+                        {
+                          $gt: [
+                            {
+                              $max: [
+                                0,
+                                {
+                                  $subtract: [
+                                    "$$variant.stock",
+                                    "$$variant.reservedStock",
+                                  ],
+                                },
+                              ],
+                            },
+                            0,
+                          ],
+                        },
                       ],
                     },
                   },
@@ -1134,6 +1201,7 @@ export const getInventoryAdminProducts = async (req, res) => {
                 productCode: 1,
                 sku: 1,
                 productType: 1,
+                stockType: 1,
 
                 thumbnail: {
                   $ifNull: [
@@ -1180,7 +1248,10 @@ export const getInventoryAdminProducts = async (req, res) => {
                 availableStock: "$availableInventory",
 
                 isInStock: {
-                  $gt: ["$availableInventory", 0],
+                  $or: [
+                    { $eq: ["$stockType", "unlimited"] },
+                    { $gt: ["$availableInventory", 0] },
+                  ],
                 },
 
                 isActive: 1,

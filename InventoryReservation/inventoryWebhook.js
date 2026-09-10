@@ -1,8 +1,10 @@
 import mongoose from "mongoose";
 import Order from "../Orders/Orders.js";
 import InventoryReservation from "../InventoryReservation/InventoryReservation.js";
-import { createReservationInternal } from "../InventoryReservation/InventoryReservationController.js";
-
+import {
+  createReservationInternal,
+  reconcilePendingReservationsInternal,
+} from "../InventoryReservation/InventoryReservationController.js";
 /* ---------------------------------------------------
    helpers
 --------------------------------------------------- */
@@ -17,11 +19,16 @@ const keyOf = (productId, variantId) =>
 const buildReservationKey = ({ refType, refId, productId, variantId = null }) =>
   `${s(refType)}:${s(refId)}:${s(productId)}:${variantId ? s(variantId) : "root"}`;
 
-const pendingQtyOf = (item) => {
+const requiredQtyOf = (item) => {
   const qty = Math.max(0, n(item?.quantity));
-  const allocated = Math.max(0, n(item?.fulfillment?.allocatedQty));
-  const shipped = Math.max(0, n(item?.fulfillment?.shippedQty));
-  return Math.max(0, qty - allocated - shipped);
+  const shipped = Math.max(
+    0,
+    n(item?.fulfillment?.shippedQty),
+  );
+
+  // Active reservation quantity is deducted separately
+  // through alreadyMap, so allocatedQty is not deducted here.
+  return Math.max(0, qty - shipped);
 };
 
 /* ---------------------------------------------------
@@ -122,8 +129,7 @@ export const reserveInventoryForOrderNumberInternal = async ({
     const variantId = it?.variant?.variantId || it?.variantId || it?.variant?._id || null;
     if (variantId && !isObjectId(variantId)) continue;
 
-    const qtyNeed = pendingQtyOf(it);
-    if (qtyNeed <= 0) continue;
+    const qtyNeed = requiredQtyOf(it);    if (qtyNeed <= 0) continue;
 
     const k = keyOf(productId, variantId);
     const snap = it?.productSnapshot || {};
@@ -243,6 +249,119 @@ export const reserveInventoryForOrderNumberInternal = async ({
 /* ---------------------------------------------------
    INTERNAL HELPER
 --------------------------------------------------- */
+
+export const ensureInventoryReservationForOrderInternal = async ({
+  orderNumber,
+  debug = false,
+  session,
+} = {}) => {
+  const on = s(orderNumber);
+
+  if (!on) {
+    throw new Error("orderNumber required");
+  }
+
+  /*
+   * Step 1:
+   * Creates only missing reservation quantities.
+   *
+   * Existing active pending/reserved quantities are detected
+   * inside reserveInventoryForOrderNumberInternal.
+   */
+  const reservationSummary =
+    await reserveInventoryForOrderNumberInternal({
+      orderNumber: on,
+      confirmedOnly: true,
+      allowedFulfillment: ["processing", "packed"],
+      debug,
+      session,
+    });
+
+  if (reservationSummary.stoppedBecause) {
+    return {
+      ...reservationSummary,
+      reconciliation: [],
+    };
+  }
+
+  /*
+   * Step 2:
+   * Recheck existing pending reservations against current stock.
+   */
+  const pendingRows = await InventoryReservation.find({
+    refType: "order",
+    refId: oid(reservationSummary.orderId),
+    status: "pending",
+  })
+    .select("_id productId variantId")
+    .session(session);
+
+  const uniqueInventoryGroups = new Map();
+
+  for (const row of pendingRows) {
+    const key = keyOf(
+      row.productId,
+      row.variantId || null,
+    );
+
+    if (!uniqueInventoryGroups.has(key)) {
+      uniqueInventoryGroups.set(key, {
+        productId: row.productId,
+        variantId: row.variantId || null,
+      });
+    }
+  }
+
+  const reconciliation = [];
+
+  for (const group of uniqueInventoryGroups.values()) {
+    const result =
+      await reconcilePendingReservationsInternal({
+        productId: group.productId,
+        variantId: group.variantId,
+        session,
+      });
+
+    reconciliation.push(result);
+  }
+
+  /*
+   * Return final active state for verification.
+   */
+  const finalReservations =
+    await InventoryReservation.find({
+      refType: "order",
+      refId: oid(reservationSummary.orderId),
+      status: {
+        $in: ["pending", "reserved"],
+      },
+    })
+      .select(
+        "_id productId variantId productCode selectedSize qty status reservedAt",
+      )
+      .session(session)
+      .lean();
+
+  return {
+    ...reservationSummary,
+
+    reconciliation,
+
+    finalReservations,
+
+    finalReservedCount:
+      finalReservations.filter(
+        (row) => row.status === "reserved",
+      ).length,
+
+    finalPendingCount:
+      finalReservations.filter(
+        (row) => row.status === "pending",
+      ).length,
+  };
+};
+
+
 export const reserveInventoryAfterOrderConfirmed = async ({
   orderNumber,
   debug = false,
@@ -292,6 +411,61 @@ export const reserveInventoryWebhookByOrderNumber = async (req, res) => {
   } catch (e) {
     await session.abortTransaction();
     return res.status(400).json({ ok: false, message: String(e?.message || "Server error") });
+  } finally {
+    session.endSession();
+  }
+};
+
+export const ensureInventoryReservationByOrderNumber = async (
+  req,
+  res,
+) => {
+  const orderNumber =
+    s(req?.params?.orderNumber) ||
+    s(req?.body?.orderNumber) ||
+    s(req?.query?.orderNumber);
+
+  const debug =
+    String(req?.query?.debug || "0") === "1";
+
+  if (!orderNumber) {
+    return res.status(400).json({
+      ok: false,
+      message: "orderNumber missing",
+    });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const summary =
+      await ensureInventoryReservationForOrderInternal({
+        orderNumber,
+        debug,
+        session,
+      });
+
+    await session.commitTransaction();
+
+    return res.json({
+      ok: true,
+      message:
+        summary.finalPendingCount > 0
+          ? "Reservation checked; some inventory is still pending"
+          : "Inventory reservation checked successfully",
+      summary,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+
+    return res.status(400).json({
+      ok: false,
+      message: String(
+        error?.message ||
+        "Failed to ensure inventory reservation",
+      ),
+    });
   } finally {
     session.endSession();
   }

@@ -252,7 +252,16 @@ const productSchema = new mongoose.Schema(
 
     /* INVENTORY (SIMPLE PRODUCT) */
     sku: { type: String, unique: true, sparse: true, trim: true, index: true },
-
+    /* STOCK MANAGEMENT TYPE
+    unlimited = regular product, manufacturing can continue
+    limited = discontinued/limited stock, only available stock can be sold
+    */
+    stockType: {
+      type: String,
+      enum: ["unlimited", "limited"],
+      default: "unlimited",
+      index: true,
+    },
     // ✅ Inventory (product level)
     stock: { type: Number, default: 0 },
     isInStock: { type: Boolean, default: false },
@@ -473,35 +482,103 @@ const productSchema = new mongoose.Schema(
 HELPERS
 ------------------------------------------------------------------- */
 function computeInventoryFlags(doc) {
-  const isVariable = Array.isArray(doc.variants) && doc.variants.length > 0;
+  const stockType = doc.stockType || "unlimited";
+  const isVariable =
+    Array.isArray(doc.variants) &&
+    doc.variants.length > 0;
 
-  /* ✅ SIMPLE PRODUCT */
-  if (!isVariable) {
-    const stock = Number(doc.stock ?? 0);
-    const reserved = Math.max(0, Number(doc.reservedStock ?? 0));
-    const available = Math.max(0, stock - reserved);
-    doc.isInStock = available > 0;
+  /*
+   * UNLIMITED PRODUCT
+   * Stock quantity does not control availability.
+   */
+  if (stockType === "unlimited") {
+    doc.isInStock = true;
+
+    if (isVariable) {
+      doc.variants = doc.variants.map((variant) => {
+        if (
+          variant &&
+          typeof variant.set === "function"
+        ) {
+          variant.set("isInStock", true);
+          return variant;
+        }
+
+        return {
+          ...variant,
+          isInStock: true,
+        };
+      });
+    }
+
     return;
   }
 
-  /* ✅ VARIABLE PRODUCT */
+  /*
+   * LIMITED SIMPLE PRODUCT
+   * Availability depends on remaining stock.
+   */
+  if (!isVariable) {
+    const stock = Math.max(
+      0,
+      Number(doc.stock ?? 0),
+    );
+
+    const reserved = Math.max(
+      0,
+      Number(doc.reservedStock ?? 0),
+    );
+
+    doc.isInStock =
+      Math.max(0, stock - reserved) > 0;
+
+    return;
+  }
+
+  /*
+   * LIMITED VARIABLE PRODUCT
+   * Each size/variant depends on its own stock.
+   */
   let anyVariantInStock = false;
 
-  doc.variants = (doc.variants || []).map((v) => {
-    const stock = Number(v.stock ?? 0);
-    const reserved = Math.max(0, Number(v.reservedStock ?? 0));
+  doc.variants = doc.variants.map((variant) => {
+    const stock = Math.max(
+      0,
+      Number(variant.stock ?? 0),
+    );
 
-    const available = Math.max(0, stock - reserved);
-    const vInStock = available > 0;
+    const reserved = Math.max(
+      0,
+      Number(variant.reservedStock ?? 0),
+    );
 
-    if (vInStock) anyVariantInStock = true;
+    const available = Math.max(
+      0,
+      stock - reserved,
+    );
 
-    if (v && typeof v.set === "function") {
-      v.set("isInStock", vInStock);
-      return v;
+    const variantInStock = available > 0;
+
+    if (variantInStock) {
+      anyVariantInStock = true;
     }
 
-    return { ...v, isInStock: vInStock };
+    if (
+      variant &&
+      typeof variant.set === "function"
+    ) {
+      variant.set(
+        "isInStock",
+        variantInStock,
+      );
+
+      return variant;
+    }
+
+    return {
+      ...variant,
+      isInStock: variantInStock,
+    };
   });
 
   doc.isInStock = anyVariantInStock;
@@ -665,24 +742,35 @@ async function applyInventoryToUpdateQuery(next) {
     }
 
     const touchesInventory =
+      "stockType" in update ||
       "stock" in update ||
       "variants" in update ||
       "reservedStock" in update ||
+      "stockType" in $set ||
       "stock" in $set ||
       "variants" in $set ||
       "reservedStock" in $set ||
       Object.keys($set).some(
-        (k) =>
-          k.startsWith("variants.") || k === "stock" || k === "reservedStock",
+        (key) =>
+          key === "stockType" ||
+          key === "stock" ||
+          key === "reservedStock" ||
+          key.startsWith("variants."),
       ) ||
       Object.keys($inc).some(
-        (k) =>
-          k.startsWith("variants.") || k === "stock" || k === "reservedStock",
+        (key) =>
+          key === "stock" ||
+          key === "reservedStock" ||
+          key.startsWith("variants."),
       ) ||
       Object.keys($unset).some(
-        (k) =>
-          k.startsWith("variants.") || k === "stock" || k === "reservedStock",
+        (key) =>
+          key === "stockType" ||
+          key === "stock" ||
+          key === "reservedStock" ||
+          key.startsWith("variants."),
       );
+
 
     const touchesColors =
       "colors" in update ||

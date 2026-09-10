@@ -56,6 +56,9 @@ import {
 
 import { createReturnOrder } from "../shiprocket/shiprocket.return.js";
 import { buildReverseShiprocketPayload } from "../shiprocket/shiprocket.reverse.payload.js";
+import {
+  ensureInventoryReservationForOrderInternal,
+} from "../InventoryReservation/inventoryWebhook.js";
 
 const isParentOrder = (order) =>
   String(order?.orderType || "").toLowerCase() === "parent";
@@ -13479,7 +13482,10 @@ export const cloneOrder = async (req, res) => {
     -------------------------------------------------------- */
 
     const escapeRegex = (value) =>
-      String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      String(value).replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
 
     const cloneRegex = new RegExp(
       `^${escapeRegex(rootOrderNumber)}-C(\\d*)$`,
@@ -13495,7 +13501,9 @@ export const cloneOrder = async (req, res) => {
     let highestCloneNumber = -1;
 
     for (const clone of existingClones) {
-      const match = String(clone.orderNumber).match(cloneRegex);
+      const match = String(
+        clone.orderNumber || "",
+      ).match(cloneRegex);
 
       if (!match) continue;
 
@@ -13515,7 +13523,8 @@ export const cloneOrder = async (req, res) => {
       }
     }
 
-    const nextCloneIndex = highestCloneNumber + 1;
+    const nextCloneIndex =
+      highestCloneNumber + 1;
 
     const newOrderNumber =
       nextCloneIndex === 0
@@ -13530,31 +13539,33 @@ export const cloneOrder = async (req, res) => {
       ...sourceOrder,
 
       orderNumber: newOrderNumber,
-
-      // fresh order lifecycle
       orderDate: new Date(),
 
-      // clone should behave as independent shipment order
+      // Independent shipment order
       orderType: "shipment",
       parentOrderId: null,
       splitSuffix: "",
 
       /* ------------------------------------------------------
-         FRESH ITEM LINE IDs
-
-         Important because RMA/inventory uses stable lineId.
+         FRESH ITEM LINE IDS AND ALLOCATION
       ------------------------------------------------------ */
-      items: (sourceOrder.items || []).map((item) => ({
-        ...item,
 
-        lineId: new mongoose.Types.ObjectId().toString(),
+      items: (sourceOrder.items || []).map(
+        (item) => ({
+          ...item,
 
-        fulfillment: {
-          allocatedQty: 0,
-          shippedQty: 0,
-          toProduceQty: Number(item.quantity || 0),
-        },
-      })),
+          lineId:
+            new mongoose.Types.ObjectId().toString(),
+
+          fulfillment: {
+            allocatedQty: 0,
+            shippedQty: 0,
+            toProduceQty: Number(
+              item.quantity || 0,
+            ),
+          },
+        }),
+      ),
 
       /* ------------------------------------------------------
          RESET FULFILLMENT
@@ -13614,6 +13625,15 @@ export const cloneOrder = async (req, res) => {
 
         lastWebhook: null,
         lastTrack: null,
+
+        shiprocket: {
+          orderId: "",
+          shipmentId: "",
+          awb: "",
+          courierName: "",
+          trackingUrl: "",
+          labelUrl: "",
+        },
       },
 
       /* ------------------------------------------------------
@@ -13643,7 +13663,7 @@ export const cloneOrder = async (req, res) => {
       },
 
       /* ------------------------------------------------------
-         DO NOT DUPLICATE PAYMENT TRANSACTION IDS
+         REMOVE OLD PAYMENT TRANSACTION IDS
       ------------------------------------------------------ */
 
       razorpay: {
@@ -13657,7 +13677,7 @@ export const cloneOrder = async (req, res) => {
       },
 
       /* ------------------------------------------------------
-         REVIEW REQUEST MUST BE FRESH
+         RESET REVIEW REQUEST
       ------------------------------------------------------ */
 
       reviewRequest: {
@@ -13683,22 +13703,69 @@ export const cloneOrder = async (req, res) => {
        CREATE CLONE
     -------------------------------------------------------- */
 
-    const clonedOrder = await Order.create(clonePayload);
+    const clonedOrder =
+      await Order.create(clonePayload);
 
     /* --------------------------------------------------------
-       RESERVE INVENTORY FOR NEW ORDER
+       ENSURE INVENTORY RESERVATION
+
+       - Existing active reservation: no duplicate
+       - Missing reservation: create
+       - Stock available: reserve
+       - Stock unavailable: keep pending
+       - Existing pending + stock available: promote
     -------------------------------------------------------- */
 
+    let inventoryReservation = null;
+    let inventoryReservationError = "";
+
     try {
-      await reserveInventoryForOrderNumberInternal(
-        clonedOrder.orderNumber,
+      inventoryReservation =
+        await ensureInventoryReservationForOrderInternal({
+          orderNumber: clonedOrder.orderNumber,
+          debug: true,
+        });
+
+      console.log(
+        `✅ Clone inventory checked | ${clonedOrder.orderNumber}`,
+        {
+          createdCount:
+            inventoryReservation?.createdCount || 0,
+
+          reservedCount:
+            inventoryReservation?.finalReservedCount ??
+            inventoryReservation?.reservedCount ??
+            0,
+
+          pendingCount:
+            inventoryReservation?.finalPendingCount ??
+            inventoryReservation?.pendingCount ??
+            0,
+
+          stoppedBecause:
+            inventoryReservation?.stoppedBecause || "",
+        },
       );
     } catch (inventoryError) {
+      inventoryReservationError = String(
+        inventoryError?.message ||
+        "Inventory reservation failed",
+      );
+
       console.error(
-        "⚠️ Clone inventory reservation failed:",
-        inventoryError?.message || inventoryError,
+        `⚠️ Clone inventory reservation failed | ${clonedOrder.orderNumber}:`,
+        inventoryReservationError,
       );
     }
+
+    /* --------------------------------------------------------
+       FETCH FRESH ORDER
+
+       Reservation sync may update allocatedQty/toProduceQty.
+    -------------------------------------------------------- */
+
+    const finalClonedOrder =
+      await Order.findById(clonedOrder._id).lean();
 
     syncCustomerAnalyticsSafe(
       clonedOrder.customerId,
@@ -13707,15 +13774,32 @@ export const cloneOrder = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: `Order cloned successfully as ${newOrderNumber}`,
-      sourceOrderNumber: sourceOrder.orderNumber,
-      clonedOrderNumber: newOrderNumber,
-      order: clonedOrder,
+
+      message: inventoryReservationError
+        ? `Order cloned as ${newOrderNumber}, but inventory reservation needs attention`
+        : `Order cloned successfully as ${newOrderNumber}`,
+
+      sourceOrderNumber:
+        sourceOrder.orderNumber,
+
+      clonedOrderNumber:
+        newOrderNumber,
+
+      inventoryReservation,
+
+      inventoryReservationError:
+        inventoryReservationError || null,
+
+      order:
+        finalClonedOrder || clonedOrder,
     });
   } catch (error) {
-    console.error("❌ Clone Order Error:", error);
+    console.error(
+      "❌ Clone Order Error:",
+      error,
+    );
 
-    // duplicate orderNumber race protection
+    // Duplicate orderNumber race protection
     if (error?.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -13727,7 +13811,8 @@ export const cloneOrder = async (req, res) => {
     return res.status(500).json({
       success: false,
       message:
-        error?.message || "Failed to clone order",
+        error?.message ||
+        "Failed to clone order",
     });
   }
 };

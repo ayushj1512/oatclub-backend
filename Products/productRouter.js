@@ -46,6 +46,7 @@ import {
   advanceProductLifecycle,
   completeProductLifecycle,
   updateFabricConsumption,
+  updateProductStockType,
 } from "./productController.js";
 
 import { searchProductsForCard } from "./product.search.controller.js";
@@ -266,6 +267,11 @@ router.patch(
 router.patch(
   "/:id/stock",
   updateProductStock
+);
+
+router.patch(
+  "/:id/stock-type",
+  updateProductStockType,
 );
 
 router.patch(

@@ -163,7 +163,11 @@ export const searchProductsForCard = async (req, res) => {
       images: { $slice: 2 }, // only first 2 images needed for card + hover
       price: 1,
       compareAtPrice: 1,
-      variants: 1, // safe fallback for card pricing logic
+      variants: 1,
+      stockType: 1,
+      stock: 1,
+      reservedStock: 1,
+      isInStock: 1,// safe fallback for card pricing logic
       isBestSeller: 1,
       isTrending: 1,
       colors: 1,

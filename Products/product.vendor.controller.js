@@ -633,6 +633,9 @@ export const getVendorBestsellerInventoryAlerts = async (req, res) => {
       isBestSeller: true,
       isActive: true,
       isDraft: { $ne: true },
+
+      // Discontinued/limited products should not trigger manufacturing alerts
+      stockType: { $ne: "limited" },
     })
       .select(
         "title slug productCode thumbnail images variants stock reservedStock updatedAt"

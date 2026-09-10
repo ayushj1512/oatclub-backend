@@ -24,6 +24,7 @@ import {
 
 import {
   reserveInventoryWebhookByOrderNumber,
+  ensureInventoryReservationByOrderNumber,
 } from "./inventoryWebhook.js";
 
 const router = express.Router();
@@ -68,7 +69,14 @@ router.post(
   reserveInventoryWebhookByOrderNumber
 );
 
+
+
 /* ---------------- single reservation ---------------- */
+
+router.post(
+  "/ensure-order/:orderNumber",
+  ensureInventoryReservationByOrderNumber,
+);
 
 router.get("/:id", getReservation);
 
