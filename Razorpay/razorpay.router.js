@@ -9,6 +9,10 @@ import {
 } from "./razorpay.controller.js";
 
 import {
+  syncRazorpayRemittance,
+} from "./razorpayRemittance.controller.js";
+
+import {
   createRefundFromOrder,
   processRazorpayRefund,
   fetchRazorpayRefundStatus,
@@ -115,6 +119,12 @@ router.get(
 router.get(
   "/reports/remittance",
   getRemittanceReport
+);
+
+
+router.post(
+  "/reports/remittance/sync",
+  syncRazorpayRemittance
 );
 
 router.get(

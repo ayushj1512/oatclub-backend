@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 
 import {
   createRemittance,
@@ -10,6 +11,8 @@ import {
   updateRemittance,
   deleteRemittance,
   importRemittanceCsv,
+  importRemittanceReport,
+  getRemittanceImportSources,
   exportRemittanceCsv,
   exportRemittanceExcel,
   getPendingRemittances,
@@ -20,52 +23,151 @@ import {
 const router = express.Router();
 
 /* -------------------------------------------------------------------------- */
-/* upload setup                                                               */
+/* Upload setup                                                               */
 /* -------------------------------------------------------------------------- */
 
-const uploadDir = path.join(process.cwd(), "uploads", "remittance");
-fs.mkdirSync(uploadDir, { recursive: true });
+const uploadDir = path.join(
+  process.cwd(),
+  "uploads",
+  "remittance"
+);
+
+fs.mkdirSync(uploadDir, {
+  recursive: true,
+});
+
+const allowedExtensions = new Set([
+  ".csv",
+  ".xls",
+  ".xlsx",
+]);
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
+  destination: (_req, _file, cb) => {
+    cb(null, uploadDir);
+  },
+
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || ".csv");
-    cb(null, `remittance-${Date.now()}${ext}`);
+    const extension = path
+      .extname(file.originalname || "")
+      .toLowerCase();
+
+    cb(
+      null,
+      `remittance-${Date.now()}-${crypto.randomUUID()}${extension}`
+    );
   },
 });
 
-const fileFilter = (_req, file, cb) => {
-  const ok =
-    file.mimetype === "text/csv" ||
-    file.mimetype === "application/vnd.ms-excel" ||
-    /\.csv$/i.test(file.originalname || "");
+const fileFilter = (
+  _req,
+  file,
+  cb
+) => {
+  const extension = path
+    .extname(file.originalname || "")
+    .toLowerCase();
 
-  if (!ok) return cb(new Error("Only CSV file is allowed"));
+  if (
+    !allowedExtensions.has(extension)
+  ) {
+    return cb(
+      new Error(
+        "Only CSV, XLS and XLSX reports are allowed"
+      )
+    );
+  }
+
   cb(null, true);
 };
 
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+  },
 });
 
 /* -------------------------------------------------------------------------- */
-/* routes                                                                     */
+/* Routes                                                                     */
 /* -------------------------------------------------------------------------- */
 
-router.get("/summary", getRemittanceSummary);
-router.get("/pending", getPendingRemittances);
+router.get(
+  "/summary",
+  getRemittanceSummary
+);
 
-router.get("/export/csv", exportRemittanceCsv);
-router.get("/export/excel", exportRemittanceExcel);
-router.get("/pending/export/csv", exportPendingRemittancesCsv);
-router.post("/import/csv", upload.single("file"), importRemittanceCsv);
+router.get(
+  "/pending",
+  getPendingRemittances
+);
 
-router.post("/", createRemittance);
-router.get("/", getRemittances);
-router.get("/:id", getRemittanceById);
-router.put("/:id", updateRemittance);
-router.delete("/:id", deleteRemittance);
+router.get(
+  "/import/sources",
+  getRemittanceImportSources
+);
+
+router.get(
+  "/export/csv",
+  exportRemittanceCsv
+);
+
+router.get(
+  "/export/excel",
+  exportRemittanceExcel
+);
+
+router.get(
+  "/pending/export/csv",
+  exportPendingRemittancesCsv
+);
+
+/*
+ * Unified provider import:
+ * source = delhivery | shiprocket | razorpay
+ */
+router.post(
+  "/import",
+  upload.single("file"),
+  importRemittanceReport
+);
+
+/*
+ * Keep old CSV import for compatibility.
+ */
+router.post(
+  "/import/csv",
+  upload.single("file"),
+  importRemittanceCsv
+);
+
+/*
+ * Manual remittance entry.
+ */
+router.post(
+  "/",
+  createRemittance
+);
+
+router.get(
+  "/",
+  getRemittances
+);
+
+router.get(
+  "/:id",
+  getRemittanceById
+);
+
+router.put(
+  "/:id",
+  updateRemittance
+);
+
+router.delete(
+  "/:id",
+  deleteRemittance
+);
 
 export default router;

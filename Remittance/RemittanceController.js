@@ -1,8 +1,18 @@
 import fs from "fs";
 import csv from "csv-parser";
 import ExcelJS from "exceljs";
+import crypto from "crypto";
+
 import Remittance from "./Remittance.js";
 import Order from "../Orders/Orders.js";
+
+import parseRazorpayReport from "./helpers/parseRazorpayReport.js";
+import parseDelhiveryReport from "./helpers/parseDelhiveryReport.js";
+import parseShiprocketReport from "./helpers/parseShiprocketReport.js";
+
+import normalizeRemittanceRow from "./helpers/normalizeRemittanceRow.js";
+import matchRemittanceOrder from "./helpers/matchRemittanceOrder.js";
+import calculateRemittanceStatus from "./helpers/calculateRemittanceStatus.js";
 
 /* helpers */
 
@@ -11,9 +21,26 @@ const normalizeOrderNumber = (v) => safe(v).toUpperCase();
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const normalizeOrderType = (value) => {
-  const v = safe(value).toLowerCase();
-  if (v === "cod") return "cod";
-  if (v === "razorpay" || v === "prepaid") return "razorpay";
+  const v = safe(value)
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+
+  if (v === "cod") {
+    return "cod";
+  }
+
+  if (
+    v === "razorpay" ||
+    v === "prepaid" ||
+    v === "online"
+  ) {
+    return "razorpay";
+  }
+
+  if (v === "partial_cod") {
+    return "partial_cod";
+  }
+
   return "";
 };
 
@@ -65,6 +92,10 @@ const buildListQuery = (query = {}) => {
     remittanceTo = "",
     minAmount = "",
     maxAmount = "",
+    source = "",
+    reconciliationStatus = "",
+    requiresReview = "",
+    isRemitted = "",
   } = query;
 
   const q = {};
@@ -76,6 +107,10 @@ const buildListQuery = (query = {}) => {
       { ewayBillId: rx },
       { shippingNo: rx },
       { orderType: rx },
+      { source: rx },
+      { providerReference: rx },
+      { utr: rx },
+      { reconciliationStatus: rx },
     ];
   }
 
@@ -116,6 +151,46 @@ const buildListQuery = (query = {}) => {
     }
   }
 
+  if (source) {
+    q.source =
+      normalizeImportSource(source);
+  }
+
+  if (reconciliationStatus) {
+    q.reconciliationStatus =
+      safe(
+        reconciliationStatus
+      ).toLowerCase();
+  }
+
+  if (
+    requiresReview === "true" ||
+    requiresReview === true
+  ) {
+    q.requiresReview = true;
+  }
+
+  if (
+    requiresReview === "false" ||
+    requiresReview === false
+  ) {
+    q.requiresReview = false;
+  }
+
+  if (
+    isRemitted === "true" ||
+    isRemitted === true
+  ) {
+    q.isRemitted = true;
+  }
+
+  if (
+    isRemitted === "false" ||
+    isRemitted === false
+  ) {
+    q.isRemitted = false;
+  }
+
   return q;
 };
 
@@ -128,6 +203,13 @@ const buildSort = (sortBy = "createdAt", sortOrder = "desc") => {
     "remittanceDate",
     "remittedAmount",
     "orderType",
+    "source",
+    "expectedAmount",
+    "receivedAmount",
+    "differenceAmount",
+    "reconciliationStatus",
+    "isRemitted",
+    "requiresReview",
   ]);
 
   const field = allowed.has(sortBy) ? sortBy : "createdAt";
@@ -140,12 +222,21 @@ const getShippingNoExpr = () => ({
     {
       $ifNull: [
         "$shipment.shiprocket.awb",
-        { $ifNull: ["$shipment.awb", "$trackingDetails.trackingId"] },
+        {
+          $ifNull: [
+            "$shipment.delhivery.awb",
+            {
+              $ifNull: [
+                "$shipment.awb",
+                "$trackingDetails.trackingId",
+              ],
+            },
+          ],
+        },
       ],
     },
   ],
 });
-
 const getDeliveredDateExpr = () => ({
   $ifNull: ["$shipment.deliveredAt", "$trackingDetails.deliveredAt"],
 });
@@ -161,7 +252,58 @@ const getPendingBasePipeline = (search = "") => {
   }
 
   return [
-    { $match: orderMatch },
+    {
+      $match: {
+        $or: [
+          /*
+           * No remittance record exists.
+           */
+          {
+            remittanceDoc: {
+              $eq: null,
+            },
+          },
+
+          /*
+           * New reconciliation record exists
+           * but is not fully remitted.
+           */
+          {
+            "remittanceDoc.isRemitted":
+              false,
+          },
+
+          /*
+           * Backward compatibility for old
+           * remittance records created before
+           * isRemitted was introduced.
+           */
+          {
+            $and: [
+              {
+                "remittanceDoc.isRemitted": {
+                  $exists: false,
+                },
+              },
+              {
+                $or: [
+                  {
+                    "remittanceDoc.remittanceDate": {
+                      $eq: null,
+                    },
+                  },
+                  {
+                    "remittanceDoc.remittedAmount": {
+                      $lte: 0,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
     { $addFields: { deliveredDate: getDeliveredDateExpr() } },
     {
       $lookup: {
@@ -217,33 +359,351 @@ const csvRowToDoc = (row = {}) => {
   };
 };
 
+const REMITTANCE_IMPORT_SOURCES = {
+  manual: {
+    value: "manual",
+    label: "Manual Entry",
+    enabled: true,
+    requiresFile: false,
+    acceptedFormats: [],
+  },
+
+  razorpay: {
+    value: "razorpay",
+    label: "Razorpay",
+    enabled: false,
+    requiresFile: true,
+    acceptedFormats: [
+      ".csv",
+      ".xls",
+      ".xlsx",
+    ],
+    disabledReason:
+      "Order-wise Razorpay report is not configured",
+  },
+
+  delhivery: {
+    value: "delhivery",
+    label: "Delhivery",
+    enabled: true,
+    requiresFile: true,
+    acceptedFormats: [".csv"],
+  },
+
+  shiprocket: {
+    value: "shiprocket",
+    label: "Shiprocket",
+    enabled: true,
+    requiresFile: true,
+    acceptedFormats: [
+      ".xls",
+      ".xlsx",
+    ],
+  },
+};
+
+const REMITTANCE_PARSERS = {
+  razorpay: parseRazorpayReport,
+  delhivery: parseDelhiveryReport,
+  shiprocket: parseShiprocketReport,
+};
+
+const normalizeImportSource = (
+  value
+) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const removeUploadedFile = (
+  filePath
+) => {
+  if (!filePath) return;
+
+  fs.unlink(filePath, (error) => {
+    if (
+      error &&
+      error.code !== "ENOENT"
+    ) {
+      console.error(
+        "Failed to remove remittance upload:",
+        error.message
+      );
+    }
+  });
+};
+
+const REMITTANCE_SELECT_FIELDS = [
+  "ewayBillId",
+  "shippingNo",
+  "orderNumber",
+  "deliveredDate",
+  "orderType",
+  "remittanceDate",
+  "remittedAmount",
+
+  "source",
+  "reportType",
+  "providerReference",
+  "utr",
+
+  "expectedAmount",
+  "receivedAmount",
+  "differenceAmount",
+  "adjustedAmount",
+
+  "reconciliationStatus",
+  "isRemitted",
+  "requiresReview",
+
+  "matchedOrderId",
+  "matchType",
+
+  "importBatchId",
+  "importRowNumber",
+
+  "createdAt",
+  "updatedAt",
+].join(" ");
+
 /* CRUD */
 
-export const createRemittance = async (req, res) => {
+export const createRemittance = async (
+  req,
+  res
+) => {
   try {
+    let orderNumber =
+      normalizeOrderNumber(
+        req.body.orderNumber
+      );
+
+    const shippingNo = safe(
+      req.body.shippingNo
+    ).replace(/\.0+$/, "");
+
+    if (!orderNumber) {
+      return res.status(400).json({
+        success: false,
+        code:
+          "ORDER_NUMBER_REQUIRED",
+        message:
+          "orderNumber is required",
+      });
+    }
+
+    /*
+     * Manual remittance must match an
+     * existing OATCLUB order.
+     */
+    const matchResult =
+      await matchRemittanceOrder({
+        orderNumber,
+        shippingNo,
+      });
+
+    if (!matchResult.matched) {
+      return res.status(404).json({
+        success: false,
+        code: "ORDER_NOT_FOUND",
+        message:
+          "No matching order found for this order number or shipping number",
+      });
+    }
+
+    orderNumber =
+      matchResult.orderNumber ||
+      orderNumber;
+
+    const exists =
+      await Remittance.findOne({
+        orderNumber,
+      })
+        .select(
+          "_id orderNumber source reconciliationStatus isRemitted"
+        )
+        .lean();
+
+    if (exists) {
+      return res.status(409).json({
+        success: false,
+        code:
+          "REMITTANCE_ALREADY_EXISTS",
+        message:
+          "Remittance already exists for this orderNumber",
+        data: exists,
+      });
+    }
+
+    const receivedAmount =
+      parseAmount(
+        req.body.receivedAmount ??
+        req.body.remittedAmount
+      );
+
+    /*
+     * If expected amount is not manually
+     * entered, use received amount.
+     *
+     * This keeps the existing manual form
+     * compatible.
+     */
+    const expectedAmount =
+      req.body.expectedAmount !==
+        undefined &&
+        req.body.expectedAmount !== ""
+        ? parseAmount(
+          req.body.expectedAmount
+        )
+        : receivedAmount;
+
+    const differenceAmount =
+      Number(
+        (
+          receivedAmount -
+          expectedAmount
+        ).toFixed(2)
+      );
+
+    let reconciliationStatus =
+      "pending";
+
+    let isRemitted = false;
+    let requiresReview = false;
+
+    if (
+      receivedAmount > 0 &&
+      Math.abs(differenceAmount) <= 1
+    ) {
+      reconciliationStatus =
+        "fully_remitted";
+
+      isRemitted = true;
+    } else if (
+      receivedAmount > 0 &&
+      receivedAmount <
+      expectedAmount
+    ) {
+      reconciliationStatus =
+        "partially_remitted";
+
+      requiresReview = true;
+    } else if (
+      receivedAmount >
+      expectedAmount
+    ) {
+      reconciliationStatus =
+        "excess_remitted";
+
+      requiresReview = true;
+    }
+
     const payload = {
-      ewayBillId: safe(req.body.ewayBillId),
-      shippingNo: safe(req.body.shippingNo),
-      orderNumber: normalizeOrderNumber(req.body.orderNumber),
-      deliveredDate: parseDate(req.body.deliveredDate),
-      orderType: normalizeOrderType(req.body.orderType),
-      remittanceDate: parseDate(req.body.remittanceDate),
-      remittedAmount: parseAmount(req.body.remittedAmount),
+      ewayBillId: safe(
+        req.body.ewayBillId
+      ),
+
+      shippingNo,
+
+      orderNumber,
+
+      deliveredDate: parseDate(
+        req.body.deliveredDate
+      ),
+
+      orderType:
+        normalizeOrderType(
+          req.body.orderType ||
+          matchResult.order
+            ?.paymentMethod
+        ),
+
+      remittanceDate:
+        parseDate(
+          req.body.remittanceDate
+        ) || new Date(),
+
+      remittedAmount:
+        receivedAmount,
+
+      source: "manual",
+
+      reportType:
+        "manual_entry",
+
+      providerReference: safe(
+        req.body.providerReference
+      ),
+
+      utr: safe(req.body.utr),
+
+      expectedAmount,
+
+      receivedAmount,
+
+      differenceAmount,
+
+      adjustedAmount: 0,
+
+      reconciliationStatus,
+
+      isRemitted,
+
+      requiresReview,
+
+      matchedOrderId:
+        matchResult.orderId,
+
+      matchType:
+        matchResult.matchType,
+
+      importBatchId: `manual-${crypto.randomUUID()}`,
+
+      importRowNumber: null,
+
+      rawRow: {
+        enteredManually: true,
+
+        note: safe(
+          req.body.note
+        ),
+      },
     };
 
-    if (!payload.orderNumber) {
-      return res.status(400).json({ message: "orderNumber is required" });
-    }
+    const doc =
+      await Remittance.create(
+        payload
+      );
 
-    const exists = await Remittance.exists({ orderNumber: payload.orderNumber });
-    if (exists) {
-      return res.status(409).json({ message: "Remittance already exists for this orderNumber" });
-    }
+    return res
+      .status(201)
+      .json({
+        success: true,
 
-    const doc = await Remittance.create(payload);
-    return res.status(201).json({ message: "Remittance created successfully", data: doc });
+        message:
+          "Manual remittance created successfully",
+
+        data: doc,
+      });
   } catch (error) {
-    return res.status(500).json({ message: "createRemittance error", error: error.message });
+    console.error(
+      "createRemittance error:",
+      error
+    );
+
+    return res
+      .status(500)
+      .json({
+        success: false,
+
+        code:
+          "CREATE_REMITTANCE_FAILED",
+
+        message:
+          "Failed to create remittance",
+
+        error: error.message,
+      });
   }
 };
 
@@ -258,7 +718,9 @@ export const getRemittances = async (req, res) => {
 
     const [rows, totalCount] = await Promise.all([
       Remittance.find(filter)
-        .select("ewayBillId shippingNo orderNumber deliveredDate orderType remittanceDate remittedAmount createdAt updatedAt")
+        .select(
+          REMITTANCE_SELECT_FIELDS
+        )
         .sort(sort)
         .skip(skip)
         .limit(limit)
@@ -287,9 +749,14 @@ export const getRemittances = async (req, res) => {
 
 export const getRemittanceById = async (req, res) => {
   try {
-    const doc = await Remittance.findById(req.params.id)
-      .select("ewayBillId shippingNo orderNumber deliveredDate orderType remittanceDate remittedAmount createdAt updatedAt")
-      .lean();
+    const doc =
+      await Remittance.findById(
+        req.params.id
+      )
+        .select(
+          `${REMITTANCE_SELECT_FIELDS} rawRow`
+        )
+        .lean();
 
     if (!doc) return res.status(404).json({ message: "Remittance not found" });
 
@@ -556,6 +1023,45 @@ export const getPendingRemittances = async (req, res) => {
             remittanceId: "$remittanceDoc._id",
             remittanceDate: "$remittanceDoc.remittanceDate",
             remittedAmount: "$remittanceDoc.remittedAmount",
+            remittanceSource:
+              "$remittanceDoc.source",
+
+            reconciliationStatus:
+              "$remittanceDoc.reconciliationStatus",
+
+            isRemitted: {
+              $ifNull: [
+                "$remittanceDoc.isRemitted",
+                false,
+              ],
+            },
+
+            requiresReview: {
+              $ifNull: [
+                "$remittanceDoc.requiresReview",
+                false,
+              ],
+            },
+
+            expectedAmount: {
+              $ifNull: [
+                "$remittanceDoc.expectedAmount",
+                "$finalPayable",
+              ],
+            },
+
+            differenceAmount: {
+              $ifNull: [
+                "$remittanceDoc.differenceAmount",
+                0,
+              ],
+            },
+
+            utr:
+              "$remittanceDoc.utr",
+
+            providerReference:
+              "$remittanceDoc.providerReference",
             ewayBillId: "$remittanceDoc.ewayBillId",
             paymentModeLabel: {
               $switch: {
@@ -697,5 +1203,538 @@ export const getRemittanceSummary = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: "getRemittanceSummary error", error: error.message });
+  }
+};
+
+
+export const getRemittanceImportSources = async (
+  _req,
+  res
+) => {
+  return res.status(200).json({
+    success: true,
+
+    data: Object.values(
+      REMITTANCE_IMPORT_SOURCES
+    ),
+  });
+};
+
+export const importRemittanceReport = async (
+  req,
+  res
+) => {
+  const uploadedFilePath =
+    req.file?.path || "";
+
+  try {
+    const source =
+      normalizeImportSource(
+        req.body?.source
+      );
+
+    if (!source) {
+      return res.status(400).json({
+        success: false,
+        code:
+          "REMITTANCE_SOURCE_REQUIRED",
+        message:
+          "Please select a remittance source",
+      });
+    }
+
+    const sourceConfig =
+      REMITTANCE_IMPORT_SOURCES[
+      source
+      ];
+
+    if (!sourceConfig) {
+      return res.status(400).json({
+        success: false,
+        code:
+          "INVALID_REMITTANCE_SOURCE",
+        message:
+          "Invalid remittance source",
+        allowedSources:
+          Object.keys(
+            REMITTANCE_IMPORT_SOURCES
+          ),
+      });
+    }
+
+    /*
+     * Manual entry uses existing
+     * POST /api/remittance endpoint.
+     */
+    if (source === "manual") {
+      return res.status(400).json({
+        success: false,
+        code:
+          "USE_MANUAL_REMITTANCE_ENDPOINT",
+        message:
+          "Use POST /api/remittance for manual entries",
+      });
+    }
+
+    if (!sourceConfig.enabled) {
+      return res.status(400).json({
+        success: false,
+        code:
+          `${source.toUpperCase()}_IMPORT_DISABLED`,
+        message:
+          sourceConfig.disabledReason ||
+          `${sourceConfig.label} import is disabled`,
+      });
+    }
+
+    if (!req.file?.path) {
+      return res.status(400).json({
+        success: false,
+        code:
+          "REMITTANCE_FILE_REQUIRED",
+        message:
+          `${sourceConfig.label} report file is required`,
+      });
+    }
+
+    const parser =
+      REMITTANCE_PARSERS[source];
+
+    if (!parser) {
+      return res.status(400).json({
+        success: false,
+        code:
+          "REMITTANCE_PARSER_NOT_FOUND",
+        message:
+          `Parser is not configured for ${source}`,
+      });
+    }
+
+    /*
+     * Parse provider-specific report.
+     */
+    const parsedReport =
+      await parser(
+        req.file.path
+      );
+
+    if (
+      !Array.isArray(
+        parsedReport?.rows
+      ) ||
+      !parsedReport.rows.length
+    ) {
+      return res.status(400).json({
+        success: false,
+        code:
+          "NO_VALID_REMITTANCE_ROWS",
+        message:
+          "No valid remittance rows found in uploaded report",
+        parserStats:
+          parsedReport?.stats || {},
+      });
+    }
+
+    const importBatchId =
+      crypto.randomUUID();
+
+    const processedRows = [];
+    const duplicateRows = [];
+    const failedRows = [];
+
+    for (
+      const parserRow of
+      parsedReport.rows
+    ) {
+      try {
+        /*
+         * Convert provider row into
+         * common format.
+         */
+        const normalizedRow =
+          normalizeRemittanceRow(
+            parserRow
+          );
+
+        /*
+         * Match against Orders.
+         */
+        const matchResult =
+          await matchRemittanceOrder(
+            normalizedRow
+          );
+
+        if (
+          matchResult.matched &&
+          matchResult.orderNumber
+        ) {
+          normalizedRow.orderNumber =
+            matchResult.orderNumber;
+        }
+
+        /*
+         * Detect an already imported
+         * provider transaction.
+         */
+        const duplicateQuery = {
+          source,
+          providerReference:
+            normalizedRow.providerReference,
+          orderNumber:
+            normalizedRow.orderNumber,
+        };
+
+        const existingTransaction =
+          normalizedRow.providerReference
+            ? await Remittance.findOne(
+              duplicateQuery
+            )
+              .select(
+                "_id orderNumber source providerReference isRemitted reconciliationStatus"
+              )
+              .lean()
+            : null;
+
+        if (existingTransaction) {
+          duplicateRows.push({
+            rowNumber:
+              normalizedRow.importRowNumber,
+
+            orderNumber:
+              normalizedRow.orderNumber,
+
+            shippingNo:
+              normalizedRow.shippingNo,
+
+            providerReference:
+              normalizedRow.providerReference,
+
+            existingRemittanceId:
+              existingTransaction._id,
+
+            reason:
+              "This provider transaction was already imported",
+          });
+
+          continue;
+        }
+
+        const statusResult =
+          calculateRemittanceStatus({
+            row: normalizedRow,
+
+            order:
+              matchResult.order,
+
+            matched:
+              matchResult.matched,
+
+            duplicate: false,
+
+            tolerance: 1,
+          });
+
+        if (
+          !normalizedRow.orderNumber
+        ) {
+          failedRows.push({
+            rowNumber:
+              normalizedRow.importRowNumber,
+
+            orderNumber: "",
+
+            shippingNo:
+              normalizedRow.shippingNo,
+
+            reason:
+              "Normalized Order Number is missing",
+          });
+
+          continue;
+        }
+
+        const remittanceData = {
+          ewayBillId:
+            normalizedRow.ewayBillId,
+
+          shippingNo:
+            normalizedRow.shippingNo,
+
+          orderNumber:
+            normalizedRow.orderNumber,
+
+          deliveredDate:
+            normalizedRow.deliveredDate,
+
+          orderType:
+            normalizedRow.orderType,
+
+          remittanceDate:
+            normalizedRow.remittanceDate,
+
+          remittedAmount:
+            statusResult.receivedAmount ??
+            normalizedRow.remittedAmount,
+
+          source,
+
+          reportType:
+            normalizedRow.reportType,
+
+          providerReference:
+            normalizedRow.providerReference,
+
+          utr:
+            normalizedRow.utr,
+
+          expectedAmount:
+            statusResult.expectedAmount ??
+            normalizedRow.expectedAmount,
+
+          receivedAmount:
+            statusResult.receivedAmount ??
+            normalizedRow.receivedAmount,
+
+          differenceAmount:
+            statusResult.differenceAmount ??
+            normalizedRow.differenceAmount,
+
+          adjustedAmount:
+            normalizedRow.adjustedAmount,
+
+          reconciliationStatus:
+            statusResult.status,
+
+          isRemitted:
+            Boolean(
+              statusResult.isRemitted
+            ),
+
+          requiresReview:
+            Boolean(
+              statusResult.requiresReview
+            ),
+
+          matchedOrderId:
+            matchResult.orderId || null,
+
+          matchType:
+            matchResult.matchType || "",
+
+          importBatchId,
+
+          importRowNumber:
+            normalizedRow.importRowNumber,
+
+          rawRow:
+            normalizedRow.rawRow,
+        };
+
+        /*
+         * One current reconciliation
+         * record per order.
+         *
+         * Existing pending/manual rows
+         * will get upgraded with the
+         * provider report information.
+         */
+        const savedRemittance =
+          await Remittance.findOneAndUpdate(
+            {
+              orderNumber:
+                normalizedRow.orderNumber,
+            },
+            {
+              $set: remittanceData,
+            },
+            {
+              new: true,
+              upsert: true,
+              runValidators: true,
+              setDefaultsOnInsert: true,
+            }
+          ).lean();
+
+        processedRows.push({
+          remittanceId:
+            savedRemittance._id,
+
+          rowNumber:
+            normalizedRow.importRowNumber,
+
+          orderNumber:
+            normalizedRow.orderNumber,
+
+          shippingNo:
+            normalizedRow.shippingNo,
+
+          status:
+            statusResult.status,
+
+          isRemitted:
+            statusResult.isRemitted,
+
+          requiresReview:
+            statusResult.requiresReview,
+
+          expectedAmount:
+            statusResult.expectedAmount,
+
+          receivedAmount:
+            statusResult.receivedAmount,
+
+          differenceAmount:
+            statusResult.differenceAmount,
+
+          matchType:
+            matchResult.matchType,
+
+          reason:
+            statusResult.reason,
+        });
+      } catch (rowError) {
+        failedRows.push({
+          rowNumber:
+            parserRow?.importRowNumber ||
+            null,
+
+          orderNumber:
+            parserRow?.orderNumber ||
+            "",
+
+          shippingNo:
+            parserRow?.shippingNo ||
+            parserRow?.awb ||
+            "",
+
+          reason:
+            rowError.message,
+        });
+      }
+    }
+
+    const countStatus = (
+      status
+    ) =>
+      processedRows.filter(
+        (row) =>
+          row.status === status
+      ).length;
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        `${sourceConfig.label} report processed successfully`,
+
+      data: {
+        source,
+
+        importBatchId,
+
+        fileName:
+          req.file.originalname,
+
+        importedAt:
+          new Date(),
+
+        stats: {
+          parserRows:
+            parsedReport.rows.length,
+
+          processedRows:
+            processedRows.length,
+
+          fullyRemitted:
+            countStatus(
+              "fully_remitted"
+            ),
+
+          partiallyRemitted:
+            countStatus(
+              "partially_remitted"
+            ),
+
+          excessRemitted:
+            countStatus(
+              "excess_remitted"
+            ),
+
+          amountAdjusted:
+            countStatus(
+              "amount_adjusted"
+            ),
+
+          needsReview:
+            processedRows.filter(
+              (row) =>
+                row.requiresReview
+            ).length,
+
+          unmapped:
+            countStatus("unmapped"),
+
+          duplicates:
+            duplicateRows.length,
+
+          failedRows:
+            failedRows.length,
+
+          parserInvalidRows:
+            parsedReport
+              .invalidRows?.length || 0,
+
+          parserDuplicateRows:
+            parsedReport
+              .duplicateRows?.length || 0,
+        },
+
+        providerStats:
+          parsedReport.stats || {},
+
+        batchSummaries:
+          parsedReport.batchSummaries ||
+          [],
+
+        processedRows,
+
+        duplicateRows,
+
+        failedRows,
+
+        invalidRows:
+          parsedReport.invalidRows ||
+          [],
+
+        parserDuplicateRows:
+          parsedReport.duplicateRows ||
+          [],
+      },
+    });
+  } catch (error) {
+    console.error(
+      "Remittance report import error:",
+      error
+    );
+
+    return res
+      .status(
+        error.statusCode || 500
+      )
+      .json({
+        success: false,
+
+        code:
+          error.code ||
+          "REMITTANCE_IMPORT_FAILED",
+
+        message:
+          error.message ||
+          "Failed to import remittance report",
+      });
+  } finally {
+    removeUploadedFile(
+      uploadedFilePath
+    );
   }
 };

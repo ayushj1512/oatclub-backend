@@ -50,6 +50,120 @@ const remittanceSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    source: {
+      type: String,
+      enum: [
+        "manual",
+        "razorpay",
+        "delhivery",
+        "shiprocket",
+      ],
+      default: "manual",
+      index: true,
+    },
+
+    reportType: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    providerReference: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
+
+    utr: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
+
+    expectedAmount: {
+      type: Number,
+      default: 0,
+    },
+
+    receivedAmount: {
+      type: Number,
+      default: 0,
+    },
+
+    differenceAmount: {
+      type: Number,
+      default: 0,
+    },
+
+    adjustedAmount: {
+      type: Number,
+      default: 0,
+    },
+
+    reconciliationStatus: {
+      type: String,
+      enum: [
+        "pending",
+        "fully_remitted",
+        "partially_remitted",
+        "excess_remitted",
+        "amount_adjusted",
+        "unmapped",
+        "duplicate",
+        "needs_review",
+        "payment_mode_mismatch",
+      ],
+      default: "pending",
+      index: true,
+    },
+
+    isRemitted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    requiresReview: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    matchedOrderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+      default: null,
+      index: true,
+    },
+
+    matchType: {
+      type: String,
+      enum: [
+        "",
+        "order_number",
+        "shipping_no",
+      ],
+      default: "",
+    },
+
+    importBatchId: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
+
+    importRowNumber: {
+      type: Number,
+      default: null,
+    },
+
+    rawRow: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
   },
   { timestamps: true }
 );

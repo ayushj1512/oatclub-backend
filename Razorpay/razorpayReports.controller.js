@@ -390,8 +390,23 @@ export const getRemittanceReport = async (req, res) => {
         settlementId: x.settlement_id || "",
         orderReceipt: x.order_receipt || "",
         orderId: x.order_id || "",
-        paymentId: x.payment_id || "",
-        refundId: x.refund_id || "",
+        paymentId:
+          x.payment_id ||
+          (
+            normalizeText(x.type) ===
+              "payment"
+              ? x.entity_id || ""
+              : ""
+          ),
+
+        refundId:
+          x.refund_id ||
+          (
+            normalizeText(x.type) ===
+              "refund"
+              ? x.entity_id || ""
+              : ""
+          ),
         method: x.method || "",
         type: x.type || "",
         description: x.description || "",
@@ -401,12 +416,19 @@ export const getRemittanceReport = async (req, res) => {
         net: money(net),
         debit: money(x.debit),
         credit: money(x.credit),
-        settledAt: x.settled_at || null,
-        settledAtLabel: x.settled_at
-          ? new Date(x.settled_at).toLocaleString("en-IN", {
-              timeZone: "Asia/Kolkata",
-            })
-          : "—",
+        settledAt:
+          x.settled_at
+            ? new Date(
+              Number(
+                x.settled_at
+              ) * 1000
+            )
+            : null,
+
+        settledAtLabel:
+          formatDate(
+            x.settled_at
+          ),
       };
     });
 
