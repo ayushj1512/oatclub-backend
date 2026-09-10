@@ -2,8 +2,7 @@ import mongoose from "mongoose";
 import Product from "../Products/Products.js";
 import Order from "./Orders.js";
 import { triggerRmaEmails } from "./order.emails.js";
-import { createReturnOrder } from "../shiprocket/shiprocket.return.js";
-import { buildReverseShiprocketPayload } from "../shiprocket/shiprocket.reverse.payload.js";
+
 import Customer from "../Customer/Customer.js";
 import { Mailer } from "../nodemailer/mailer.js";
 import { sendCustomerCreditWhatsapp } from "../fast2sms/fast2sms.whatsapp.js";
@@ -184,70 +183,130 @@ export const createRma = async (req, res) => {
       type = "return",
       reason = "other",
       customerNote = "",
+      adminNote = "",
+      allowException = false,
+      exceptionReason = "",
       items,
       exchangeTo,
-      media = [], // ✅ NEW
+      media = [],
     } = req.body || {};
+
+    const isAdminCreation =
+      req.isAdminRmaCreation === true;
+
+    const isAdminException =
+      isAdminCreation &&
+      req.allowRmaException === true &&
+      allowException === true;
 
     console.log("📦 [CREATE RMA] Request:", {
       orderId,
       type,
       reason,
-      mediaCount: Array.isArray(media) ? media.length : 0,
+      isAdminCreation,
+      isAdminException,
+      mediaCount: Array.isArray(media)
+        ? media.length
+        : 0,
     });
 
     if (!isObjectId(orderId)) {
-      return badRequest(res, "Invalid order id");
+      return badRequest(
+        res,
+        "Invalid order id"
+      );
     }
 
-    if (!Array.isArray(items) || !items.length) {
-      return badRequest(res, "RMA items missing");
+    if (
+      !Array.isArray(items) ||
+      !items.length
+    ) {
+      return badRequest(
+        res,
+        "RMA items missing"
+      );
     }
 
-    if (!["return", "exchange"].includes(type)) {
-      return badRequest(res, "Invalid RMA type");
+    if (
+      !["return", "exchange"].includes(type)
+    ) {
+      return badRequest(
+        res,
+        "Invalid RMA type"
+      );
+    }
+
+    if (
+      isAdminException &&
+      !String(exceptionReason || "").trim()
+    ) {
+      return badRequest(
+        res,
+        "Exception reason is required"
+      );
     }
 
     /* ============================================================
-       ✅ QC MEDIA
+       QC MEDIA
     ============================================================ */
 
     const normalizedMedia = Array.isArray(media)
       ? media
-        .filter((m) => String(m?.url || "").trim())
-        .map((m) => ({
-          url: String(m.url).trim(),
-          publicId: String(m?.publicId || "").trim(),
+        .filter((item) =>
+          String(item?.url || "").trim()
+        )
+        .map((item) => ({
+          url: String(item.url).trim(),
+
+          publicId: String(
+            item?.publicId || ""
+          ).trim(),
+
           resourceType:
-            String(m?.resourceType || "image").trim().toLowerCase() ===
-              "video"
+            String(
+              item?.resourceType || "image"
+            )
+              .trim()
+              .toLowerCase() === "video"
               ? "video"
               : "image",
-          evidenceType: String(m?.evidenceType || "")
+
+          evidenceType: String(
+            item?.evidenceType || ""
+          )
             .trim()
             .toLowerCase(),
+
           uploadedAt: new Date(),
         }))
       : [];
 
     /*
-     * Return requires:
-     * front + back + tag
-     *
-     * Exchange is intentionally not forced here yet,
-     * so existing exchange flow does not break.
+     * Customer return requires front, back and
+     * tag images. Admin RMA does not require media.
      */
-    if (type === "return") {
-      const requiredEvidence = ["front", "back", "tag"];
+    if (
+      type === "return" &&
+      !isAdminCreation
+    ) {
+      const requiredEvidence = [
+        "front",
+        "back",
+        "tag",
+      ];
 
-      const hasAllImages = requiredEvidence.every((evidenceType) =>
-        normalizedMedia.some(
-          (m) =>
-            m.evidenceType === evidenceType &&
-            m.resourceType === "image" &&
-            m.url
-        )
-      );
+      const hasAllImages =
+        requiredEvidence.every(
+          (evidenceType) =>
+            normalizedMedia.some(
+              (item) =>
+                item.evidenceType ===
+                evidenceType &&
+                item.resourceType ===
+                "image" &&
+                item.url
+            )
+        );
 
       if (!hasAllImages) {
         return badRequest(
@@ -256,12 +315,15 @@ export const createRma = async (req, res) => {
         );
       }
 
-      // Keep exactly one image of each required type
-      const orderedMedia = requiredEvidence.map((evidenceType) =>
-        normalizedMedia.find(
-          (m) => m.evidenceType === evidenceType
-        )
-      );
+      const orderedMedia =
+        requiredEvidence.map(
+          (evidenceType) =>
+            normalizedMedia.find(
+              (item) =>
+                item.evidenceType ===
+                evidenceType
+            )
+        );
 
       normalizedMedia.splice(
         0,
@@ -270,13 +332,20 @@ export const createRma = async (req, res) => {
       );
     }
 
-    const order = await Order.findById(orderId);
+    const order =
+      await Order.findById(orderId);
 
     if (!order) {
-      return notFound(res, "Order not found");
+      return notFound(
+        res,
+        "Order not found"
+      );
     }
 
-    if (order.fulfillmentStatus !== "delivered") {
+    if (
+      order.fulfillmentStatus !==
+      "delivered"
+    ) {
       return badRequest(
         res,
         "Return/Exchange allowed only for delivered orders"
@@ -285,62 +354,78 @@ export const createRma = async (req, res) => {
 
     /* ============================================================
        DELIVERY DATE + RMA WINDOW
+       Admin exception bypasses date validation
     ============================================================ */
 
     const deliveredAt =
-      order?.fulfillmentDates?.deliveredAt ||
+      order?.fulfillmentDates
+        ?.deliveredAt ||
       order?.shipment?.deliveredAt ||
       order?.trackingDetails?.deliveredAt;
 
-    if (!deliveredAt) {
-      return badRequest(
-        res,
-        "Delivery date missing. Cannot create RMA."
-      );
-    }
+    if (!isAdminException) {
+      if (!deliveredAt) {
+        return badRequest(
+          res,
+          "Delivery date missing. Cannot create RMA."
+        );
+      }
 
-    const deliveredTime = new Date(deliveredAt).getTime();
+      const deliveredTime =
+        new Date(deliveredAt).getTime();
 
-    if (!Number.isFinite(deliveredTime)) {
-      return badRequest(
-        res,
-        "Invalid delivery date. Cannot create RMA."
-      );
-    }
+      if (
+        !Number.isFinite(deliveredTime)
+      ) {
+        return badRequest(
+          res,
+          "Invalid delivery date. Cannot create RMA."
+        );
+      }
 
-    const now = Date.now();
+      const now = Date.now();
 
-    if (deliveredTime > now) {
-      return badRequest(
-        res,
-        "Invalid delivery date. Delivery date cannot be in the future."
-      );
-    }
+      if (deliveredTime > now) {
+        return badRequest(
+          res,
+          "Invalid delivery date. Delivery date cannot be in the future."
+        );
+      }
 
-    const expiresAt =
-      deliveredTime +
-      RMA_POLICY.windowDays * 24 * 60 * 60 * 1000;
+      const expiresAt =
+        deliveredTime +
+        RMA_POLICY.windowDays *
+        24 *
+        60 *
+        60 *
+        1000;
 
-    if (now > expiresAt) {
-      return badRequest(
-        res,
-        `Return/Exchange window expired. Allowed within ${RMA_POLICY.windowDays} days.`
-      );
+      if (now > expiresAt) {
+        return badRequest(
+          res,
+          `Return/Exchange window expired. Allowed within ${RMA_POLICY.windowDays} days.`
+        );
+      }
     }
 
     /* ============================================================
        VALIDATE ITEMS
     ============================================================ */
 
-    const remaining = computeRemainingQtyByLineId(order);
+    const remaining =
+      computeRemainingQtyByLineId(order);
 
-    for (const ri of items) {
+    for (const item of items) {
       const lineId = String(
-        ri?.orderLineId || ""
+        item?.orderLineId || ""
       ).trim();
 
-      const qty = Number(ri?.quantity || 0);
-      const rem = remaining.get(lineId);
+      const quantity = Number(
+        item?.quantity || 0
+      );
+
+      const remainingQuantity =
+        remaining.get(lineId);
 
       if (!lineId) {
         return badRequest(
@@ -349,21 +434,26 @@ export const createRma = async (req, res) => {
         );
       }
 
-      if (rem == null) {
+      if (remainingQuantity == null) {
         return badRequest(
           res,
           `Invalid orderLineId: ${lineId}`
         );
       }
 
-      if (!Number.isFinite(qty) || qty < 1) {
+      if (
+        !Number.isFinite(quantity) ||
+        quantity < 1
+      ) {
         return badRequest(
           res,
           "Invalid RMA quantity"
         );
       }
 
-      if (qty > rem) {
+      if (
+        quantity > remainingQuantity
+      ) {
         return badRequest(
           res,
           `Qty exceeds remaining for lineId: ${lineId}`
@@ -372,7 +462,10 @@ export const createRma = async (req, res) => {
     }
 
     const rmaItemsSnapshots =
-      buildRmaItemsSnapshots(order, items);
+      buildRmaItemsSnapshots(
+        order,
+        items
+      );
 
     let fee = {
       amount: 0,
@@ -387,10 +480,11 @@ export const createRma = async (req, res) => {
     ============================================================ */
 
     if (type === "exchange") {
-      const ex = exchangeTo || {};
+      const exchange =
+        exchangeTo || {};
 
       const productId = String(
-        ex?.productId || ""
+        exchange?.productId || ""
       ).trim();
 
       if (!isObjectId(productId)) {
@@ -400,72 +494,93 @@ export const createRma = async (req, res) => {
         );
       }
 
-      let resolvedVariantId = String(
-        ex?.variantId || ""
-      ).trim();
+      let resolvedVariantId =
+        String(
+          exchange?.variantId || ""
+        ).trim();
 
-      let resolvedVariantSku = String(
-        ex?.variantSku || ""
-      ).trim();
+      let resolvedVariantSku =
+        String(
+          exchange?.variantSku || ""
+        ).trim();
 
-      const attrs = Array.isArray(ex?.attributes)
-        ? ex.attributes
-        : [];
+      const attributes =
+        Array.isArray(
+          exchange?.attributes
+        )
+          ? exchange.attributes
+          : [];
 
-      const wanted = normalizeWantedAttrs(attrs);
+      const wantedAttributes =
+        normalizeWantedAttrs(
+          attributes
+        );
 
-      if (!wanted.size) {
+      if (!wantedAttributes.size) {
         return badRequest(
           res,
           "exchangeTo.attributes missing size for exchange"
         );
       }
 
-      if (!isObjectId(resolvedVariantId)) {
-        const prod = await Product.findById(productId)
-          .select("variants")
-          .lean();
+      if (
+        !isObjectId(resolvedVariantId)
+      ) {
+        const product =
+          await Product.findById(
+            productId
+          )
+            .select("variants")
+            .lean();
 
-        if (!prod) {
+        if (!product) {
           return notFound(
             res,
             "Exchange product not found"
           );
         }
 
-        const matched = findVariantByAttrs(
-          prod?.variants || [],
-          wanted
-        );
+        const matchedVariant =
+          findVariantByAttrs(
+            product?.variants || [],
+            wantedAttributes
+          );
 
-        if (!matched?._id) {
+        if (!matchedVariant?._id) {
           return badRequest(
             res,
             "No matching variant found for exchangeTo.attributes"
           );
         }
 
-        resolvedVariantId =
-          String(matched._id);
+        resolvedVariantId = String(
+          matchedVariant._id
+        );
 
-        if (matched?.sku) {
+        if (matchedVariant?.sku) {
           resolvedVariantSku =
-            String(matched.sku);
+            String(
+              matchedVariant.sku
+            );
         }
       }
 
-      if (!isObjectId(resolvedVariantId)) {
+      if (
+        !isObjectId(resolvedVariantId)
+      ) {
         return badRequest(
           res,
           "exchangeTo.variantId missing for exchange"
         );
       }
 
-      const prevExchanges =
+      const previousExchanges =
         countPreviousExchanges(order);
 
       const amount =
-        computeExchangeFee(prevExchanges);
+        computeExchangeFee(
+          previousExchanges
+        );
 
       fee = {
         amount,
@@ -478,10 +593,14 @@ export const createRma = async (req, res) => {
 
       exchangeRequest = {
         productId,
-        variantId: resolvedVariantId,
-        variantSku: resolvedVariantSku,
-        attributes: attrs,
-        note: String(ex?.note || ""),
+        variantId:
+          resolvedVariantId,
+        variantSku:
+          resolvedVariantSku,
+        attributes,
+        note: String(
+          exchange?.note || ""
+        ).trim(),
       };
     }
 
@@ -489,27 +608,62 @@ export const createRma = async (req, res) => {
        CREATE RMA
     ============================================================ */
 
-    const rmaNumber = makeRmaNumber();
+    const rmaNumber =
+      makeRmaNumber();
 
-    order.rmas = order.rmas || [];
+    order.rmas =
+      order.rmas || [];
 
     order.rmas.push({
       rmaNumber,
       type,
       reason,
-      customerNote,
 
-      items: rmaItemsSnapshots,
+      customerNote: String(
+        customerNote || ""
+      ).trim(),
 
-      // ✅ SAVE QC IMAGES
-      media: normalizedMedia,
+      adminNote: isAdminCreation
+        ? String(
+          adminNote || ""
+        ).trim()
+        : "",
+
+      allowException:
+        isAdminException,
+
+      exceptionReason:
+        isAdminException
+          ? String(
+            exceptionReason || ""
+          ).trim()
+          : "",
+
+      exceptionAllowedAt:
+        isAdminException
+          ? new Date()
+          : null,
+
+      exceptionAllowedBy:
+        isAdminException &&
+          isObjectId(req.user?._id)
+          ? req.user._id
+          : null,
+
+      items:
+        rmaItemsSnapshots,
+
+      media:
+        normalizedMedia,
 
       status: "requested",
       resolution: "pending",
 
       isApproved: false,
       isFulfilled: false,
-      isExchangeOrderCreated: false,
+
+      isExchangeOrderCreated:
+        false,
 
       fee,
       exchangeRequest,
@@ -523,13 +677,27 @@ export const createRma = async (req, res) => {
     await order.save();
 
     const created =
-      order.rmas[order.rmas.length - 1];
+      order.rmas[
+      order.rmas.length - 1
+      ];
 
-    console.log("✅ [CREATE RMA] Created:", {
-      orderNumber: order.orderNumber,
-      rmaNumber: created?.rmaNumber,
-      mediaCount: created?.media?.length || 0,
-    });
+    console.log(
+      "✅ [CREATE RMA] Created:",
+      {
+        orderNumber:
+          order.orderNumber,
+
+        rmaNumber:
+          created?.rmaNumber,
+
+        isAdminCreation,
+        isAdminException,
+
+        mediaCount:
+          created?.media
+            ?.length || 0,
+      }
+    );
 
     /* ============================================================
        EMAIL
@@ -541,31 +709,82 @@ export const createRma = async (req, res) => {
         rma: created,
         policy: RMA_POLICY,
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
         "⚠️ [CREATE RMA] triggerRmaEmails failed:",
-        e?.message || e
+        error?.message || error
       );
     }
 
-    return res.status(201).json({
-      success: true,
-      message: "RMA created",
-      rma: created,
-      orderId: order._id,
-      order,
-      policy: RMA_POLICY,
-    });
-  } catch (err) {
+    return res
+      .status(201)
+      .json({
+        success: true,
+
+        message:
+          isAdminException
+            ? "Exception RMA created"
+            : "RMA created",
+
+        rma: created,
+        orderId: order._id,
+        order,
+        policy: RMA_POLICY,
+      });
+  } catch (error) {
     console.error(
       "❌ Create RMA Error:",
-      err
+      error
+    );
+
+    return res
+      .status(500)
+      .json({
+        success: false,
+        message:
+          error?.message ||
+          "Server error",
+      });
+  }
+};
+
+/* ============================================================
+   ✅ CREATE RMA (ADMIN — PHOTOS OPTIONAL)
+   Supports both return and exchange
+============================================================ */
+/* ============================================================
+   ✅ CREATE RMA (ADMIN)
+   - Photos optional
+   - Supports return and exchange
+   - Can bypass RMA date window using allowException
+============================================================ */
+export const createAdminController = async (
+  req,
+  res
+) => {
+  try {
+    const allowException =
+      req.body?.allowException === true;
+
+    /*
+     * Internal server flags.
+     * Customer cannot enable these through normal createRma route.
+     */
+    req.isAdminRmaCreation = true;
+    req.allowRmaException = allowException;
+
+    return await createRma(req, res);
+  } catch (error) {
+    console.error(
+      "❌ Create Admin RMA Error:",
+      error
     );
 
     return res.status(500).json({
       success: false,
       message:
-        err?.message || "Server error",
+        error?.message ||
+        "Unable to create admin RMA",
     });
   }
 };
@@ -1527,8 +1746,8 @@ export const approveRma = async (req, res) => {
     }
 
     const rma = (order.rmas || []).find(
-      (r) =>
-        String(r?.rmaNumber) ===
+      (item) =>
+        String(item?.rmaNumber) ===
         String(rmaNumber)
     );
 
@@ -1554,10 +1773,7 @@ export const approveRma = async (req, res) => {
       );
     }
 
-    /* ========================================================
-       1. APPROVE RMA
-    ======================================================== */
-
+    /* Approve RMA only */
     if (rma.isApproved !== true) {
       rma.isApproved = true;
       rma.status = "approved";
@@ -1573,170 +1789,7 @@ export const approveRma = async (req, res) => {
       await order.save();
     }
 
-    /* ========================================================
-       2. CREATE REVERSE PICKUP
-       BOTH RETURN + EXCHANGE
-    ======================================================== */
-
-    let pickupResult = {
-      success: false,
-      alreadyCreated: false,
-    };
-
-    const alreadyBooked =
-      rma?.reverseShipment?.orderId ||
-      rma?.reverseShipment?.shipmentId ||
-      rma?.reverseShipment?.awb;
-
-    if (alreadyBooked) {
-      pickupResult = {
-        success: true,
-        alreadyCreated: true,
-        awb: rma?.reverseShipment?.awb || "",
-      };
-    } else {
-      try {
-        const payload =
-          buildReverseShiprocketPayload({
-            order,
-            rma,
-          });
-
-        // ✅ QC OFF
-        payload.order_items = (
-          payload.order_items || []
-        ).map(
-          ({
-            qc_enable,
-            qc_product_name,
-            qc_brand,
-            qc_product_image,
-            ...item
-          }) => item
-        );
-
-        const result =
-          await createReturnOrder(payload);
-
-        const reverseOrderId = String(
-          result?.order_id ||
-          result?.id ||
-          ""
-        );
-
-        const shipmentId = String(
-          result?.shipment_id ||
-          result?.shipment?.id ||
-          ""
-        );
-
-        const awb = String(
-          result?.awb_code ||
-          result?.awb ||
-          result?.shipment?.awb_code ||
-          ""
-        );
-
-        if (!reverseOrderId && !shipmentId) {
-          throw new Error(
-            result?.message ||
-            result?.error ||
-            "Reverse pickup creation failed"
-          );
-        }
-
-        const now = new Date();
-
-        rma.reverseShipment =
-          rma.reverseShipment || {};
-
-        rma.reverseShipment.provider =
-          "shiprocket";
-
-        rma.reverseShipment.orderId =
-          reverseOrderId;
-
-        rma.reverseShipment.shipmentId =
-          shipmentId;
-
-        rma.reverseShipment.awb = awb;
-
-        rma.reverseShipment.courierName =
-          String(
-            result?.courier_name ||
-            result?.courier ||
-            ""
-          );
-
-        rma.reverseShipment.trackingUrl =
-          String(
-            result?.tracking_url || ""
-          );
-
-        rma.reverseShipment.status =
-          awb
-            ? "pickup_scheduled"
-            : "return_order_created";
-
-        rma.reverseShipment.pickupScheduledAt =
-          awb ? now : null;
-
-        rma.reverseShipment.lastSyncedAt = now;
-
-        if (awb) {
-          rma.status = "pickup_scheduled";
-        }
-
-        order.markModified("rmas");
-        await order.save();
-
-        pickupResult = {
-          success: true,
-          alreadyCreated: false,
-          orderId: reverseOrderId,
-          shipmentId,
-          awb,
-        };
-      } catch (error) {
-        console.error(
-          "⚠️ Reverse pickup creation failed:",
-          error?.response?.data ||
-          error?.message ||
-          error
-        );
-
-        rma.reverseShipment =
-          rma.reverseShipment || {};
-
-        rma.reverseShipment.status =
-          "booking_failed";
-
-        rma.reverseShipment.bookingError = {
-          step: "create_return_order",
-          message:
-            error?.response?.data?.message ||
-            error?.message ||
-            "Reverse pickup failed",
-          occurredAt: new Date(),
-        };
-
-        order.markModified("rmas");
-        await order.save();
-
-        pickupResult = {
-          success: false,
-          error:
-            error?.response?.data?.message ||
-            error?.message ||
-            "Reverse pickup failed",
-        };
-      }
-    }
-
-    /* ========================================================
-       3. EXCHANGE ONLY → CREATE -E ORDER
-    ======================================================== */
-
+    /* Exchange only: create replacement order */
     let exchangeOrder = null;
     let exchangeOrderError = null;
 
@@ -1749,29 +1802,19 @@ export const approveRma = async (req, res) => {
           await createExchangeOrderFromRmaInternal({
             orderId: order._id,
             rmaNumber: rma.rmaNumber,
-            adminId:
-              req.user?._id || "admin",
+            adminId: req.user?._id || "admin",
           });
-
-        console.log(
-          "✅ Exchange replacement created:",
-          exchangeOrder?.orderNumber
-        );
       } catch (error) {
         exchangeOrderError =
           error?.message ||
           "Exchange order creation failed";
 
         console.error(
-          "⚠️ Exchange order creation failed:",
+          "Exchange order creation failed:",
           error
         );
       }
     }
-
-    /* ========================================================
-       4. RETURN DOES NOTHING ELSE
-    ======================================================== */
 
     const freshOrder = await Order.findById(
       order._id
@@ -1780,8 +1823,8 @@ export const approveRma = async (req, res) => {
     const freshRma = (
       freshOrder?.rmas || []
     ).find(
-      (x) =>
-        String(x?.rmaNumber) ===
+      (item) =>
+        String(item?.rmaNumber) ===
         String(rmaNumber)
     );
 
@@ -1793,40 +1836,31 @@ export const approveRma = async (req, res) => {
       });
     } catch (error) {
       console.error(
-        "⚠️ RMA approval email failed:",
+        "RMA approval email failed:",
         error?.message || error
       );
     }
 
     return res.status(200).json({
       success: true,
-
       message:
         rma.type === "exchange"
           ? "Exchange RMA approved"
           : "Return RMA approved",
-
       type: rma.type,
-
       rma: freshRma,
-
-      reversePickup: pickupResult,
-
+      pickupRequired: true,
       exchangeOrder:
         rma.type === "exchange"
           ? exchangeOrder
           : null,
-
       exchangeOrderError:
         rma.type === "exchange"
           ? exchangeOrderError
           : null,
     });
   } catch (error) {
-    console.error(
-      "❌ Approve RMA Error:",
-      error
-    );
+    console.error("Approve RMA Error:", error);
 
     return res.status(500).json({
       success: false,

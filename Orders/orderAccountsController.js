@@ -477,28 +477,53 @@ const getResolvedCouponExpr = () => ({
   },
 });
 
-const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
+const buildSalesBasePipeline = ({
+  month,
+  search,
+  startDate,
+  endDate,
+}) => {
   const pipeline = [
     {
       $addFields: {
-        deliveredAtResolved: getDeliveredAtExpr(),
-        salesStatusDateResolved: getSalesStatusDateExpr(),
+        deliveredAtResolved:
+          getDeliveredAtExpr(),
+
+        salesStatusDateResolved:
+          getSalesStatusDateExpr(),
       },
     },
+
     {
       $match: {
-        paymentMethod: { $ne: "exchange" },
-        deliveredAtResolved: { $type: "date" },
+        paymentMethod: {
+          $ne: "exchange",
+        },
+
+        deliveredAtResolved: {
+          $type: "date",
+        },
       },
     },
   ];
 
+  /* =========================================================
+     DATE FILTERS
+  ========================================================= */
+
   if (month) {
-    const range = getMonthRangeUTCFromISTMonth(month);
+    const range =
+      getMonthRangeUTCFromISTMonth(
+        month
+      );
+
     if (range) {
       pipeline.push({
         $match: {
-          deliveredAtResolved: { $gte: range.startUTC, $lt: range.endUTC },
+          deliveredAtResolved: {
+            $gte: range.startUTC,
+            $lt: range.endUTC,
+          },
         },
       });
     }
@@ -506,22 +531,45 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
 
   if (startDate || endDate) {
     const deliveredDateMatch = {};
-    if (startDate)
-      deliveredDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
-    if (endDate)
-      deliveredDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
+
+    if (startDate) {
+      deliveredDateMatch.$gte =
+        new Date(
+          `${startDate}T00:00:00.000Z`
+        );
+    }
+
+    if (endDate) {
+      deliveredDateMatch.$lte =
+        new Date(
+          `${endDate}T23:59:59.999Z`
+        );
+    }
 
     pipeline.push({
-      $match: { deliveredAtResolved: deliveredDateMatch },
+      $match: {
+        deliveredAtResolved:
+          deliveredDateMatch,
+      },
     });
   }
 
   pipeline.push(
+    /* =========================================================
+       ORDER-LEVEL VALUES
+    ========================================================= */
+
     {
       $addFields: {
-        customerNameResolved: getResolvedCustomerNameExpr(),
-        customerStateResolved: getResolvedStateExpr(),
-        couponCodeResolved: getResolvedCouponExpr(),
+        customerNameResolved:
+          getResolvedCustomerNameExpr(),
+
+        customerStateResolved:
+          getResolvedStateExpr(),
+
+        couponCodeResolved:
+          getResolvedCouponExpr(),
+
         courierNameResolved: {
           $ifNull: [
             "$shipment.courierName",
@@ -530,74 +578,15 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
                 "$shipment.awbData.courier_name",
                 {
                   $ifNull: [
-                    "$shipment.shiprocket.courier_name",
-                    { $ifNull: ["$courierName", ""] },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-        orderDiscountResolved: { $ifNull: ["$discount", 0] },
-        orderTotalResolved: { $ifNull: ["$finalPayable", 0] },
-        orderSubtotalResolved: {
-          $let: {
-            vars: {
-              itemsArray: { $cond: [{ $isArray: "$items" }, "$items", []] },
-            },
-            in: {
-              $ifNull: [
-                "$subtotal",
-                {
-                  $ifNull: [
-                    "$subTotal",
+                    "$shipment.shiprocket.courierName",
                     {
                       $ifNull: [
-                        "$cartTotal",
+                        "$shipment.shiprocket.courier_name",
                         {
-                          $sum: {
-                            $map: {
-                              input: "$$itemsArray",
-                              as: "it",
-                              in: {
-                                $multiply: [
-                                  {
-                                    $toDouble: {
-                                      $ifNull: [
-                                        "$$it.finalPrice",
-                                        {
-                                          $ifNull: [
-                                            "$$it.price",
-                                            {
-                                              $ifNull: [
-                                                "$$it.sellingPrice",
-                                                {
-                                                  $ifNull: [
-                                                    "$$it.unitPrice",
-                                                    "$$it.mrp",
-                                                  ],
-                                                },
-                                              ],
-                                            },
-                                          ],
-                                        },
-                                      ],
-                                    },
-                                  },
-                                  {
-                                    $max: [
-                                      1,
-                                      {
-                                        $toDouble: {
-                                          $ifNull: ["$$it.quantity", 1],
-                                        },
-                                      },
-                                    ],
-                                  },
-                                ],
-                              },
-                            },
-                          },
+                          $ifNull: [
+                            "$courierName",
+                            "",
+                          ],
                         },
                       ],
                     },
@@ -605,44 +594,223 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
                 },
               ],
             },
+          ],
+        },
+
+        orderDiscountResolved: {
+          $toDouble: {
+            $ifNull: [
+              "$discount",
+              0,
+            ],
+          },
+        },
+
+        orderTotalResolved: {
+          $toDouble: {
+            $ifNull: [
+              "$finalPayable",
+              0,
+            ],
+          },
+        },
+
+        orderSubtotalResolved: {
+          $let: {
+            vars: {
+              itemsArray: {
+                $cond: [
+                  {
+                    $isArray:
+                      "$items",
+                  },
+                  "$items",
+                  [],
+                ],
+              },
+            },
+
+            in: {
+              $toDouble: {
+                $ifNull: [
+                  "$subtotal",
+                  {
+                    $ifNull: [
+                      "$subTotal",
+                      {
+                        $ifNull: [
+                          "$cartTotal",
+                          {
+                            $sum: {
+                              $map: {
+                                input:
+                                  "$$itemsArray",
+
+                                as: "it",
+
+                                in: {
+                                  $multiply:
+                                    [
+                                      {
+                                        $toDouble:
+                                        {
+                                          $cond:
+                                            [
+                                              {
+                                                $gt:
+                                                  [
+                                                    {
+                                                      $toDouble:
+                                                      {
+                                                        $ifNull:
+                                                          [
+                                                            "$$it.originalPrice",
+                                                            0,
+                                                          ],
+                                                      },
+                                                    },
+                                                    0,
+                                                  ],
+                                              },
+
+                                              "$$it.originalPrice",
+
+                                              {
+                                                $ifNull:
+                                                  [
+                                                    "$$it.finalPrice",
+                                                    {
+                                                      $ifNull:
+                                                        [
+                                                          "$$it.price",
+                                                          {
+                                                            $ifNull:
+                                                              [
+                                                                "$$it.sellingPrice",
+                                                                {
+                                                                  $ifNull:
+                                                                    [
+                                                                      "$$it.unitPrice",
+                                                                      "$$it.mrp",
+                                                                    ],
+                                                                },
+                                                              ],
+                                                          },
+                                                        ],
+                                                    },
+                                                  ],
+                                              },
+                                            ],
+                                        },
+                                      },
+
+                                      {
+                                        $max:
+                                          [
+                                            1,
+                                            {
+                                              $toDouble:
+                                              {
+                                                $ifNull:
+                                                  [
+                                                    "$$it.quantity",
+                                                    1,
+                                                  ],
+                                              },
+                                            },
+                                          ],
+                                      },
+                                    ],
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
           },
         },
       },
     },
+
+    /* =========================================================
+       UNWIND PRODUCTS
+    ========================================================= */
+
     {
       $unwind: {
         path: "$items",
-        preserveNullAndEmptyArrays: false,
+        preserveNullAndEmptyArrays:
+          false,
       },
     },
+
+    /* =========================================================
+       PRODUCT VALUES
+    ========================================================= */
+
     {
       $addFields: {
         itemQty: {
-          $max: [1, { $toDouble: { $ifNull: ["$items.quantity", 1] } }],
+          $max: [
+            1,
+            {
+              $toDouble: {
+                $ifNull: [
+                  "$items.quantity",
+                  1,
+                ],
+              },
+            },
+          ],
         },
+
         itemSize: {
           $ifNull: [
             "$items.selectedSize",
-            { $ifNull: ["$items.size", "$items.variant.size"] },
+            {
+              $ifNull: [
+                "$items.size",
+                "$items.variant.size",
+              ],
+            },
           ],
         },
+
         itemHsn: {
           $ifNull: [
             "$items.hsnCode",
             {
               $ifNull: [
                 "$items.hsn",
-                { $ifNull: ["$items.taxInfo.hsnCode", DEFAULT_HSN] },
+                {
+                  $ifNull: [
+                    "$items.taxInfo.hsnCode",
+                    DEFAULT_HSN,
+                  ],
+                },
               ],
             },
           ],
         },
+
         itemProductType: {
           $ifNull: [
-            "$items.productModel",
-            { $ifNull: ["$items.productType", "Product"] },
+            "$items.productSnapshot.productType",
+            {
+              $ifNull: [
+                "$items.productModel",
+                "Product",
+              ],
+            },
           ],
         },
+
+        // Final discounted unit price
         itemPriceIncl: {
           $toDouble: {
             $ifNull: [
@@ -653,7 +821,12 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
                   {
                     $ifNull: [
                       "$items.sellingPrice",
-                      { $ifNull: ["$items.unitPrice", "$items.mrp"] },
+                      {
+                        $ifNull: [
+                          "$items.unitPrice",
+                          "$items.mrp",
+                        ],
+                      },
                     ],
                   },
                 ],
@@ -661,73 +834,299 @@ const buildSalesBasePipeline = ({ month, search, startDate, endDate }) => {
             ],
           },
         },
-      },
-    },
-    {
-      $addFields: {
-        itemGrossIncl: {
-          $multiply: [{ $ifNull: ["$itemPriceIncl", 0] }, "$itemQty"],
-        },
-      },
-    },
-    {
-      $addFields: {
-        allocatedDiscount: {
+
+        // Original unit price before discount
+        itemOriginalPriceIncl: {
           $cond: [
-            { $gt: ["$orderSubtotalResolved", 0] },
             {
-              $multiply: [
-                { $divide: ["$itemGrossIncl", "$orderSubtotalResolved"] },
-                "$orderDiscountResolved",
+              $gt: [
+                {
+                  $toDouble: {
+                    $ifNull: [
+                      "$items.originalPrice",
+                      0,
+                    ],
+                  },
+                },
+                0,
               ],
             },
-            0,
+
+            {
+              $toDouble:
+                "$items.originalPrice",
+            },
+
+            {
+              $toDouble: {
+                $ifNull: [
+                  "$items.finalPrice",
+                  {
+                    $ifNull: [
+                      "$items.price",
+                      0,
+                    ],
+                  },
+                ],
+              },
+            },
           ],
         },
-      },
-    },
-    {
-      $addFields: {
-        netLine: {
-          $max: [0, { $subtract: ["$itemGrossIncl", "$allocatedDiscount"] }],
-        },
-      },
-    },
-    {
-      $addFields: {
-        taxableValue: { $divide: ["$netLine", 1 + SALES_TAX_RATE] },
-        taxAmount: {
-          $subtract: [
-            "$netLine",
-            { $divide: ["$netLine", 1 + SALES_TAX_RATE] },
-          ],
-        },
-        deliveredMonth: {
-          $dateToString: {
-            format: "%Y-%m",
-            date: "$deliveredAtResolved",
-            timezone: IST,
+
+        itemStoredDiscount: {
+          $toDouble: {
+            $ifNull: [
+              "$items.discountAmount",
+              0,
+            ],
           },
         },
       },
     },
+
+    /* =========================================================
+       LINE TOTALS
+    ========================================================= */
+
+    {
+      $addFields: {
+        itemGrossIncl: {
+          $multiply: [
+            "$itemPriceIncl",
+            "$itemQty",
+          ],
+        },
+
+        itemOriginalGrossIncl: {
+          $multiply: [
+            "$itemOriginalPriceIncl",
+            "$itemQty",
+          ],
+        },
+      },
+    },
+
+    /* =========================================================
+       EMBEDDED DISCOUNT
+
+       If item.price is already discounted:
+       original gross - final gross gives actual discount.
+    ========================================================= */
+
+    {
+      $addFields: {
+        embeddedDiscount: {
+          $max: [
+            0,
+            "$itemStoredDiscount",
+            {
+              $subtract: [
+                "$itemOriginalGrossIncl",
+                "$itemGrossIncl",
+              ],
+            },
+          ],
+        },
+      },
+    },
+
+    /* =========================================================
+       FINAL DISCOUNT
+
+       New orders:
+       Use embedded line discount.
+
+       Legacy orders:
+       Fall back to proportional order discount.
+    ========================================================= */
+
+    {
+      $addFields: {
+        allocatedDiscount: {
+          $cond: [
+            {
+              $gt: [
+                "$embeddedDiscount",
+                0,
+              ],
+            },
+
+            "$embeddedDiscount",
+
+            {
+              $cond: [
+                {
+                  $gt: [
+                    "$orderSubtotalResolved",
+                    0,
+                  ],
+                },
+
+                {
+                  $multiply: [
+                    {
+                      $divide: [
+                        "$itemGrossIncl",
+                        "$orderSubtotalResolved",
+                      ],
+                    },
+
+                    "$orderDiscountResolved",
+                  ],
+                },
+
+                0,
+              ],
+            },
+          ],
+        },
+      },
+    },
+
+    /* =========================================================
+       NET LINE
+
+       Embedded discount means itemGrossIncl is already final.
+       Legacy orders require allocated discount subtraction.
+    ========================================================= */
+
+    {
+      $addFields: {
+        netLine: {
+          $cond: [
+            {
+              $gt: [
+                "$embeddedDiscount",
+                0,
+              ],
+            },
+
+            "$itemGrossIncl",
+
+            {
+              $max: [
+                0,
+                {
+                  $subtract: [
+                    "$itemGrossIncl",
+                    "$allocatedDiscount",
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+
+    /* =========================================================
+       TAX
+    ========================================================= */
+
+    {
+      $addFields: {
+        taxableValue: {
+          $divide: [
+            "$netLine",
+            1 + SALES_TAX_RATE,
+          ],
+        },
+
+        taxAmount: {
+          $subtract: [
+            "$netLine",
+            {
+              $divide: [
+                "$netLine",
+                1 + SALES_TAX_RATE,
+              ],
+            },
+          ],
+        },
+
+        deliveredMonth: {
+          $dateToString: {
+            format: "%Y-%m",
+            date:
+              "$deliveredAtResolved",
+            timezone: IST,
+          },
+        },
+      },
+    }
   );
 
+  /* =========================================================
+     SEARCH
+  ========================================================= */
+
   if (search) {
-    const rx = escapeRegex(search);
+    const rx =
+      escapeRegex(search);
+
     pipeline.push({
       $match: {
         $or: [
-          { orderNumber: { $regex: rx, $options: "i" } },
-          { customerNameResolved: { $regex: rx, $options: "i" } },
-          { customerStateResolved: { $regex: rx, $options: "i" } },
-          { couponCodeResolved: { $regex: rx, $options: "i" } },
-          { itemHsn: { $regex: rx, $options: "i" } },
-          { itemSize: { $regex: rx, $options: "i" } },
-          { itemProductType: { $regex: rx, $options: "i" } },
-          { paymentMethod: { $regex: rx, $options: "i" } },
-          { courierNameResolved: { $regex: rx, $options: "i" } },
-          { fulfillmentStatus: { $regex: rx, $options: "i" } },
+          {
+            orderNumber: {
+              $regex: rx,
+              $options: "i",
+            },
+          },
+          {
+            customerNameResolved: {
+              $regex: rx,
+              $options: "i",
+            },
+          },
+          {
+            customerStateResolved: {
+              $regex: rx,
+              $options: "i",
+            },
+          },
+          {
+            couponCodeResolved: {
+              $regex: rx,
+              $options: "i",
+            },
+          },
+          {
+            itemHsn: {
+              $regex: rx,
+              $options: "i",
+            },
+          },
+          {
+            itemSize: {
+              $regex: rx,
+              $options: "i",
+            },
+          },
+          {
+            itemProductType: {
+              $regex: rx,
+              $options: "i",
+            },
+          },
+          {
+            paymentMethod: {
+              $regex: rx,
+              $options: "i",
+            },
+          },
+          {
+            courierNameResolved: {
+              $regex: rx,
+              $options: "i",
+            },
+          },
+          {
+            fulfillmentStatus: {
+              $regex: rx,
+              $options: "i",
+            },
+          },
         ],
       },
     });
@@ -769,6 +1168,89 @@ const getLedgerCourierExpr = () => ({
       },
     },
     in: { $ifNull: ["$$firstNonEmpty", ""] },
+  },
+});
+
+const getCourierPartnerExpr = () => ({
+  $switch: {
+    branches: [
+      {
+        case: {
+          $and: [
+            {
+              $ne: [
+                { $ifNull: ["$shipment.provider", ""] },
+                "",
+              ],
+            },
+            {
+              $ne: [
+                "$shipment.provider",
+                "unassigned",
+              ],
+            },
+          ],
+        },
+        then: "$shipment.provider",
+      },
+      {
+        case: {
+          $ne: [
+            {
+              $ifNull: [
+                "$shipment.delhivery.waybill",
+                "",
+              ],
+            },
+            "",
+          ],
+        },
+        then: "delhivery",
+      },
+      {
+        case: {
+          $ne: [
+            {
+              $ifNull: [
+                "$shipment.shiprocket.awb",
+                "",
+              ],
+            },
+            "",
+          ],
+        },
+        then: "shiprocket",
+      },
+      {
+        case: {
+          $ne: [
+            {
+              $ifNull: [
+                "$shipment.xpressbees.awb",
+                "",
+              ],
+            },
+            "",
+          ],
+        },
+        then: "xpressbees",
+      },
+      {
+        case: {
+          $ne: [
+            {
+              $ifNull: [
+                "$shipment.eshipz.awb",
+                "",
+              ],
+            },
+            "",
+          ],
+        },
+        then: "eshipz",
+      },
+    ],
+    default: "unassigned",
   },
 });
 
@@ -906,7 +1388,6 @@ const buildSalesResponse = async ({
    SALES LEDGER REPORT
    GET /api/orders/accounts/sales-ledger
 ========================================================= */
-
 const buildSalesLedgerBasePipeline = ({
   month,
   search,
@@ -916,126 +1397,277 @@ const buildSalesLedgerBasePipeline = ({
   const pipeline = [
     {
       $addFields: {
-        deliveredAtResolved: getDeliveredAtExpr(),
-        salesStatusDateResolved: getSalesStatusDateExpr(),
+        deliveredAtResolved:
+          getDeliveredAtExpr(),
+
+        salesStatusDateResolved:
+          getSalesStatusDateExpr(),
+
         orderDateResolved: {
-          $ifNull: ["$orderDate", { $ifNull: ["$createdAt", "$updatedAt"] }],
+          $ifNull: [
+            "$orderDate",
+            {
+              $ifNull: [
+                "$createdAt",
+                "$updatedAt",
+              ],
+            },
+          ],
         },
       },
     },
+
     {
       $match: {
-        paymentMethod: { $ne: "exchange" },
-        deliveredAtResolved: { $type: "date" },
+        paymentMethod: {
+          $ne: "exchange",
+        },
+
+        deliveredAtResolved: {
+          $type: "date",
+        },
       },
     },
   ];
 
+  /* =========================================================
+     DATE FILTERS
+  ========================================================= */
+
   if (month) {
-    const range = getMonthRangeUTCFromISTMonth(month);
+    const range =
+      getMonthRangeUTCFromISTMonth(
+        month
+      );
+
     if (range) {
       pipeline.push({
         $match: {
-          deliveredAtResolved: { $gte: range.startUTC, $lt: range.endUTC },
+          deliveredAtResolved: {
+            $gte: range.startUTC,
+            $lt: range.endUTC,
+          },
         },
       });
     }
   }
 
   if (startDate || endDate) {
-    const deliveredDateMatch = {};
-    if (startDate)
-      deliveredDateMatch.$gte = new Date(`${startDate}T00:00:00.000Z`);
-    if (endDate)
-      deliveredDateMatch.$lte = new Date(`${endDate}T23:59:59.999Z`);
+    const date = {};
+
+    if (startDate) {
+      date.$gte = new Date(
+        `${startDate}T00:00:00.000Z`
+      );
+    }
+
+    if (endDate) {
+      date.$lte = new Date(
+        `${endDate}T23:59:59.999Z`
+      );
+    }
 
     pipeline.push({
-      $match: { deliveredAtResolved: deliveredDateMatch },
+      $match: {
+        deliveredAtResolved: date,
+      },
     });
   }
 
   pipeline.push(
+    /* =========================================================
+       ORDER VALUES
+    ========================================================= */
+
     {
       $addFields: {
-        customerNameResolved: getResolvedCustomerNameExpr(),
-        customerStateResolved: getResolvedStateExpr(),
-        courierNameResolved: getLedgerCourierExpr(),
-        orderDiscountResolved: { $toDouble: { $ifNull: ["$discount", 0] } },
-        orderShippingResolved: { $toDouble: { $ifNull: ["$shippingFee", 0] } },
+        customerNameResolved:
+          getResolvedCustomerNameExpr(),
+
+        customerStateResolved:
+          getResolvedStateExpr(),
+
+        courierNameResolved:
+          getLedgerCourierExpr(),
+
+        courierPartnerResolved:
+          getCourierPartnerExpr(),
+
+        orderDiscountResolved: {
+          $toDouble: {
+            $ifNull: [
+              "$discount",
+              0,
+            ],
+          },
+        },
+
+        orderShippingResolved: {
+          $toDouble: {
+            $ifNull: [
+              "$shippingFee",
+              0,
+            ],
+          },
+        },
+
         orderSubtotalResolved: {
           $let: {
             vars: {
               itemsArray: {
-                $cond: [{ $isArray: "$items" }, "$items", []],
+                $cond: [
+                  {
+                    $isArray: "$items",
+                  },
+                  "$items",
+                  [],
+                ],
               },
             },
+
             in: {
-              $ifNull: [
-                "$subtotal",
-                {
-                  $sum: {
-                    $map: {
-                      input: "$$itemsArray",
-                      as: "it",
-                      in: {
-                        $multiply: [
+              $toDouble: {
+                $ifNull: [
+                  "$subtotal",
+                  {
+                    $ifNull: [
+                      "$subTotal",
+                      {
+                        $ifNull: [
+                          "$cartTotal",
                           {
-                            $toDouble: {
-                              $ifNull: [
-                                "$$it.finalPrice",
-                                {
-                                  $ifNull: [
-                                    "$$it.price",
+                            $sum: {
+                              $map: {
+                                input:
+                                  "$$itemsArray",
+
+                                as: "item",
+
+                                in: {
+                                  $multiply: [
                                     {
-                                      $ifNull: [
-                                        "$$it.sellingPrice",
+                                      $toDouble: {
+                                        $cond: [
+                                          {
+                                            $gt: [
+                                              {
+                                                $toDouble: {
+                                                  $ifNull: [
+                                                    "$$item.originalPrice",
+                                                    0,
+                                                  ],
+                                                },
+                                              },
+                                              0,
+                                            ],
+                                          },
+
+                                          "$$item.originalPrice",
+
+                                          {
+                                            $ifNull: [
+                                              "$$item.finalPrice",
+                                              {
+                                                $ifNull: [
+                                                  "$$item.price",
+                                                  {
+                                                    $ifNull: [
+                                                      "$$item.sellingPrice",
+                                                      {
+                                                        $ifNull: [
+                                                          "$$item.unitPrice",
+                                                          "$$item.mrp",
+                                                        ],
+                                                      },
+                                                    ],
+                                                  },
+                                                ],
+                                              },
+                                            ],
+                                          },
+                                        ],
+                                      },
+                                    },
+
+                                    {
+                                      $max: [
+                                        1,
                                         {
-                                          $ifNull: [
-                                            "$$it.unitPrice",
-                                            "$$it.mrp",
-                                          ],
+                                          $toDouble: {
+                                            $ifNull: [
+                                              "$$item.quantity",
+                                              1,
+                                            ],
+                                          },
                                         },
                                       ],
                                     },
                                   ],
                                 },
-                              ],
+                              },
                             },
-                          },
-                          {
-                            $max: [
-                              1,
-                              { $toDouble: { $ifNull: ["$$it.quantity", 1] } },
-                            ],
                           },
                         ],
                       },
-                    },
+                    ],
                   },
-                },
-              ],
+                ],
+              },
             },
           },
         },
       },
     },
+
+    /* =========================================================
+       UNWIND ITEMS
+    ========================================================= */
+
     {
       $unwind: {
         path: "$items",
-        preserveNullAndEmptyArrays: false,
+        preserveNullAndEmptyArrays:
+          false,
       },
     },
+
+    /* =========================================================
+       ITEM VALUES
+    ========================================================= */
+
     {
       $addFields: {
         itemQty: {
-          $max: [1, { $toDouble: { $ifNull: ["$items.quantity", 1] } }],
+          $max: [
+            1,
+            {
+              $toDouble: {
+                $ifNull: [
+                  "$items.quantity",
+                  1,
+                ],
+              },
+            },
+          ],
         },
+
         itemSize: {
           $ifNull: [
             "$items.selectedSize",
-            { $ifNull: ["$items.size", "$items.variant.size"] },
+            {
+              $ifNull: [
+                "$items.size",
+                {
+                  $ifNull: [
+                    "$items.variant.size",
+                    "",
+                  ],
+                },
+              ],
+            },
           ],
         },
+
         itemHsn: {
           $ifNull: [
             "$items.productSnapshot.hsnCode",
@@ -1045,19 +1677,20 @@ const buildSalesLedgerBasePipeline = ({
                 {
                   $ifNull: [
                     "$items.hsn",
-                    { $ifNull: ["$items.taxInfo.hsnCode", DEFAULT_HSN] },
+                    {
+                      $ifNull: [
+                        "$items.taxInfo.hsnCode",
+                        DEFAULT_HSN,
+                      ],
+                    },
                   ],
                 },
               ],
             },
           ],
         },
-        itemProductType: {
-          $ifNull: [
-            "$items.productSnapshot.productType",
-            { $ifNull: ["$items.productModel", "Product"] },
-          ],
-        },
+
+        // Final discounted unit price
         itemPriceIncl: {
           $toDouble: {
             $ifNull: [
@@ -1068,7 +1701,12 @@ const buildSalesLedgerBasePipeline = ({
                   {
                     $ifNull: [
                       "$items.sellingPrice",
-                      { $ifNull: ["$items.unitPrice", "$items.mrp"] },
+                      {
+                        $ifNull: [
+                          "$items.unitPrice",
+                          "$items.mrp",
+                        ],
+                      },
                     ],
                   },
                 ],
@@ -1076,89 +1714,379 @@ const buildSalesLedgerBasePipeline = ({
             ],
           },
         },
-      },
-    },
-    {
-      $addFields: {
-        itemGrossIncl: {
-          $multiply: ["$itemQty", { $ifNull: ["$itemPriceIncl", 0] }],
+
+        // Original unit price
+        itemOriginalPriceIncl: {
+          $cond: [
+            {
+              $gt: [
+                {
+                  $toDouble: {
+                    $ifNull: [
+                      "$items.originalPrice",
+                      0,
+                    ],
+                  },
+                },
+                0,
+              ],
+            },
+
+            {
+              $toDouble:
+                "$items.originalPrice",
+            },
+
+            {
+              $toDouble: {
+                $ifNull: [
+                  "$items.finalPrice",
+                  {
+                    $ifNull: [
+                      "$items.price",
+                      0,
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+
+        itemStoredDiscount: {
+          $toDouble: {
+            $ifNull: [
+              "$items.discountAmount",
+              0,
+            ],
+          },
         },
       },
     },
+
+    /* =========================================================
+       ITEM TOTALS
+    ========================================================= */
+
+    {
+      $addFields: {
+        itemGrossIncl: {
+          $multiply: [
+            "$itemQty",
+            "$itemPriceIncl",
+          ],
+        },
+
+        itemOriginalGrossIncl: {
+          $multiply: [
+            "$itemQty",
+            "$itemOriginalPriceIncl",
+          ],
+        },
+      },
+    },
+
+    /* =========================================================
+       EMBEDDED DISCOUNT + SHIPPING
+    ========================================================= */
+
+    {
+      $addFields: {
+        embeddedDiscount: {
+          $max: [
+            0,
+            "$itemStoredDiscount",
+            {
+              $subtract: [
+                "$itemOriginalGrossIncl",
+                "$itemGrossIncl",
+              ],
+            },
+          ],
+        },
+
+        shippingCharges: {
+          $cond: [
+            {
+              $gt: [
+                "$orderSubtotalResolved",
+                0,
+              ],
+            },
+
+            {
+              $multiply: [
+                {
+                  $divide: [
+                    "$itemOriginalGrossIncl",
+                    "$orderSubtotalResolved",
+                  ],
+                },
+
+                "$orderShippingResolved",
+              ],
+            },
+
+            0,
+          ],
+        },
+      },
+    },
+
+    /* =========================================================
+       DISCOUNT
+    ========================================================= */
+
     {
       $addFields: {
         totalDiscount: {
           $cond: [
-            { $gt: ["$orderSubtotalResolved", 0] },
             {
-              $multiply: [
-                { $divide: ["$itemGrossIncl", "$orderSubtotalResolved"] },
-                "$orderDiscountResolved",
+              $gt: [
+                "$embeddedDiscount",
+                0,
               ],
             },
-            0,
-          ],
-        },
-        shippingCharges: {
-          $cond: [
-            { $gt: ["$orderSubtotalResolved", 0] },
+
+            "$embeddedDiscount",
+
+            // Legacy order fallback
             {
-              $multiply: [
-                { $divide: ["$itemGrossIncl", "$orderSubtotalResolved"] },
-                "$orderShippingResolved",
+              $cond: [
+                {
+                  $gt: [
+                    "$orderSubtotalResolved",
+                    0,
+                  ],
+                },
+
+                {
+                  $multiply: [
+                    {
+                      $divide: [
+                        "$itemGrossIncl",
+                        "$orderSubtotalResolved",
+                      ],
+                    },
+
+                    "$orderDiscountResolved",
+                  ],
+                },
+
+                0,
               ],
             },
-            0,
           ],
         },
       },
     },
+
+    /* =========================================================
+       NET INCLUSIVE
+    ========================================================= */
+
     {
       $addFields: {
         netInclusive: {
+          $cond: [
+            // Item price already contains discount
+            {
+              $gt: [
+                "$embeddedDiscount",
+                0,
+              ],
+            },
+
+            {
+              $add: [
+                "$itemGrossIncl",
+                "$shippingCharges",
+              ],
+            },
+
+            // Legacy order: subtract allocated discount
+            {
+              $max: [
+                0,
+                {
+                  $subtract: [
+                    {
+                      $add: [
+                        "$itemGrossIncl",
+                        "$shippingCharges",
+                      ],
+                    },
+
+                    "$totalDiscount",
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+
+    /* =========================================================
+       PRODUCT + SHIPPING SPLIT
+    ========================================================= */
+
+    {
+      $addFields: {
+        orderInclusive: {
           $max: [
             0,
             {
               $subtract: [
-                { $add: ["$itemGrossIncl", "$shippingCharges"] },
-                "$totalDiscount",
+                "$netInclusive",
+                "$shippingCharges",
               ],
             },
           ],
         },
-      },
-    },
-    {
-      $addFields: {
-        taxable: { $divide: ["$netInclusive", 1 + SALES_TAX_RATE] },
-        taxAmount: {
-          $subtract: [
-            "$netInclusive",
-            { $divide: ["$netInclusive", 1 + SALES_TAX_RATE] },
+
+        taxRate: {
+          $literal: "5%",
+        },
+
+        paymentType: {
+          $cond: [
+            {
+              $eq: [
+                "$paymentMethod",
+                "cod",
+              ],
+            },
+            "COD",
+            "Prepaid",
           ],
         },
-        taxRate: { $literal: "5%" },
-        paymentType: {
-          $cond: [{ $eq: ["$paymentMethod", "cod"] }, "COD", "Prepaid"],
+      },
+    },
+
+    /* =========================================================
+       TAXABLE VALUES
+    ========================================================= */
+
+    {
+      $addFields: {
+        orderTaxable: {
+          $divide: [
+            "$orderInclusive",
+            1.05,
+          ],
+        },
+
+        shippingTaxable: {
+          $divide: [
+            "$shippingCharges",
+            1.05,
+          ],
         },
       },
     },
+
+    /* =========================================================
+       TAX AMOUNTS
+    ========================================================= */
+
+    {
+      $addFields: {
+        orderTaxAmount: {
+          $subtract: [
+            "$orderInclusive",
+            "$orderTaxable",
+          ],
+        },
+
+        shippingTaxAmount: {
+          $subtract: [
+            "$shippingCharges",
+            "$shippingTaxable",
+          ],
+        },
+      },
+    },
+
+    /* =========================================================
+       TOTAL TAX
+    ========================================================= */
+
+    {
+      $addFields: {
+        taxable: {
+          $add: [
+            "$orderTaxable",
+            "$shippingTaxable",
+          ],
+        },
+
+        totalTaxAmount: {
+          $add: [
+            "$orderTaxAmount",
+            "$shippingTaxAmount",
+          ],
+        },
+
+        // Backward compatibility
+        taxAmount: {
+          $add: [
+            "$orderTaxAmount",
+            "$shippingTaxAmount",
+          ],
+        },
+      },
+    }
   );
 
+  /* =========================================================
+     SEARCH
+  ========================================================= */
+
   if (search) {
-    const rx = escapeRegex(search);
+    const rx =
+      escapeRegex(search);
+
+    const match = {
+      $regex: rx,
+      $options: "i",
+    };
+
     pipeline.push({
       $match: {
         $or: [
-          { orderNumber: { $regex: rx, $options: "i" } },
-          { customerNameResolved: { $regex: rx, $options: "i" } },
-          { customerStateResolved: { $regex: rx, $options: "i" } },
-          { courierNameResolved: { $regex: rx, $options: "i" } },
-          { itemProductType: { $regex: rx, $options: "i" } },
-          { itemHsn: { $regex: rx, $options: "i" } },
-          { itemSize: { $regex: rx, $options: "i" } },
-          { paymentMethod: { $regex: rx, $options: "i" } },
-          { fulfillmentStatus: { $regex: rx, $options: "i" } },
+          {
+            orderNumber: match,
+          },
+          {
+            customerNameResolved:
+              match,
+          },
+          {
+            customerStateResolved:
+              match,
+          },
+          {
+            courierNameResolved:
+              match,
+          },
+          {
+            courierPartnerResolved:
+              match,
+          },
+          {
+            itemHsn: match,
+          },
+          {
+            itemSize: match,
+          },
+          {
+            paymentMethod: match,
+          },
+          {
+            fulfillmentStatus:
+              match,
+          },
         ],
       },
     });
@@ -1176,114 +2104,370 @@ const buildSalesLedgerResponse = async ({
   limit,
 }) => {
   const skip = (page - 1) * limit;
-  const pipeline = buildSalesLedgerBasePipeline({
-    month,
-    search,
-    startDate,
-    endDate,
-  });
 
-  const [countAgg, rowsAgg, totalsAgg] = await Promise.all([
-    Order.aggregate([...pipeline, { $count: "total" }]),
+  const pipeline =
+    buildSalesLedgerBasePipeline({
+      month,
+      search,
+      startDate,
+      endDate,
+    });
 
-    Order.aggregate([
-      ...pipeline,
-      {
-        $sort: { salesStatusDateResolved: -1, orderDateResolved: -1, _id: -1 },
-      },
-      { $skip: skip },
-      { $limit: limit },
-      {
-        $project: {
-          _id: 0,
-          orderId: "$orderNumber",
-          orderDate: "$orderDateResolved",
-          deliveredDate: "$salesStatusDateResolved",
-          fulfillmentStatus: 1,
-          customerName: { $ifNull: ["$customerNameResolved", ""] },
-          state: { $ifNull: ["$customerStateResolved", ""] },
-          paymentType: { $ifNull: ["$paymentType", ""] },
-          courier: { $ifNull: ["$courierNameResolved", ""] },
-          productType: { $ifNull: ["$itemProductType", "Product"] },
-          hsnCode: { $ifNull: ["$itemHsn", DEFAULT_HSN] },
-          size: { $ifNull: ["$itemSize", ""] },
-          qty: { $ifNull: ["$itemQty", 1] },
-          unitInclusiveTax: { $ifNull: ["$itemPriceIncl", 0] },
-          totalDiscount: { $ifNull: ["$totalDiscount", 0] },
-          netInclusive: { $ifNull: ["$netInclusive", 0] },
-          taxable: { $ifNull: ["$taxable", 0] },
-          shippingCharges: { $ifNull: ["$shippingCharges", 0] },
-          taxAmount: { $ifNull: ["$taxAmount", 0] },
-          taxRate: { $ifNull: ["$taxRate", "5%"] },
+  const [countAgg, rowsAgg, totalsAgg] =
+    await Promise.all([
+      Order.aggregate([
+        ...pipeline,
+        { $count: "total" },
+      ]),
+
+      Order.aggregate([
+        ...pipeline,
+
+        {
+          $sort: {
+            salesStatusDateResolved: -1,
+            orderDateResolved: -1,
+            _id: -1,
+          },
         },
-      },
-    ]),
 
-    Order.aggregate([
-      ...pipeline,
-      {
-        $group: {
-          _id: null,
-          rows: { $sum: 1 },
-          ordersSet: { $addToSet: "$_id" },
-          totalDiscount: { $sum: { $ifNull: ["$totalDiscount", 0] } },
-          netInclusive: { $sum: { $ifNull: ["$netInclusive", 0] } },
-          taxable: { $sum: { $ifNull: ["$taxable", 0] } },
-          shippingCharges: { $sum: { $ifNull: ["$shippingCharges", 0] } },
-          taxAmount: { $sum: { $ifNull: ["$taxAmount", 0] } },
-        },
-      },
-      {
-        $project: {
-          _id: 0,
-          rows: 1,
-          orders: { $size: { $ifNull: ["$ordersSet", []] } },
-          totalDiscount: 1,
-          netInclusive: 1,
-          taxable: 1,
-          shippingCharges: 1,
-          taxAmount: 1,
-        },
-      },
-    ]),
-  ]);
+        { $skip: skip },
+        { $limit: limit },
 
-  const totalRows = toNum(countAgg?.[0]?.total, 0);
-  const totalPages = Math.max(1, Math.ceil(totalRows / limit));
-  const totalsDoc = totalsAgg?.[0] || {};
+        {
+          $project: {
+            _id: 0,
+
+            orderId: "$orderNumber",
+            orderDate: "$orderDateResolved",
+            deliveredDate:
+              "$salesStatusDateResolved",
+
+            fulfillmentStatus: 1,
+
+            customerName: {
+              $ifNull: [
+                "$customerNameResolved",
+                "",
+              ],
+            },
+
+            state: {
+              $ifNull: [
+                "$customerStateResolved",
+                "",
+              ],
+            },
+
+            paymentType: {
+              $ifNull: [
+                "$paymentType",
+                "",
+              ],
+            },
+
+            courierPartner: {
+              $ifNull: [
+                "$courierPartnerResolved",
+                "",
+              ],
+            },
+
+            hsnCode: {
+              $ifNull: [
+                "$itemHsn",
+                DEFAULT_HSN,
+              ],
+            },
+
+            size: {
+              $ifNull: [
+                "$itemSize",
+                "",
+              ],
+            },
+
+            qty: {
+              $ifNull: [
+                "$itemQty",
+                1,
+              ],
+            },
+
+            unitInclusiveTax: {
+              $ifNull: [
+                "$itemPriceIncl",
+                0,
+              ],
+            },
+
+            totalDiscount: {
+              $ifNull: [
+                "$totalDiscount",
+                0,
+              ],
+            },
+
+            netInclusive: {
+              $ifNull: [
+                "$netInclusive",
+                0,
+              ],
+            },
+
+            orderTaxable: {
+              $ifNull: [
+                "$orderTaxable",
+                0,
+              ],
+            },
+
+            shippingCharges: {
+              $ifNull: [
+                "$shippingCharges",
+                0,
+              ],
+            },
+
+            shippingTaxable: {
+              $ifNull: [
+                "$shippingTaxable",
+                0,
+              ],
+            },
+
+            taxable: {
+              $ifNull: [
+                "$taxable",
+                0,
+              ],
+            },
+
+            orderTaxAmount: {
+              $ifNull: [
+                "$orderTaxAmount",
+                0,
+              ],
+            },
+
+            shippingTaxAmount: {
+              $ifNull: [
+                "$shippingTaxAmount",
+                0,
+              ],
+            },
+
+            totalTaxAmount: {
+              $ifNull: [
+                "$totalTaxAmount",
+                0,
+              ],
+            },
+
+            taxRate: {
+              $ifNull: [
+                "$taxRate",
+                "5%",
+              ],
+            },
+          },
+        },
+      ]),
+
+      Order.aggregate([
+        ...pipeline,
+
+        {
+          $group: {
+            _id: null,
+
+            rows: { $sum: 1 },
+
+            ordersSet: {
+              $addToSet: "$_id",
+            },
+
+            totalDiscount: {
+              $sum: "$totalDiscount",
+            },
+
+            netInclusive: {
+              $sum: "$netInclusive",
+            },
+
+            orderTaxable: {
+              $sum: "$orderTaxable",
+            },
+
+            shippingCharges: {
+              $sum: "$shippingCharges",
+            },
+
+            shippingTaxable: {
+              $sum: "$shippingTaxable",
+            },
+
+            taxable: {
+              $sum: "$taxable",
+            },
+
+            orderTaxAmount: {
+              $sum: "$orderTaxAmount",
+            },
+
+            shippingTaxAmount: {
+              $sum: "$shippingTaxAmount",
+            },
+
+            totalTaxAmount: {
+              $sum: "$totalTaxAmount",
+            },
+          },
+        },
+
+        {
+          $project: {
+            _id: 0,
+            rows: 1,
+
+            orders: {
+              $size: {
+                $ifNull: [
+                  "$ordersSet",
+                  [],
+                ],
+              },
+            },
+
+            totalDiscount: 1,
+            netInclusive: 1,
+            orderTaxable: 1,
+            shippingCharges: 1,
+            shippingTaxable: 1,
+            taxable: 1,
+            orderTaxAmount: 1,
+            shippingTaxAmount: 1,
+            totalTaxAmount: 1,
+          },
+        },
+      ]),
+    ]);
+
+  const totalRows = toNum(
+    countAgg?.[0]?.total,
+    0
+  );
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(totalRows / limit)
+  );
+
+  const totalsDoc =
+    totalsAgg?.[0] || {};
 
   const rows = Array.isArray(rowsAgg)
     ? rowsAgg.map((row) => ({
-        ...row,
-        qty: toNum(row?.qty, 0),
-        unitInclusiveTax: money(row?.unitInclusiveTax),
-        totalDiscount: money(row?.totalDiscount),
-        netInclusive: money(row?.netInclusive),
-        taxable: money(row?.taxable),
-        shippingCharges: money(row?.shippingCharges),
-        taxAmount: money(row?.taxAmount),
-      }))
+      ...row,
+
+      qty: toNum(row.qty),
+
+      unitInclusiveTax: money(
+        row.unitInclusiveTax
+      ),
+
+      totalDiscount: money(
+        row.totalDiscount
+      ),
+
+      netInclusive: money(
+        row.netInclusive
+      ),
+
+      orderTaxable: money(
+        row.orderTaxable
+      ),
+
+      shippingCharges: money(
+        row.shippingCharges
+      ),
+
+      shippingTaxable: money(
+        row.shippingTaxable
+      ),
+
+      taxable: money(
+        row.taxable
+      ),
+
+      orderTaxAmount: money(
+        row.orderTaxAmount
+      ),
+
+      shippingTaxAmount: money(
+        row.shippingTaxAmount
+      ),
+
+      totalTaxAmount: money(
+        row.totalTaxAmount
+      ),
+    }))
     : [];
 
   return {
     success: true,
     rows,
+
     totals: {
-      rows: toNum(totalsDoc.rows, 0),
-      orders: toNum(totalsDoc.orders, 0),
-      totalDiscount: money(totalsDoc.totalDiscount),
-      netInclusive: money(totalsDoc.netInclusive),
-      taxable: money(totalsDoc.taxable),
-      shippingCharges: money(totalsDoc.shippingCharges),
-      taxAmount: money(totalsDoc.taxAmount),
+      rows: toNum(totalsDoc.rows),
+      orders: toNum(totalsDoc.orders),
+
+      totalDiscount: money(
+        totalsDoc.totalDiscount
+      ),
+
+      netInclusive: money(
+        totalsDoc.netInclusive
+      ),
+
+      orderTaxable: money(
+        totalsDoc.orderTaxable
+      ),
+
+      shippingCharges: money(
+        totalsDoc.shippingCharges
+      ),
+
+      shippingTaxable: money(
+        totalsDoc.shippingTaxable
+      ),
+
+      taxable: money(
+        totalsDoc.taxable
+      ),
+
+      orderTaxAmount: money(
+        totalsDoc.orderTaxAmount
+      ),
+
+      shippingTaxAmount: money(
+        totalsDoc.shippingTaxAmount
+      ),
+
+      totalTaxAmount: money(
+        totalsDoc.totalTaxAmount
+      ),
     },
+
     meta: {
       page,
       limit,
       totalRows,
       totalPages,
-      hasNextPage: page < totalPages,
-      hasPrevPage: page > 1,
+      hasNextPage:
+        page < totalPages,
+      hasPrevPage:
+        page > 1,
       month,
       search,
       startDate,
@@ -1325,23 +2509,82 @@ export const getSalesLedgerReport = async (req, res) => {
   }
 };
 
-export const downloadSalesLedgerCsv = async (req, res) => {
+export const downloadSalesLedgerCsv = async (
+  req,
+  res
+) => {
   try {
-    const month = String(req.query.month || "").trim();
-    const search = String(req.query.search || "").trim();
-    const startDate = String(req.query.startDate || "").trim();
-    const endDate = String(req.query.endDate || "").trim();
+    const month = String(
+      req.query.month || ""
+    ).trim();
 
-    const data = await buildSalesLedgerResponse({
+    const search = String(
+      req.query.search || ""
+    ).trim();
+
+    const startDate = String(
+      req.query.startDate || ""
+    ).trim();
+
+    const endDate = String(
+      req.query.endDate || ""
+    ).trim();
+
+    const filters = {
       month,
       search,
       startDate,
       endDate,
-      page: 1,
       limit: MAX_LIMIT,
-    });
+    };
 
-    const rows = Array.isArray(data?.rows) ? data.rows : [];
+    const first =
+      await buildSalesLedgerResponse({
+        ...filters,
+        page: 1,
+      });
+
+    let rows = Array.isArray(
+      first?.rows
+    )
+      ? [...first.rows]
+      : [];
+
+    const totalPages = Math.max(
+      1,
+      Number(
+        first?.meta?.totalPages || 1
+      )
+    );
+
+    if (totalPages > 1) {
+      const pages =
+        await Promise.all(
+          Array.from(
+            {
+              length:
+                totalPages - 1,
+            },
+            (_, index) =>
+              buildSalesLedgerResponse({
+                ...filters,
+                page: index + 2,
+              })
+          )
+        );
+
+      pages.forEach((pageData) => {
+        if (
+          Array.isArray(
+            pageData?.rows
+          )
+        ) {
+          rows.push(
+            ...pageData.rows
+          );
+        }
+      });
+    }
 
     const header = [
       "Order ID",
@@ -1350,66 +2593,91 @@ export const downloadSalesLedgerCsv = async (req, res) => {
       "Customer Name",
       "State",
       "Payment Type",
-      "Courier",
-      "Product Type",
+      "Courier Partner",
       "HSN Code",
       "Size",
       "Qty",
       "Unit (Inclusive Tax)",
-      "T. Discount",
-      "Net (Inclusive)",
-      "Taxable",
-      "Shipping Charges",
-      "Tax Amount",
+      "Unit (Tax Exclusive)",
+      "Shipping Taxable",
+      "Total Tax",
       "Tax Rate",
     ];
 
-    const escapeCsv = (value) => {
-      const str = String(value ?? "");
-      return `"${str.replace(/"/g, '""')}"`;
-    };
+    const escapeCsv = (value) =>
+      `"${String(
+        value ?? ""
+      ).replace(/"/g, '""')}"`;
 
     const csv = [
       header.join(","),
-      ...rows.map((row) =>
-        [
-          row.orderId,
-          row.orderDate,
-          row.deliveredDate,
-          row.customerName,
-          row.state,
-          row.paymentType,
-          row.courier,
-          row.productType,
-          row.hsnCode,
-          row.size,
-          row.qty,
-          row.unitInclusiveTax,
-          row.totalDiscount,
-          row.netInclusive,
-          row.taxable,
-          row.shippingCharges,
-          row.taxAmount,
-          row.taxRate,
+
+      ...rows.map((row) => {
+        const quantity = Math.max(
+          1,
+          Number(row?.qty || 1)
+        );
+
+        const unitTaxExclusive =
+          Number(
+            row?.orderTaxable || 0
+          ) / quantity;
+
+        return [
+          row?.orderId,
+          row?.orderDate,
+          row?.deliveredDate,
+          row?.customerName,
+          row?.state,
+          row?.paymentType,
+          row?.courierPartner,
+
+          // Enforced common HSN
+          DEFAULT_HSN,
+
+          row?.size,
+          quantity,
+          row?.unitInclusiveTax,
+
+          Number(
+            unitTaxExclusive.toFixed(2)
+          ),
+
+          row?.shippingTaxable,
+          row?.totalTaxAmount,
+          row?.taxRate,
         ]
           .map(escapeCsv)
-          .join(","),
-      ),
+          .join(",");
+      }),
     ].join("\n");
 
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=sales-ledger-${month || "all"}.csv`,
+      "Content-Type",
+      "text/csv; charset=utf-8"
     );
 
-    return res.status(200).send(csv);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=sales-ledger-${month || "all"}.csv`
+    );
+
+    return res
+      .status(200)
+      .send(`\uFEFF${csv}`);
   } catch (error) {
-    console.error("downloadSalesLedgerCsv error:", error);
+    console.error(
+      "downloadSalesLedgerCsv error:",
+      error
+    );
+
     return res.status(500).json({
       success: false,
-      message: "Failed to download sales ledger csv",
-      error: error?.message || "Server error",
+      message:
+        "Failed to download sales ledger csv",
+      error:
+        error?.message ||
+        "Server error",
     });
   }
 };

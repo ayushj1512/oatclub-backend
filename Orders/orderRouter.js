@@ -86,6 +86,7 @@ import {
 
 import {
   createRma,
+  createAdminController,
   getAllRmasAdmin,
   getRmaByNumber,
   getRmasByOrder,
@@ -389,7 +390,13 @@ router.patch("/:id/influencer-order", markOrderAsInfluencer);
 
 router.post("/:id/rma", createRma);
 
+
 router.get("/:id/rma", getRmasByOrder);
+// Admin: create return/exchange RMA without mandatory photos
+router.post(
+  "/:id/rma/admin",
+  createAdminController
+);
 
 router.get("/:id/rma/:rmaNumber", getRmaByNumber);
 

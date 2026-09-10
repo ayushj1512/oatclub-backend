@@ -1,5 +1,6 @@
 import {
   createShipment,
+  createReverseShipment,
   updateShipment,
   cancelShipment,
   fetchWaybills,
@@ -37,6 +38,7 @@ import {
 import Order from "../Orders/Orders.js";
 
 import { PDFDocument } from "pdf-lib";
+
 
 const send = async (
   res,
@@ -625,23 +627,439 @@ export const updateWarehouseController = (
     updateWarehouse(req.body),
   );
 
-export const pickupController = (
-  req,
-  res,
-) => {
-  const {
-    pickupDate,
-    pickupTime,
-    packageCount,
-  } = req.body || {};
+export const pickupController = async (req, res) => {
+  try {
+    const {
+      pickupDate,
+      pickupTime,
+      packageCount = 1,
+    } = req.body;
 
-  return send(
-    res,
-    createPickup({
+    if (!pickupDate || !pickupTime) {
+      return res.status(400).json({
+        success: false,
+        message: "Pickup date and time are required.",
+      });
+    }
+
+    const data = await createPickup({
       pickupDate,
       pickupTime,
       packageCount,
-    }),
-    201,
-  );
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Pickup scheduled successfully.",
+      data,
+    });
+  } catch (error) {
+    const responseData = error.response?.data;
+
+    return res
+      .status(error.response?.status || 500)
+      .json({
+        success: false,
+        message:
+          responseData?.message ||
+          responseData?.error ||
+          error.message ||
+          "Unable to schedule pickup.",
+        data: responseData || null,
+      });
+  }
 };
+
+const findRma = (
+  order,
+  rmaNumber,
+) =>
+  (order?.rmas || []).find(
+    (item) =>
+      String(item?.rmaNumber) ===
+      String(rmaNumber),
+  );
+
+const extractCreatedPackage = (
+  data,
+) => {
+  if (Array.isArray(data?.packages)) {
+    return data.packages[0] || {};
+  }
+
+  if (
+    data?.package &&
+    typeof data.package === "object"
+  ) {
+    return data.package;
+  }
+
+  return {};
+};
+
+const extractReverseWaybill = (
+  data,
+) => {
+  const packageResult =
+    extractCreatedPackage(data);
+
+  return String(
+    packageResult?.waybill ||
+    packageResult?.waybill_no ||
+    packageResult?.wbn ||
+    data?.waybill ||
+    data?.awb ||
+    "",
+  ).trim();
+};
+
+const getReverseStatus = (
+  trackingData,
+) => {
+  const shipment =
+    trackingData?.ShipmentData?.[0]
+      ?.Shipment ||
+    trackingData?.shipment ||
+    {};
+
+  const statusData =
+    shipment?.Status || {};
+
+  const rawStatus = String(
+    statusData?.Status ||
+    statusData?.Instructions ||
+    shipment?.status ||
+    "",
+  ).trim();
+
+  const statusCode = String(
+    statusData?.StatusCode ||
+    statusData?.StatusType ||
+    shipment?.status_code ||
+    "",
+  ).trim();
+
+  const normalized =
+    rawStatus.toLowerCase();
+
+  let status = "pickup_scheduled";
+
+  if (
+    normalized.includes("cancel")
+  ) {
+    status = "cancelled";
+  } else if (
+    normalized.includes("delivered") ||
+    normalized.includes(
+      "returned to client",
+    )
+  ) {
+    status = "received";
+  } else if (
+    normalized.includes(
+      "in transit",
+    ) ||
+    normalized.includes("transit") ||
+    normalized.includes(
+      "dispatched",
+    )
+  ) {
+    status = "in_transit";
+  } else if (
+    normalized.includes("picked") ||
+    normalized.includes(
+      "pickup complete",
+    )
+  ) {
+    status = "picked";
+  }
+
+  return {
+    status,
+    rawStatus,
+    statusCode,
+    shipment,
+  };
+};
+
+export const createReversePickupController = async (
+  req,
+  res,
+) => {
+  try {
+    const order = await Order.findById(
+      req.params.orderId,
+    );
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    const rma = findRma(
+      order,
+      req.params.rmaNumber,
+    );
+
+    if (!rma) {
+      return res.status(404).json({
+        success: false,
+        message: "RMA not found.",
+      });
+    }
+
+    if (rma.reverseShipment?.awb) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Reverse pickup is already booked.",
+      });
+    }
+
+    const data = await createReverseShipment({
+      ...req.body,
+      order: order.toObject(),
+      rma:
+        typeof rma.toObject === "function"
+          ? rma.toObject()
+          : rma,
+    });
+
+    const packageData =
+      extractCreatedPackage(data);
+
+    const waybill =
+      extractReverseWaybill(data);
+
+    if (!waybill) {
+      return res.status(502).json({
+        success: false,
+        message:
+          data?.rmk ||
+          data?.message ||
+          "Delhivery did not return a waybill.",
+        data,
+      });
+    }
+
+    const now = new Date();
+
+    rma.reverseShipment.provider =
+      "delhivery";
+
+    rma.reverseShipment.awb =
+      waybill;
+
+    rma.reverseShipment.orderId =
+      String(
+        packageData?.refnum ||
+        packageData?.reference_number ||
+        req.body?.reference_number ||
+        "",
+      );
+
+    rma.reverseShipment.shipmentId =
+      String(
+        packageData?.shipment_id ||
+        packageData?.id ||
+        "",
+      );
+
+    rma.reverseShipment.courierName =
+      "Delhivery";
+
+    rma.reverseShipment.status =
+      "pickup_scheduled";
+
+    rma.reverseShipment.rawStatus =
+      String(
+        packageData?.status ||
+        data?.status ||
+        "Pickup scheduled",
+      );
+
+    rma.reverseShipment.pickupScheduledAt =
+      now;
+
+    rma.reverseShipment.lastSyncedAt =
+      now;
+
+    rma.reverseShipment.lastTrack =
+      data;
+
+    rma.status = "pickup_scheduled";
+
+    order.markModified("rmas");
+    await order.save();
+
+    return res.status(201).json({
+      success: true,
+      message:
+        "Delhivery reverse pickup booked successfully.",
+      data: {
+        waybill,
+        status: "pickup_scheduled",
+        reverseShipment:
+          rma.reverseShipment,
+        response: data,
+      },
+    });
+  } catch (error) {
+    return send(
+      res,
+      Promise.reject(error),
+    );
+  }
+};
+
+export const syncReversePickupController =
+  async (req, res) => {
+    try {
+      const order =
+        await Order.findById(
+          req.params.orderId,
+        );
+
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Order not found.",
+        });
+      }
+
+      const rma = findRma(
+        order,
+        req.params.rmaNumber,
+      );
+
+      if (!rma) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "RMA not found.",
+        });
+      }
+
+      const waybill = String(
+        rma.reverseShipment?.awb ||
+        "",
+      ).trim();
+
+      if (!waybill) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Reverse Delhivery waybill is not assigned.",
+        });
+      }
+
+      const trackingData =
+        await trackShipment(
+          waybill,
+        );
+
+      const {
+        status,
+        rawStatus,
+        statusCode,
+      } = getReverseStatus(
+        trackingData,
+      );
+
+      const now = new Date();
+
+      rma.reverseShipment.provider =
+        "delhivery";
+
+      rma.reverseShipment.status =
+        status;
+
+      rma.reverseShipment.rawStatus =
+        rawStatus;
+
+      rma.reverseShipment.statusCode =
+        statusCode;
+
+      rma.reverseShipment.lastTrack =
+        trackingData;
+
+      rma.reverseShipment.lastTrackAt =
+        now;
+
+      rma.reverseShipment.lastSyncedAt =
+        now;
+
+      if (
+        status === "picked" &&
+        !rma.reverseShipment.pickedAt
+      ) {
+        rma.reverseShipment.pickedAt =
+          now;
+
+        rma.returnPickupCompleted =
+          true;
+      }
+
+      if (
+        status === "in_transit" &&
+        !rma.reverseShipment.inTransitAt
+      ) {
+        rma.reverseShipment.inTransitAt =
+          now;
+      }
+
+      if (
+        status === "received" &&
+        !rma.reverseShipment.receivedAt
+      ) {
+        rma.reverseShipment.receivedAt =
+          now;
+      }
+
+      if (
+        status === "cancelled" &&
+        !rma.reverseShipment.cancelledAt
+      ) {
+        rma.reverseShipment.cancelledAt =
+          now;
+      }
+
+      const rmaStatuses = [
+        "pickup_scheduled",
+        "picked",
+        "in_transit",
+        "received",
+      ];
+
+      if (
+        rmaStatuses.includes(status)
+      ) {
+        rma.status = status;
+      }
+
+      order.markModified("rmas");
+      await order.save();
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "Reverse pickup tracking synced.",
+        data: {
+          waybill,
+          status,
+          rawStatus,
+          statusCode,
+          reverseShipment:
+            rma.reverseShipment,
+        },
+      });
+    } catch (error) {
+      return send(
+        res,
+        Promise.reject(error),
+      );
+    }
+  };

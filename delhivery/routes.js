@@ -16,6 +16,8 @@ import {
   updateWarehouseController,
   pickupController,
   syncAllDelhiveryTrackingController,
+  createReversePickupController,
+  syncReversePickupController,
 } from "./controller.js";
 
 import {
@@ -45,6 +47,17 @@ router.patch(
 router.post(
   "/shipments/:waybill/cancel",
   cancelShipmentController,
+);
+
+// Reverse pickup
+router.post(
+  "/reverse/:orderId/:rmaNumber",
+  createReversePickupController,
+);
+
+router.post(
+  "/reverse/:orderId/:rmaNumber/sync",
+  syncReversePickupController,
 );
 
 // Tracking

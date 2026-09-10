@@ -181,7 +181,29 @@ const rmaSchema = new mongoose.Schema(
 
     customerNote: { type: String, default: "" },
     adminNote: { type: String, default: "" },
+    // Admin-approved RMA exception
+    allowException: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
 
+    exceptionReason: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    exceptionAllowedAt: {
+      type: Date,
+      default: null,
+    },
+
+    exceptionAllowedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "AdminUser",
+      default: null,
+    },
     media: [
       {
         url: {
@@ -280,8 +302,12 @@ const rmaSchema = new mongoose.Schema(
     reverseShipment: {
       provider: {
         type: String,
-        enum: ["shiprocket", "manual"],
-        default: "shiprocket",
+        enum: [
+          "shiprocket",
+          "delhivery",
+          "manual",
+        ],
+        default: "manual",
       },
 
       // Shiprocket return-order identifiers
