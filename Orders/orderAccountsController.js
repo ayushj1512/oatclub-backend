@@ -184,6 +184,7 @@ const basePipeline = ({ month, search, startDate, endDate }) => {
     },
     {
       $match: {
+        isInfluencerOrder: { $ne: true },
         paymentMethod: { $ne: "exchange" },
         paymentStatus: { $nin: ["failed", "refunded", "refund_pending"] },
         fulfillmentStatus: { $in: ACTIVE_REVENUE_STATUSES },
@@ -496,6 +497,7 @@ const buildSalesBasePipeline = ({
 
     {
       $match: {
+        isInfluencerOrder: { $ne: true },
         paymentMethod: {
           $ne: "exchange",
         },
@@ -1341,18 +1343,18 @@ const buildSalesResponse = async ({
 
   const rows = Array.isArray(rowsAgg)
     ? rowsAgg.map((row) => ({
-        ...row,
-        qty: toNum(row.qty, 1),
-        sellingPrice: money(row.sellingPrice),
-        allocatedDiscount: money(row.allocatedDiscount),
-        netLine: money(row.netLine),
-        taxableValue: money(row.taxableValue),
-        taxAmount: money(row.taxAmount),
-        orderTotalAmount: money(row.orderTotalAmount),
-        orderDiscount: money(row.orderDiscount),
-        hsnCode: row.hsnCode || DEFAULT_HSN,
-        taxRate: row.taxRate || "5%",
-      }))
+      ...row,
+      qty: toNum(row.qty, 1),
+      sellingPrice: money(row.sellingPrice),
+      allocatedDiscount: money(row.allocatedDiscount),
+      netLine: money(row.netLine),
+      taxableValue: money(row.taxableValue),
+      taxAmount: money(row.taxAmount),
+      orderTotalAmount: money(row.orderTotalAmount),
+      orderDiscount: money(row.orderDiscount),
+      hsnCode: row.hsnCode || DEFAULT_HSN,
+      taxRate: row.taxRate || "5%",
+    }))
     : [];
 
   const totalsDoc = totalsAgg?.[0] || {};
@@ -1419,7 +1421,9 @@ const buildSalesLedgerBasePipeline = ({
 
     {
       $match: {
+        isInfluencerOrder: { $ne: true },
         paymentMethod: {
+
           $ne: "exchange",
         },
 
