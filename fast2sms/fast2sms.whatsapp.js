@@ -26,6 +26,7 @@ export const sendFast2SmsWhatsappTemplate = async ({
   phone,
   templateKey,
   variables = [],
+  mediaUrl = "",
   udf1 = "",
   udf2 = "",
   udf3 = "",
@@ -36,39 +37,43 @@ export const sendFast2SmsWhatsappTemplate = async ({
   const normalizedPhone =
     normalizeIndianPhone(phone);
 
+  const finalMediaUrl =
+    mediaUrl || template.mediaUrl || "";
+
   const result = await fast2smsRequest({
     method: "GET",
     endpoint:
       FAST2SMS_CONFIG.ENDPOINTS.SEND_SIMPLE,
-
     params: {
       message_id: template.messageId,
       phone_number_id:
         FAST2SMS_CONFIG.PHONE_NUMBER_ID,
       numbers: normalizedPhone,
 
-      ...(variables.length
-        ? {
-          variables_values:
-            joinTemplateVariables(variables),
-        }
-        : {}),
+      ...(variables.length && {
+        variables_values:
+          joinTemplateVariables(variables),
+      }),
 
-      ...(udf1 ? { udf1 } : {}),
-      ...(udf2 ? { udf2 } : {}),
-      ...(udf3 ? { udf3 } : {}),
+      ...(finalMediaUrl && {
+        media_url: finalMediaUrl,
+      }),
+
+      ...(udf1 && { udf1 }),
+      ...(udf2 && { udf2 }),
+      ...(udf3 && { udf3 }),
     },
   });
 
   return {
     ...result,
-
     meta: {
       templateKey,
       templateName: template.templateName,
       templateId: template.templateId,
       messageId: template.messageId,
       phone: normalizedPhone,
+      mediaUrl: finalMediaUrl || null,
     },
   };
 };
@@ -339,3 +344,15 @@ export const sendCustomerCreditWhatsapp = async ({
     udf2: "customer_wallet_credit",
   });
 };
+
+
+export const sendMarketingOfferWhatsapp = async ({
+  phone,
+  referenceId = "",
+}) =>
+  sendFast2SmsWhatsappTemplate({
+    phone,
+    templateKey: "MARKETING_OFFER",
+    udf1: referenceId,
+    udf2: "marketing_offer",
+  });

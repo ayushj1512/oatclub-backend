@@ -103,6 +103,18 @@ export const FAST2SMS_TEMPLATES = Object.freeze({
     status: "NOT_CONFIGURED",
   },
 
+  MARKETING_OFFER: {
+    key: "MARKETING_OFFER",
+    messageId: 32415,
+    templateId: "2276804036490100",
+    templateName: "marketing_template_9th_aug",
+    language: "en",
+    status: "APPROVED",
+    mediaUrl:
+      "https://res.cloudinary.com/znyqjoop/image/upload/v1789124884/oatclub/media/h9dbpfaserrxrv5tmply.jpg",
+    buildVariables: () => [],
+  },
+
   CUSTOMER_CREDITS_UPDATE: {
     key: "CUSTOMER_CREDITS_UPDATE",
     messageId: 30308,

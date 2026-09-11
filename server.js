@@ -55,7 +55,7 @@ import commerceFeed from "./routes/commerceManagerFeed.js";
 import influencerProgramRoutes from "./InfluencerProgram/InfluencerProgramRoutes.js";
 import whatsappConfirmationMessageRoutes from "./whatsappConfirmationMessage/whatsappConfirmationMessageRoutes.js";
 import tailorroutes from "./tailor/tailor.routes.js";
-
+import fast2smsRoutes from "./fast2sms/fast2sms.routes.js";
 import inventoryRoutes from "./routes/admin/inventoryRouter.js";
 import ticketRoutes from "./routes/admin/tickets.js";
 import superadminRoutes from "./routes/superadmin.js";
@@ -290,6 +290,7 @@ app.use("/api/tailors", tailorroutes);
 
 app.use("/api", shiprocketRoutes);
 app.use("/api/otp", otpRoutes);
+app.use("/api/fast2sms", fast2smsRoutes);
 app.use("/api/analytics", productViewAnalyticsRoutes);
 app.use("/api/reels", reelsRoutes);
 app.use("/api/support", customerTicketRoutes);

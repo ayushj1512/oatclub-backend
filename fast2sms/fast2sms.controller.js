@@ -3,6 +3,7 @@ import {
   sendOrderConfirmationWhatsapp,
   sendPaymentCompletedWhatsapp,
   sendPrepaidOrderConfirmationWhatsapp,
+  sendMarketingOfferWhatsapp,
 } from "./fast2sms.whatsapp.js";
 
 import {
@@ -368,3 +369,40 @@ export const getFast2SmsTemplateController = async (
     });
   }
 };
+
+export const sendMarketingOfferController = async (req, res) => {
+  try {
+    const { phone, referenceId = "" } = req.body || {};
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required",
+      });
+    }
+
+    const result = await sendMarketingOfferWhatsapp({
+      phone,
+      referenceId,
+    });
+
+    if (!result?.success) {
+      return sendFailure(res, {
+        message: "Marketing message could not be sent",
+        result,
+      });
+    }
+
+    return sendSuccess(res, {
+      message: "Marketing message sent successfully",
+      result,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Unable to send marketing message",
+      error: error.message,
+    });
+  }
+};
+
