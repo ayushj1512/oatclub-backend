@@ -13180,13 +13180,37 @@ export const repairSplitOrderToOriginal = async (req, res) => {
 
 export const updateRtoReceivedStatus = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { isRtoReceived } = req.body;
+    const singleId = req.params.id;
+    const {
+      ids = [],
+      isRtoReceived,
+      condition,
+    } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    const orderIds = [
+      ...new Set(
+        (singleId ? [singleId] : ids)
+          .map(String)
+          .filter(Boolean),
+      ),
+    ];
+
+    if (!orderIds.length) {
       return res.status(400).json({
         success: false,
-        message: "Invalid order id",
+        message: "At least one order ID is required",
+      });
+    }
+
+    const invalidIds = orderIds.filter(
+      (id) => !mongoose.Types.ObjectId.isValid(id),
+    );
+
+    if (invalidIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order IDs found",
+        invalidIds,
       });
     }
 
@@ -13197,62 +13221,129 @@ export const updateRtoReceivedStatus = async (req, res) => {
       });
     }
 
-    const order = await Order.findById(id);
+    const allowedConditions = [
+      "clean",
+      "damaged",
+      "wrong_product",
+    ];
 
-    if (!order) {
+    if (
+      isRtoReceived &&
+      !allowedConditions.includes(condition)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "condition must be clean, damaged or wrong_product",
+      });
+    }
+
+    const orders = await Order.find({
+      _id: { $in: orderIds },
+    });
+
+    if (!orders.length) {
       return res.status(404).json({
         success: false,
-        message: "Order not found",
+        message: "Orders not found",
       });
     }
 
     const now = new Date();
+    const results = [];
 
-    /* =========================================================
-       MARK RTO RECEIVED
-    ========================================================= */
+    for (const order of orders) {
+      try {
+        let inventoryRestored = false;
 
-    if (isRtoReceived) {
-      order.isRtoReceived = true;
+        if (isRtoReceived) {
+          order.isRtoReceived = true;
+          order.rtoReceivedAt =
+            order.rtoReceivedAt || now;
+          order.rtoReceivedCondition = condition;
+          order.fulfillmentStatus = "rto";
 
-      // Don't overwrite original received timestamp
-      order.rtoReceivedAt =
-        order.rtoReceivedAt || now;
+          order.fulfillmentDates =
+            order.fulfillmentDates || {};
 
-      // ✅ Physical packet received = order is now RTO
-      order.fulfillmentStatus = "rto";
+          order.fulfillmentDates.rtoAt =
+            order.fulfillmentDates.rtoAt || now;
 
-      // ✅ Keep normal fulfillment date tracking consistent
-      order.fulfillmentDates =
-        order.fulfillmentDates || {};
+          // Restore inventory only once and only for clean RTO
+          if (
+            condition === "clean" &&
+            !order.rtoInventoryRestocked
+          ) {
+            const consumedReservations =
+              await InventoryReservation.find({
+                refType: "order",
+                refId: order._id,
+                status: "consumed",
+              }).lean();
 
-      order.fulfillmentDates.rtoAt =
-        order.fulfillmentDates.rtoAt || now;
+            if (!consumedReservations.length) {
+              throw new Error(
+                "No consumed inventory found for this order",
+              );
+            }
+
+            for (const reservation of consumedReservations) {
+              await restockFromRTOInternal({
+                productId: reservation.productId,
+                variantId: reservation.variantId || null,
+                qty: reservation.qty,
+                reason: `Clean RTO received | orderNumber=${order.orderNumber || ""
+                  }`,
+              });
+            }
+            order.rtoInventoryRestocked = true;
+            order.rtoInventoryRestockedAt = now;
+            order.rtoInventoryRestockedBy =
+              req.admin?._id ||
+              req.user?._id ||
+              null;
+
+            inventoryRestored = true;
+          }
+        } else {
+          /*
+           * Only remove receiving status.
+           * Previously restored inventory is NOT deducted automatically.
+           */
+          order.isRtoReceived = false;
+          order.rtoReceivedAt = null;
+          order.rtoReceivedCondition = null;
+        }
+
+        await order.save();
+
+        results.push({
+          orderId: order._id,
+          success: true,
+          inventoryRestored,
+        });
+      } catch (error) {
+        results.push({
+          orderId: order._id,
+          success: false,
+          message: error.message,
+        });
+      }
     }
 
-    /* =========================================================
-       UNDO ONLY RECEIVED MARK
-       - Do NOT revert fulfillmentStatus automatically
-    ========================================================= */
-
-    if (!isRtoReceived) {
-      order.isRtoReceived = false;
-      order.rtoReceivedAt = null;
-
-      // Intentionally NOT changing fulfillmentStatus.
-      // We don't safely know the previous status.
-    }
-
-    const updatedOrder = await order.save();
+    const successCount = results.filter(
+      (item) => item.success,
+    ).length;
 
     return res.status(200).json({
-      success: true,
-
+      success: successCount > 0,
       message: isRtoReceived
-        ? "RTO received and fulfillment marked as RTO"
-        : "RTO received status removed",
-
-      order: updatedOrder,
+        ? `${successCount} RTO order(s) marked as ${condition}`
+        : `${successCount} RTO receiving status(es) removed`,
+      requestedCount: orderIds.length,
+      successCount,
+      failedCount: results.length - successCount,
+      results,
     });
   } catch (error) {
     console.error(
@@ -13262,13 +13353,11 @@ export const updateRtoReceivedStatus = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to update RTO received status",
+      message: "Failed to update RTO received status",
       error: error.message,
     });
   }
 };
-
 
 export const cancelChildOrder = async (req, res) => {
   const session = await mongoose.startSession();

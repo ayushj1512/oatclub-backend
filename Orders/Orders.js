@@ -956,6 +956,30 @@ const orderSchema = new mongoose.Schema(
       default: null,
     },
 
+    rtoReceivedCondition: {
+      type: String,
+      enum: ["clean", "damaged", "wrong_product"],
+      default: null,
+      index: true,
+    },
+
+    rtoInventoryRestocked: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    rtoInventoryRestockedAt: {
+      type: Date,
+      default: null,
+    },
+
+    rtoInventoryRestockedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "AdminUser",
+      default: null,
+    },
+
     fulfillmentDates: {
       processingAt: { type: Date, default: Date.now },
       packedAt: { type: Date, default: null },
