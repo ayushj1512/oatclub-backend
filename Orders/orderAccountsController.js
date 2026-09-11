@@ -1396,58 +1396,48 @@ const buildSalesLedgerBasePipeline = ({
   startDate,
   endDate,
 }) => {
+  const fallback = (...values) =>
+    values
+      .slice(0, -1)
+      .reduceRight(
+        (result, value) => ({ $ifNull: [value, result] }),
+        values.at(-1)
+      );
+
+  const num = (value, defaultValue = 0) => ({
+    $toDouble: { $ifNull: [value, defaultValue] },
+  });
+
   const pipeline = [
     {
       $addFields: {
-        deliveredAtResolved:
-          getDeliveredAtExpr(),
-
-        salesStatusDateResolved:
-          getSalesStatusDateExpr(),
-
-        orderDateResolved: {
-          $ifNull: [
-            "$orderDate",
-            {
-              $ifNull: [
-                "$createdAt",
-                "$updatedAt",
-              ],
-            },
-          ],
-        },
+        deliveredAtResolved: getDeliveredAtExpr(),
+        salesStatusDateResolved: getSalesStatusDateExpr(),
+        orderDateResolved: fallback(
+          "$orderDate",
+          "$createdAt",
+          "$updatedAt"
+        ),
       },
     },
-
     {
       $match: {
         isInfluencerOrder: { $ne: true },
-        paymentMethod: {
-
-          $ne: "exchange",
-        },
-
-        deliveredAtResolved: {
-          $type: "date",
-        },
+        paymentMethod: { $ne: "exchange" },
+        deliveredAtResolved: { $type: "date" },
+        salesStatusDateResolved: { $type: "date" },
       },
     },
   ];
 
-  /* =========================================================
-     DATE FILTERS
-  ========================================================= */
-
+  // Filter using the same date displayed in Delivered Date
   if (month) {
-    const range =
-      getMonthRangeUTCFromISTMonth(
-        month
-      );
+    const range = getMonthRangeUTCFromISTMonth(month);
 
     if (range) {
       pipeline.push({
         $match: {
-          deliveredAtResolved: {
+          salesStatusDateResolved: {
             $gte: range.startUTC,
             $lt: range.endUTC,
           },
@@ -1460,339 +1450,129 @@ const buildSalesLedgerBasePipeline = ({
     const date = {};
 
     if (startDate) {
-      date.$gte = new Date(
-        `${startDate}T00:00:00.000Z`
-      );
+      date.$gte = new Date(`${startDate}T00:00:00.000Z`);
     }
 
     if (endDate) {
-      date.$lte = new Date(
-        `${endDate}T23:59:59.999Z`
-      );
+      date.$lte = new Date(`${endDate}T23:59:59.999Z`);
     }
 
     pipeline.push({
-      $match: {
-        deliveredAtResolved: date,
-      },
+      $match: { salesStatusDateResolved: date },
     });
   }
 
   pipeline.push(
-    /* =========================================================
-       ORDER VALUES
-    ========================================================= */
-
     {
       $addFields: {
-        customerNameResolved:
-          getResolvedCustomerNameExpr(),
+        customerNameResolved: getResolvedCustomerNameExpr(),
+        customerStateResolved: getResolvedStateExpr(),
+        courierNameResolved: getLedgerCourierExpr(),
+        courierPartnerResolved: getCourierPartnerExpr(),
 
-        customerStateResolved:
-          getResolvedStateExpr(),
-
-        courierNameResolved:
-          getLedgerCourierExpr(),
-
-        courierPartnerResolved:
-          getCourierPartnerExpr(),
-
-        orderDiscountResolved: {
-          $toDouble: {
-            $ifNull: [
-              "$discount",
-              0,
-            ],
-          },
-        },
-
-        orderShippingResolved: {
-          $toDouble: {
-            $ifNull: [
-              "$shippingFee",
-              0,
-            ],
-          },
-        },
+        orderDiscountResolved: num("$discount"),
+        orderShippingResolved: num("$shippingFee"),
 
         orderSubtotalResolved: {
-          $let: {
-            vars: {
-              itemsArray: {
-                $cond: [
-                  {
-                    $isArray: "$items",
-                  },
-                  "$items",
-                  [],
-                ],
-              },
-            },
-
-            in: {
-              $toDouble: {
-                $ifNull: [
-                  "$subtotal",
-                  {
-                    $ifNull: [
-                      "$subTotal",
-                      {
-                        $ifNull: [
-                          "$cartTotal",
+          $toDouble: {
+            $ifNull: [
+              "$subtotal",
+              fallback(
+                "$subTotal",
+                "$cartTotal",
+                {
+                  $sum: {
+                    $map: {
+                      input: {
+                        $cond: [{ $isArray: "$items" }, "$items", []],
+                      },
+                      as: "item",
+                      in: {
+                        $multiply: [
                           {
-                            $sum: {
-                              $map: {
-                                input:
-                                  "$$itemsArray",
-
-                                as: "item",
-
-                                in: {
-                                  $multiply: [
-                                    {
-                                      $toDouble: {
-                                        $cond: [
-                                          {
-                                            $gt: [
-                                              {
-                                                $toDouble: {
-                                                  $ifNull: [
-                                                    "$$item.originalPrice",
-                                                    0,
-                                                  ],
-                                                },
-                                              },
-                                              0,
-                                            ],
-                                          },
-
-                                          "$$item.originalPrice",
-
-                                          {
-                                            $ifNull: [
-                                              "$$item.finalPrice",
-                                              {
-                                                $ifNull: [
-                                                  "$$item.price",
-                                                  {
-                                                    $ifNull: [
-                                                      "$$item.sellingPrice",
-                                                      {
-                                                        $ifNull: [
-                                                          "$$item.unitPrice",
-                                                          "$$item.mrp",
-                                                        ],
-                                                      },
-                                                    ],
-                                                  },
-                                                ],
-                                              },
-                                            ],
-                                          },
-                                        ],
-                                      },
-                                    },
-
-                                    {
-                                      $max: [
-                                        1,
-                                        {
-                                          $toDouble: {
-                                            $ifNull: [
-                                              "$$item.quantity",
-                                              1,
-                                            ],
-                                          },
-                                        },
-                                      ],
-                                    },
-                                  ],
-                                },
-                              },
+                            $toDouble: {
+                              $cond: [
+                                { $gt: [num("$$item.originalPrice"), 0] },
+                                "$$item.originalPrice",
+                                fallback(
+                                  "$$item.finalPrice",
+                                  "$$item.price",
+                                  "$$item.sellingPrice",
+                                  "$$item.unitPrice",
+                                  "$$item.mrp"
+                                ),
+                              ],
                             },
                           },
+                          { $max: [1, num("$$item.quantity", 1)] },
                         ],
                       },
-                    ],
+                    },
                   },
-                ],
-              },
-            },
+                }
+              ),
+            ],
           },
         },
       },
     },
 
-    /* =========================================================
-       UNWIND ITEMS
-    ========================================================= */
-
-    {
-      $unwind: {
-        path: "$items",
-        preserveNullAndEmptyArrays:
-          false,
-      },
-    },
-
-    /* =========================================================
-       ITEM VALUES
-    ========================================================= */
+    { $unwind: "$items" },
 
     {
       $addFields: {
         itemQty: {
-          $max: [
-            1,
-            {
-              $toDouble: {
-                $ifNull: [
-                  "$items.quantity",
-                  1,
-                ],
-              },
-            },
-          ],
+          $max: [1, num("$items.quantity", 1)],
         },
 
-        itemSize: {
-          $ifNull: [
-            "$items.selectedSize",
-            {
-              $ifNull: [
-                "$items.size",
-                {
-                  $ifNull: [
-                    "$items.variant.size",
-                    "",
-                  ],
-                },
-              ],
-            },
-          ],
-        },
+        itemSize: fallback(
+          "$items.selectedSize",
+          "$items.size",
+          "$items.variant.size",
+          ""
+        ),
 
-        itemHsn: {
-          $ifNull: [
-            "$items.productSnapshot.hsnCode",
-            {
-              $ifNull: [
-                "$items.hsnCode",
-                {
-                  $ifNull: [
-                    "$items.hsn",
-                    {
-                      $ifNull: [
-                        "$items.taxInfo.hsnCode",
-                        DEFAULT_HSN,
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
+        itemHsn: fallback(
+          "$items.productSnapshot.hsnCode",
+          "$items.hsnCode",
+          "$items.hsn",
+          "$items.taxInfo.hsnCode",
+          DEFAULT_HSN
+        ),
 
-        // Final discounted unit price
-        itemPriceIncl: {
-          $toDouble: {
-            $ifNull: [
-              "$items.finalPrice",
-              {
-                $ifNull: [
-                  "$items.price",
-                  {
-                    $ifNull: [
-                      "$items.sellingPrice",
-                      {
-                        $ifNull: [
-                          "$items.unitPrice",
-                          "$items.mrp",
-                        ],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        },
+        itemPriceIncl: num(
+          fallback(
+            "$items.finalPrice",
+            "$items.price",
+            "$items.sellingPrice",
+            "$items.unitPrice",
+            "$items.mrp",
+            0
+          )
+        ),
 
-        // Original unit price
         itemOriginalPriceIncl: {
           $cond: [
-            {
-              $gt: [
-                {
-                  $toDouble: {
-                    $ifNull: [
-                      "$items.originalPrice",
-                      0,
-                    ],
-                  },
-                },
-                0,
-              ],
-            },
-
-            {
-              $toDouble:
-                "$items.originalPrice",
-            },
-
-            {
-              $toDouble: {
-                $ifNull: [
-                  "$items.finalPrice",
-                  {
-                    $ifNull: [
-                      "$items.price",
-                      0,
-                    ],
-                  },
-                ],
-              },
-            },
+            { $gt: [num("$items.originalPrice"), 0] },
+            num("$items.originalPrice"),
+            num(fallback("$items.finalPrice", "$items.price", 0)),
           ],
         },
 
-        itemStoredDiscount: {
-          $toDouble: {
-            $ifNull: [
-              "$items.discountAmount",
-              0,
-            ],
-          },
-        },
+        itemStoredDiscount: num("$items.discountAmount"),
       },
     },
-
-    /* =========================================================
-       ITEM TOTALS
-    ========================================================= */
 
     {
       $addFields: {
         itemGrossIncl: {
-          $multiply: [
-            "$itemQty",
-            "$itemPriceIncl",
-          ],
+          $multiply: ["$itemQty", "$itemPriceIncl"],
         },
-
         itemOriginalGrossIncl: {
-          $multiply: [
-            "$itemQty",
-            "$itemOriginalPriceIncl",
-          ],
+          $multiply: ["$itemQty", "$itemOriginalPriceIncl"],
         },
       },
     },
-
-    /* =========================================================
-       EMBEDDED DISCOUNT + SHIPPING
-    ========================================================= */
 
     {
       $addFields: {
@@ -1811,13 +1591,7 @@ const buildSalesLedgerBasePipeline = ({
 
         shippingCharges: {
           $cond: [
-            {
-              $gt: [
-                "$orderSubtotalResolved",
-                0,
-              ],
-            },
-
+            { $gt: ["$orderSubtotalResolved", 0] },
             {
               $multiply: [
                 {
@@ -1826,44 +1600,24 @@ const buildSalesLedgerBasePipeline = ({
                     "$orderSubtotalResolved",
                   ],
                 },
-
                 "$orderShippingResolved",
               ],
             },
-
             0,
           ],
         },
       },
     },
 
-    /* =========================================================
-       DISCOUNT
-    ========================================================= */
-
     {
       $addFields: {
         totalDiscount: {
           $cond: [
-            {
-              $gt: [
-                "$embeddedDiscount",
-                0,
-              ],
-            },
-
+            { $gt: ["$embeddedDiscount", 0] },
             "$embeddedDiscount",
-
-            // Legacy order fallback
             {
               $cond: [
-                {
-                  $gt: [
-                    "$orderSubtotalResolved",
-                    0,
-                  ],
-                },
-
+                { $gt: ["$orderSubtotalResolved", 0] },
                 {
                   $multiply: [
                     {
@@ -1872,11 +1626,9 @@ const buildSalesLedgerBasePipeline = ({
                         "$orderSubtotalResolved",
                       ],
                     },
-
                     "$orderDiscountResolved",
                   ],
                 },
-
                 0,
               ],
             },
@@ -1885,30 +1637,17 @@ const buildSalesLedgerBasePipeline = ({
       },
     },
 
-    /* =========================================================
-       NET INCLUSIVE
-    ========================================================= */
-
     {
       $addFields: {
         netInclusive: {
           $cond: [
-            // Item price already contains discount
-            {
-              $gt: [
-                "$embeddedDiscount",
-                0,
-              ],
-            },
-
+            { $gt: ["$embeddedDiscount", 0] },
             {
               $add: [
                 "$itemGrossIncl",
                 "$shippingCharges",
               ],
             },
-
-            // Legacy order: subtract allocated discount
             {
               $max: [
                 0,
@@ -1920,7 +1659,6 @@ const buildSalesLedgerBasePipeline = ({
                         "$shippingCharges",
                       ],
                     },
-
                     "$totalDiscount",
                   ],
                 },
@@ -1928,12 +1666,18 @@ const buildSalesLedgerBasePipeline = ({
             },
           ],
         },
+
+        taxRate: { $literal: "5%" },
+
+        paymentType: {
+          $cond: [
+            { $eq: ["$paymentMethod", "cod"] },
+            "COD",
+            "Prepaid",
+          ],
+        },
       },
     },
-
-    /* =========================================================
-       PRODUCT + SHIPPING SPLIT
-    ========================================================= */
 
     {
       $addFields: {
@@ -1948,61 +1692,17 @@ const buildSalesLedgerBasePipeline = ({
             },
           ],
         },
-
-        taxRate: {
-          $literal: "5%",
-        },
-
-        paymentType: {
-          $cond: [
-            {
-              $eq: [
-                "$paymentMethod",
-                "cod",
-              ],
-            },
-            "COD",
-            "Prepaid",
-          ],
+        shippingTaxable: {
+          $divide: ["$shippingCharges", 1.05],
         },
       },
     },
-
-    /* =========================================================
-       TAXABLE VALUES
-    ========================================================= */
 
     {
       $addFields: {
         orderTaxable: {
-          $divide: [
-            "$orderInclusive",
-            1.05,
-          ],
+          $divide: ["$orderInclusive", 1.05],
         },
-
-        shippingTaxable: {
-          $divide: [
-            "$shippingCharges",
-            1.05,
-          ],
-        },
-      },
-    },
-
-    /* =========================================================
-       TAX AMOUNTS
-    ========================================================= */
-
-    {
-      $addFields: {
-        orderTaxAmount: {
-          $subtract: [
-            "$orderInclusive",
-            "$orderTaxable",
-          ],
-        },
-
         shippingTaxAmount: {
           $subtract: [
             "$shippingCharges",
@@ -2012,27 +1712,31 @@ const buildSalesLedgerBasePipeline = ({
       },
     },
 
-    /* =========================================================
-       TOTAL TAX
-    ========================================================= */
-
     {
       $addFields: {
+        orderTaxAmount: {
+          $subtract: [
+            "$orderInclusive",
+            "$orderTaxable",
+          ],
+        },
         taxable: {
           $add: [
             "$orderTaxable",
             "$shippingTaxable",
           ],
         },
+      },
+    },
 
+    {
+      $addFields: {
         totalTaxAmount: {
           $add: [
             "$orderTaxAmount",
             "$shippingTaxAmount",
           ],
         },
-
-        // Backward compatibility
         taxAmount: {
           $add: [
             "$orderTaxAmount",
@@ -2043,54 +1747,24 @@ const buildSalesLedgerBasePipeline = ({
     }
   );
 
-  /* =========================================================
-     SEARCH
-  ========================================================= */
-
   if (search) {
-    const rx =
-      escapeRegex(search);
-
     const match = {
-      $regex: rx,
+      $regex: escapeRegex(search),
       $options: "i",
     };
 
     pipeline.push({
       $match: {
         $or: [
-          {
-            orderNumber: match,
-          },
-          {
-            customerNameResolved:
-              match,
-          },
-          {
-            customerStateResolved:
-              match,
-          },
-          {
-            courierNameResolved:
-              match,
-          },
-          {
-            courierPartnerResolved:
-              match,
-          },
-          {
-            itemHsn: match,
-          },
-          {
-            itemSize: match,
-          },
-          {
-            paymentMethod: match,
-          },
-          {
-            fulfillmentStatus:
-              match,
-          },
+          { orderNumber: match },
+          { customerNameResolved: match },
+          { customerStateResolved: match },
+          { courierNameResolved: match },
+          { courierPartnerResolved: match },
+          { itemHsn: match },
+          { itemSize: match },
+          { paymentMethod: match },
+          { fulfillmentStatus: match },
         ],
       },
     });
