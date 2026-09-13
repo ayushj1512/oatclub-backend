@@ -36,6 +36,10 @@ import {
 } from "./webhook.js";
 
 import Order from "../Orders/Orders.js";
+import {
+  getNdrStatus,
+  submitNdrAction,
+} from "./ndr.js";
 
 import { PDFDocument } from "pdf-lib";
 
@@ -222,7 +226,28 @@ export const syncAllDelhiveryTrackingController =
         ],
       })
         .select(
-          "_id orderNumber fulfillmentStatus shipment",
+          [
+            "orderNumber",
+            "customerId",
+            "shippingAddressSnapshot",
+            "items",
+            "subtotal",
+            "discount",
+            "shippingFee",
+            "tax",
+            "totalAmount",
+            "finalPayable",
+            "currency",
+            "paymentMethod",
+            "paymentStatus",
+            "fulfillmentStatus",
+            "shipment",
+            "createdAt",
+          ].join(" "),
+        )
+        .populate(
+          "customerId",
+          "name fullName phone mobile email",
         )
         .lean();
 
@@ -725,18 +750,27 @@ const getReverseStatus = (
   const statusData =
     shipment?.Status || {};
 
-  const rawStatus = String(
-    statusData?.Status ||
-    statusData?.Instructions ||
-    shipment?.status ||
-    "",
-  ).trim();
-
   const statusCode = String(
-    statusData?.StatusCode ||
-    statusData?.StatusType ||
-    shipment?.status_code ||
+    delhivery.statusCode ||
+    delhivery.lastWebhook?.NSLCode ||
+    order.shipment?.statusCode ||
+    order.shipment?.lastWebhook
+      ?.NSLCode ||
+    lastTrack?.Status?.StatusCode ||
+    lastTrack?.StatusCode ||
     "",
+  )
+    .trim()
+    .toUpperCase();
+
+  const reason = String(
+    delhivery.lastWebhook
+      ?.Status?.Instructions ||
+    order.shipment?.lastWebhook
+      ?.Status?.Instructions ||
+    lastTrack?.Status?.Instructions ||
+    rawStatus ||
+    "Delivery attempt failed",
   ).trim();
 
   const normalized =
@@ -1061,5 +1095,798 @@ export const syncReversePickupController =
         res,
         Promise.reject(error),
       );
+    }
+  };
+
+export const updateNdrController = (
+  req,
+  res,
+) =>
+  send(
+    res,
+    submitNdrAction({
+      waybill:
+        req.params.waybill,
+      action:
+        req.body?.action,
+    }),
+  );
+
+export const getNdrStatusController = (
+  req,
+  res,
+) =>
+  send(
+    res,
+    getNdrStatus(
+      req.params.requestId,
+    ),
+  );
+
+
+const DELHIVERY_NDR_CODES = new Set([
+  "EOD-74",
+  "EOD-15",
+  "EOD-104",
+  "EOD-43",
+  "EOD-86",
+  "EOD-11",
+  "EOD-69",
+  "EOD-6",
+]);
+
+export const getDelhiveryNdrOrdersController =
+  async (req, res) => {
+    try {
+      const filter = {
+        fulfillmentStatus: {
+          $nin: [
+            "delivered",
+            "cancelled",
+            "returned",
+            "rto_delivered",
+          ],
+        },
+
+        $and: [
+          {
+            $or: [
+              {
+                "shipment.provider": {
+                  $regex: /^delhivery$/i,
+                },
+              },
+              {
+                "shipment.delhivery.waybill": {
+                  $exists: true,
+                  $nin: ["", null],
+                },
+              },
+              {
+                "shipment.delhivery.awb": {
+                  $exists: true,
+                  $nin: ["", null],
+                },
+              },
+            ],
+          },
+          {
+            $or: [
+              {
+                "shipment.delhivery.waybill": {
+                  $exists: true,
+                  $nin: ["", null],
+                },
+              },
+             
+        {
+                "shipment.delhivery.awb": {
+                  $exists: true,
+                  $nin: ["", null],
+                },
+              },
+              {
+                "shipment.awb": {
+                  $exists: true,
+                  $nin: ["", null],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const orders = await Order.find(
+        filter,
+      )
+        .select("shipment")
+        .lean();
+
+      const waybills = [
+        ...new Set(
+          orders
+            .map(
+              (order) =>
+                order.shipment
+                  ?.delhivery?.waybill ||
+                order.shipment
+                  ?.delhivery?.awb ||
+                order.shipment?.awb ||
+                "",
+            )
+            .filter(Boolean),
+        ),
+      ];
+
+      const syncErrors = [];
+
+      for (
+        let index = 0;
+        index < waybills.length;
+        index += 50
+      ) {
+        const batch = waybills.slice(
+          index,
+          index + 50,
+        );
+
+        try {
+          const trackingData =
+            await trackShipments(batch);
+
+          await syncDelhiveryPayload(
+            trackingData,
+            "tracking",
+          );
+        } catch (error) {
+          syncErrors.push({
+            waybills: batch,
+
+            error:
+              error?.response?.data ||
+              error?.message ||
+              "Tracking sync failed",
+          });
+        }
+      }
+
+      const syncedOrders =
+        await Order.find(filter)
+          .select(
+            [
+              "orderNumber",
+              "customerId",
+              "shippingAddressSnapshot",
+              "items",
+              "subtotal",
+              "discount",
+              "shippingFee",
+              "tax",
+              "totalAmount",
+              "finalPayable",
+              "currency",
+              "paymentMethod",
+              "paymentStatus",
+              "fulfillmentStatus",
+              "shipment",
+              "createdAt",
+            ].join(" "),
+          )
+          .populate(
+            "customerId",
+            "name fullName phone mobile email",
+          )
+          .sort({ createdAt: -1 })
+          .lean();
+
+      const normalizedOrders =
+        syncedOrders.map((order) => {
+          const shipment =
+            order.shipment || {};
+
+          const delhivery =
+            shipment.delhivery || {};
+
+          const lastTrack =
+            delhivery.lastTrack ||
+            shipment.lastTrack ||
+            {};
+
+          const lastWebhook =
+            delhivery.lastWebhook ||
+            shipment.lastWebhook ||
+            {};
+
+          const scans = Array.isArray(lastTrack.Scans)
+            ? lastTrack.Scans.map(
+              (item) => item?.ScanDetail || item || {},
+            )
+            : [];
+
+          const lastScan = scans.at(-1) || {};
+
+          const ndrScan =
+            [...scans].reverse().find((scan) => {
+              const code = String(
+                scan.StatusCode ||
+                scan.NSLCode ||
+                "",
+              )
+                .trim()
+                .toUpperCase();
+
+              const text = [
+                scan.Scan,
+                scan.Status,
+                scan.Instructions,
+              ]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase();
+
+              return (
+                DELHIVERY_NDR_CODES.has(code) ||
+                text.includes("consignee unavailable") ||
+                text.includes("undelivered") ||
+                text.includes("delivery attempt")
+              );
+            }) || {};
+
+          const waybill =
+            delhivery.waybill ||
+            delhivery.awb ||
+            shipment.awb ||
+            "";
+
+          const statusCode = String(
+            lastWebhook?.NSLCode ||
+            lastWebhook?.Status?.StatusCode ||
+            ndrScan.StatusCode ||
+            ndrScan.NSLCode ||
+            delhivery.statusCode ||
+            shipment.statusCode ||
+            lastTrack?.Status?.StatusCode ||
+            lastScan.StatusCode ||
+            "",
+          )
+            .trim()
+            .toUpperCase();
+
+          const rawStatus = String(
+            lastWebhook?.Status?.Status ||
+            ndrScan.Scan ||
+            ndrScan.Status ||
+            delhivery.rawStatus ||
+            shipment.rawStatus ||
+            lastTrack?.Status?.Status ||
+            lastScan.Scan ||
+            "Pending",
+          ).trim();
+
+          const reason = String(
+            lastWebhook?.Status?.Instructions ||
+            ndrScan.Instructions ||
+            lastTrack?.Status?.Instructions ||
+            lastScan.Instructions ||
+            rawStatus ||
+            "Delivery attempt failed",
+          ).trim();
+
+          const ndrText = [
+            rawStatus,
+            reason,
+            ndrScan.Scan,
+            ndrScan.Status,
+            ndrScan.Instructions,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+          const isNdr =
+            DELHIVERY_NDR_CODES.has(statusCode) ||
+            ndrText.includes("consignee unavailable") ||
+            ndrText.includes("undelivered") ||
+            ndrText.includes("delivery attempt");
+
+          const detectedAttempts = scans.filter((scan) => {
+            const code = String(
+              scan.StatusCode || scan.NSLCode || "",
+            )
+              .trim()
+              .toUpperCase();
+
+            return DELHIVERY_NDR_CODES.has(code);
+          }).length;
+
+          const attemptCount =
+            Number(
+              lastTrack.DispatchCount ??
+              lastTrack.attempt_count ??
+              lastTrack.attemptCount ??
+              delhivery.attemptCount ??
+              0,
+            ) ||
+            detectedAttempts ||
+            (isNdr ? 1 : 0);
+
+          const address =
+            order.shippingAddressSnapshot ||
+            {};
+
+          const customer =
+            order.customerId &&
+            typeof order.customerId ===
+              "object"
+              ? order.customerId
+              : {};
+
+          const products = (
+            Array.isArray(order.items)
+              ? order.items
+              : []
+          ).map((item) => {
+            const product =
+              item.productSnapshot || {};
+
+            const size =
+              item.selectedSize ||
+              item.variant?.attributes?.find(
+                (attribute) =>
+                  String(
+                    attribute?.key || "",
+                  ).toLowerCase() ===
+                  "size",
+              )?.value ||
+              "";
+
+            return {
+              lineId: item.lineId,
+              productId:
+                item.productId,
+
+              title:
+                product.title ||
+                "Product",
+
+              productCode:
+                product.productCode ||
+                "",
+
+              image:
+                product.thumbnail ||
+                product.images?.[0] ||
+                "",
+
+              sku:
+                item.variant?.sku ||
+                product.sku ||
+                "",
+
+              selectedSize: size,
+              selectedColor:
+                item.selectedColor ||
+                "",
+
+              quantity: Number(
+                item.quantity || 1,
+              ),
+
+              price: Number(
+                item.price || 0,
+              ),
+
+              subtotal: Number(
+                item.subtotal || 0,
+              ),
+            };
+          });
+
+          return {
+            _id: order._id,
+            orderNumber:
+              order.orderNumber,
+
+            createdAt:
+              order.createdAt,
+
+            paymentMethod:
+              order.paymentMethod,
+
+            paymentStatus:
+              order.paymentStatus,
+
+            fulfillmentStatus:
+              order.fulfillmentStatus,
+
+            shipment,
+
+            customer: {
+              id:
+                customer._id ||
+                order.customerId ||
+                null,
+
+              name:
+                address.fullName ||
+                customer.fullName ||
+                customer.name ||
+                "Customer",
+
+              phone:
+                address.phone ||
+                customer.phone ||
+                customer.mobile ||
+                "",
+
+              email:
+                address.email ||
+                customer.email ||
+                "",
+            },
+
+            shippingAddress: {
+              name:
+                address.fullName || "",
+
+              phone:
+                address.phone || "",
+
+              email:
+                address.email || "",
+
+              line1:
+                address.line1 || "",
+
+              line2:
+                address.line2 || "",
+
+              city:
+                address.city || "",
+
+              state:
+                address.state || "",
+
+              country:
+                address.country ||
+                "India",
+
+              pincode:
+                address.pincode || "",
+            },
+
+            products,
+
+            pricing: {
+              subtotal: Number(
+                order.subtotal || 0,
+              ),
+
+              discount: Number(
+                order.discount || 0,
+              ),
+
+              shippingFee: Number(
+                order.shippingFee || 0,
+              ),
+
+              tax: Number(
+                order.tax || 0,
+              ),
+
+              totalAmount: Number(
+                order.totalAmount || 0,
+              ),
+
+              finalPayable: Number(
+                order.finalPayable ||
+                  order.totalAmount ||
+                  0,
+              ),
+
+              currency:
+                order.currency || "INR",
+            },
+
+            ndr: {
+              waybill,
+              statusCode,
+              rawStatus,
+              reason,
+              attemptCount,
+              eligible:
+                isNdr &&
+                [1, 2].includes(attemptCount),
+              allowedActions: ["RE-ATTEMPT"],
+            },
+          };
+        });
+
+      const ndrOrders =
+        normalizedOrders.filter(
+          (order) =>
+            order.ndr.eligible,
+        );
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "Delhivery orders synced successfully",
+
+        data: {
+          totalOrders: normalizedOrders.length,
+          totalWaybills: waybills.length,
+          totalBatches: Math.ceil(
+            waybills.length / 50,
+          ),
+          totalNdrOrders: ndrOrders.length,
+          ndrOrders,
+          orders: normalizedOrders,
+          syncErrors,
+        },
+      });
+    } catch (error) {
+      console.error(
+        "[Delhivery] NDR sync error:",
+        error,
+      );
+
+      return res.status(500).json({
+        success: false,
+
+        message:
+          "Unable to sync Delhivery NDR orders",
+
+        error:
+          error?.response?.data ||
+          error?.message,
+      });
+    }
+  };
+
+
+
+
+export const getCustomerNdrOrderController = async (
+  req,
+  res,
+) => {
+  try {
+    const orderNumber = String(
+      req.params.token || "",
+    ).trim();
+
+    const order = await Order.findOne({
+      orderNumber,
+      "shipment.provider": "delhivery",
+    })
+      .select(
+        [
+          "orderNumber",
+          "shippingAddressSnapshot",
+          "items",
+          "subtotal",
+          "discount",
+          "shippingFee",
+          "tax",
+          "totalAmount",
+          "finalPayable",
+          "paymentMethod",
+          "paymentStatus",
+          "fulfillmentStatus",
+          "shipment",
+        ].join(" "),
+      )
+      .lean();
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    const shipment = order.shipment || {};
+    const delhivery = shipment.delhivery || {};
+    const webhook =
+      delhivery.lastWebhook ||
+      shipment.lastWebhook ||
+      {};
+    const track =
+      delhivery.lastTrack ||
+      shipment.lastTrack ||
+      {};
+
+    const statusCode = String(
+      webhook.NSLCode ||
+      delhivery.statusCode ||
+      shipment.statusCode ||
+      track?.Status?.StatusCode ||
+      "",
+    )
+      .trim()
+      .toUpperCase();
+
+    const attemptCount = Number(
+      track.DispatchCount ??
+      track.attempt_count ??
+      track.attemptCount ??
+      delhivery.attemptCount ??
+      0,
+    );
+
+    const rawStatus = String(
+      webhook?.Status?.Status ||
+      track?.Status?.Status ||
+      delhivery.rawStatus ||
+      shipment.rawStatus ||
+      "Pending",
+    ).trim();
+
+    const reason = String(
+      webhook?.Status?.Instructions ||
+      track?.Status?.Instructions ||
+      webhook?.Instructions ||
+      delhivery.reason ||
+      rawStatus ||
+      "Delivery attempt failed",
+    ).trim();
+
+    return res.json({
+      success: true,
+      data: {
+        ...order,
+        ndr: {
+          waybill:
+            delhivery.waybill ||
+            delhivery.awb ||
+            shipment.awb ||
+            "",
+          statusCode,
+          rawStatus,
+          reason,
+          attemptCount,
+          eligible:
+            DELHIVERY_NDR_CODES.has(statusCode) &&
+            [1, 2].includes(attemptCount),
+          allowedActions: ["RE-ATTEMPT"],
+        },
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message:
+        error?.message ||
+        "Unable to fetch NDR order",
+    });
+  }
+};
+
+export const submitCustomerNdrActionController =
+  async (req, res) => {
+    try {
+      const orderNumber = String(
+        req.params.token || "",
+      ).trim();
+
+      const action = String(
+        req.body?.action || "",
+      )
+        .trim()
+        .toUpperCase();
+
+      if (action !== "RE-ATTEMPT") {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Only delivery reattempt is supported",
+        });
+      }
+
+      const order = await Order.findOne({
+        orderNumber,
+        "shipment.provider":
+          "delhivery",
+        fulfillmentStatus: {
+          $in: [
+            "packed",
+            "shipped",
+            "out_for_delivery",
+          ],
+        },
+      });
+
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Eligible Delhivery order not found",
+        });
+      }
+
+      const delhivery =
+        order.shipment?.delhivery || {};
+
+      const waybill =
+        delhivery.waybill ||
+        delhivery.awb ||
+        order.shipment?.awb;
+
+      const statusCode = String(
+        delhivery.statusCode ||
+        delhivery.lastWebhook
+          ?.NSLCode ||
+        order.shipment?.statusCode ||
+        "",
+      )
+        .trim()
+        .toUpperCase();
+
+      if (!waybill) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Delhivery waybill not found",
+        });
+      }
+
+      if (
+        !DELHIVERY_NDR_CODES.has(
+          statusCode,
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Order is not eligible for reattempt",
+        });
+      }
+
+      const result =
+        await submitNdrAction({
+          waybill,
+          action: "RE-ATTEMPT",
+        });
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "Delivery reattempt requested successfully",
+        data: {
+          requestId:
+            result?.requestId ||
+            result?.upl ||
+            result?.data?.upl ||
+            null,
+
+          providerResponse: result,
+
+          order: {
+            _id: order._id,
+            orderNumber:
+              order.orderNumber,
+            fulfillmentStatus:
+              order.fulfillmentStatus,
+            shipment: order.shipment,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(
+        "[Delhivery] Customer NDR action error:",
+        error,
+      );
+
+      return res.status(
+        error?.response?.status || 500,
+      ).json({
+        success: false,
+        message:
+          error?.response?.data
+            ?.message ||
+          error?.message ||
+          "Unable to submit reattempt request",
+      });
     }
   };

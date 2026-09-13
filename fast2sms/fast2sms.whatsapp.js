@@ -356,3 +356,49 @@ export const sendMarketingOfferWhatsapp = async ({
     udf1: referenceId,
     udf2: "marketing_offer",
   });
+
+/* =========================================================
+ NDR DELIVERY ACTION
+========================================================= */
+
+export const sendNdrWhatsapp = async ({
+  order,
+  ndrReason,
+}) => {
+  const orderNumber =
+    getOrderNumber(order);
+
+  const template =
+    getApprovedFast2SmsTemplate(
+      "NDR",
+    );
+
+  const confirmationLink =
+    buildOrderActionLink(
+      orderNumber,
+    );
+
+  const actionLink =
+    confirmationLink.replace(
+      "/orders/action/",
+      "/orders/ndr/",
+    );
+
+  const variables =
+    template.buildVariables({
+      orderNumber,
+      customerName:
+        getOrderCustomerName(order),
+      ndrReason,
+      actionLink,
+    });
+
+  return sendFast2SmsWhatsappTemplate({
+    phone: getOrderPhone(order),
+    templateKey: "NDR",
+    variables,
+    udf1: orderNumber,
+    udf2: "ndr_action",
+    udf3: String(order?._id || ""),
+  });
+};

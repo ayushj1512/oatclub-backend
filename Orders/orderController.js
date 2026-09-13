@@ -230,6 +230,58 @@ const RMA_POLICY = {
 /* ============================================================
    HELPERS
 ============================================================ */
+
+const syncOrderPaymentBreakdown = (order) => {
+  const num = (value) => Math.max(0, Number(value) || 0);
+  const method = String(order?.paymentMethod || "").toLowerCase();
+  const payable = num(order?.finalPayable);
+
+  order.paymentBreakdown ||= {};
+  order.paymentBreakdown.walletAmount = num(order?.walletCredit?.amount);
+  order.paymentBreakdown.razorpayAmount = 0;
+  order.paymentBreakdown.codAmount = 0;
+
+  if (method === "razorpay") {
+    order.paymentBreakdown.razorpayAmount = payable;
+  }
+
+  if (method === "cod") {
+    order.paymentBreakdown.codAmount = payable;
+  }
+
+  if (method === "partial_cod") {
+    order.partialPayment ||= {};
+
+    const upfrontAmount = Math.min(
+      payable,
+      order.partialPayment.upfrontPaid
+        ? num(order.partialPayment.upfrontAmount)
+        : Math.max(
+          1,
+          Math.round(
+            (payable * PARTIAL_COD_UPFRONT_PERCENT) / 100,
+          ),
+        ),
+    );
+
+    const codAmount = Math.max(0, payable - upfrontAmount);
+
+    order.paymentBreakdown.razorpayAmount = upfrontAmount;
+    order.paymentBreakdown.codAmount = codAmount;
+
+    order.partialPayment.enabled = true;
+    order.partialPayment.upfrontPercent =
+      PARTIAL_COD_UPFRONT_PERCENT;
+    order.partialPayment.upfrontAmount = upfrontAmount;
+    order.partialPayment.remainingCodAmount = codAmount;
+
+    order.markModified("partialPayment");
+  }
+
+  order.markModified("paymentBreakdown");
+};
+
+
 const normalizeVariantAttributes = (variant) => {
   const attrs = Array.isArray(variant?.attributes) ? variant.attributes : [];
   return attrs

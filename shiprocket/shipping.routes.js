@@ -5,6 +5,9 @@ import {
   syncShiprocketTrackingFlex,
   checkShiprocketServiceabilityApi,
   syncReversePickup,
+  getShiprocketNdrListController,
+  getShiprocketNdrController,
+  reattemptShiprocketNdrController,
 } from "./shipping.controller.js";
 import { shiprocketWebhook } from "./shiprocket.webhook.js";
 
@@ -53,5 +56,24 @@ router.post(
 ============================================================ */
 router.get("/orders/:id/tracking/sync", syncShiprocketTrackingFlex);
 router.get("/orders/tracking/sync", syncShiprocketTrackingFlex);
+
+/* ============================================================
+    NDR (Non-Delivery Report)
+============================================================ */
+
+router.get(
+  "/shiprocket/ndr",
+  getShiprocketNdrListController,
+);
+
+router.get(
+  "/shiprocket/ndr/:awb",
+  getShiprocketNdrController,
+);
+
+router.post(
+  "/shiprocket/ndr/:awb/reattempt",
+  reattemptShiprocketNdrController,
+);
 
 export default router;

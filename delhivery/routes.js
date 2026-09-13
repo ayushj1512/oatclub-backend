@@ -18,14 +18,18 @@ import {
   syncAllDelhiveryTrackingController,
   createReversePickupController,
   syncReversePickupController,
+  getNdrStatusController,
+  updateNdrController,
+  getDelhiveryNdrOrdersController,
+  getCustomerNdrOrderController,
+  submitCustomerNdrActionController,
 } from "./controller.js";
 
 import {
   delhiveryWebhook,
 } from "./webhook.js";
 
-const router =
-  express.Router();
+const router = express.Router();
 
 // Serviceability
 router.get(
@@ -33,7 +37,7 @@ router.get(
   serviceabilityController,
 );
 
-// Shipment
+// Shipments
 router.post(
   "/shipments",
   createShipmentController,
@@ -98,7 +102,7 @@ router.get(
   documentController,
 );
 
-// Waybill
+// Waybills
 router.get(
   "/waybills",
   waybillController,
@@ -125,6 +129,33 @@ router.post(
 router.post(
   "/webhook",
   delhiveryWebhook,
+);
+
+// Admin NDR
+router.get(
+  "/ndr/orders/sync",
+  getDelhiveryNdrOrdersController,
+);
+
+router.post(
+  "/ndr/:waybill/action",
+  updateNdrController,
+);
+
+router.get(
+  "/ndr/status/:requestId",
+  getNdrStatusController,
+);
+
+// Customer NDR
+router.get(
+  "/ndr/customer/:token",
+  getCustomerNdrOrderController,
+);
+
+router.post(
+  "/ndr/customer/:token/action",
+  submitCustomerNdrActionController,
 );
 
 export default router;

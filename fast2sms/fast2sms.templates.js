@@ -131,7 +131,36 @@ export const FAST2SMS_TEMPLATES = Object.freeze({
         cleanAmount(amount),
       ],
   },
+
+  NDR: {
+    key: "NDR",
+    messageId: 32656,
+    templateId: "1607370920846421",
+    templateName: "ndr",
+    language: "en",
+    status: "APPROVED",
+
+    buildVariables: ({
+      orderNumber,
+      customerName,
+      ndrReason,
+      actionLink,
+    } = {}) => [
+        // Header variables start from 1
+        clean(orderNumber),
+
+        // Body variables start from 1
+        clean(customerName, "Customer"),
+        clean(
+          ndrReason,
+          "Delivery attempt was unsuccessful",
+        ),
+        clean(actionLink),
+      ],
+  },
 });
+
+
 
 export const getFast2SmsTemplate = (templateKey) => {
   const key = String(templateKey || "")

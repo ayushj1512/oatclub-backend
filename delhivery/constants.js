@@ -10,6 +10,10 @@ export const ENDPOINTS = {
   UPDATE_SHIPMENT: "/api/p/edit",
   CANCEL_SHIPMENT: "/api/p/edit",
 
+  // NDR
+  // NDR
+  NDR: "/api/p/update",
+  NDR_STATUS: "/api/cmu/get_bulk_upl",
   // Tracking / label
   TRACKING: "/api/v1/packages/json/",
   LABEL: "/api/p/packing_slip",

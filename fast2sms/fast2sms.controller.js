@@ -4,6 +4,7 @@ import {
   sendPaymentCompletedWhatsapp,
   sendPrepaidOrderConfirmationWhatsapp,
   sendMarketingOfferWhatsapp,
+  sendNdrWhatsapp,
 } from "./fast2sms.whatsapp.js";
 
 import {
@@ -401,6 +402,64 @@ export const sendMarketingOfferController = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Unable to send marketing message",
+      error: error.message,
+    });
+  }
+};
+
+export const sendNdrController = async (
+  req,
+  res,
+) => {
+  try {
+    const order = ensureOrder(
+      req,
+      res,
+    );
+
+    if (!order) return;
+
+    const ndrReason = String(
+      req.body?.ndrReason || "",
+    ).trim();
+
+    if (!ndrReason) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "NDR reason is required",
+      });
+    }
+
+    const result =
+      await sendNdrWhatsapp({
+        order,
+        ndrReason,
+      });
+
+    if (!result?.success) {
+      return sendFailure(res, {
+        message:
+          "NDR WhatsApp message could not be sent",
+        result,
+      });
+    }
+
+    return sendSuccess(res, {
+      message:
+        "NDR WhatsApp message sent successfully",
+      result,
+    });
+  } catch (error) {
+    console.error(
+      "[Fast2SMS] NDR message error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to send NDR WhatsApp message",
       error: error.message,
     });
   }

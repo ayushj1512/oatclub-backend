@@ -8,6 +8,7 @@ import {
   sendPaymentCompletedController,
   sendPrepaidOrderConfirmationController,
   sendMarketingOfferController,
+  sendNdrController,
 } from "./fast2sms.controller.js";
 
 const router = express.Router();
@@ -51,6 +52,11 @@ router.post(
 router.post(
   "/whatsapp/marketing-offer",
   sendMarketingOfferController
+);
+
+router.post(
+  "/whatsapp/ndr",
+  sendNdrController,
 );
 
 export default router;

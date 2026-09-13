@@ -6,6 +6,11 @@ import { getShiprocketToken } from "./shiprocket.auth.js";
 import { shiprocketApi } from "./shiprocket.client.js";
 import { generateShiprocketLabel } from "./shiprocket.label.js";
 import { createReturnOrder } from "./shiprocket.return.js";
+import {
+  getShiprocketNdr,
+  getShiprocketNdrList,
+  reattemptShiprocketNdr,
+} from "./shiprocket.ndr.js";
 
 const s = (v) => (v == null ? "" : String(v)).trim();
 
@@ -1355,3 +1360,83 @@ export async function syncReversePickup(req, res) {
     );
   }
 }
+
+export async function getShiprocketNdrListController(
+  req,
+  res,
+) {
+  try {
+    const data =
+      await getShiprocketNdrList(
+        req.query,
+      );
+
+    return res.json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    return sendShiprocketError(
+      res,
+      error,
+      "Unable to fetch Shiprocket NDR shipments",
+    );
+  }
+}
+
+export async function getShiprocketNdrController(
+  req,
+  res,
+) {
+  try {
+    const data =
+      await getShiprocketNdr(
+        req.params.awb,
+      );
+
+    return res.json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    return sendShiprocketError(
+      res,
+      error,
+      "Unable to fetch Shiprocket NDR",
+    );
+  }
+}
+
+export async function reattemptShiprocketNdrController(
+  req,
+  res,
+) {
+  try {
+    const data =
+      await reattemptShiprocketNdr({
+        awb: req.params.awb,
+        address1:
+          req.body?.address1,
+        address2:
+          req.body?.address2,
+        phone: req.body?.phone,
+        deferredDate:
+          req.body?.deferredDate,
+      });
+
+    return res.json({
+      success: true,
+      message:
+        "Shiprocket NDR reattempt submitted successfully",
+      data,
+    });
+  } catch (error) {
+    return sendShiprocketError(
+      res,
+      error,
+      "Shiprocket NDR reattempt failed",
+    );
+  }
+}
+
+
