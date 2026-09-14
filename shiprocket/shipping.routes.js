@@ -2,78 +2,81 @@ import express from "express";
 import {
   bookWithShiprocket,
   createReversePickup,
+  syncReversePickup,
   syncShiprocketTrackingFlex,
   checkShiprocketServiceabilityApi,
-  syncReversePickup,
   getShiprocketNdrListController,
   getShiprocketNdrController,
-  reattemptShiprocketNdrController,
+  submitShiprocketNdrActionController,
+  getShiprocketCustomerNdrOrderController,
+  submitShiprocketCustomerNdrActionController,
 } from "./shipping.controller.js";
 import { shiprocketWebhook } from "./shiprocket.webhook.js";
 
 const router = express.Router();
 
-/* ============================================================
-   SHIPMENT BOOKING
-============================================================ */
+/* Shipment */
 router.post("/orders/:id/ship", bookWithShiprocket);
+router.get(
+  "/shiprocket/serviceability",
+  checkShiprocketServiceabilityApi,
+);
 
-/* ============================================================
-   SERVICEABILITY
-============================================================ */
-router.get("/shiprocket/serviceability", checkShiprocketServiceabilityApi);
-
-/* ============================================================
-   SHIPROCKET WEBHOOK
-   Docs suggest avoiding obvious words in webhook URL,
-   so keep secret route as primary + old route as fallback.
-============================================================ */
-router.post("/1bfc4cf60e6c2cc8/1bfc4cf60e6c2cc8", shiprocketWebhook);
-
-// optional fallback for local/manual testing
+/* Webhook */
+router.post(
+  "/1bfc4cf60e6c2cc8/1bfc4cf60e6c2cc8",
+  shiprocketWebhook,
+);
 router.post("/shiprocket/webhook", shiprocketWebhook);
 
-/* ============================================================
-   REVERSE PICKUP (RMA)
-============================================================ */
-
+/* Reverse pickup */
 router.post(
   "/shiprocket/return/:orderId/:rmaNumber",
-  createReversePickup
+  createReversePickup,
 );
-
 router.post(
   "/return/:orderId/:rmaNumber/sync",
-  syncReversePickup
+  syncReversePickup,
 );
-
 router.post(
   "/shiprocket/return/:orderId/:rmaNumber/sync",
-  syncReversePickup
+  syncReversePickup,
 );
-/* ============================================================
-   TRACKING SYNC
-============================================================ */
-router.get("/orders/:id/tracking/sync", syncShiprocketTrackingFlex);
-router.get("/orders/tracking/sync", syncShiprocketTrackingFlex);
 
-/* ============================================================
-    NDR (Non-Delivery Report)
-============================================================ */
-
+/* Tracking */
 router.get(
-  "/shiprocket/ndr",
+  "/orders/:id/tracking/sync",
+  syncShiprocketTrackingFlex,
+);
+router.get(
+  "/orders/tracking/sync",
+  syncShiprocketTrackingFlex,
+);
+
+/* NDR */
+router.get(
+  "/shiprocket/ndr/orders/sync",
   getShiprocketNdrListController,
 );
 
 router.get(
-  "/shiprocket/ndr/:awb",
-  getShiprocketNdrController,
+  "/shiprocket/ndr/customer/:orderNumber",
+  getShiprocketCustomerNdrOrderController,
 );
 
 router.post(
-  "/shiprocket/ndr/:awb/reattempt",
-  reattemptShiprocketNdrController,
+  "/shiprocket/ndr/customer/:orderNumber/action",
+  submitShiprocketCustomerNdrActionController,
+);
+
+
+router.get(
+  "/shiprocket/ndr/:awb/status",
+  getShiprocketNdrController,
+);
+router.post(
+  "/shiprocket/ndr/:awb/action",
+  submitShiprocketNdrActionController,
 );
 
 export default router;

@@ -7,12 +7,80 @@ import { shiprocketApi } from "./shiprocket.client.js";
 import { generateShiprocketLabel } from "./shiprocket.label.js";
 import { createReturnOrder } from "./shiprocket.return.js";
 import {
+  getAllShiprocketNdrPages,
   getShiprocketNdr,
-  getShiprocketNdrList,
-  reattemptShiprocketNdr,
+  submitShiprocketNdrAction,
 } from "./shiprocket.ndr.js";
 
 const s = (v) => (v == null ? "" : String(v)).trim();
+
+const getShiprocketAwb = (order) =>
+  s(
+    order?.shipment?.shiprocket?.awb ||
+    order?.shipment?.awb ||
+    order?.shipment?.awbCode,
+  );
+
+const SHIPROCKET_TERMINAL_STATUSES = [
+  "delivered",
+  "cancelled",
+  "canceled",
+  "returned",
+  "rto_delivered",
+];
+
+const shiprocketOrderFilter = {
+  fulfillmentStatus: {
+    $nin: SHIPROCKET_TERMINAL_STATUSES,
+  },
+  $and: [
+    {
+      $or: [
+        {
+          "shipment.provider": {
+            $regex: /^shiprocket$/i,
+          },
+        },
+        {
+          "shipment.shiprocket.awb": {
+            $exists: true,
+            $nin: ["", null],
+          },
+        },
+      ],
+    },
+    {
+      $or: [
+        {
+          "shipment.shiprocket.awb": {
+            $exists: true,
+            $nin: ["", null],
+          },
+        },
+        {
+          "shipment.awb": {
+            $exists: true,
+            $nin: ["", null],
+          },
+        },
+        {
+          "shipment.awbCode": {
+            $exists: true,
+            $nin: ["", null],
+          },
+        },
+      ],
+    },
+  ],
+};
+
+const getShiprocketNdrRow = (response) => {
+  if (Array.isArray(response?.data)) {
+    return response.data[0] || null;
+  }
+
+  return response?.data || response || null;
+};
 
 const getShiprocketError = (err) =>
   err?.response?.data || err?.message || "Unknown Shiprocket error";
@@ -1360,83 +1428,794 @@ export async function syncReversePickup(req, res) {
     );
   }
 }
-
-export async function getShiprocketNdrListController(
-  req,
-  res,
-) {
+export async function getShiprocketNdrListController(req, res) {
   try {
-    const data =
-      await getShiprocketNdrList(
-        req.query,
-      );
+    const orders = await Order.find(shiprocketOrderFilter)
+      .select(
+        [
+          "orderNumber",
+          "customerId",
+          "shippingAddressSnapshot",
+          "items",
+          "subtotal",
+          "discount",
+          "shippingFee",
+          "tax",
+          "totalAmount",
+          "finalPayable",
+          "currency",
+          "paymentMethod",
+          "paymentStatus",
+          "fulfillmentStatus",
+          "shipment",
+          "createdAt",
+        ].join(" "),
+      )
+      .populate(
+        "customerId",
+        "name fullName phone mobile email",
+      )
+      .sort({ createdAt: -1 })
+      .lean();
 
-    return res.json({
-      success: true,
-      data,
-    });
-  } catch (error) {
-    return sendShiprocketError(
-      res,
-      error,
-      "Unable to fetch Shiprocket NDR shipments",
+    const awbs = [
+      ...new Set(
+        orders
+          .map(getShiprocketAwb)
+          .filter(Boolean),
+      ),
+    ];
+
+    const result =
+      await getAllShiprocketNdrPages(req.query);
+
+    const ndrByAwb = new Map(
+      result.ndrOrders.map((ndr) => [
+        s(ndr?.awb_code).toLowerCase(),
+        ndr,
+      ]),
     );
-  }
-}
 
-export async function getShiprocketNdrController(
-  req,
-  res,
-) {
-  try {
-    const data =
-      await getShiprocketNdr(
-        req.params.awb,
-      );
-
-    return res.json({
-      success: true,
-      data,
-    });
-  } catch (error) {
-    return sendShiprocketError(
-      res,
-      error,
-      "Unable to fetch Shiprocket NDR",
+    const matchedOrders = orders.filter((order) =>
+      ndrByAwb.has(
+        getShiprocketAwb(order).toLowerCase(),
+      ),
     );
-  }
-}
 
-export async function reattemptShiprocketNdrController(
-  req,
-  res,
-) {
-  try {
-    const data =
-      await reattemptShiprocketNdr({
-        awb: req.params.awb,
-        address1:
-          req.body?.address1,
-        address2:
-          req.body?.address2,
-        phone: req.body?.phone,
-        deferredDate:
-          req.body?.deferredDate,
+    if (matchedOrders.length) {
+      await Order.bulkWrite(
+        matchedOrders.map((order) => {
+          const ndr = ndrByAwb.get(
+            getShiprocketAwb(order).toLowerCase(),
+          );
+
+          return {
+            updateOne: {
+              filter: { _id: order._id },
+              update: {
+                $set: {
+                  "shipment.provider": "shiprocket",
+                  "shipment.status": s(ndr?.status),
+                  "shipment.statusCode": s(
+                    ndr?.status_code,
+                  ),
+                  "shipment.rawStatus": s(ndr?.status),
+                  "shipment.shiprocket.statusCode": s(
+                    ndr?.status_code,
+                  ),
+                  "shipment.shiprocket.rawStatus": s(
+                    ndr?.status,
+                  ),
+                  "shipment.shiprocket.reason": s(
+                    ndr?.reason,
+                  ),
+                  "shipment.shiprocket.attemptCount":
+                    Number(ndr?.attempts || 0),
+                  "shipment.shiprocket.lastNdr": ndr,
+                  "shipment.shiprocket.ndrSyncedAt":
+                    new Date(),
+                },
+              },
+            },
+          };
+        }),
+        { ordered: false },
+      );
+    }
+
+    const number = (value) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const ndrOrders = matchedOrders.map((order) => {
+      const awb = getShiprocketAwb(order);
+      const ndr = ndrByAwb.get(awb.toLowerCase());
+      const address =
+        order.shippingAddressSnapshot || {};
+
+      const customer =
+        order.customerId &&
+          typeof order.customerId === "object"
+          ? order.customerId
+          : {};
+
+      const products = (
+        Array.isArray(order.items)
+          ? order.items
+          : []
+      ).map((item) => {
+        const product =
+          item.productSnapshot || {};
+
+        const selectedSize =
+          item.selectedSize ||
+          item.variant?.attributes?.find(
+            (attribute) =>
+              s(attribute?.key).toLowerCase() ===
+              "size",
+          )?.value ||
+          "";
+
+        const quantity = number(
+          item.quantity || 1,
+        );
+
+        const price = number(item.price);
+
+        return {
+          lineId: item.lineId || item._id,
+          productId: item.productId || null,
+          title:
+            product.title ||
+            item.title ||
+            "Product",
+          productCode:
+            product.productCode ||
+            item.productCode ||
+            "",
+          image:
+            product.thumbnail ||
+            product.images?.[0] ||
+            item.image ||
+            "",
+          sku:
+            item.variant?.sku ||
+            product.sku ||
+            "",
+          selectedSize,
+          selectedColor:
+            item.selectedColor || "",
+          quantity,
+          price,
+          subtotal:
+            number(item.subtotal) ||
+            price * quantity,
+        };
       });
+
+      return {
+        _id: order._id,
+        orderNumber: order.orderNumber,
+        provider: "shiprocket",
+        createdAt: order.createdAt,
+
+        customer: {
+          id:
+            customer._id ||
+            order.customerId ||
+            null,
+          name:
+            address.fullName ||
+            customer.fullName ||
+            customer.name ||
+            "Customer",
+          phone:
+            address.phone ||
+            customer.phone ||
+            customer.mobile ||
+            "",
+          email:
+            address.email ||
+            customer.email ||
+            "",
+        },
+
+        shippingAddress: {
+          name: address.fullName || "",
+          phone: address.phone || "",
+          line1: address.line1 || "",
+          line2: address.line2 || "",
+          landmark: address.landmark || "",
+          city: address.city || "",
+          state: address.state || "",
+          country: address.country || "India",
+          pincode: address.pincode || "",
+        },
+
+        products,
+
+        pricing: {
+          subtotal: number(order.subtotal),
+          discount: number(order.discount),
+          shippingFee: number(order.shippingFee),
+          tax: number(order.tax),
+          totalAmount: number(order.totalAmount),
+          finalPayable: number(
+            order.finalPayable ||
+            order.totalAmount,
+          ),
+          currency: order.currency || "INR",
+        },
+
+        paymentMethod: order.paymentMethod,
+        paymentStatus: order.paymentStatus,
+        fulfillmentStatus:
+          order.fulfillmentStatus,
+
+        ndr: {
+          awb,
+          statusCode: s(ndr?.status_code),
+          rawStatus:
+            s(ndr?.status) || "Undelivered",
+          reason:
+            s(ndr?.reason) ||
+            "Delivery attempt failed",
+          attemptCount: number(ndr?.attempts),
+          eligible: true,
+          allowedActions: [
+            "re-attempt",
+            "return",
+          ],
+          raisedAt: ndr?.ndr_raised_at || null,
+          escalationStatus:
+            ndr?.escalation_status || "",
+          history: Array.isArray(ndr?.history)
+            ? ndr.history
+            : [],
+        },
+      };
+    });
 
     return res.json({
       success: true,
       message:
-        "Shiprocket NDR reattempt submitted successfully",
+        "Shiprocket NDR orders synced successfully",
+      data: {
+        totalOrders: orders.length,
+        totalAwbs: awbs.length,
+        totalPages: result.totalPages,
+        totalNdrOrders: ndrOrders.length,
+        ndrOrders,
+        syncErrors: result.syncErrors,
+      },
+    });
+  } catch (error) {
+    return sendShiprocketError(
+      res,
+      error,
+      "Unable to sync Shiprocket NDR orders",
+    );
+  }
+}
+
+export async function getShiprocketNdrController(req, res) {
+  try {
+    const awb = s(req.params.awb);
+
+    if (!awb) {
+      return res.status(400).json({
+        success: false,
+        message: "Shiprocket AWB is required",
+      });
+    }
+
+    const response = await getShiprocketNdr(awb);
+
+    const ndr = Array.isArray(response?.data)
+      ? response.data[0]
+      : response?.data || response;
+
+    if (!ndr) {
+      return res.status(404).json({
+        success: false,
+        message: "Shiprocket NDR record not found",
+      });
+    }
+
+    const statusCode = s(ndr.status_code);
+    const rawStatus =
+      s(ndr.status) || "Undelivered";
+
+    const reason =
+      s(ndr.reason) ||
+      "Delivery attempt failed";
+
+    const attemptCount = Number(
+      ndr.attempts || 0,
+    );
+
+    const order = await Order.findOneAndUpdate(
+      {
+        $or: [
+          {
+            "shipment.shiprocket.awb": awb,
+          },
+          {
+            "shipment.awb": awb,
+          },
+          {
+            "shipment.awbCode": awb,
+          },
+        ],
+      },
+      {
+        $set: {
+          "shipment.provider": "shiprocket",
+          "shipment.status": rawStatus,
+          "shipment.statusCode": statusCode,
+          "shipment.rawStatus": rawStatus,
+          "shipment.shiprocket.statusCode":
+            statusCode,
+          "shipment.shiprocket.rawStatus":
+            rawStatus,
+          "shipment.shiprocket.reason": reason,
+          "shipment.shiprocket.attemptCount":
+            attemptCount,
+          "shipment.shiprocket.lastNdr": ndr,
+          "shipment.shiprocket.ndrSyncedAt":
+            new Date(),
+        },
+      },
+      { new: true },
+    )
+      .select(
+        "orderNumber fulfillmentStatus shipment",
+      )
+      .lean();
+
+    return res.json({
+      success: true,
+      data: {
+        awb,
+        statusCode,
+        rawStatus,
+        reason,
+        attemptCount,
+        eligible: true,
+        allowedActions: [
+          "re-attempt",
+          "return",
+        ],
+        raisedAt: ndr.ndr_raised_at || null,
+        escalationStatus:
+          ndr.escalation_status || "",
+        history: Array.isArray(ndr.history)
+          ? ndr.history
+          : [],
+        order: order || null,
+      },
+    });
+  } catch (error) {
+    if (error?.response?.status === 404) {
+      return res.status(404).json({
+        success: false,
+        message: "Shiprocket NDR record not found",
+      });
+    }
+
+    return sendShiprocketError(
+      res,
+      error,
+      "Unable to fetch Shiprocket NDR status",
+    );
+  }
+}
+
+export async function submitShiprocketNdrActionController(
+  req,
+  res,
+) {
+  try {
+    const data = await submitShiprocketNdrAction({
+      awb: req.params.awb,
+      action: req.body?.action,
+      comments: req.body?.comments,
+      phone: req.body?.phone,
+      address1: req.body?.address1,
+      address2: req.body?.address2,
+      deferredDate: req.body?.deferredDate,
+      proofAudio: req.body?.proofAudio,
+      proofImage: req.body?.proofImage,
+      remarks: req.body?.remarks,
+    });
+
+    return res.status(202).json({
+      success: true,
+      message:
+        "Shiprocket NDR action submitted successfully",
       data,
     });
   } catch (error) {
     return sendShiprocketError(
       res,
       error,
-      "Shiprocket NDR reattempt failed",
+      "Shiprocket NDR action failed",
     );
   }
 }
+
+const publicShiprocketOrder = (
+  order,
+  ndr,
+) => {
+  const address =
+    order.shippingAddressSnapshot || {};
+
+  const products = (order.items || []).map(
+    (item) => {
+      const product =
+        item.productSnapshot || {};
+
+      const quantity = Number(
+        item.quantity || 1,
+      );
+
+      const price = Number(item.price || 0);
+
+      return {
+        lineId: item.lineId || item._id,
+        productId: item.productId || null,
+        title:
+          product.title ||
+          item.title ||
+          "Product",
+        productCode:
+          product.productCode ||
+          item.productCode ||
+          "",
+        image:
+          product.thumbnail ||
+          product.images?.[0] ||
+          item.image ||
+          "",
+        sku:
+          item.variant?.sku ||
+          product.sku ||
+          "",
+        selectedSize:
+          item.selectedSize || "",
+        selectedColor:
+          item.selectedColor || "",
+        quantity,
+        price,
+        subtotal:
+          Number(item.subtotal) ||
+          price * quantity,
+      };
+    },
+  );
+
+  return {
+    _id: order._id,
+    orderNumber: order.orderNumber,
+    provider: "shiprocket",
+
+    customer: {
+      name:
+        address.fullName ||
+        address.name ||
+        "Customer",
+      phone: address.phone || "",
+      email: address.email || "",
+    },
+
+    shippingAddress: {
+      name:
+        address.fullName ||
+        address.name ||
+        "",
+      phone: address.phone || "",
+      line1: address.line1 || "",
+      line2: address.line2 || "",
+      landmark: address.landmark || "",
+      city: address.city || "",
+      state: address.state || "",
+      country: address.country || "India",
+      pincode: address.pincode || "",
+    },
+
+    products,
+
+    pricing: {
+      subtotal: Number(order.subtotal || 0),
+      discount: Number(order.discount || 0),
+      shippingFee: Number(
+        order.shippingFee || 0,
+      ),
+      tax: Number(order.tax || 0),
+      totalAmount: Number(
+        order.totalAmount || 0,
+      ),
+      finalPayable: Number(
+        order.finalPayable ||
+        order.totalAmount ||
+        0,
+      ),
+      currency: order.currency || "INR",
+    },
+
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus,
+    fulfillmentStatus:
+      order.fulfillmentStatus,
+
+    ndr: {
+      awb: getShiprocketAwb(order),
+      statusCode: s(ndr?.status_code),
+      rawStatus:
+        s(ndr?.status) || "Undelivered",
+      reason:
+        s(ndr?.reason) ||
+        "Delivery attempt failed",
+      attemptCount: Number(
+        ndr?.attempts || 0,
+      ),
+      eligible: true,
+      allowedActions: [
+        "re-attempt",
+        "return",
+      ],
+    },
+  };
+};
+
+export async function getShiprocketCustomerNdrOrderController(
+  req,
+  res,
+) {
+  try {
+    const orderNumber = s(
+      req.params.orderNumber,
+    );
+
+    const order = await Order.findOne({
+      orderNumber,
+      fulfillmentStatus: {
+        $nin: SHIPROCKET_TERMINAL_STATUSES,
+      },
+      $or: [
+        {
+          "shipment.provider": {
+            $regex: /^shiprocket$/i,
+          },
+        },
+        {
+          "shipment.shiprocket.awb": {
+            $exists: true,
+            $nin: ["", null],
+          },
+        },
+      ],
+    })
+      .select(
+        [
+          "orderNumber",
+          "shippingAddressSnapshot",
+          "items",
+          "subtotal",
+          "discount",
+          "shippingFee",
+          "tax",
+          "totalAmount",
+          "finalPayable",
+          "currency",
+          "paymentMethod",
+          "paymentStatus",
+          "fulfillmentStatus",
+          "shipment",
+        ].join(" "),
+      )
+      .lean();
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Eligible Shiprocket order not found",
+      });
+    }
+
+    const awb = getShiprocketAwb(order);
+
+    if (!awb) {
+      return res.status(404).json({
+        success: false,
+        message: "Shiprocket AWB not found",
+      });
+    }
+
+    const response =
+      await getShiprocketNdr(awb);
+
+    const ndr =
+      getShiprocketNdrRow(response);
+
+    if (!ndr) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "This order does not have an active NDR",
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: publicShiprocketOrder(
+        order,
+        ndr,
+      ),
+    });
+  } catch (error) {
+    if (error?.response?.status === 404) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "This order does not have an active NDR",
+      });
+    }
+
+    return sendShiprocketError(
+      res,
+      error,
+      "Unable to fetch Shiprocket NDR order",
+    );
+  }
+}
+
+export async function submitShiprocketCustomerNdrActionController(
+  req,
+  res,
+) {
+  try {
+    const orderNumber = s(
+      req.params.orderNumber,
+    );
+
+    const action = s(
+      req.body?.action,
+    ).toLowerCase();
+
+    if (
+      !["re-attempt", "return"].includes(
+        action,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Only reattempt or return is supported",
+      });
+    }
+
+    const order = await Order.findOne({
+      orderNumber,
+      fulfillmentStatus: {
+        $nin: SHIPROCKET_TERMINAL_STATUSES,
+      },
+      $or: [
+        {
+          "shipment.provider": {
+            $regex: /^shiprocket$/i,
+          },
+        },
+        {
+          "shipment.shiprocket.awb": {
+            $exists: true,
+            $nin: ["", null],
+          },
+        },
+      ],
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Eligible Shiprocket order not found",
+      });
+    }
+
+    const awb = getShiprocketAwb(order);
+
+    if (!awb) {
+      return res.status(400).json({
+        success: false,
+        message: "Shiprocket AWB not found",
+      });
+    }
+
+    const latestResponse =
+      await getShiprocketNdr(awb);
+
+    const latestNdr =
+      getShiprocketNdrRow(
+        latestResponse,
+      );
+
+    if (!latestNdr) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Order is no longer eligible for an NDR action",
+      });
+    }
+
+    const comments =
+      s(req.body?.comments) ||
+      (action === "return"
+        ? "Customer requested return to origin"
+        : "Customer confirmed delivery reattempt");
+
+    const providerResponse =
+      await submitShiprocketNdrAction({
+        awb,
+        action,
+        comments,
+        phone: req.body?.phone,
+        address1: req.body?.address1,
+        address2: req.body?.address2,
+        deferredDate:
+          req.body?.deferredDate,
+      });
+
+    await Order.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          "shipment.shiprocket.lastNdrAction":
+          {
+            action,
+            comments,
+            source: "customer",
+            submittedAt: new Date(),
+            response:
+              providerResponse || null,
+          },
+        },
+      },
+    );
+
+    return res.status(202).json({
+      success: true,
+      message:
+        action === "return"
+          ? "Return request submitted successfully"
+          : "Delivery reattempt submitted successfully",
+      data: {
+        provider: "shiprocket",
+        action,
+        awb,
+        providerResponse,
+        order: {
+          _id: order._id,
+          orderNumber:
+            order.orderNumber,
+          provider: "shiprocket",
+        },
+      },
+    });
+  } catch (error) {
+    return sendShiprocketError(
+      res,
+      error,
+      "Unable to submit Shiprocket NDR action",
+    );
+  }
+}
+
+/* Keep old routes working until shipping.routes.js is patched */
+export const reattemptShiprocketNdrController =
+  submitShiprocketNdrActionController;
 
 
