@@ -8,6 +8,9 @@ import { onboardingTemplate } from "./OnboardingEmailTempalte.js";
 import { orderConfirmationTemplate } from "./OrderConfirmationTemplate.js";
 import { orderReceivedTemplate } from "./OrderReceivedTemplate.js";
 import { rmaCreatedTemplate } from "./events/RmaEmailTemplate.js";
+import {
+  rmaReversePickupBookedTemplate,
+} from "./events/RmaReversePickupBookedTemplate.js";
 import { orderPaymentPendingTemplate } from "./events/OrderPaymentPendingTemplate.js";
 import { customerCreditCreditedTemplate } from "./events/CustomerCreditCreditedTemplate.js";
 
@@ -546,6 +549,120 @@ eventBus.on(
      ctaUrl?
    }
 ========================================================= */
+
+
+/* =========================================================
+   RMA REVERSE PICKUP BOOKED
+========================================================= */
+
+eventBus.on(
+  EVENTS.RMA_REVERSE_PICKUP_BOOKED,
+  async ({
+    email,
+    name,
+    order,
+    rma,
+    ctaUrl,
+    onSuccess,
+    onError,
+  }) => {
+    try {
+      if (!order) {
+        throw new Error(
+          "Missing order in RMA_REVERSE_PICKUP_BOOKED event",
+        );
+      }
+
+      if (!rma) {
+        throw new Error(
+          "Missing RMA in RMA_REVERSE_PICKUP_BOOKED event",
+        );
+      }
+
+      const customerEmail = getCustomerEmail({
+        email,
+        order,
+      });
+
+      const customerName = getCustomerName({
+        name,
+        order,
+      });
+
+      if (!customerEmail) {
+        throw new Error(
+          "Missing customer email in RMA_REVERSE_PICKUP_BOOKED event",
+        );
+      }
+
+      if (!rma?.reverseShipment?.awb) {
+        throw new Error(
+          "Reverse shipment AWB is missing",
+        );
+      }
+
+      const orderNumber =
+        order?.orderNumber ||
+        order?.orderId ||
+        order?._id;
+
+      const { subject, text, html } =
+        rmaReversePickupBookedTemplate({
+          name: customerName,
+          orderNumber,
+          rma,
+          ctaUrl:
+            ctaUrl ||
+            rma?.reverseShipment?.trackingUrl ||
+            `https://oatclub.in/orders/${orderNumber}`,
+        });
+
+      const info = await sendMail({
+        to: customerEmail,
+        subject,
+        text,
+        html,
+        headers: {
+          "X-OATCLUB-Notification-Type":
+            "rma-reverse-pickup-booked",
+          "X-OATCLUB-RMA-Number": String(
+            rma?.rmaNumber || "",
+          ),
+          "X-OATCLUB-Order-Number": String(
+            orderNumber || "",
+          ),
+        },
+      });
+
+      if (typeof onSuccess === "function") {
+        await onSuccess(info);
+      }
+
+      console.log(
+        "✅ RMA reverse pickup email sent:",
+        {
+          email: customerEmail,
+          orderNumber,
+          rmaNumber: rma?.rmaNumber,
+          provider:
+            rma?.reverseShipment?.provider,
+          awb: rma?.reverseShipment?.awb,
+        },
+      );
+    } catch (error) {
+      if (typeof onError === "function") {
+        await onError(error);
+      }
+
+      console.error(
+        "❌ RMA reverse pickup email failed:",
+        error?.message || error,
+      );
+    }
+  },
+);
+
+
 
 eventBus.on(
   EVENTS.CUSTOMER_CREDIT_CREDITED,

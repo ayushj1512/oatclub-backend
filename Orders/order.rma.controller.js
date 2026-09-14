@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import Order from "./Orders.js";
 import Product from "../Products/Products.js";
-
+import { Mailer } from "../nodemailer/mailer.js";
 /* =========================================================
    HELPERS
 ========================================================= */
@@ -1042,5 +1042,103 @@ export const getRmaReasonsGroupedByProductCode = async (req, res) => {
 
       error: error.message,
     });
+  }
+};
+
+const sendReversePickupBookedMail = async (
+  order,
+  rma,
+) => {
+  const shipment = rma?.reverseShipment;
+
+  if (
+    !order ||
+    !rma ||
+    !shipment?.awb ||
+    shipment?.customerNotification?.emailSent ===
+    true
+  ) {
+    return;
+  }
+
+  const email =
+    order?.customerId?.email ||
+    order?.shippingAddressSnapshot?.email ||
+    order?.billingAddressSnapshot?.email ||
+    "";
+
+  if (!email) return;
+
+  const name =
+    order?.customerId?.name ||
+    order?.shippingAddressSnapshot?.fullName ||
+    order?.billingAddressSnapshot?.fullName ||
+    "Customer";
+
+  shipment.customerNotification =
+    shipment.customerNotification || {};
+
+  try {
+    const info =
+      await Mailer.sendRmaReversePickupBooked({
+        to: email,
+        name,
+        orderNumber:
+          order?.orderNumber ||
+          order?.orderId ||
+          order?._id,
+        rma: rma.toObject?.() || rma,
+        ctaUrl:
+          shipment.trackingUrl ||
+          `https://oatclub.in/orders/${order.orderNumber}`,
+      });
+
+    if (info?.disabled) {
+      shipment.customerNotification.emailSent =
+        false;
+
+      shipment.customerNotification.emailError =
+        "Email skipped because MAIL_ENABLED is false";
+
+      return;
+    }
+
+    shipment.customerNotification.emailSent =
+      true;
+
+    shipment.customerNotification.emailSentAt =
+      new Date();
+
+    shipment.customerNotification.emailError =
+      "";
+
+    console.log(
+      "✅ Reverse pickup email sent:",
+      {
+        orderNumber: order.orderNumber,
+        rmaNumber: rma.rmaNumber,
+        email,
+        courier: shipment.courierName,
+        awb: shipment.awb,
+      },
+    );
+  } catch (error) {
+    shipment.customerNotification.emailSent =
+      false;
+
+    shipment.customerNotification.emailSentAt =
+      null;
+
+    shipment.customerNotification.emailError =
+      error?.message ||
+      "Reverse pickup email failed";
+
+    console.error(
+      "❌ Reverse pickup email failed:",
+      error?.message || error,
+    );
+  } finally {
+    order.markModified("rmas");
+    await order.save();
   }
 };

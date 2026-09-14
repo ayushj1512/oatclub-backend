@@ -10,63 +10,114 @@ import { orderTrackingTemplate } from "./events/OrderTrackingTemplate.js";
 import { orderShippedTemplate } from "./events/OrderShippedTemplate.js";
 import { orderDeliveredTemplate } from "./events/OrderDeliveredTemplate.js";
 import { orderPaymentPendingTemplate } from "./events/OrderPaymentPendingTemplate.js";
-import {
-  adminUserTaskEmailTemplate,
-} from "./events/AdminUserTaskEmailTemplate.js";
+import { adminUserTaskEmailTemplate } from "./events/AdminUserTaskEmailTemplate.js";
 import { customerCreditCreditedTemplate } from "./events/CustomerCreditCreditedTemplate.js";
+import { rmaReversePickupBookedTemplate } from "./events/RmaReversePickupBookedTemplate.js";
 
-const MAIL_ENABLED = String(process.env.MAIL_ENABLED).toLowerCase() !== "false";
+const MAIL_ENABLED =
+  String(process.env.MAIL_ENABLED).toLowerCase() !== "false";
 
 console.log("📨 MAIL_ENABLED:", process.env.MAIL_ENABLED);
 console.log("📧 MAIL_USER:", process.env.MAIL_USER);
-console.log("🔐 MAIL_PASS:", process.env.MAIL_PASS ? "✅ present" : "❌ missing");
+console.log(
+  "🔐 MAIL_PASS:",
+  process.env.MAIL_PASS ? "✅ present" : "❌ missing",
+);
 
 let cachedTransporter = null;
 
 function getTransporter() {
   if (cachedTransporter) return cachedTransporter;
 
+  const port = Number(process.env.MAIL_PORT || 587);
+
   cachedTransporter = nodemailer.createTransport({
     host: process.env.MAIL_HOST || "smtp.gmail.com",
-    port: Number(process.env.MAIL_PORT || 587),
-    secure: String(process.env.MAIL_SECURE).toLowerCase() === "true",
-    requireTLS: Number(process.env.MAIL_PORT || 587) === 587,
-    name: process.env.MAIL_EHLO_NAME || process.env.SMTP_EHLO_NAME || "oatclub.in",
+    port,
+    secure:
+      String(process.env.MAIL_SECURE).toLowerCase() ===
+      "true",
+    requireTLS: port === 587,
+    name:
+      process.env.MAIL_EHLO_NAME ||
+      process.env.SMTP_EHLO_NAME ||
+      "oatclub.in",
     auth: {
       user: process.env.MAIL_USER,
       pass: process.env.MAIL_PASS,
     },
     pool: true,
-    maxConnections: Number(process.env.MAIL_MAX_CONNECTIONS || 2),
-    maxMessages: Number(process.env.MAIL_MAX_MESSAGES || 500),
+    maxConnections: Number(
+      process.env.MAIL_MAX_CONNECTIONS || 2,
+    ),
+    maxMessages: Number(
+      process.env.MAIL_MAX_MESSAGES || 500,
+    ),
   });
 
-  cachedTransporter.verify((err) => {
-    if (err) console.error("❌ SMTP verify failed:", err.message);
-    else console.log("✅ SMTP server ready to send emails");
+  cachedTransporter.verify((error) => {
+    if (error) {
+      console.error(
+        "❌ SMTP verify failed:",
+        error.message,
+      );
+    } else {
+      console.log("✅ SMTP server ready to send emails");
+    }
   });
 
   return cachedTransporter;
 }
 
-export async function sendMail({ to, subject, text, html, headers = {} }) {
+export async function sendMail({
+  to,
+  subject,
+  text,
+  html,
+  headers = {},
+}) {
   if (!MAIL_ENABLED) {
-    console.log("📭 MAIL_ENABLED false → skipping mail", { to, subject });
+    console.log(
+      "📭 MAIL_ENABLED false → skipping mail",
+      { to, subject },
+    );
+
     return { disabled: true };
   }
 
-  if (!to) throw new Error("Recipient email missing");
-  if (!process.env.MAIL_USER || !process.env.MAIL_PASS) {
-    throw new Error("MAIL_USER or MAIL_PASS missing in .env");
+  if (!to) {
+    throw new Error("Recipient email missing");
+  }
+
+  if (
+    !process.env.MAIL_USER ||
+    !process.env.MAIL_PASS
+  ) {
+    throw new Error(
+      "MAIL_USER or MAIL_PASS missing in .env",
+    );
   }
 
   const transporter = getTransporter();
 
-  const from = process.env.MAIL_FROM || `OATCLUB <${process.env.MAIL_USER}>`;
-  const replyTo = process.env.MAIL_REPLY_TO || process.env.MAIL_USER;
-  const envelopeFrom = process.env.MAIL_ENVELOPE_FROM || process.env.MAIL_USER;
+  const from =
+    process.env.MAIL_FROM ||
+    `OATCLUB <${process.env.MAIL_USER}>`;
 
-  console.log("📤 Sending mail...", { to, subject, from, replyTo });
+  const replyTo =
+    process.env.MAIL_REPLY_TO ||
+    process.env.MAIL_USER;
+
+  const envelopeFrom =
+    process.env.MAIL_ENVELOPE_FROM ||
+    process.env.MAIL_USER;
+
+  console.log("📤 Sending mail...", {
+    to,
+    subject,
+    from,
+    replyTo,
+  });
 
   const info = await transporter.sendMail({
     from,
@@ -83,155 +134,141 @@ export async function sendMail({ to, subject, text, html, headers = {} }) {
   });
 
   console.log(`✅ Email sent → ${to} | ${subject}`);
+
   return info;
 }
 
+const sendTemplate = (
+  template,
+  to,
+  templateData,
+  headers = {},
+) => {
+  const { subject, text, html } =
+    template(templateData);
+
+  return sendMail({
+    to,
+    subject,
+    text,
+    html,
+    headers,
+  });
+};
+
 export const Mailer = {
-  sendUserOnboarding: async ({
+  sendUserOnboarding: ({
     to,
     name,
     ctaUrl,
     brandName,
     supportEmail,
-  }) => {
-    const { subject, text, html } = userOnboardingTemplate({
+  }) =>
+    sendTemplate(userOnboardingTemplate, to, {
       name,
       ctaUrl,
       brandName,
       supportEmail,
-    });
+    }),
 
-    return sendMail({
-      to,
-      subject,
-      text,
-      html,
-    });
-  },
-
-  sendOrderConfirmation: async ({
+  sendOrderConfirmation: ({
     to,
     name,
     order,
     ctaUrl,
-  }) => {
-    const { subject, text, html } = orderConfirmationTemplate({
+  }) =>
+    sendTemplate(orderConfirmationTemplate, to, {
       name,
       order,
       ctaUrl,
-    });
+    }),
 
-    return sendMail({
-      to,
-      subject,
-      text,
-      html,
-    });
-  },
-
-  sendOrderPaymentPending: async ({
+  sendOrderPaymentPending: ({
     to,
     name,
     order,
     paymentLink,
     expiresAt,
-  }) => {
-    const { subject, text, html } = orderPaymentPendingTemplate({
+  }) =>
+    sendTemplate(orderPaymentPendingTemplate, to, {
       name,
       order,
       paymentLink,
       expiresAt,
-    });
+    }),
 
-    return sendMail({
-      to,
-      subject,
-      text,
-      html,
-    });
-  },
-
-  sendOrderCancelled: async ({
+  sendOrderCancelled: ({
     to,
     name,
     order,
     ctaUrl,
     reason,
-  }) => {
-    const { subject, text, html } = orderCancellationTemplate({
+  }) =>
+    sendTemplate(orderCancellationTemplate, to, {
       name,
       order,
       ctaUrl,
       reason,
-    });
+    }),
 
-    return sendMail({
-      to,
-      subject,
-      text,
-      html,
-    });
-  },
+  sendOrderCancellation: (payload) =>
+    Mailer.sendOrderCancelled(payload),
 
-  sendOrderCancellation: async ({
-    to,
-    name,
-    order,
-    ctaUrl,
-    reason,
-  }) => {
-    return Mailer.sendOrderCancelled({
-      to,
-      name,
-      order,
-      ctaUrl,
-      reason,
-    });
-  },
-
-  sendAdminOrderReceived: async ({
+  sendAdminOrderReceived: ({
     to,
     order,
     ctaUrl,
-  }) => {
-    const { subject, text, html } = orderReceivedAdminTemplate({
+  }) =>
+    sendTemplate(orderReceivedAdminTemplate, to, {
       order,
       ctaUrl,
-    });
+    }),
 
-    return sendMail({
-      to,
-      subject,
-      text,
-      html,
-    });
-  },
-
-  sendRmaCreated: async ({
+  sendRmaCreated: ({
     to,
     name,
     order,
     rma,
     policy,
     ctaUrl,
-  }) => {
-    const { subject, text, html } = rmaCreatedTemplate({
+  }) =>
+    sendTemplate(rmaCreatedTemplate, to, {
       name,
       order,
       rma,
       policy,
       ctaUrl,
-    });
+    }),
 
-    return sendMail({
+  sendRmaReversePickupBooked: ({
+    to,
+    name,
+    orderNumber,
+    rma,
+    ctaUrl,
+  }) =>
+    sendTemplate(
+      rmaReversePickupBookedTemplate,
       to,
-      subject,
-      text,
-      html,
-    });
-  },
+      {
+        name,
+        orderNumber,
+        rma,
+        ctaUrl,
+      },
+      {
+        "X-OATCLUB-Notification-Type":
+          "rma-reverse-pickup-booked",
+        "X-OATCLUB-RMA-Number": String(
+          rma?.rmaNumber || "",
+        ),
+        "X-OATCLUB-Order-Number": String(
+          orderNumber || "",
+        ),
+      },
+    ),
 
-  sendOrderTracking: async ({
+  sendOrderTracking: ({
     to,
     name,
     awb,
@@ -239,25 +276,17 @@ export const Mailer = {
     trackingLink,
     order,
     ctaUrl,
-  }) => {
-    const { subject, text, html } = orderTrackingTemplate({
+  }) =>
+    sendTemplate(orderTrackingTemplate, to, {
       name,
       awb,
       courierName,
       trackingLink,
       order,
       ctaUrl,
-    });
+    }),
 
-    return sendMail({
-      to,
-      subject,
-      text,
-      html,
-    });
-  },
-
-  sendOrderShipped: async ({
+  sendOrderShipped: ({
     to,
     name,
     order,
@@ -273,17 +302,10 @@ export const Mailer = {
       trackingLink,
     );
 
-    const { subject, text, html } = orderShippedTemplate({
+    return sendTemplate(orderShippedTemplate, to, {
       name,
       order: patchedOrder,
       ctaUrl,
-    });
-
-    return sendMail({
-      to,
-      subject,
-      text,
-      html,
     });
   },
 
@@ -296,11 +318,16 @@ export const Mailer = {
     courierName,
     trackingLink,
   }) => {
-    const { subject, text, html } = orderTrackingTemplate({
+    const {
+      subject,
+      text,
+      html,
+    } = orderTrackingTemplate({
       name,
       awb,
       courierName,
-      trackingLink: trackingLink || ctaUrl,
+      trackingLink:
+        trackingLink || ctaUrl,
       order: {
         ...(order || {}),
         emailStatusLabel: "Out for Delivery",
@@ -312,14 +339,16 @@ export const Mailer = {
       to,
       subject:
         subject ||
-        `Order Out for Delivery — #${order?.orderNumber || order?._id
+        `Order Out for Delivery — #${order?.orderNumber ||
+        order?._id ||
+        ""
         }`,
       text,
       html,
     });
   },
 
-  sendOrderDelivered: async ({
+  sendOrderDelivered: ({
     to,
     name,
     order,
@@ -335,21 +364,18 @@ export const Mailer = {
       trackingLink,
     );
 
-    const { subject, text, html } = orderDeliveredTemplate({
-      name,
-      order: patchedOrder,
-      ctaUrl,
-    });
-
-    return sendMail({
+    return sendTemplate(
+      orderDeliveredTemplate,
       to,
-      subject,
-      text,
-      html,
-    });
+      {
+        name,
+        order: patchedOrder,
+        ctaUrl,
+      },
+    );
   },
 
-  sendAdminUserTaskEmail: async ({
+  sendAdminUserTaskEmail: ({
     to,
     eventType,
     task,
@@ -360,9 +386,11 @@ export const Mailer = {
     ctaUrl,
     brandName = "OATCLUB",
     supportEmail,
-  }) => {
-    const { subject, text, html } =
-      adminUserTaskEmailTemplate({
+  }) =>
+    sendTemplate(
+      adminUserTaskEmailTemplate,
+      to,
+      {
         eventType,
         task,
         recipient,
@@ -372,68 +400,74 @@ export const Mailer = {
         ctaUrl,
         brandName,
         supportEmail,
-      });
-
-    return sendMail({
-      to,
-      subject,
-      text,
-      html,
-      headers: {
-        "X-OATCLUB-Notification-Type": "admin-user-task",
-        "X-OATCLUB-Task-Event": eventType || "task_updated",
+      },
+      {
+        "X-OATCLUB-Notification-Type":
+          "admin-user-task",
+        "X-OATCLUB-Task-Event":
+          eventType || "task_updated",
         "X-OATCLUB-Task-Id": String(
-          task?._id || task?.taskNumber || "",
+          task?._id ||
+          task?.taskNumber ||
+          "",
         ),
       },
-    });
-  },
+    ),
+
+  sendCustomerCreditCredited: ({
+    to,
+    name,
+    amount,
+    balance,
+    orderNumber,
+    creditId,
+    reason,
+    creditedAt,
+    ctaUrl,
+  }) =>
+    sendTemplate(
+      customerCreditCreditedTemplate,
+      to,
+      {
+        name,
+        amount,
+        balance,
+        orderNumber,
+        creditId,
+        reason,
+        creditedAt,
+        ctaUrl,
+      },
+    ),
 };
 
-function patchShipment(order, awb, courierName, trackingLink) {
+function patchShipment(
+  order,
+  awb,
+  courierName,
+  trackingLink,
+) {
   return {
     ...(order || {}),
     shipment: {
       ...(order?.shipment || {}),
       shiprocket: {
         ...(order?.shipment?.shiprocket || {}),
-        awb: awb || order?.shipment?.shiprocket?.awb || "",
+        awb:
+          awb ||
+          order?.shipment?.shiprocket?.awb ||
+          "",
         courierName:
-          courierName || order?.shipment?.shiprocket?.courierName || "",
+          courierName ||
+          order?.shipment?.shiprocket
+            ?.courierName ||
+          "",
         trackingUrl:
-          trackingLink || order?.shipment?.shiprocket?.trackingUrl || "",
+          trackingLink ||
+          order?.shipment?.shiprocket
+            ?.trackingUrl ||
+          "",
       },
     },
   };
-}
-
-sendCustomerCreditCredited: async ({
-  to,
-  name,
-  amount,
-  balance,
-  orderNumber,
-  creditId,
-  reason,
-  creditedAt,
-  ctaUrl,
-}) => {
-  const { subject, text, html } =
-    customerCreditCreditedTemplate({
-      name,
-      amount,
-      balance,
-      orderNumber,
-      creditId,
-      reason,
-      creditedAt,
-      ctaUrl,
-    });
-
-  return sendMail({
-    to,
-    subject,
-    text,
-    html,
-  });
 }

@@ -42,7 +42,7 @@ import {
 } from "./ndr.js";
 
 import { PDFDocument } from "pdf-lib";
-
+import { Mailer } from "../nodemailer/mailer.js";
 
 const send = async (
   res,
@@ -847,8 +847,7 @@ export const createReversePickupController = async (
     if (rma.reverseShipment?.awb) {
       return res.status(409).json({
         success: false,
-        message:
-          "Reverse pickup is already booked.",
+        message: "Reverse pickup is already booked.",
       });
     }
 
@@ -880,19 +879,23 @@ export const createReversePickupController = async (
 
     const now = new Date();
 
+    rma.reverseShipment =
+      rma.reverseShipment || {};
+
+    rma.reverseShipment.customerNotification =
+      rma.reverseShipment.customerNotification || {};
+
     rma.reverseShipment.provider =
       "delhivery";
 
-    rma.reverseShipment.awb =
-      waybill;
+    rma.reverseShipment.awb = String(waybill);
 
-    rma.reverseShipment.orderId =
-      String(
-        packageData?.refnum ||
-        packageData?.reference_number ||
-        req.body?.reference_number ||
-        "",
-      );
+    rma.reverseShipment.orderId = String(
+      packageData?.refnum ||
+      packageData?.reference_number ||
+      req.body?.reference_number ||
+      "",
+    );
 
     rma.reverseShipment.shipmentId =
       String(
@@ -903,6 +906,9 @@ export const createReversePickupController = async (
 
     rma.reverseShipment.courierName =
       "Delhivery";
+
+    rma.reverseShipment.trackingUrl =
+      `https://www.delhivery.com/track/package/${waybill}`;
 
     rma.reverseShipment.status =
       "pickup_scheduled";
@@ -920,13 +926,75 @@ export const createReversePickupController = async (
     rma.reverseShipment.lastSyncedAt =
       now;
 
-    rma.reverseShipment.lastTrack =
-      data;
+    rma.reverseShipment.lastTrack = data;
 
     rma.status = "pickup_scheduled";
 
     order.markModified("rmas");
     await order.save();
+
+    /* Send customer email after waybill allocation */
+
+    const customerEmail =
+      order?.customerId?.email ||
+      order?.shippingAddressSnapshot?.email ||
+      order?.billingAddressSnapshot?.email ||
+      "";
+
+    const customerName =
+      order?.customerId?.name ||
+      order?.shippingAddressSnapshot?.fullName ||
+      order?.billingAddressSnapshot?.fullName ||
+      "Customer";
+
+    if (
+      customerEmail &&
+      rma.reverseShipment.customerNotification
+        .emailSent !== true
+    ) {
+      try {
+        const info =
+          await Mailer.sendRmaReversePickupBooked({
+            to: customerEmail,
+            name: customerName,
+            orderNumber: order.orderNumber,
+            rma: rma.toObject?.() || rma,
+            ctaUrl:
+              rma.reverseShipment.trackingUrl,
+          });
+
+        if (info?.disabled) {
+          throw new Error(
+            "Email skipped because MAIL_ENABLED is false",
+          );
+        }
+
+        rma.reverseShipment.customerNotification
+          .emailSent = true;
+
+        rma.reverseShipment.customerNotification
+          .emailSentAt = new Date();
+
+        rma.reverseShipment.customerNotification
+          .emailError = "";
+      } catch (emailError) {
+        rma.reverseShipment.customerNotification
+          .emailSent = false;
+
+        rma.reverseShipment.customerNotification
+          .emailError =
+          emailError?.message ||
+          "Reverse pickup email failed";
+
+        console.error(
+          "❌ Delhivery reverse pickup email failed:",
+          emailError?.message || emailError,
+        );
+      }
+
+      order.markModified("rmas");
+      await order.save();
+    }
 
     return res.status(201).json({
       success: true,
@@ -935,8 +1003,7 @@ export const createReversePickupController = async (
       data: {
         waybill,
         status: "pickup_scheduled",
-        reverseShipment:
-          rma.reverseShipment,
+        reverseShipment: rma.reverseShipment,
         response: data,
       },
     });
@@ -1178,7 +1245,7 @@ export const getDelhiveryNdrOrdersController =
                   $nin: ["", null],
                 },
               },
-             
+
         {
                 "shipment.delhivery.awb": {
                   $exists: true,

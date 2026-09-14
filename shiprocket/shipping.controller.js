@@ -11,6 +11,7 @@ import {
   getShiprocketNdr,
   submitShiprocketNdrAction,
 } from "./shiprocket.ndr.js";
+import { Mailer } from "../nodemailer/mailer.js";
 
 const s = (v) => (v == null ? "" : String(v)).trim();
 
@@ -466,7 +467,8 @@ export async function createReversePickup(req, res) {
     }
 
     const rma = order.rmas?.find(
-      (item) => String(item.rmaNumber) === String(rmaNumber),
+      (item) =>
+        String(item.rmaNumber) === String(rmaNumber),
     );
 
     if (!rma) {
@@ -475,7 +477,6 @@ export async function createReversePickup(req, res) {
         message: "RMA not found",
       });
     }
-
 
     if (
       rma.reverseShipment?.orderId ||
@@ -488,39 +489,53 @@ export async function createReversePickup(req, res) {
       });
     }
 
-    const payload = buildReverseShiprocketPayload({
-      order,
-      rma,
-    });
+    const payload =
+      buildReverseShiprocketPayload({
+        order,
+        rma,
+      });
 
-    console.log("↩️ Creating Shiprocket return order:", {
-      orderNumber: order.orderNumber,
-      rmaNumber: rma.rmaNumber,
-      items: payload.order_items.length,
-    });
+    console.log(
+      "↩️ Creating Shiprocket return order:",
+      {
+        orderNumber: order.orderNumber,
+        rmaNumber: rma.rmaNumber,
+        items: payload.order_items.length,
+      },
+    );
 
-    const shipment = await createReturnOrder(payload);
+    const booking = await createReturnOrder(
+      payload,
+    );
 
     const reverseAwb = s(
-      shipment?.awb_code ||
-      shipment?.awb ||
-      shipment?.shipment?.awb_code,
+      booking?.awb_code ||
+      booking?.awb ||
+      booking?.shipment?.awb_code,
+    );
+
+    const courierName = s(
+      booking?.courier_name ||
+      booking?.courier ||
+      booking?.shipment?.courier_name,
     );
 
     const shiprocketOrderId = s(
-      shipment?.order_id ||
-      shipment?.id,
+      booking?.order_id || booking?.id,
     );
 
     const shiprocketShipmentId = s(
-      shipment?.shipment_id ||
-      shipment?.shipment?.id,
+      booking?.shipment_id ||
+      booking?.shipment?.id,
     );
 
-    if (!shiprocketOrderId && !shiprocketShipmentId) {
+    if (
+      !shiprocketOrderId &&
+      !shiprocketShipmentId
+    ) {
       throw new Error(
-        shipment?.message ||
-        shipment?.error ||
+        booking?.message ||
+        booking?.error ||
         "Shiprocket return order creation failed.",
       );
     }
@@ -528,42 +543,128 @@ export async function createReversePickup(req, res) {
     const now = new Date();
 
     rma.reverseShipment = {
-      provider: "shiprocket",
+      ...(rma.reverseShipment?.toObject?.() ||
+        rma.reverseShipment ||
+        {}),
 
+      provider: "shiprocket",
       orderId: shiprocketOrderId,
       shipmentId: shiprocketShipmentId,
-
       awb: reverseAwb,
-
-      courierName: s(
-        shipment?.courier_name ||
-        shipment?.courier,
+      courierName,
+      trackingUrl: s(
+        booking?.tracking_url ||
+        booking?.shipment?.tracking_url,
       ),
-
-      trackingUrl: s(shipment?.tracking_url),
-
-      pickupScheduledAt: reverseAwb ? now : null,
-
+      pickupScheduledAt: now,
       status: reverseAwb
         ? "pickup_scheduled"
         : "return_order_created",
-
       lastUpdatedAt: now,
+
+      customerNotification: {
+        ...(rma.reverseShipment
+          ?.customerNotification || {}),
+        emailSent:
+          rma.reverseShipment
+            ?.customerNotification?.emailSent ||
+          false,
+        emailSentAt:
+          rma.reverseShipment
+            ?.customerNotification?.emailSentAt ||
+          null,
+        emailError: "",
+      },
     };
 
-    if (reverseAwb) {
+    if (reverseAwb || courierName) {
       rma.status = "pickup_scheduled";
     }
 
+    order.markModified("rmas");
     await order.save();
+
+    /* Customer email after courier allocation */
+
+    const customerEmail =
+      order?.customerId?.email ||
+      order?.shippingAddressSnapshot?.email ||
+      order?.billingAddressSnapshot?.email ||
+      "";
+
+    const customerName =
+      order?.customerId?.name ||
+      order?.shippingAddressSnapshot?.fullName ||
+      order?.billingAddressSnapshot?.fullName ||
+      "Customer";
+
+    const emailAlreadySent =
+      rma.reverseShipment.customerNotification
+        ?.emailSent === true;
+
+    if (
+      customerEmail &&
+      (reverseAwb || courierName) &&
+      !emailAlreadySent
+    ) {
+      try {
+        const info =
+          await Mailer.sendRmaReversePickupBooked({
+            to: customerEmail,
+            name: customerName,
+            orderNumber: order.orderNumber,
+            rma: rma.toObject?.() || rma,
+            ctaUrl:
+              rma.reverseShipment.trackingUrl ||
+              `https://oatclub.in/orders/${order.orderNumber}`,
+          });
+
+        if (info?.disabled) {
+          throw new Error(
+            "Email skipped because MAIL_ENABLED is false",
+          );
+        }
+
+        rma.reverseShipment.customerNotification.emailSent =
+          true;
+
+        rma.reverseShipment.customerNotification.emailSentAt =
+          new Date();
+
+        rma.reverseShipment.customerNotification.emailError =
+          "";
+
+        order.markModified("rmas");
+        await order.save();
+
+        console.log(
+          "✅ Reverse pickup email sent:",
+          customerEmail,
+        );
+      } catch (emailError) {
+        rma.reverseShipment.customerNotification.emailSent =
+          false;
+
+        rma.reverseShipment.customerNotification.emailError =
+          emailError?.message ||
+          "Reverse pickup email failed";
+
+        order.markModified("rmas");
+        await order.save();
+
+        console.error(
+          "❌ Reverse pickup email failed:",
+          emailError?.message || emailError,
+        );
+      }
+    }
 
     return res.status(200).json({
       success: true,
-
-      message: reverseAwb
-        ? "Reverse pickup scheduled"
-        : "Shiprocket return order created",
-
+      message:
+        reverseAwb || courierName
+          ? "Reverse pickup scheduled"
+          : "Shiprocket return order created",
       reverseShipment: rma.reverseShipment,
     });
   } catch (err) {
