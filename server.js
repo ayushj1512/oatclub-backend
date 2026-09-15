@@ -91,6 +91,7 @@ import fabricLogRoutes from "./FabricLog/FabricLogRouter.js";
 import { delhiveryRoutes } from "./delhivery/index.js";
 import productCostingRouter from "./Products/ProductCosting/ProductCostingRouter.js";
 import { connectRedis } from "./config/redis.js";
+import bdayRoutes from "./bday/bday.js";
 
 
 // --------------------------------------------------
@@ -282,6 +283,7 @@ app.use("/api/inventory", inventoryRoutes);
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/homepage-settings", homepageSettingsRoutes);
 app.use("/api/remittance", remittanceRoutes);
+app.use("/api/bday", bdayRoutes);
 
 app.use("/api/media", mediaRoutes);
 app.use("/media-user", mediaAuthRoutes);
