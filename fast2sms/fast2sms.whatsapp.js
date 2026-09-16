@@ -315,6 +315,62 @@ export const sendOrderConfirmationWhatsapp =
     });
   };
 
+
+/* =========================================================
+ ORDER SHIPPED
+========================================================= */
+
+export const sendOrderShippedWhatsapp = async ({
+  order,
+  courierName = "",
+  awbNumber = "",
+}) => {
+  const orderNumber = getOrderNumber(order);
+
+  const resolvedCourierName =
+    courierName ||
+    order?.shipping?.courierName ||
+    order?.shipping?.courier ||
+    order?.shippingProvider ||
+    order?.courierName ||
+    "Courier Partner";
+
+  const resolvedAwbNumber =
+    awbNumber ||
+    order?.shipping?.awbNumber ||
+    order?.shipping?.awb ||
+    order?.shipment?.awbNumber ||
+    order?.shipment?.awb ||
+    order?.awbNumber ||
+    order?.awb ||
+    "";
+
+  if (!resolvedAwbNumber) {
+    throw new Error(
+      `AWB number is missing for order ${orderNumber}`,
+    );
+  }
+
+  const template =
+    getApprovedFast2SmsTemplate("ORDER_SHIPPED");
+
+  const variables = template.buildVariables({
+    customerName: getOrderCustomerName(order),
+    orderNumber,
+    courierName: resolvedCourierName,
+    awbNumber: resolvedAwbNumber,
+  });
+
+  return sendFast2SmsWhatsappTemplate({
+    phone: getOrderPhone(order),
+    templateKey: "ORDER_SHIPPED",
+    variables,
+    udf1: orderNumber,
+    udf2: "order_shipped",
+    udf3: String(order?._id || ""),
+  });
+};
+
 /* =========================================================
    CUSTOMER WALLET CREDIT
 ========================================================= */

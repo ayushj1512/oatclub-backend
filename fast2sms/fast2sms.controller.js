@@ -1,6 +1,7 @@
 import {
   sendCodOrderConfirmationWhatsapp,
   sendOrderConfirmationWhatsapp,
+  sendOrderShippedWhatsapp,
   sendPaymentCompletedWhatsapp,
   sendPrepaidOrderConfirmationWhatsapp,
   sendMarketingOfferWhatsapp,
@@ -113,6 +114,82 @@ export const sendOrderConfirmationController = async (
       success: false,
       message:
         "Unable to send order confirmation WhatsApp message",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Sends order shipped notification.
+ *
+ * POST /api/fast2sms/whatsapp/order-shipped
+ *
+ * Body:
+ * {
+ *   "order": {},
+ *   "courierName": "Delhivery",
+ *   "awbNumber": "123456789"
+ * }
+ */
+export const sendOrderShippedController = async (
+  req,
+  res,
+) => {
+  try {
+    const order = ensureOrder(req, res);
+    if (!order) return;
+
+    const courierName = String(
+      req.body?.courierName || "",
+    ).trim();
+
+    const awbNumber = String(
+      req.body?.awbNumber || "",
+    ).trim();
+
+    if (!courierName) {
+      return res.status(400).json({
+        success: false,
+        message: "Courier name is required",
+      });
+    }
+
+    if (!awbNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "AWB number is required",
+      });
+    }
+
+    const result = await sendOrderShippedWhatsapp({
+      order,
+      courierName,
+      awbNumber,
+    });
+
+    if (!result?.success) {
+      return sendFailure(res, {
+        message:
+          "Order shipped WhatsApp message could not be sent",
+        result,
+      });
+    }
+
+    return sendSuccess(res, {
+      message:
+        "Order shipped WhatsApp message sent successfully",
+      result,
+    });
+  } catch (error) {
+    console.error(
+      "[Fast2SMS] Order shipped controller error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to send order shipped WhatsApp message",
       error: error.message,
     });
   }

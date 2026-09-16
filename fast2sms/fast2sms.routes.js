@@ -5,6 +5,7 @@ import {
   getFast2SmsTemplatesController,
   sendCodOrderConfirmationController,
   sendOrderConfirmationController,
+  sendOrderShippedController,
   sendPaymentCompletedController,
   sendPrepaidOrderConfirmationController,
   sendMarketingOfferController,
@@ -57,6 +58,11 @@ router.post(
 router.post(
   "/whatsapp/ndr",
   sendNdrController,
+);
+
+router.post(
+  "/whatsapp/order-shipped",
+  sendOrderShippedController,
 );
 
 export default router;

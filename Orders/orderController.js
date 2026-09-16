@@ -48,6 +48,7 @@ import {
   sendCodOrderConfirmationWhatsapp,
   sendPaymentPendingWhatsapp,
   sendPrepaidOrderConfirmationWhatsapp,
+  sendOrderShippedWhatsapp,
 } from "../fast2sms/index.js";
 
 import {
@@ -3662,6 +3663,73 @@ export const updateOrderStatus = async (req, res) => {
     });
   };
 
+  const sendOrderShippedWhatsappNonBlocking = (
+    order,
+  ) => {
+    defer(async () => {
+      try {
+        const courierName =
+          order?.shipment?.courierName ||
+          order?.shipment?.shiprocket?.courierName ||
+          order?.shipment?.delhivery?.courierName ||
+          order?.trackingDetails?.courierName ||
+          order?.shipment?.provider ||
+          "";
+
+        const awbNumber =
+          order?.shipment?.awb ||
+          order?.shipment?.shiprocket?.awb ||
+          order?.shipment?.delhivery?.awb ||
+          order?.shipment?.delhivery?.waybill ||
+          order?.trackingDetails?.awb ||
+          order?.trackingDetails?.trackingId ||
+          "";
+
+        if (!courierName || !awbNumber) {
+          console.warn(
+            "⚠️ Shipped WhatsApp skipped: courier/AWB missing",
+            {
+              orderNumber: order?.orderNumber,
+              courierName,
+              awbNumber,
+            },
+          );
+          return;
+        }
+
+        const result =
+          await sendOrderShippedWhatsapp({
+            order,
+            courierName,
+            awbNumber,
+          });
+
+        if (!result?.success) {
+          console.error(
+            "❌ Shipped WhatsApp failed:",
+            order?.orderNumber,
+            result?.error ||
+            result?.data?.message ||
+            result,
+          );
+          return;
+        }
+
+        console.log(
+          "✅ Shipped WhatsApp sent:",
+          order?.orderNumber,
+          awbNumber,
+        );
+      } catch (error) {
+        console.error(
+          "❌ Shipped WhatsApp error:",
+          order?.orderNumber,
+          error?.message || error,
+        );
+      }
+    });
+  };
+
   try {
     req.body = stripUndefinedDeep(req.body);
 
@@ -4409,6 +4477,10 @@ export const updateOrderStatus = async (req, res) => {
         type: "shipped",
         order: finalOrder,
       });
+
+      sendOrderShippedWhatsappNonBlocking(
+        finalOrder,
+      );
     }
 
     if (finalOrder && shouldSendDeliveredEmail) {
