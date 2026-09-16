@@ -60,6 +60,179 @@ import {
   ensureInventoryReservationForOrderInternal,
 } from "../InventoryReservation/inventoryWebhook.js";
 
+
+/* ============================================================
+   CUSTOMER ORDER LABEL
+   First genuine order = new
+   Every later order = repeat
+
+   Split child orders customer count mein include nahi honge.
+============================================================ */
+
+const enrichOrdersWithCustomerType = async (orders = []) => {
+  if (!Array.isArray(orders) || !orders.length) {
+    return orders;
+  }
+
+  const customerIds = [
+    ...new Set(
+      orders
+        .map((order) => {
+          const customerId =
+            order?.customerId?._id ||
+            order?.customerId;
+
+          return mongoose.Types.ObjectId.isValid(
+            String(customerId || "")
+          )
+            ? String(customerId)
+            : null;
+        })
+        .filter(Boolean)
+    ),
+  ].map(
+    (id) =>
+      new mongoose.Types.ObjectId(id)
+  );
+
+  if (!customerIds.length) {
+    return orders.map((order) => ({
+      ...order,
+      customerType: "new",
+      customerLabel: "NEW CUSTOMER",
+      isNewCustomer: true,
+      isRepeatCustomer: false,
+      customerOrderCount: 1,
+      previousOrderCount: 0,
+    }));
+  }
+
+  /*
+   * Sort first so $first gives the customer's
+   * actual first order.
+   */
+  const customerHistory =
+    await Order.aggregate([
+      {
+        $match: {
+          customerId: {
+            $in: customerIds,
+          },
+
+          // Parent/original orders only.
+          // Split children must not increase customer count.
+          parentOrderId: null,
+
+          orderType: {
+            $ne: "parent",
+          },
+        },
+      },
+      {
+        $sort: {
+          customerId: 1,
+          createdAt: 1,
+          _id: 1,
+        },
+      },
+      {
+        $group: {
+          _id: "$customerId",
+
+          firstOrderId: {
+            $first: "$_id",
+          },
+
+          firstOrderAt: {
+            $first: "$createdAt",
+          },
+
+          totalOrders: {
+            $sum: 1,
+          },
+        },
+      },
+    ]);
+
+  const historyMap = new Map(
+    customerHistory.map((item) => [
+      String(item._id),
+      {
+        firstOrderId: String(
+          item.firstOrderId
+        ),
+        firstOrderAt:
+          item.firstOrderAt || null,
+        totalOrders: Number(
+          item.totalOrders || 0
+        ),
+      },
+    ])
+  );
+
+  return orders.map((order) => {
+    const customerId = String(
+      order?.customerId?._id ||
+      order?.customerId ||
+      ""
+    );
+
+    const history =
+      historyMap.get(customerId);
+
+    if (!history) {
+      return {
+        ...order,
+        customerType: "new",
+        customerLabel: "NEW CUSTOMER",
+        isNewCustomer: true,
+        isRepeatCustomer: false,
+        customerOrderCount: 1,
+        previousOrderCount: 0,
+        customerFirstOrderAt: null,
+      };
+    }
+
+    const isSplitChild =
+      Boolean(order?.parentOrderId);
+
+    const isFirstOrder =
+      !isSplitChild &&
+      String(order?._id) ===
+      history.firstOrderId;
+
+    const customerType =
+      isFirstOrder ? "new" : "repeat";
+
+    return {
+      ...order,
+
+      customerType,
+
+      customerLabel: isFirstOrder
+        ? "NEW CUSTOMER"
+        : "REPEAT CUSTOMER",
+
+      isNewCustomer: isFirstOrder,
+      isRepeatCustomer: !isFirstOrder,
+
+      customerOrderCount:
+        history.totalOrders,
+
+      previousOrderCount:
+        isFirstOrder
+          ? 0
+          : Math.max(
+            history.totalOrders - 1,
+            1
+          ),
+
+      customerFirstOrderAt:
+        history.firstOrderAt,
+    };
+  });
+};
+
 const isParentOrder = (order) =>
   String(order?.orderType || "").toLowerCase() === "parent";
 const isShipmentOrder = (order) =>
@@ -2907,6 +3080,8 @@ export const getAllOrders = async (req, res) => {
        ✅ FAST projection for list
     ---------------------------- */
     const LIST_FIELDS = {
+      customerId: 1,
+      parentOrderId: 1,
       orderNumber: 1,
       createdAt: 1,
       orderDate: 1,
@@ -3064,13 +3239,17 @@ export const getAllOrders = async (req, res) => {
       promises
     );
 
-    const finalOrders =
-      confirmFilter ===
-        "not_confirmed"
+    const readinessOrders =
+      confirmFilter === "not_confirmed"
         ? await enrichOrdersWithFulfillmentReadiness(
           orders
         )
         : orders;
+
+    const finalOrders =
+      await enrichOrdersWithCustomerType(
+        readinessOrders
+      );
 
     const totalSum =
       wantSum
@@ -9440,6 +9619,8 @@ const ADVANCED_ORDER_TYPES = new Set([
 ]);
 
 const ADVANCED_ORDER_LIST_FIELDS = {
+  customerId: 1,
+  parentOrderId: 1,
   orderNumber: 1,
   createdAt: 1,
   orderDate: 1,
@@ -10340,9 +10521,16 @@ export const getAdvancedFilteredOrders = async (
         String(order?.fulfillmentStatus || "").toLowerCase() === "processing"
     );
 
-    const finalOrders = needsReadiness
-      ? await enrichOrdersWithFulfillmentReadiness(orders)
+    const readinessOrders = needsReadiness
+      ? await enrichOrdersWithFulfillmentReadiness(
+        orders
+      )
       : orders;
+
+    const finalOrders =
+      await enrichOrdersWithCustomerType(
+        readinessOrders
+      );
 
     return res.status(200).json({
       orders: finalOrders,
