@@ -10673,139 +10673,46 @@ export const getAdvancedFilteredOrders = async (
 
 export const splitOrder = async (req, res) => {
   const session = await mongoose.startSession();
-
-  const safeString = (value) =>
-    String(value ?? "").trim();
-
-  const safeNumber = (value, fallback = 0) => {
-    const number = Number(value);
-    return Number.isFinite(number)
-      ? number
-      : fallback;
-  };
-
-  const getVariantId = (item = {}) =>
-    item?.variant?.variantId ||
-    item?.variantId ||
-    item?.variant?._id ||
-    null;
-
-  const makeInventoryKey = (
-    productId,
-    variantId = null,
-  ) =>
-    `${safeString(productId)}::${variantId
-      ? safeString(variantId)
-      : "root"
-    }`;
-
-  const buildReservationKey = ({
-    refId,
-    productId,
-    variantId = null,
-  }) =>
-    `order:${safeString(refId)}:${safeString(
-      productId,
-    )}:${variantId
-      ? safeString(variantId)
-      : "root"
-    }`;
-
-  const appendNote = (
-    oldText = "",
-    nextText = "",
-  ) => {
-    const oldValue = safeString(oldText);
-    const nextValue = safeString(nextText);
-
-    if (!oldValue) return nextValue;
-    if (!nextValue) return oldValue;
-
-    return `${oldValue}\n${nextValue}`;
-  };
+  const str = (v) => String(v ?? "").trim();
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const money = (v) => Math.round((num(v) + Number.EPSILON) * 100) / 100;
+  const variantIdOf = (item) =>
+    item?.variant?.variantId || item?.variantId || item?.variant?._id || null;
+  const inventoryKey = (productId, variantId) =>
+    `${str(productId)}::${variantId ? str(variantId) : "root"}`;
+  const reservationKey = (refId, productId, variantId) =>
+    `order:${str(refId)}:${str(productId)}:${variantId ? str(variantId) : "root"}`;
+  const addNote = (oldNote, newNote) =>
+    [str(oldNote), str(newNote)].filter(Boolean).join("\n");
 
   try {
     const { orderId } = req.params;
-    const { shipments = [] } = req.body;
+    const shipments = req.body?.shipments;
 
-    /* =========================================================
-       BASIC VALIDATION
-    ========================================================= */
+    if (!mongoose.Types.ObjectId.isValid(str(orderId))) {
+      return res.status(400).json({ success: false, message: "Invalid orderId" });
+    }
 
-    if (
-      !mongoose.Types.ObjectId.isValid(
-        String(orderId || ""),
-      )
-    ) {
+    if (!Array.isArray(shipments) || shipments.length < 2 || shipments.length > 26) {
       return res.status(400).json({
         success: false,
-        message: "Invalid orderId",
+        message: "Split requires 2 to 26 shipments.",
       });
     }
 
-    if (
-      !Array.isArray(shipments) ||
-      shipments.length < 2
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "At least two shipments are required.",
-      });
-    }
-
-    if (shipments.length > 26) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Maximum 26 split shipments are allowed.",
-      });
-    }
-
-    let parentOrderId = null;
-    const createdChildIds = [];
+    let parentOrderId;
+    const childIds = [];
 
     await session.withTransaction(async () => {
-      /* =======================================================
-         LOAD ORDER
-      ======================================================= */
-
-      const order = await Order.findById(
-        orderId,
-      ).session(session);
-
-      if (!order) {
-        throw new Error("Order not found");
+      const order = await Order.findById(orderId).session(session);
+      if (!order) throw new Error("Order not found");
+      if (order.orderType === "parent") throw new Error("Order is already split");
+      if (order.parentOrderId) throw new Error("Child order cannot be split");
+      if (order.cancellation?.isCancelled || order.fulfillmentStatus === "cancelled") {
+        throw new Error("Cancelled order cannot be split");
       }
 
-      const orderType = safeString(
-        order.orderType || "shipment",
-      ).toLowerCase();
-
-      if (orderType === "parent") {
-        throw new Error(
-          "This order has already been split.",
-        );
-      }
-
-      if (order.parentOrderId) {
-        throw new Error(
-          "A child shipment order cannot be split.",
-        );
-      }
-
-      if (
-        order.cancellation?.isCancelled ===
-        true ||
-        order.fulfillmentStatus ===
-        "cancelled"
-      ) {
-        throw new Error(
-          "Cancelled order cannot be split.",
-        );
-      }
-
-      const blockedStatuses = [
+      const blocked = [
         "picked",
         "shipped",
         "out_for_delivery",
@@ -10814,256 +10721,86 @@ export const splitOrder = async (req, res) => {
         "returned",
         "refunded",
       ];
+      if (blocked.includes(str(order.fulfillmentStatus).toLowerCase())) {
+        throw new Error(`Order cannot be split in ${order.fulfillmentStatus} status`);
+      }
+      if (await Order.exists({ parentOrderId: order._id }).session(session)) {
+        throw new Error("Split child orders already exist");
+      }
 
-      if (
-        blockedStatuses.includes(
-          safeString(
-            order.fulfillmentStatus,
-          ).toLowerCase(),
+      const originalItems = Array.isArray(order.items) ? order.items : [];
+      if (!originalItems.length) throw new Error("Order has no items");
+
+      const itemMap = new Map(originalItems.map((item) => [str(item.lineId), item]));
+      const assigned = new Map();
+
+      shipments.forEach((shipment, shipmentIndex) => {
+        if (!Array.isArray(shipment?.items) || !shipment.items.length) {
+          throw new Error(`Shipment ${shipmentIndex + 1} must contain an item`);
+        }
+
+        shipment.items.forEach(({ lineId: rawLineId, quantity: rawQuantity }) => {
+          const lineId = str(rawLineId);
+          const quantity = Number(rawQuantity);
+          const item = itemMap.get(lineId);
+
+          if (!lineId || !item) throw new Error(`Invalid lineId ${lineId || "missing"}`);
+          if (!Number.isInteger(quantity) || quantity < 1) {
+            throw new Error(`Invalid quantity for ${lineId}`);
+          }
+
+          const next = (assigned.get(lineId) || 0) + quantity;
+          if (next > num(item.quantity)) {
+            throw new Error(`Split quantity exceeds ordered quantity for ${item.productSnapshot?.title || lineId}`);
+          }
+          assigned.set(lineId, next);
+        });
+      });
+
+      originalItems.forEach((item) => {
+        const lineId = str(item.lineId);
+        const used = assigned.get(lineId) || 0;
+        if (used !== num(item.quantity)) {
+          throw new Error(
+            `Complete quantity required for ${item.productSnapshot?.title || lineId}. Ordered: ${item.quantity}, assigned: ${used}`,
+          );
+        }
+      });
+
+      const reservations = await InventoryReservation.find({
+        refType: "order",
+        refId: order._id,
+        status: { $in: ["pending", "reserved"] },
+      })
+        .sort({ createdAt: 1, _id: 1 })
+        .session(session);
+
+      const source = order.toObject();
+      const totals = {
+        subtotal: money(order.subtotal),
+        discount: money(order.discount),
+        shipping: money(order.shippingFee),
+        wallet: money(order.walletCredit?.amount ?? order.paymentBreakdown?.walletAmount),
+        payable: money(order.finalPayable),
+      };
+
+      const isPartialCod = order.paymentMethod === "partial_cod";
+      totals.upfront = isPartialCod
+        ? Math.min(
+          totals.payable,
+          money(order.partialPayment?.upfrontAmount ?? order.paymentBreakdown?.razorpayAmount),
         )
-      ) {
-        throw new Error(
-          `Order cannot be split in ${order.fulfillmentStatus} status.`,
-        );
-      }
-
-      const existingChildren =
-        await Order.exists({
-          parentOrderId: order._id,
-        }).session(session);
-
-      if (existingChildren) {
-        throw new Error(
-          "Split shipment orders already exist.",
-        );
-      }
-
-      /* =======================================================
-         ITEMS + SPLIT VALIDATION
-      ======================================================= */
-
-      const originalItems =
-        Array.isArray(order.items)
-          ? order.items
-          : [];
-
-      if (!originalItems.length) {
-        throw new Error(
-          "Order has no items to split.",
-        );
-      }
-
-      const itemMap = new Map(
-        originalItems.map((item) => [
-          safeString(item.lineId),
-          item,
-        ]),
-      );
-
-      const assignedQuantityMap =
-        new Map();
-
-      for (
-        let shipmentIndex = 0;
-        shipmentIndex < shipments.length;
-        shipmentIndex += 1
-      ) {
-        const shipment =
-          shipments[shipmentIndex];
-
-        if (
-          !Array.isArray(
-            shipment?.items,
-          ) ||
-          !shipment.items.length
-        ) {
-          throw new Error(
-            `Shipment ${shipmentIndex + 1
-            } must contain at least one item.`,
-          );
-        }
-
-        for (const requestedItem of shipment.items) {
-          const lineId = safeString(
-            requestedItem?.lineId,
-          );
-
-          const quantity = Number(
-            requestedItem?.quantity,
-          );
-
-          if (!lineId) {
-            throw new Error(
-              `lineId missing in shipment ${shipmentIndex + 1
-              }.`,
-            );
-          }
-
-          if (
-            !Number.isInteger(quantity) ||
-            quantity < 1
-          ) {
-            throw new Error(
-              `Invalid quantity for lineId ${lineId}.`,
-            );
-          }
-
-          const originalItem =
-            itemMap.get(lineId);
-
-          if (!originalItem) {
-            throw new Error(
-              `Order item not found for lineId ${lineId}.`,
-            );
-          }
-
-          const orderedQuantity =
-            Math.max(
-              0,
-              safeNumber(
-                originalItem.quantity,
-              ),
-            );
-
-          const previous =
-            assignedQuantityMap.get(
-              lineId,
-            ) || 0;
-
-          const next =
-            previous + quantity;
-
-          if (next > orderedQuantity) {
-            throw new Error(
-              `Split quantity exceeds ordered quantity for ${originalItem
-                ?.productSnapshot
-                ?.title || lineId
-              }.`,
-            );
-          }
-
-          assignedQuantityMap.set(
-            lineId,
-            next,
-          );
-        }
-      }
-
-      for (const item of originalItems) {
-        const lineId = safeString(
-          item.lineId,
-        );
-
-        const orderedQuantity =
-          Math.max(
-            0,
-            safeNumber(item.quantity),
-          );
-
-        const assignedQuantity =
-          assignedQuantityMap.get(
-            lineId,
-          ) || 0;
-
-        if (
-          assignedQuantity !==
-          orderedQuantity
-        ) {
-          throw new Error(
-            `Complete quantity must be assigned for ${item?.productSnapshot
-              ?.title || lineId
-            }. Ordered: ${orderedQuantity}, assigned: ${assignedQuantity}.`,
-          );
-        }
-      }
-
-      /* =======================================================
-         LOAD PARENT ACTIVE RESERVATIONS BEFORE MODIFYING ORDER
-      ======================================================= */
-
-      const parentReservations =
-        await InventoryReservation.find({
-          refType: "order",
-          refId: order._id,
-          status: {
-            $in: [
-              "pending",
-              "reserved",
-            ],
-          },
-        })
-          .sort({
-            createdAt: 1,
-            _id: 1,
-          })
-          .session(session);
-
-      /*
-       * IMPORTANT:
-       * We do NOT release these reservations.
-       * We do NOT reserve stock again.
-       *
-       * Ownership will simply move:
-       *
-       * parent -> child A / child B
-       *
-       * Therefore physical stock and reservedStock stay unchanged.
-       */
-
-      /* =======================================================
-         SAVE ORIGINAL FINANCIAL VALUES BEFORE PARENT CONVERSION
-      ======================================================= */
-
-      const originalParent =
-        order.toObject();
-
-      const totalSubtotal =
-        safeNumber(order.subtotal);
-
-      const totalDiscount =
-        safeNumber(order.discount);
-
-      const totalShippingFee =
-        safeNumber(order.shippingFee);
-
-      const totalTax =
-        safeNumber(order.tax);
-
-      const totalWalletAmount =
-        Math.max(
-          0,
-          safeNumber(
-            order?.walletCredit
-              ?.amount ??
-            order?.paymentBreakdown
-              ?.walletAmount,
-          ),
-        );
-
-      /* =======================================================
-         CONVERT ORIGINAL ORDER INTO LOGICAL PARENT
-      ======================================================= */
+        : 0;
+      totals.cod = isPartialCod ? money(totals.payable - totals.upfront) : 0;
 
       parentOrderId = order._id;
-
       order.orderType = "parent";
       order.parentOrderId = null;
       order.splitSuffix = "";
-
-      /*
-       * Parent remains financial/source record.
-       * It must not behave like warehouse shipment.
-       */
-
       order.isPackable = false;
-
       order.shipment = {
-        provider:
-          order.shipment?.provider ||
-          "shiprocket",
-
+        provider: order.shipment?.provider || "shiprocket",
         status: "pending",
-
         orderId: "",
         shipmentId: "",
         awb: "",
@@ -11071,7 +10808,6 @@ export const splitOrder = async (req, res) => {
         trackingUrl: "",
         labelUrl: "",
       };
-
       order.trackingDetails = {
         trackingId: "",
         awb: "",
@@ -11080,398 +10816,135 @@ export const splitOrder = async (req, res) => {
         trackingUrl: "",
         lastUpdatedAt: null,
       };
+      await order.save({ session });
 
-      await order.save({
-        session,
-      });
+      const distributed = {
+        discount: 0,
+        shipping: 0,
+        wallet: 0,
+        upfront: 0,
+        cod: 0,
+      };
+      const allocationPlans = [];
+      const basePayload = { ...source };
+      ["_id", "__v", "createdAt", "updatedAt"].forEach((key) => delete basePayload[key]);
 
-      /* =======================================================
-         CHILD ORDERS
-      ======================================================= */
+      for (let index = 0; index < shipments.length; index += 1) {
+        const last = index === shipments.length - 1;
+        const suffix = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[index];
 
-      const alphabet =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const childItems = shipments[index].items.map(({ lineId, quantity }) => {
+          const original = itemMap.get(str(lineId));
+          const item = typeof original.toObject === "function" ? original.toObject() : { ...original };
+          const originalPrice = money(num(item.originalPrice) > 0 ? item.originalPrice : item.price);
 
-      let distributedDiscount = 0;
-      let distributedShippingFee = 0;
-      let distributedTax = 0;
-      let distributedWalletAmount = 0;
-
-      /*
-       * Used afterwards to distribute existing reservations.
-       */
-      const childAllocationPlans = [];
-
-      for (
-        let index = 0;
-        index < shipments.length;
-        index += 1
-      ) {
-        const shipmentRequest =
-          shipments[index];
-
-        const splitSuffix =
-          alphabet[index];
-
-        /* ---------------------------------------------------
-           ITEMS
-        --------------------------------------------------- */
-
-        const childItems =
-          shipmentRequest.items.map(
-            (requestedItem) => {
-              const originalItem =
-                itemMap.get(
-                  safeString(
-                    requestedItem.lineId,
-                  ),
-                );
-
-              const quantity =
-                Number(
-                  requestedItem.quantity,
-                );
-
-              const price =
-                safeNumber(
-                  originalItem.price,
-                );
-
-              const subtotal =
-                price * quantity;
-
-              const itemObject =
-                typeof originalItem.toObject ===
-                  "function"
-                  ? originalItem.toObject()
-                  : {
-                    ...originalItem,
-                  };
-
-              return {
-                ...itemObject,
-
-                quantity,
-                subtotal,
-
-                /*
-                 * Reservation sync after migration
-                 * becomes source of truth for
-                 * allocatedQty.
-                 */
-                fulfillment: {
-                  ...(itemObject.fulfillment ||
-                    {}),
-
-                  allocatedQty: 0,
-                  shippedQty: 0,
-
-                  toProduceQty:
-                    quantity,
-                },
-              };
+          return {
+            ...item,
+            quantity: Number(quantity),
+            originalPrice,
+            originalSubtotal: money(originalPrice * Number(quantity)),
+            price: originalPrice,
+            subtotal: money(originalPrice * Number(quantity)),
+            discountAmount: 0,
+            fulfillment: {
+              ...(item.fulfillment || {}),
+              allocatedQty: 0,
+              shippedQty: 0,
+              toProduceQty: Number(quantity),
             },
-          );
+          };
+        });
 
-        const childSubtotal =
-          childItems.reduce(
-            (sum, item) =>
-              sum +
-              safeNumber(
-                item.subtotal,
-              ),
-            0,
-          );
+        const childSubtotal = money(
+          childItems.reduce((sum, item) => sum + num(item.originalSubtotal), 0),
+        );
+        const ratio = totals.subtotal > 0 ? childSubtotal / totals.subtotal : 1 / shipments.length;
+        const take = (key, total) => {
+          const value = last ? money(total - distributed[key]) : money(total * ratio);
+          distributed[key] = money(distributed[key] + value);
+          return Math.max(0, value);
+        };
 
-        const ratio =
-          totalSubtotal > 0
-            ? childSubtotal /
-            totalSubtotal
-            : 1 /
-            shipments.length;
+        const childDiscount = take("discount", totals.discount);
+        const childShipping = take("shipping", totals.shipping);
+        const proposedWallet = take("wallet", totals.wallet);
+        const childTotal = money(childSubtotal - childDiscount + childShipping);
+        const childWallet = Math.min(proposedWallet, childTotal);
+        const childPayable = money(childTotal - childWallet);
+        const payableRatio = totals.payable > 0 ? childPayable / totals.payable : 1 / shipments.length;
 
-        const isLastChild =
-          index ===
-          shipments.length - 1;
+        const takePayment = (key, total) => {
+          const value = last ? money(total - distributed[key]) : money(total * payableRatio);
+          distributed[key] = money(distributed[key] + value);
+          return Math.max(0, value);
+        };
 
-        /* ---------------------------------------------------
-           MONEY DISTRIBUTION
-        --------------------------------------------------- */
-
-        const childDiscount =
-          isLastChild
-            ? totalDiscount -
-            distributedDiscount
-            : Math.round(
-              totalDiscount *
-              ratio,
-            );
-
-        const childShippingFee =
-          isLastChild
-            ? totalShippingFee -
-            distributedShippingFee
-            : Math.round(
-              totalShippingFee *
-              ratio,
-            );
-
-        const childTax =
-          isLastChild
-            ? totalTax -
-            distributedTax
-            : Math.round(
-              totalTax * ratio,
-            );
-
-        const childWalletAmount =
-          isLastChild
-            ? totalWalletAmount -
-            distributedWalletAmount
-            : Math.round(
-              totalWalletAmount *
-              ratio,
-            );
-
-        distributedDiscount +=
-          childDiscount;
-
-        distributedShippingFee +=
-          childShippingFee;
-
-        distributedTax +=
-          childTax;
-
-        distributedWalletAmount +=
-          childWalletAmount;
-
-        const childTotalAmount =
-          childSubtotal +
-          childShippingFee +
-          childTax;
-
-        /*
-         * Order model itself calculates:
-         *
-         * finalPayable =
-         * totalAmount
-         * - discount
-         * - wallet
-         *
-         * So child values must match that formula.
-         */
-
-        const childBeforeWallet =
-          Math.max(
-            0,
-            childTotalAmount -
-            childDiscount,
-          );
-
-        const safeChildWalletAmount =
-          Math.min(
-            childWalletAmount,
-            childBeforeWallet,
-          );
-
-        const childFinalPayable =
-          Math.max(
-            0,
-            childBeforeWallet -
-            safeChildWalletAmount,
-          );
-
-        /* ---------------------------------------------------
-           PAYMENT BREAKDOWN
-        --------------------------------------------------- */
-
-        const childPaymentBreakdown = {
-          walletAmount:
-            safeChildWalletAmount,
-
+        const childUpfront = isPartialCod ? takePayment("upfront", totals.upfront) : 0;
+        const childCod = isPartialCod ? takePayment("cod", totals.cod) : 0;
+        const paymentBreakdown = {
+          walletAmount: childWallet,
           razorpayAmount:
-            order.paymentMethod ===
-              "razorpay"
-              ? childFinalPayable
-              : 0,
-
+            order.paymentMethod === "razorpay"
+              ? childPayable
+              : isPartialCod
+                ? childUpfront
+                : 0,
           codAmount:
-            order.paymentMethod === "cod"
-              ? childFinalPayable
-              : 0,
+            order.paymentMethod === "cod" ? childPayable : isPartialCod ? childCod : 0,
         };
 
-        /* ---------------------------------------------------
-           COUPON SNAPSHOT
-        --------------------------------------------------- */
-
-        const childCoupon =
-          originalParent?.coupon
-            ? {
-              ...originalParent.coupon,
-
-              discount:
-                Math.max(
-                  0,
-                  childDiscount,
-                ),
-
-              finalTotal:
-                childFinalPayable,
-            }
-            : null;
-
-        /* ---------------------------------------------------
-           PAYLOAD
-        --------------------------------------------------- */
-
-        const parentObject = {
-          ...originalParent,
-        };
-
-        delete parentObject._id;
-        delete parentObject.__v;
-        delete parentObject.createdAt;
-        delete parentObject.updatedAt;
-
-        const childOrderPayload = {
-          ...parentObject,
-
-          orderNumber: `${order.orderNumber}-${splitSuffix}`,
-
+        const totalQuantity = childItems.reduce((sum, item) => sum + num(item.quantity), 0);
+        const childPayload = {
+          ...basePayload,
+          orderNumber: `${order.orderNumber}-${suffix}`,
           orderType: "shipment",
-
-          parentOrderId:
-            order._id,
-
-          splitSuffix,
-
+          parentOrderId: order._id,
+          splitSuffix: suffix,
           items: childItems,
-
-          subtotal:
-            childSubtotal,
-
-          discount:
-            Math.max(
-              0,
-              childDiscount,
-            ),
-
-          shippingFee:
-            Math.max(
-              0,
-              childShippingFee,
-            ),
-
-          tax:
-            Math.max(
-              0,
-              childTax,
-            ),
-
-          totalAmount:
-            Math.max(
-              0,
-              childTotalAmount,
-            ),
-
-          finalPayable:
-            childFinalPayable,
-
-          coupon:
-            childCoupon,
-
-          /*
-           * Split wallet financially,
-           * but DO NOT debit wallet again.
-           */
+          subtotal: childSubtotal,
+          discount: childDiscount,
+          shippingFee: childShipping,
+          totalAmount: childTotal,
+          finalPayable: childPayable,
+          coupon: source.coupon
+            ? { ...source.coupon, discount: childDiscount, finalTotal: childPayable }
+            : null,
           walletCredit: {
-            used:
-              safeChildWalletAmount >
-              0,
-
-            amount:
-              safeChildWalletAmount,
-
-            /*
-             * Reference original debit only.
-             * No new debit occurs here.
-             */
-            transactionId:
-              originalParent
-                ?.walletCredit
-                ?.transactionId ||
-              "",
-
-            debitedAt:
-              originalParent
-                ?.walletCredit
-                ?.debitedAt ||
-              null,
-
-            balanceAfterDebit:
-              originalParent
-                ?.walletCredit
-                ?.balanceAfterDebit ||
-              0,
+            used: childWallet > 0,
+            amount: childWallet,
+            transactionId: source.walletCredit?.transactionId || "",
+            debitedAt: source.walletCredit?.debitedAt || null,
+            balanceAfterDebit: source.walletCredit?.balanceAfterDebit || 0,
           },
-
-          paymentBreakdown:
-            childPaymentBreakdown,
-
-          /*
-           * Financial payment transaction
-           * belongs to parent.
-           *
-           * Do not duplicate Razorpay IDs
-           * across child shipment orders.
-           */
+          paymentBreakdown,
+          partialPayment: {
+            enabled: isPartialCod,
+            upfrontPercent: isPartialCod
+              ? num(source.partialPayment?.upfrontPercent || PARTIAL_COD_UPFRONT_PERCENT)
+              : 0,
+            upfrontAmount: childUpfront,
+            remainingCodAmount: childCod,
+            upfrontPaid: isPartialCod && source.partialPayment?.upfrontPaid === true,
+            upfrontPaidAt: isPartialCod ? source.partialPayment?.upfrontPaidAt || null : null,
+            razorpayOrderId: "",
+            razorpayPaymentId: "",
+          },
           razorpay: {
             orderId: "",
             paymentId: "",
             signature: "",
             amount: 0,
-            currency:
-              originalParent
-                ?.razorpay
-                ?.currency ||
-              originalParent
-                ?.currency ||
-              "INR",
+            currency: source.razorpay?.currency || source.currency || "INR",
             paidAt: null,
           },
-
-          /*
-           * Payment state itself remains
-           * inherited because customer has
-           * already paid / selected COD
-           * on original order.
-           */
-          paymentMethod:
-            originalParent.paymentMethod,
-
-          paymentStatus:
-            originalParent.paymentStatus,
-
-          isConfirmed:
-            originalParent.isConfirmed ===
-            true,
-
-          confirmedAt:
-            originalParent.confirmedAt ||
-            null,
-
-          confirmedBy:
-            originalParent.confirmedBy ||
-            null,
-
-          fulfillmentStatus:
-            "processing",
-
+          paymentMethod: source.paymentMethod,
+          paymentStatus: source.paymentStatus,
+          isConfirmed: source.isConfirmed === true,
+          confirmedAt: source.confirmedAt || null,
+          confirmedBy: source.confirmedBy || null,
+          fulfillmentStatus: "processing",
           fulfillmentDates: {
-            processingAt:
-              new Date(),
-
+            processingAt: new Date(),
             packedAt: null,
             pickedAt: null,
             shippedAt: null,
@@ -11487,22 +10960,10 @@ export const splitOrder = async (req, res) => {
             rtoAt: null,
             failedAt: null,
           },
-
-          cancellation: {
-            isCancelled: false,
-            cancelledAt: null,
-            reason: "",
-          },
-
+          cancellation: { isCancelled: false, cancelledAt: null, reason: "" },
           shipment: {
-            provider:
-              originalParent
-                ?.shipment
-                ?.provider ||
-              "shiprocket",
-
+            provider: source.shipment?.provider || "shiprocket",
             status: "pending",
-
             orderId: "",
             shipmentId: "",
             awb: "",
@@ -11510,7 +10971,6 @@ export const splitOrder = async (req, res) => {
             trackingUrl: "",
             labelUrl: "",
           },
-
           trackingDetails: {
             trackingId: "",
             awb: "",
@@ -11519,14 +10979,10 @@ export const splitOrder = async (req, res) => {
             trackingUrl: "",
             lastUpdatedAt: null,
           },
-
           isPackable: false,
-
           rmas: [],
-
           eligibleForRefund: false,
           eligibleForRma: false,
-
           reviewRequest: {
             sent: false,
             sentAt: null,
@@ -11535,458 +10991,116 @@ export const splitOrder = async (req, res) => {
             link: "",
             error: "",
           },
-
           analytics: {
-            ...(originalParent.analytics ||
-              {}),
-
-            totalItems:
-              childItems.reduce(
-                (sum, item) =>
-                  sum +
-                  safeNumber(
-                    item.quantity,
-                  ),
-                0,
-              ),
-
-            averageItemPrice:
-              childItems.reduce(
-                (sum, item) =>
-                  sum +
-                  safeNumber(
-                    item.quantity,
-                  ),
-                0,
-              ) > 0
-                ? childSubtotal /
-                childItems.reduce(
-                  (sum, item) =>
-                    sum +
-                    safeNumber(
-                      item.quantity,
-                    ),
-                  0,
-                )
-                : 0,
-
-            creditsUsed:
-              safeChildWalletAmount >
-              0,
+            ...(source.analytics || {}),
+            totalItems: totalQuantity,
+            averageItemPrice: totalQuantity ? money(childSubtotal / totalQuantity) : 0,
+            creditsUsed: childWallet > 0,
           },
         };
 
-        const [childOrder] =
-          await Order.create(
-            [childOrderPayload],
-            {
-              session,
-            },
-          );
-
-        createdChildIds.push(
-          childOrder._id,
-        );
-
-        /* ---------------------------------------------------
-           BUILD RESERVATION NEED MAP FOR CHILD
-        --------------------------------------------------- */
+        const [child] = await Order.create([childPayload], { session });
+        childIds.push(child._id);
 
         const needMap = new Map();
-
-        for (const item of childItems) {
-          const productId =
-            item?.productId?._id ||
-            item?.productId;
-
-          if (!productId) {
-            continue;
-          }
-
-          const variantId =
-            getVariantId(item);
-
-          const key =
-            makeInventoryKey(
-              productId,
-              variantId,
-            );
-
-          const quantity =
-            Math.max(
-              0,
-              safeNumber(
-                item.quantity,
-              ),
-            );
-
-          if (quantity <= 0) {
-            continue;
-          }
-
-          if (!needMap.has(key)) {
-            needMap.set(key, {
-              productId,
-              variantId,
-              quantity: 0,
-            });
-          }
-
-          needMap.get(key).quantity +=
-            quantity;
-        }
-
-        childAllocationPlans.push({
-          childOrderId:
-            childOrder._id,
-
-          orderNumber:
-            childOrder.orderNumber,
-
-          needMap,
+        childItems.forEach((item) => {
+          const productId = item?.productId?._id || item?.productId;
+          if (!productId) return;
+          const variantId = variantIdOf(item);
+          const key = inventoryKey(productId, variantId);
+          const need = needMap.get(key) || { productId, variantId, quantity: 0 };
+          need.quantity += num(item.quantity);
+          needMap.set(key, need);
         });
+        allocationPlans.push({ childOrderId: child._id, orderNumber: child.orderNumber, needMap });
       }
 
-      /* =======================================================
-         RESERVATION MIGRATION
-         Parent -> Children
-
-         IMPORTANT:
-         - No releaseReservedStock()
-         - No reserveAvailableStockNow()
-         - No stock increment/decrement
-         - Same total active reservation qty
-      ======================================================= */
-
-      for (
-        const parentReservation of parentReservations
-      ) {
-        const reservationObject =
-          parentReservation.toObject();
-
-        const key =
-          makeInventoryKey(
-            parentReservation.productId,
-            parentReservation.variantId ||
-            null,
-          );
-
-        let remainingReservationQty =
-          Math.max(
-            0,
-            safeNumber(
-              parentReservation.qty,
-            ),
-          );
-
+      for (const reservation of reservations) {
+        const key = inventoryKey(reservation.productId, reservation.variantId);
+        let remaining = Math.max(0, num(reservation.qty));
         const allocations = [];
 
-        for (
-          const plan of
-          childAllocationPlans
-        ) {
-          if (
-            remainingReservationQty <=
-            0
-          ) {
-            break;
-          }
-
-          const need =
-            plan.needMap.get(key);
-
-          if (!need) {
-            continue;
-          }
-
-          const remainingNeed =
-            Math.max(
-              0,
-              safeNumber(
-                need.quantity,
-              ),
-            );
-
-          if (
-            remainingNeed <= 0
-          ) {
-            continue;
-          }
-
-          const allocationQty =
-            Math.min(
-              remainingReservationQty,
-              remainingNeed,
-            );
-
-          if (
-            allocationQty <= 0
-          ) {
-            continue;
-          }
-
-          allocations.push({
-            childOrderId:
-              plan.childOrderId,
-
-            orderNumber:
-              plan.orderNumber,
-
-            qty: allocationQty,
-          });
-
-          need.quantity -=
-            allocationQty;
-
-          remainingReservationQty -=
-            allocationQty;
+        for (const plan of allocationPlans) {
+          if (!remaining) break;
+          const need = plan.needMap.get(key);
+          if (!need?.quantity) continue;
+          const quantity = Math.min(remaining, need.quantity);
+          allocations.push({ ...plan, quantity });
+          need.quantity -= quantity;
+          remaining -= quantity;
         }
 
-        /*
-         * Active reservation exists but none
-         * of the child items match it.
-         *
-         * Better to stop whole split than
-         * silently orphan reserved inventory.
-         */
-        if (
-          !allocations.length &&
-          safeNumber(
-            parentReservation.qty,
-          ) > 0
-        ) {
-          throw new Error(
-            `Unable to migrate reservation ${parentReservation._id} while splitting order.`,
-          );
+        if (remaining > 0) {
+          throw new Error(`Reservation quantity mismatch while splitting ${order.orderNumber}`);
         }
 
-        /*
-         * If full active reservation qty
-         * cannot be assigned, stop transaction.
-         */
-        if (
-          remainingReservationQty > 0
-        ) {
-          throw new Error(
-            `Reservation quantity mismatch while splitting ${order.orderNumber}.`,
-          );
-        }
+        const reservationObject = reservation.toObject();
+        await InventoryReservation.deleteOne({ _id: reservation._id }, { session });
 
-        /*
-         * Delete original reservation document
-         * ONLY as DB ownership record.
-         *
-         * We intentionally do NOT call stock
-         * release because stock hold must remain.
-         */
-        await InventoryReservation.deleteOne(
-          {
-            _id:
-              parentReservation._id,
-          },
-          {
-            session,
-          },
-        );
-
-        /*
-         * Recreate reservation ownership rows
-         * preserving SAME status + total qty.
-         */
         for (const allocation of allocations) {
-          const clonedReservation = {
+          const clone = {
             ...reservationObject,
-
-            _id:
-              new mongoose.Types.ObjectId(),
-
+            _id: new mongoose.Types.ObjectId(),
             refType: "order",
-
-            refId:
+            refId: allocation.childOrderId,
+            orderNumber: allocation.orderNumber,
+            qty: allocation.quantity,
+            reservationKey: reservationKey(
               allocation.childOrderId,
-
-            orderNumber:
-              allocation.orderNumber,
-
-            qty:
-              allocation.qty,
-
-            reservationKey:
-              buildReservationKey({
-                refId:
-                  allocation.childOrderId,
-
-                productId:
-                  parentReservation.productId,
-
-                variantId:
-                  parentReservation.variantId ||
-                  null,
-              }),
-
-            notes:
-              appendNote(
-                parentReservation.notes,
-
-                `Reservation moved from split parent ${order.orderNumber} to ${allocation.orderNumber}`,
-              ),
-
-            updatedAt:
-              new Date(),
+              reservation.productId,
+              reservation.variantId,
+            ),
+            notes: addNote(
+              reservation.notes,
+              `Reservation moved from split parent ${order.orderNumber} to ${allocation.orderNumber}`,
+            ),
+            updatedAt: new Date(),
           };
-
-          /*
-           * Preserve original creation time if
-           * available for FIFO history.
-           */
-          if (
-            reservationObject.createdAt
-          ) {
-            clonedReservation.createdAt =
-              reservationObject.createdAt;
-          }
-
-          delete clonedReservation.__v;
-
-          await InventoryReservation.create(
-            [clonedReservation],
-            {
-              session,
-            },
-          );
+          delete clone.__v;
+          await InventoryReservation.create([clone], { session });
         }
       }
 
-      /* =======================================================
-         SYNC ALLOCATED QTY FROM NEW RESERVATION OWNERSHIP
-      ======================================================= */
+      await syncOrderAllocatedQtyFromReservations({
+        orderId: order._id,
+        debug: false,
+        session,
+      });
 
-      await syncOrderAllocatedQtyFromReservations(
-        {
-          orderId: order._id,
-          debug: false,
-          session,
-        },
-      );
-
-      for (
-        const childOrderId of
-        createdChildIds
-      ) {
-        await syncOrderAllocatedQtyFromReservations(
-          {
-            orderId:
-              childOrderId,
-
-            debug: false,
-            session,
-          },
-        );
+      for (const childId of childIds) {
+        await syncOrderAllocatedQtyFromReservations({ orderId: childId, debug: false, session });
       }
 
-      /*
-       * Parent should have zero allocated qty
-       * after reservations moved away.
-       *
-       * Children get actual allocation from
-       * their reservation records.
-       */
-
-      const syncedChildren =
-        await Order.find({
-          _id: {
-            $in: createdChildIds,
-          },
-        }).session(session);
-
-      for (const child of syncedChildren) {
-        const childItems =
-          Array.isArray(child.items)
-            ? child.items
-            : [];
-
+      const children = await Order.find({ _id: { $in: childIds } }).session(session);
+      for (const child of children) {
         child.isPackable =
-          childItems.length > 0 &&
-          childItems.every((item) => {
-            const orderedQty =
-              Math.max(
-                0,
-                safeNumber(
-                  item.quantity,
-                ),
-              );
-
-            const allocatedQty =
-              Math.max(
-                0,
-                safeNumber(
-                  item
-                    ?.fulfillment
-                    ?.allocatedQty,
-                ),
-              );
-
-            return (
-              allocatedQty >=
-              orderedQty
-            );
-          });
-
-        await child.save({
-          session,
-        });
+          child.items.length > 0 &&
+          child.items.every(
+            (item) => num(item.fulfillment?.allocatedQty) >= num(item.quantity),
+          );
+        await child.save({ session });
       }
     });
 
-    /* =========================================================
-       RESPONSE
-    ========================================================= */
-
-    const parent =
-      await Order.findById(
-        parentOrderId,
-      )
-        .populate(
-          "customerId",
-          "name email phone",
-        )
-        .lean();
-
-    const children =
-      await Order.find({
-        _id: {
-          $in: createdChildIds,
-        },
-      })
-        .sort({
-          splitSuffix: 1,
-        })
-        .populate(
-          "customerId",
-          "name email phone",
-        )
-        .lean();
+    const [parent, children] = await Promise.all([
+      Order.findById(parentOrderId).populate("customerId", "name email phone").lean(),
+      Order.find({ _id: { $in: childIds } })
+        .sort({ splitSuffix: 1 })
+        .populate("customerId", "name email phone")
+        .lean(),
+    ]);
 
     return res.status(201).json({
       success: true,
-
       message: `Order ${parent.orderNumber} split into ${children.length} shipments successfully.`,
-
       parent,
       children,
     });
   } catch (error) {
-    console.error(
-      "❌ Split Order Error:",
-      error,
-    );
-
+    console.error("Split Order Error:", error);
     return res.status(400).json({
       success: false,
-
-      message:
-        error.message ||
-        "Order split failed.",
+      message: error.message || "Order split failed",
     });
   } finally {
     await session.endSession();
