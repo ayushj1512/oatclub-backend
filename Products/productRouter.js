@@ -50,7 +50,6 @@ import {
 } from "./productController.js";
 
 import { searchProductsForCard } from "./product.search.controller.js";
-
 import {
   getVendorSamplingProducts,
   updateVendorSamplingStatus,
@@ -58,6 +57,7 @@ import {
   getVendorPatternProducts,
   updateVendorPatternStatus,
   getVendorBestsellerInventoryAlerts,
+  subtractVendorInventory,
 } from "./product.vendor.controller.js";
 
 import {
@@ -74,7 +74,6 @@ import {
   bulkCreateDraftProducts,
 } from "./BulkproductController.js";
 
-import { protectVendor } from "../VendorUser/vendorAuth.js";
 
 const router = express.Router();
 
@@ -108,41 +107,54 @@ router.get(
    VENDOR
 ========================================================= */
 
+/* Inventory adjustment */
+router.get(
+  "/vendor-inventory/:id/history",
+  getInventoryHistory
+);
+
+router.get(
+  "/vendor-inventory/:id",
+  getSingleInventoryAdminProduct
+);
+
+router.patch(
+  "/vendor-inventory/:id",
+  subtractVendorInventory,
+);
+
+/* Inventory alerts */
 router.get(
   "/vendor-inventory-alerts",
   getVendorBestsellerInventoryAlerts
 );
 
+/* Sampling */
 router.get(
   "/vendor-sampling",
-  protectVendor,
   getVendorSamplingProducts
 );
 
 router.patch(
   "/vendor-sampling/:id/status",
-  protectVendor,
   updateVendorSamplingStatus
 );
 
 router.patch(
   "/vendor-sampling/:id/remark",
-  protectVendor,
   addVendorSamplingRemark
 );
 
+/* Patterns */
 router.get(
   "/vendor-patterns",
-  protectVendor,
   getVendorPatternProducts
 );
 
 router.patch(
   "/vendor-patterns/:id/status",
-  protectVendor,
   updateVendorPatternStatus
 );
-
 /* =========================================================
    PRODUCT LISTING / SEARCH
 ========================================================= */

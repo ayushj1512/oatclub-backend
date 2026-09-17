@@ -625,6 +625,369 @@ const getVariantSize = (variant = {}) =>
     .trim()
     .toUpperCase();
 
+/**
+* PATCH /api/products/vendor-inventory/:id
+*
+* Variable product body:
+* {
+*   "variantId": "VARIANT_MONGO_ID",
+*   "quantity": 2,
+*   "note": "Damaged pieces"
+* }
+*
+* Simple product body:
+* {
+*   "quantity": 2,
+*   "note": "Damaged pieces"
+* }
+*/
+export const subtractVendorInventory = async (
+  req,
+  res,
+) => {
+  try {
+    const productId = String(
+      req.params?.id || "",
+    ).trim();
+
+    if (!isValidObjectId(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product ID",
+      });
+    }
+
+    const quantity = Number(
+      req.body?.quantity,
+    );
+
+    if (
+      !Number.isSafeInteger(quantity) ||
+      quantity <= 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "quantity must be a positive integer",
+      });
+    }
+
+    const product =
+      await Product.findById(productId);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    const variants = Array.isArray(
+      product.variants,
+    )
+      ? product.variants
+      : [];
+
+    const isVariable =
+      product.productType === "variable" ||
+      variants.length > 0;
+
+    let targetVariant = null;
+    let stockBefore = 0;
+    let stockAfter = 0;
+    let reservedStock = 0;
+    let availableStock = 0;
+    let size = "";
+    let sku = "";
+    let scope = "product";
+
+    /* VARIABLE PRODUCT */
+
+    if (isVariable) {
+      const variantId = String(
+        req.body?.variantId || "",
+      ).trim();
+
+      if (!isValidObjectId(variantId)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "variantId is required for a variable product",
+        });
+      }
+
+      targetVariant =
+        product.variants.id(variantId);
+
+      if (!targetVariant) {
+        return res.status(404).json({
+          success: false,
+          message: "Product variant not found",
+        });
+      }
+
+      scope = "variant";
+      size = getVariantSize(targetVariant);
+      sku = targetVariant.sku || "";
+
+      stockBefore = Math.max(
+        0,
+        Number(targetVariant.stock) || 0,
+      );
+
+      reservedStock = Math.max(
+        0,
+        Number(
+          targetVariant.reservedStock,
+        ) || 0,
+      );
+
+      availableStock = Math.max(
+        0,
+        stockBefore - reservedStock,
+      );
+
+      if (quantity > availableStock) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `Only ${availableStock} available unit(s)` +
+            ` can be removed from size ${size || "—"}`,
+        });
+      }
+
+      stockAfter =
+        stockBefore - quantity;
+
+      targetVariant.stock = stockAfter;
+
+      targetVariant.isInStock =
+        product.stockType === "unlimited" ||
+        stockAfter - reservedStock > 0;
+
+      product.markModified("variants");
+
+      /*
+       * Product-level stock is always equal to
+       * total physical stock of all variants.
+       */
+      product.stock =
+        product.variants.reduce(
+          (total, variant) =>
+            total +
+            Math.max(
+              0,
+              Number(variant?.stock) || 0,
+            ),
+          0,
+        );
+
+      product.markModified("stock");
+    } else {
+      /* SIMPLE PRODUCT */
+
+      stockBefore = Math.max(
+        0,
+        Number(product.stock) || 0,
+      );
+
+      reservedStock = Math.max(
+        0,
+        Number(product.reservedStock) || 0,
+      );
+
+      availableStock = Math.max(
+        0,
+        stockBefore - reservedStock,
+      );
+
+      if (quantity > availableStock) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `Only ${availableStock} available unit(s)` +
+            " can be removed",
+        });
+      }
+
+      stockAfter =
+        stockBefore - quantity;
+
+      sku = product.sku || "";
+
+      product.stock = stockAfter;
+
+      product.isInStock =
+        product.stockType === "unlimited" ||
+        stockAfter - reservedStock > 0;
+
+      product.markModified("stock");
+      product.markModified("isInStock");
+    }
+
+    /* INVENTORY HISTORY */
+
+    const referenceId = String(
+      req.body?.referenceId ||
+      `VENDOR-OUT-${Date.now()}`,
+    )
+      .trim()
+      .slice(0, 100);
+
+    const requestedNote = String(
+      req.body?.note || "",
+    )
+      .trim()
+      .slice(0, 300);
+
+    const inventoryMovement = {
+      type: "OUT",
+      scope,
+
+      variantId:
+        targetVariant?._id || null,
+
+      size,
+      sku,
+
+      stockBefore,
+      quantityChanged: quantity,
+      stockAfter,
+
+      source: "correction",
+      referenceId,
+
+      note:
+        requestedNote ||
+        `Vendor removed ${quantity} unit(s)${size ? ` from size ${size}` : ""
+        }`,
+
+      /*
+       * Schema references AdminUser.
+       * Vendor ID should not be saved here.
+       */
+      updatedBy: null,
+      createdAt: new Date(),
+    };
+
+    if (
+      !Array.isArray(
+        product.inventoryHistory,
+      )
+    ) {
+      product.inventoryHistory = [];
+    }
+
+    product.inventoryHistory.push(
+      inventoryMovement,
+    );
+
+    product.markModified(
+      "inventoryHistory",
+    );
+
+    await product.save({
+      validateBeforeSave: true,
+    });
+
+    const updatedVariant =
+      targetVariant
+        ? {
+          _id: targetVariant._id,
+          size,
+          sku,
+          stock: stockAfter,
+          reservedStock,
+          availableStock: Math.max(
+            0,
+            stockAfter - reservedStock,
+          ),
+        }
+        : null;
+
+    return res.json({
+      success: true,
+
+      message:
+        `${quantity} unit(s) removed successfully` +
+        `${size ? ` from size ${size}` : ""}`,
+
+      updated: {
+        productId: product._id,
+        productCode: product.productCode,
+
+        variantId:
+          targetVariant?._id || null,
+
+        size,
+        sku,
+
+        stockBefore,
+        quantityRemoved: quantity,
+        stockAfter,
+        reservedStock,
+
+        availableStock: Math.max(
+          0,
+          stockAfter - reservedStock,
+        ),
+
+        totalProductStock: Math.max(
+          0,
+          Number(product.stock) || 0,
+        ),
+      },
+
+      inventoryMovement,
+
+      product: {
+        _id: product._id,
+        title: product.title,
+        slug: product.slug,
+        productCode: product.productCode,
+
+        thumbnail:
+          product.thumbnail ||
+          product.images?.[0] ||
+          "",
+
+        images: product.images || [],
+        productType: product.productType,
+        stockType: product.stockType,
+
+        stock: Math.max(
+          0,
+          Number(product.stock) || 0,
+        ),
+
+        reservedStock: Math.max(
+          0,
+          Number(product.reservedStock) || 0,
+        ),
+
+        variant: updatedVariant,
+
+        variants:
+          product.variants || [],
+      },
+    });
+  } catch (error) {
+    console.error(
+      "subtractVendorInventory error:",
+      error,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error?.message ||
+        "Failed to subtract inventory",
+    });
+  }
+};
+
+
+
 export const getVendorBestsellerInventoryAlerts = async (req, res) => {
   try {
     const threshold = Math.max(1, Number(req.query.threshold) || 5);
