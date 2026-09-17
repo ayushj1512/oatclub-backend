@@ -105,11 +105,11 @@ export const FAST2SMS_TEMPLATES = Object.freeze({
 
   ORDER_SHIPPED: {
     key: "ORDER_SHIPPED",
-    messageId: null,
-    templateId: null,
+    messageId: 33090,
+    templateId: "941609248442148",
     templateName: "order_shipped",
     language: "en",
-    status: "NOT_CONFIGURED",
+    status: "APPROVED",
 
     buildVariables: ({
       customerName,
