@@ -92,7 +92,7 @@ import { delhiveryRoutes } from "./delhivery/index.js";
 import productCostingRouter from "./Products/ProductCosting/ProductCostingRouter.js";
 import { connectRedis } from "./config/redis.js";
 import bdayRoutes from "./bday/bday.js";
-
+import packagingEvidenceRoutes from "./packagingevidence/packagingEvidenceRoutes.js";
 
 // --------------------------------------------------
 // APP CONFIG
@@ -129,7 +129,8 @@ const ALLOWED_ORIGINS = [
   "http://127.0.0.1:4001",
   "http://127.0.0.1:4002",
   "http://127.0.0.1:4003",
-
+  "http://127.0.0.1:4782",
+  "http://127.0.0.1:4782",
   "http://192.168.29.74:3000",
 
   // OATCLUB Store
@@ -255,6 +256,10 @@ app.use("/api/credits", creditRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/offers", offerRoutes);
 app.use("/api/orders", orderRoutes);
+app.use(
+  "/api/packaging-evidence",
+  packagingEvidenceRoutes,
+);
 app.use("/api/cutting-batches", cuttingBatchRoutes);
 app.use("/api/order-refunds", orderRefundRoutes);
 app.use("/api/products", productRoutes);
