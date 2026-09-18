@@ -4535,10 +4535,15 @@ export const createExchangeOrderFromRmaInternal = async ({
 }) => {
   const session = await mongoose.startSession();
 
-  const str = (v) => (v == null ? "" : String(v));
-  const num = (v, d = 0) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : d;
+  const str = (value) =>
+    value == null ? "" : String(value);
+
+  const num = (value, fallback = 0) => {
+    const parsed = Number(value);
+
+    return Number.isFinite(parsed)
+      ? parsed
+      : fallback;
   };
 
   const normalizeAttrs = (variant) => {
@@ -4546,41 +4551,59 @@ export const createExchangeOrderFromRmaInternal = async ({
 
     if (Array.isArray(raw)) {
       return raw
-        .filter((a) => a?.key != null && a?.value != null)
-        .map((a) => ({
-          key: str(a.key),
-          value: str(a.value),
+        .filter(
+          (attribute) =>
+            attribute?.key != null &&
+            attribute?.value != null
+        )
+        .map((attribute) => ({
+          key: str(attribute.key),
+          value: str(attribute.value),
         }));
     }
 
     if (raw && typeof raw === "object") {
-      return Object.entries(raw).map(([key, value]) => ({
-        key,
-        value: str(value),
-      }));
+      return Object.entries(raw).map(
+        ([key, value]) => ({
+          key,
+          value: str(value),
+        })
+      );
     }
 
     return [];
   };
 
-  const pickAttr = (attrs = [], keys = []) => {
-    const wanted = keys.map((x) => str(x).trim().toLowerCase());
-
-    const found = (attrs || []).find((a) =>
-      wanted.includes(
-        str(a?.key || "")
-          .trim()
-          .toLowerCase()
-      )
+  const pickAttr = (
+    attributes = [],
+    keys = []
+  ) => {
+    const wantedKeys = keys.map((key) =>
+      str(key).trim().toLowerCase()
     );
 
-    return found?.value ? str(found.value) : "";
+    const found = (attributes || []).find(
+      (attribute) =>
+        wantedKeys.includes(
+          str(attribute?.key)
+            .trim()
+            .toLowerCase()
+        )
+    );
+
+    return found?.value
+      ? str(found.value)
+      : "";
   };
 
   const getVariantSize = (variant) =>
     pickAttr(
       normalizeAttrs(variant),
-      ["size", "sizes", "shirt_size"]
+      [
+        "size",
+        "sizes",
+        "shirt_size",
+      ]
     )
       .trim()
       .toUpperCase();
@@ -4589,340 +4612,639 @@ export const createExchangeOrderFromRmaInternal = async ({
     pickAttr(
       normalizeAttrs(variant),
       ["color", "colour"]
-    );
+    ).trim();
 
   let createdOrder = null;
+  let reservationResult = null;
+  let reservationError = "";
 
   try {
-    await session.withTransaction(async () => {
-      const original = await Order.findById(orderId).session(session);
+    /*
+     * Exchange order creation and original-order update
+     * remain inside one transaction.
+     */
+    await session.withTransaction(
+      async () => {
+        const original =
+          await Order.findById(orderId).session(
+            session
+          );
 
-      if (!original) {
-        throw new Error("Original order not found");
-      }
+        if (!original) {
+          throw new Error(
+            "Original order not found"
+          );
+        }
 
-      const targetRma = (original.rmas || []).find(
-        (r) => str(r?.rmaNumber) === str(rmaNumber)
-      );
-
-      if (!targetRma) {
-        throw new Error("Exchange RMA not found");
-      }
-
-      if (targetRma.type !== "exchange") {
-        throw new Error("RMA is not an exchange request");
-      }
-
-      // ✅ MAIN APPROVAL GATE
-      if (targetRma.isApproved !== true) {
-        throw new Error(
-          "RMA must be approved before creating exchange order"
+        const targetRma = (
+          original.rmas || []
+        ).find(
+          (rma) =>
+            str(rma?.rmaNumber) ===
+            str(rmaNumber)
         );
-      }
 
-      // ✅ Duplicate protection
-      if (targetRma.isExchangeOrderCreated === true) {
-        throw new Error("Exchange order already created");
-      }
+        if (!targetRma) {
+          throw new Error(
+            "Exchange RMA not found"
+          );
+        }
 
-      // ✅ Exchange fee safety
-      if (
-        Number(targetRma?.fee?.amount || 0) > 0 &&
-        String(targetRma?.fee?.status || "").toLowerCase() !== "paid"
-      ) {
-        throw new Error(
-          "Exchange fee unpaid. Cannot create exchange order"
+        if (
+          String(targetRma.type).toLowerCase() !==
+          "exchange"
+        ) {
+          throw new Error(
+            "RMA is not an exchange request"
+          );
+        }
+
+        if (targetRma.isApproved !== true) {
+          throw new Error(
+            "RMA must be approved before creating exchange order"
+          );
+        }
+
+        if (
+          targetRma.isExchangeOrderCreated ===
+          true
+        ) {
+          throw new Error(
+            "Exchange order already created"
+          );
+        }
+
+        if (
+          num(targetRma?.fee?.amount) > 0 &&
+          str(targetRma?.fee?.status)
+            .trim()
+            .toLowerCase() !== "paid"
+        ) {
+          throw new Error(
+            "Exchange fee unpaid. Cannot create exchange order"
+          );
+        }
+
+        const baseOrderNumber = str(
+          original.orderNumber
+        ).trim();
+
+        if (!baseOrderNumber) {
+          throw new Error(
+            "Original order number missing"
+          );
+        }
+
+        const newOrderNumber =
+          `${baseOrderNumber}-E`;
+
+        /*
+         * Idempotency:
+         * if exchange order already exists but RMA flags
+         * were not updated, repair the flags and reuse it.
+         */
+        const existingOrder =
+          await Order.findOne({
+            orderNumber: newOrderNumber,
+          })
+            .session(session)
+            .lean();
+
+        if (existingOrder) {
+          targetRma.isExchangeOrderCreated =
+            true;
+
+          original.hasExchangeOrder = true;
+          original.markModified("rmas");
+
+          await original.save({ session });
+
+          createdOrder = existingOrder;
+          return;
+        }
+
+        const exchangeRequest =
+          targetRma?.exchangeRequest || {};
+
+        const requestedSize = pickAttr(
+          exchangeRequest?.attributes || [],
+          [
+            "size",
+            "sizes",
+            "shirt_size",
+          ]
+        )
+          .trim()
+          .toUpperCase();
+
+        if (!requestedSize) {
+          throw new Error(
+            "Preferred exchange size missing"
+          );
+        }
+
+        /*
+         * Build exchange items from RMA data.
+         * Frontend does not need to resend item data.
+         */
+        const incomingItems = (
+          targetRma.items || []
+        ).map((rmaItem) => ({
+          productId:
+            exchangeRequest?.productId ||
+            rmaItem?.productId,
+
+          quantity: Math.max(
+            1,
+            num(rmaItem?.quantity, 1)
+          ),
+
+          variantId:
+            exchangeRequest?.variantId ||
+            null,
+        }));
+
+        if (!incomingItems.length) {
+          throw new Error(
+            "Exchange items missing"
+          );
+        }
+
+        const productIds = [
+          ...new Set(
+            incomingItems
+              .map((item) =>
+                str(item.productId)
+              )
+              .filter(Boolean)
+          ),
+        ];
+
+        if (!productIds.length) {
+          throw new Error(
+            "Exchange product ID missing"
+          );
+        }
+
+        const products =
+          await Product.find({
+            _id: {
+              $in: productIds,
+            },
+          })
+            .session(session)
+            .lean();
+
+        const productMap = new Map(
+          products.map((product) => [
+            str(product._id),
+            product,
+          ])
         );
-      }
 
-      const base = str(original.orderNumber).trim();
+        const normalizedItems = [];
+        let subtotal = 0;
 
-      if (!base) {
-        throw new Error("Original order number missing");
-      }
+        for (const item of incomingItems) {
+          const product = productMap.get(
+            str(item.productId)
+          );
 
-      const newOrderNumber = `${base}-E`;
+          if (!product) {
+            throw new Error(
+              `Exchange product not found: ${str(
+                item.productId
+              )}`
+            );
+          }
 
-      const existing = await Order.findOne({
-        orderNumber: newOrderNumber,
-      })
-        .session(session)
-        .lean();
+          const quantity = Math.max(
+            1,
+            num(item.quantity, 1)
+          );
 
-      if (existing) {
-        targetRma.isExchangeOrderCreated = true;
+          const isVariable =
+            product.productType ===
+            "variable" ||
+            (product.variants || []).length >
+            0;
+
+          let variant = null;
+
+          if (isVariable) {
+            /*
+             * First priority:
+             * requested exchange size.
+             */
+            variant =
+              (
+                product.variants || []
+              ).find(
+                (productVariant) =>
+                  getVariantSize(
+                    productVariant
+                  ) === requestedSize
+              ) || null;
+
+            /*
+             * Fallback:
+             * specifically stored variant ID.
+             */
+            if (
+              !variant &&
+              item.variantId
+            ) {
+              variant =
+                (
+                  product.variants || []
+                ).find(
+                  (productVariant) =>
+                    str(
+                      productVariant?._id
+                    ) ===
+                    str(item.variantId)
+                ) || null;
+            }
+
+            if (!variant) {
+              throw new Error(
+                `${product.title} - size ${requestedSize} variant not found`
+              );
+            }
+          }
+
+          const physicalStock = num(
+            variant?.stock ??
+            product.stock
+          );
+
+          const reservedStock = num(
+            variant?.reservedStock ??
+            product.reservedStock
+          );
+
+          const availableStock =
+            Math.max(
+              0,
+              physicalStock -
+              reservedStock
+            );
+
+          /*
+           * This is only the initial snapshot.
+           * Reservation helper will perform the real,
+           * atomic reservation and sync these values.
+           */
+          const allocatedQty =
+            Math.min(
+              quantity,
+              availableStock
+            );
+
+          const toProduceQty =
+            Math.max(
+              0,
+              quantity -
+              allocatedQty
+            );
+
+          const price = num(
+            variant?.price ??
+            product.price
+          );
+
+          const compareAtPrice =
+            variant?.compareAtPrice ??
+            product.compareAtPrice ??
+            null;
+
+          const lineSubtotal =
+            price * quantity;
+
+          subtotal += lineSubtotal;
+
+          const attributes =
+            normalizeAttrs(variant);
+
+          normalizedItems.push({
+            lineId:
+              crypto.randomUUID(),
+
+            productModel: "Product",
+            productId: product._id,
+
+            productSnapshot: {
+              productCode:
+                product.productCode || "",
+
+              title:
+                product.title || "",
+
+              slug:
+                product.slug || "",
+
+              thumbnail:
+                product.thumbnail || "",
+
+              images: Array.isArray(
+                product.images
+              )
+                ? product.images
+                : [],
+
+              productType:
+                product.productType ||
+                  (
+                    product.variants || []
+                  ).length
+                  ? "variable"
+                  : "simple",
+
+              sku:
+                product.sku || "",
+
+              tags: Array.isArray(
+                product.tags
+              )
+                ? product.tags
+                : [],
+
+              hsnCode: str(
+                product.hsnCode
+              ),
+
+              weight: num(
+                product.weight
+              ),
+
+              currency:
+                product.currency ||
+                "INR",
+            },
+
+            variant: {
+              variantId:
+                variant?._id || null,
+
+              sku:
+                variant?.sku || "",
+
+              attributes,
+
+              weight: num(
+                variant?.weight
+              ),
+            },
+
+            selectedSize:
+              getVariantSize(variant) ||
+              requestedSize,
+
+            selectedColor:
+              getColor(variant),
+
+            quantity,
+            price,
+            compareAtPrice,
+            subtotal: lineSubtotal,
+
+            originalPrice: price,
+            originalSubtotal:
+              lineSubtotal,
+
+            discountAmount: 0,
+
+            taxRate: 5,
+            taxableValue:
+              lineSubtotal / 1.05,
+
+            taxAmount:
+              lineSubtotal -
+              lineSubtotal / 1.05,
+
+            fulfillment: {
+              allocatedQty,
+              shippedQty: 0,
+              toProduceQty,
+            },
+          });
+        }
+
+        const [created] =
+          await Order.create(
+            [
+              {
+                customerId:
+                  original.customerId,
+
+                shippingAddressSnapshot:
+                  original.shippingAddressSnapshot,
+
+                billingAddressSnapshot:
+                  original.billingAddressSnapshot,
+
+                items: normalizedItems,
+                rmas: [],
+
+                subtotal,
+                discount: 0,
+                shippingFee: 0,
+                tax: 0,
+
+                totalAmount: subtotal,
+                finalPayable: 0,
+
+                currency:
+                  original.currency ||
+                  "INR",
+
+                paymentMethod:
+                  "exchange",
+
+                paymentStatus:
+                  "not_applicable",
+
+                fulfillmentStatus:
+                  "processing",
+
+                isExchangeOrder: true,
+                hasExchangeOrder: false,
+
+                source: "manual",
+
+                /*
+                 * Exchange is a shipment order.
+                 * It is linked to the original through
+                 * parentOrderId but must not be treated
+                 * as a normal split child by reservation
+                 * validation.
+                 */
+                orderType: "shipment",
+                parentOrderId:
+                  original._id,
+                splitSuffix: "E",
+
+                isGiftOrder:
+                  original.isGiftOrder ||
+                  false,
+
+                isConfirmed: true,
+                confirmedAt: new Date(),
+
+                confirmedBy:
+                  adminId || "admin",
+
+                adminRemarks:
+                  `exchange_replacement_of:${baseOrderNumber}`,
+
+                customerSupportRemark:
+                  original.customerSupportRemark ||
+                  "",
+
+                analytics: {
+                  ...(
+                    original.analytics ||
+                    {}
+                  ),
+
+                  couponApplied: false,
+                  creditsUsed: false,
+
+                  onlinePaymentDiscountApplied:
+                    false,
+
+                  onlinePaymentDiscountPct:
+                    0,
+
+                  onlinePaymentDiscountAmount:
+                    0,
+                },
+
+                orderNumber:
+                  newOrderNumber,
+              },
+            ],
+            { session }
+          );
+
+        targetRma.isExchangeOrderCreated =
+          true;
+
         original.hasExchangeOrder = true;
         original.markModified("rmas");
 
-        await original.save({ session });
+        await original.save({
+          session,
+        });
 
-        createdOrder = existing;
-        return;
+        createdOrder = created;
       }
+    );
 
-      const exchangeRequest =
-        targetRma?.exchangeRequest || {};
+    if (!createdOrder?._id) {
+      throw new Error(
+        "Exchange order was created but could not be loaded"
+      );
+    }
 
-      const requestedSize = pickAttr(
-        exchangeRequest?.attributes || [],
-        ["size", "sizes", "shirt_size"]
-      )
-        .trim()
-        .toUpperCase();
+    /*
+     * IMPORTANT:
+     * Reservation must happen after transaction commit.
+     *
+     * Calling this inside the transaction can fail because
+     * the reservation helper uses its own queries and may
+     * not see the uncommitted exchange order.
+     */
+    try {
+      reservationResult =
+        await ensureInventoryReservationForOrderInternal(
+          {
+            orderNumber:
+              createdOrder.orderNumber,
 
-      if (!requestedSize) {
-        throw new Error("Preferred exchange size missing");
-      }
+            debug: true,
+          }
+        );
+
+      console.log(
+        `✅ Exchange inventory checked | ${createdOrder.orderNumber}`,
+        {
+          createdCount:
+            reservationResult
+              ?.createdCount || 0,
+
+          reservedCount:
+            reservationResult
+              ?.finalReservedCount ??
+            reservationResult
+              ?.reservedCount ??
+            0,
+
+          pendingCount:
+            reservationResult
+              ?.finalPendingCount ??
+            reservationResult
+              ?.pendingCount ??
+            0,
+
+          stoppedBecause:
+            reservationResult
+              ?.stoppedBecause || "",
+        }
+      );
 
       /*
-        Build items from RMA itself.
-        Frontend does NOT need to send duplicate items anymore.
-      */
-      const incomingItems = (targetRma.items || []).map((rmaItem) => ({
-        productId:
-          exchangeRequest?.productId ||
-          rmaItem?.productId,
-
-        quantity: Math.max(
-          1,
-          Number(rmaItem?.quantity || 1)
-        ),
-
-        variantId:
-          exchangeRequest?.variantId || null,
-      }));
-
-      if (!incomingItems.length) {
-        throw new Error("Exchange items missing");
+       * Protection against reservation validators that
+       * incorrectly classify exchange orders as split children
+       * merely because parentOrderId exists.
+       */
+      if (
+        String(
+          reservationResult?.stoppedBecause ||
+          ""
+        )
+          .trim()
+          .toLowerCase()
+          .includes("split")
+      ) {
+        console.warn(
+          `⚠️ Exchange order ${createdOrder.orderNumber} was treated as a split order. Update reservation validation to allow isExchangeOrder=true.`
+        );
       }
-
-      const productIds = [
-        ...new Set(
-          incomingItems
-            .map((item) => str(item.productId))
-            .filter(Boolean)
-        ),
-      ];
-
-      const products = await Product.find({
-        _id: { $in: productIds },
-      })
-        .session(session)
-        .lean();
-
-      const productMap = new Map(
-        products.map((p) => [str(p._id), p])
+    } catch (error) {
+      reservationError = str(
+        error?.message ||
+        "Inventory reservation failed"
       );
 
-      const normalizedItems = [];
-      let subtotal = 0;
-
-      for (const item of incomingItems) {
-        const product = productMap.get(
-          str(item.productId)
-        );
-
-        if (!product) {
-          throw new Error("Exchange product not found");
-        }
-
-        const qty = Math.max(
-          1,
-          num(item.quantity, 1)
-        );
-
-        const isVariable =
-          product.productType === "variable" ||
-          (product.variants || []).length > 0;
-
-        let variant = null;
-
-        if (isVariable) {
-          // ✅ RMA preferred size FIRST
-          variant =
-            (product.variants || []).find(
-              (v) =>
-                getVariantSize(v) === requestedSize
-            ) || null;
-
-          // fallback
-          if (!variant && item.variantId) {
-            variant =
-              (product.variants || []).find(
-                (v) =>
-                  str(v?._id) ===
-                  str(item.variantId)
-              ) || null;
-          }
-
-          if (!variant) {
-            throw new Error(
-              `${product.title} - size ${requestedSize} variant not found`
-            );
-          }
-        }
-
-        const stock = num(
-          variant?.stock ?? product.stock
-        );
-
-        const reservedStock = num(
-          variant?.reservedStock ??
-          product.reservedStock
-        );
-
-        const available = Math.max(
-          0,
-          stock - reservedStock
-        );
-
-        const allocatedQty = Math.min(
-          qty,
-          available
-        );
-
-        const toProduceQty = Math.max(
-          0,
-          qty - allocatedQty
-        );
-
-        const price = num(product.price);
-        const lineSubtotal = price * qty;
-
-        subtotal += lineSubtotal;
-
-        const attrs = normalizeAttrs(variant);
-
-        normalizedItems.push({
-          lineId: crypto.randomUUID(),
-
-          productModel: "Product",
-          productId: product._id,
-
-          productSnapshot: {
-            productCode: product.productCode || "",
-            title: product.title || "",
-            slug: product.slug || "",
-            thumbnail: product.thumbnail || "",
-            images: product.images || [],
-
-            productType:
-              product.productType ||
-              (product.variants?.length
-                ? "variable"
-                : "simple"),
-
-            sku: product.sku || "",
-            tags: product.tags || [],
-            hsnCode: str(product.hsnCode),
-            weight: num(product.weight),
-            currency: product.currency || "INR",
-          },
-
-          variant: {
-            variantId: variant?._id || null,
-            sku: variant?.sku || "",
-            attributes: attrs,
-            weight: num(variant?.weight),
-          },
-
-          selectedSize: getVariantSize(variant),
-          selectedColor: getColor(variant),
-
-          quantity: qty,
-          price,
-
-          compareAtPrice:
-            product.compareAtPrice ?? null,
-
-          subtotal: lineSubtotal,
-
-          fulfillment: {
-            allocatedQty,
-            shippedQty: 0,
-            toProduceQty,
-          },
-        });
-      }
-
-      const [created] = await Order.create(
-        [
-          {
-            customerId: original.customerId,
-
-            shippingAddressSnapshot:
-              original.shippingAddressSnapshot,
-
-            billingAddressSnapshot:
-              original.billingAddressSnapshot,
-
-            items: normalizedItems,
-            rmas: [],
-
-            subtotal,
-            discount: 0,
-            shippingFee: 0,
-            tax: 0,
-
-            totalAmount: subtotal,
-            finalPayable: 0,
-
-            currency:
-              original.currency || "INR",
-
-            paymentMethod: "exchange",
-            paymentStatus: "not_applicable",
-
-            fulfillmentStatus: "processing",
-
-            isExchangeOrder: true,
-            hasExchangeOrder: false,
-
-            source: "manual",
-            orderType: "shipment",
-
-            parentOrderId: original._id,
-            splitSuffix: "E",
-
-            isGiftOrder:
-              original.isGiftOrder || false,
-
-            isConfirmed: true,
-            confirmedAt: new Date(),
-            confirmedBy: adminId || "admin",
-
-            adminRemarks:
-              `exchange_replacement_of:${base}`,
-
-            customerSupportRemark:
-              original.customerSupportRemark || "",
-
-            analytics: {
-              ...(original.analytics || {}),
-              couponApplied: false,
-              creditsUsed: false,
-              onlinePaymentDiscountApplied: false,
-              onlinePaymentDiscountPct: 0,
-              onlinePaymentDiscountAmount: 0,
-            },
-
-            orderNumber: newOrderNumber,
-          },
-        ],
-        { session }
+      console.error(
+        `⚠️ Exchange reservation failed | ${createdOrder.orderNumber}:`,
+        reservationError
       );
 
-      targetRma.isExchangeOrderCreated = true;
-      original.hasExchangeOrder = true;
+      /*
+       * Do not delete the exchange order here.
+       * It remains visible in Broken Orders and can
+       * be repaired selectively or through bulk fix.
+       */
+    }
 
-      original.markModified("rmas");
+    /*
+     * Reservation sync can update:
+     * - fulfillment.allocatedQty
+     * - fulfillment.toProduceQty
+     *
+     * Therefore return the fresh document.
+     */
+    const finalExchangeOrder =
+      await Order.findById(
+        createdOrder._id
+      ).lean();
 
-      await original.save({ session });
-
-      createdOrder = created;
-    });
-
-    return createdOrder;
+    return (
+      finalExchangeOrder ||
+      createdOrder
+    );
   } finally {
     await session.endSession();
   }
