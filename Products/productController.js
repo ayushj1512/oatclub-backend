@@ -541,7 +541,10 @@ const mapProductCard = (product) => {
   const hoverImage =
     images[1] || null;
 
-  const price = toNum(product?.price);
+  const price = toNum(
+    product?.price,
+  );
+
   const compareAtPrice = toNum(
     product?.compareAtPrice,
   );
@@ -553,7 +556,9 @@ const mapProductCard = (product) => {
     : [];
 
   const categorySlug =
-    getCardCategorySlug(categories);
+    getCardCategorySlug(
+      categories,
+    );
 
   const safeSlug = slugifySafe(
     product?.slug ||
@@ -569,6 +574,47 @@ const mapProductCard = (product) => {
     product?.stockType === "limited"
       ? "limited"
       : "unlimited";
+
+  /* ---------------- price drop ---------------- */
+
+  const priceLogs = Array.isArray(
+    product?.priceLogs,
+  )
+    ? product.priceLogs
+    : [];
+
+  const latestPriceLog =
+    priceLogs.length > 0
+      ? priceLogs[
+      priceLogs.length - 1
+      ]
+      : null;
+
+  const oldPrice = Number(
+    latestPriceLog?.oldPrice,
+  );
+
+  const newPrice = Number(
+    latestPriceLog?.newPrice,
+  );
+
+  const priceDroppedBy =
+    Number.isFinite(oldPrice) &&
+      Number.isFinite(newPrice) &&
+      oldPrice > newPrice &&
+      newPrice === price
+      ? oldPrice - newPrice
+      : 0;
+
+  const priceDropPercentage =
+    priceDroppedBy > 0 &&
+      oldPrice > 0
+      ? Math.round(
+        (priceDroppedBy /
+          oldPrice) *
+        100,
+      )
+      : 0;
 
   return {
     _id: product?._id,
@@ -589,8 +635,17 @@ const mapProductCard = (product) => {
     price,
     compareAtPrice,
 
+    priceLogs,
+    latestPriceLog,
+    priceDroppedBy,
+    priceDropPercentage,
+
     stockType,
-    stock: toNum(product?.stock),
+
+    stock: toNum(
+      product?.stock,
+    ),
+
     reservedStock: toNum(
       product?.reservedStock,
     ),
@@ -601,9 +656,11 @@ const mapProductCard = (product) => {
 
     productType:
       product?.productType ||
-      (product?.variants?.length
-        ? "variable"
-        : "simple"),
+      (
+        product?.variants?.length
+          ? "variable"
+          : "simple"
+      ),
 
     attributes: Array.isArray(
       product?.attributes,
@@ -638,8 +695,11 @@ const mapProductCard = (product) => {
       compareAtPrice > price &&
         price > 0
         ? Math.round(
-          ((compareAtPrice - price) /
-            compareAtPrice) *
+          (
+            (compareAtPrice -
+              price) /
+            compareAtPrice
+          ) *
           100,
         )
         : 0,
@@ -3413,67 +3473,139 @@ export const getProductBySKU = async (req, res) => {
 export const updateProduct = async (req, res) => {
   try {
     const data = { ...req.body };
-    data.productSpotlight = json(data.productSpotlight, []);
+
+    data.productSpotlight = json(
+      data.productSpotlight,
+      [],
+    );
+
+    // Price logs frontend se modify nahi honge
+    delete data.priceLogs;
 
     /* ---------------- helpers ---------------- */
-    const s = (v) => String(v ?? "").trim();
+
+    const s = (v) =>
+      String(v ?? "").trim();
+
     const toBool = (v) =>
       typeof v === "boolean"
         ? v
-        : ["true", "1", "yes"].includes(s(v).toLowerCase());
+        : ["true", "1", "yes"].includes(
+          s(v).toLowerCase(),
+        );
 
     const normColors = (v) =>
       Array.from(
         new Set(
-          (Array.isArray(v) ? v : String(v || "").split(","))
-            .map((c) => s(c).toLowerCase())
+          (
+            Array.isArray(v)
+              ? v
+              : String(v || "").split(",")
+          )
+            .map((c) =>
+              s(c).toLowerCase(),
+            )
             .filter(Boolean),
         ),
       );
 
     const normSpecs = (v) => {
       const out = [];
+
       const push = (k, val) => {
-        const key = s(k),
-          value = s(val);
-        if (key) out.push({ key, value });
+        const key = s(k);
+        const value = s(val);
+
+        if (key) {
+          out.push({
+            key,
+            value,
+          });
+        }
       };
 
       if (typeof v === "string") {
-        const t = v.trim();
-        if (!t) return [];
+        const text = v.trim();
+
+        if (!text) return [];
+
         try {
-          v = JSON.parse(t);
+          v = JSON.parse(text);
         } catch {
-          (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) => {
-            const x = s(p);
-            if (!x) return;
-            const sep = x.includes(":") ? ":" : x.includes("=") ? "=" : null;
-            if (!sep) return;
-            const [k, ...rest] = x.split(sep);
-            push(k, rest.join(sep));
+          (
+            text.includes("|")
+              ? text.split("|")
+              : text.split(",")
+          ).forEach((part) => {
+            const value = s(part);
+
+            if (!value) return;
+
+            const separator = value.includes(":")
+              ? ":"
+              : value.includes("=")
+                ? "="
+                : null;
+
+            if (!separator) return;
+
+            const [key, ...rest] =
+              value.split(separator);
+
+            push(
+              key,
+              rest.join(separator),
+            );
           });
+
           return out;
         }
       }
 
-      if (Array.isArray(v))
-        return (v.forEach((r) => r && push(r.key, r.value)), out);
-      if (v && typeof v === "object")
-        return (Object.entries(v).forEach(([k, val]) => push(k, val)), out);
+      if (Array.isArray(v)) {
+        v.forEach((row) => {
+          if (row) {
+            push(row.key, row.value);
+          }
+        });
+
+        return out;
+      }
+
+      if (
+        v &&
+        typeof v === "object"
+      ) {
+        Object.entries(v).forEach(
+          ([key, value]) =>
+            push(key, value),
+        );
+
+        return out;
+      }
 
       return [];
     };
 
     const normFabrics = (v) => {
-      const ROLES = new Set(["main", "lining", "contrast", "padding", "other"]);
+      const roles = new Set([
+        "main",
+        "lining",
+        "contrast",
+        "padding",
+        "other",
+      ]);
+
       const out = [];
 
       const push = (row) => {
         if (!row) return;
 
-        if (typeof row === "string") {
+        if (
+          typeof row === "string"
+        ) {
           const name = s(row);
+
           if (name) {
             out.push({
               fabricName: name,
@@ -3482,16 +3614,35 @@ export const updateProduct = async (req, res) => {
               role: "main",
             });
           }
+
           return;
         }
 
-        if (typeof row !== "object") return;
+        if (
+          typeof row !== "object"
+        ) {
+          return;
+        }
 
-        const fabricName = s(row.fabricName);
-        const fabricCode = s(row.fabricCode);
-        const fabricColor = s(row.fabricColor);
-        const roleRaw = s(row.role || "main").toLowerCase();
-        const role = ROLES.has(roleRaw) ? roleRaw : "main";
+        const fabricName = s(
+          row.fabricName,
+        );
+
+        const fabricCode = s(
+          row.fabricCode,
+        );
+
+        const fabricColor = s(
+          row.fabricColor,
+        );
+
+        const roleRaw = s(
+          row.role || "main",
+        ).toLowerCase();
+
+        const role = roles.has(roleRaw)
+          ? roleRaw
+          : "main";
 
         const hasAny = !!(
           fabricName ||
@@ -3499,313 +3650,727 @@ export const updateProduct = async (req, res) => {
           fabricColor ||
           s(row.role)
         );
+
         if (!hasAny) return;
 
-        const finalName = fabricName || fabricCode;
-        if (!finalName) throw new Error("Fabric name is required in fabrics[]");
+        const finalName =
+          fabricName || fabricCode;
+
+        if (!finalName) {
+          throw new Error(
+            "Fabric name is required in fabrics[]",
+          );
+        }
 
         out.push({
           fabricName: finalName,
           fabricCode: fabricCode || "",
-          fabricColor: fabricColor || "",
+          fabricColor:
+            fabricColor || "",
           role,
         });
       };
 
       if (typeof v === "string") {
-        const t = v.trim();
-        if (!t) return [];
+        const text = v.trim();
+
+        if (!text) return [];
+
         try {
-          v = JSON.parse(t);
+          v = JSON.parse(text);
         } catch {
-          (t.includes("|") ? t.split("|") : t.split(",")).forEach((p) =>
-            push(String(p || "")),
+          (
+            text.includes("|")
+              ? text.split("|")
+              : text.split(",")
+          ).forEach((part) =>
+            push(String(part || "")),
           );
+
           return out;
         }
       }
 
-      if (Array.isArray(v)) return (v.forEach(push), out);
+      if (Array.isArray(v)) {
+        v.forEach(push);
+        return out;
+      }
 
-      if (v && typeof v === "object") {
+      if (
+        v &&
+        typeof v === "object"
+      ) {
         const looksSingle =
           "fabricName" in v ||
           "fabricCode" in v ||
           "fabricColor" in v ||
           "role" in v;
 
-        if (looksSingle) return (push(v), out);
+        if (looksSingle) {
+          push(v);
+          return out;
+        }
 
-        Object.entries(v).forEach(([role, name]) =>
-          push({ role, fabricName: name }),
+        Object.entries(v).forEach(
+          ([role, name]) =>
+            push({
+              role,
+              fabricName: name,
+            }),
         );
+
         return out;
       }
 
       return [];
     };
 
-    /* ---------------- normalize (only if provided) ---------------- */
-    if (data.stockType !== undefined) {
+    /* ---------------- normalize ---------------- */
+
+    if (
+      data.stockType !== undefined
+    ) {
       const stockType = s(
         data.stockType,
       ).toLowerCase();
 
       if (
-        !["unlimited", "limited"].includes(
-          stockType,
-        )
+        ![
+          "unlimited",
+          "limited",
+        ].includes(stockType)
       ) {
-        return res.status(400).json({
-          message:
-            "stockType must be either unlimited or limited",
-        });
+        return res
+          .status(400)
+          .json({
+            message:
+              "stockType must be either unlimited or limited",
+          });
       }
 
       data.stockType = stockType;
     }
-    if (data.attributes !== undefined)
-      data.attributes = json(data.attributes, data.attributes);
 
-    if (data.shortDescription !== undefined)
-      data.shortDescription = s(data.shortDescription);
-    if (data.howToStyle !== undefined) data.howToStyle = s(data.howToStyle);
-    if (data.fabricDetails !== undefined)
-      data.fabricDetails = s(data.fabricDetails);
+    if (
+      data.attributes !== undefined
+    ) {
+      data.attributes = json(
+        data.attributes,
+        data.attributes,
+      );
+    }
 
-    if (data.keyFeatures !== undefined)
-      data.keyFeatures = json(data.keyFeatures, []);
-    else if (data.highlights !== undefined)
-      data.keyFeatures = json(data.highlights, []);
-    if (data.highlights !== undefined) delete data.highlights;
+    if (
+      data.shortDescription !==
+      undefined
+    ) {
+      data.shortDescription = s(
+        data.shortDescription,
+      );
+    }
 
-    if (data.specifications !== undefined || data.specs !== undefined) {
-      data.specifications = normSpecs(data.specifications ?? data.specs);
+    if (
+      data.howToStyle !== undefined
+    ) {
+      data.howToStyle = s(
+        data.howToStyle,
+      );
+    }
+
+    if (
+      data.fabricDetails !==
+      undefined
+    ) {
+      data.fabricDetails = s(
+        data.fabricDetails,
+      );
+    }
+
+    if (
+      data.keyFeatures !== undefined
+    ) {
+      data.keyFeatures = json(
+        data.keyFeatures,
+        [],
+      );
+    } else if (
+      data.highlights !== undefined
+    ) {
+      data.keyFeatures = json(
+        data.highlights,
+        [],
+      );
+    }
+
+    if (
+      data.highlights !== undefined
+    ) {
+      delete data.highlights;
+    }
+
+    if (
+      data.specifications !==
+      undefined ||
+      data.specs !== undefined
+    ) {
+      data.specifications =
+        normSpecs(
+          data.specifications ??
+          data.specs,
+        );
+
       delete data.specs;
     }
 
-    if (data.keywords !== undefined) data.keywords = arr(data.keywords);
-    if (data.tags !== undefined) data.tags = tagsNorm(data.tags);
-    if (data.collections !== undefined)
-      data.collections = arr(data.collections);
-
-    if (data.fabrics !== undefined) {
-      try {
-        data.fabrics = normFabrics(json(data.fabrics, data.fabrics));
-      } catch (err) {
-        return res
-          .status(400)
-          .json({ message: err.message || "Invalid fabrics" });
-      }
-    }
-
-    if (data.avgFabricConsumption !== undefined) {
-      data.avgFabricConsumption = json(
-        data.avgFabricConsumption,
-        data.avgFabricConsumption,
+    if (
+      data.keywords !== undefined
+    ) {
+      data.keywords = arr(
+        data.keywords,
       );
     }
 
-    // ✅ NEW fields
-    if (data.originalProductLink !== undefined)
-      data.originalProductLink = s(data.originalProductLink);
+    if (data.tags !== undefined) {
+      data.tags = tagsNorm(
+        data.tags,
+      );
+    }
+
     if (
-      data.productLink !== undefined &&
-      data.originalProductLink === undefined
+      data.collections !== undefined
     ) {
-      data.originalProductLink = s(data.productLink);
+      data.collections = arr(
+        data.collections,
+      );
+    }
+
+    if (
+      data.fabrics !== undefined
+    ) {
+      try {
+        data.fabrics = normFabrics(
+          json(
+            data.fabrics,
+            data.fabrics,
+          ),
+        );
+      } catch (error) {
+        return res
+          .status(400)
+          .json({
+            message:
+              error.message ||
+              "Invalid fabrics",
+          });
+      }
+    }
+
+    if (
+      data.avgFabricConsumption !==
+      undefined
+    ) {
+      data.avgFabricConsumption =
+        json(
+          data.avgFabricConsumption,
+          data.avgFabricConsumption,
+        );
+    }
+
+    if (
+      data.originalProductLink !==
+      undefined
+    ) {
+      data.originalProductLink = s(
+        data.originalProductLink,
+      );
+    }
+
+    if (
+      data.productLink !==
+      undefined &&
+      data.originalProductLink ===
+      undefined
+    ) {
+      data.originalProductLink = s(
+        data.productLink,
+      );
+
       delete data.productLink;
     }
 
-    // allow manual set, but we will recompute if variants provided
-    if (data.isPatternReady !== undefined)
-      data.isPatternReady = toBool(data.isPatternReady);
-
-    if (data.isSamplingDone !== undefined)
-      data.isSamplingDone = toBool(data.isSamplingDone);
-    if (data.isBestSeller !== undefined)
-      data.isBestSeller = toBool(data.isBestSeller);
-    if (data.isTrending !== undefined)
-      data.isTrending = toBool(data.isTrending);
-    if (data.availableForCollab !== undefined) {
-      data.availableForCollab = toBool(data.availableForCollab);
-    }
-    // ✅ NEW
-    if (data.isPrimaryProduct !== undefined) {
-      data.isPrimaryProduct = toBool(data.isPrimaryProduct);
+    if (
+      data.isPatternReady !==
+      undefined
+    ) {
+      data.isPatternReady = toBool(
+        data.isPatternReady,
+      );
     }
 
-    if (data.colors !== undefined) data.colors = normColors(data.colors);
+    if (
+      data.isSamplingDone !==
+      undefined
+    ) {
+      data.isSamplingDone = toBool(
+        data.isSamplingDone,
+      );
+    }
 
-    if (data.hsnCode !== undefined) {
-      const hsn = s(data.hsnCode);
-      if (hsn && !/^\d+$/.test(hsn)) {
+    if (
+      data.isBestSeller !== undefined
+    ) {
+      data.isBestSeller = toBool(
+        data.isBestSeller,
+      );
+    }
+
+    if (
+      data.isTrending !== undefined
+    ) {
+      data.isTrending = toBool(
+        data.isTrending,
+      );
+    }
+
+    if (
+      data.availableForCollab !==
+      undefined
+    ) {
+      data.availableForCollab =
+        toBool(
+          data.availableForCollab,
+        );
+    }
+
+    if (
+      data.isPrimaryProduct !==
+      undefined
+    ) {
+      data.isPrimaryProduct = toBool(
+        data.isPrimaryProduct,
+      );
+    }
+
+    if (
+      data.colors !== undefined
+    ) {
+      data.colors = normColors(
+        data.colors,
+      );
+    }
+
+    if (
+      data.hsnCode !== undefined
+    ) {
+      const hsnCode = s(
+        data.hsnCode,
+      );
+
+      if (
+        hsnCode &&
+        !/^\d+$/.test(hsnCode)
+      ) {
         return res
           .status(400)
-          .json({ message: "HSN code must contain digits only" });
+          .json({
+            message:
+              "HSN code must contain digits only",
+          });
       }
-      data.hsnCode = hsn;
+
+      data.hsnCode = hsnCode;
     }
 
     /* ---------------- fetch existing ---------------- */
-    const existing = await Product.findById(req.params.id);
-    if (!existing)
-      return res.status(404).json({ message: "Product not found" });
+
+    const existing =
+      await Product.findById(
+        req.params.id,
+      );
+
+    if (!existing) {
+      return res
+        .status(404)
+        .json({
+          message:
+            "Product not found",
+        });
+    }
+
+    /* ---------------- price logs ---------------- */
+
+    let priceChanged = false;
+
+    if (data.price !== undefined) {
+      const oldPrice = Number(
+        existing.price,
+      );
+
+      const newPrice = Number(
+        data.price,
+      );
+
+      if (
+        !Number.isFinite(newPrice) ||
+        newPrice < 0
+      ) {
+        return res
+          .status(400)
+          .json({
+            message:
+              "Price must be a valid non-negative number",
+          });
+      }
+
+      data.price = newPrice;
+
+      if (oldPrice !== newPrice) {
+        const previousLogs =
+          Array.isArray(
+            existing.priceLogs,
+          )
+            ? existing.priceLogs
+            : [];
+
+        existing.priceLogs = [
+          ...previousLogs,
+          {
+            oldPrice,
+            newPrice,
+            changedAt: new Date(),
+          },
+        ].slice(-50);
+
+        priceChanged = true;
+      }
+    }
 
     /* ---------------- slug ---------------- */
+
     if (data.slug || data.title) {
       const nextSlug = slugify(
-        String(data.slug || data.title || existing.title),
-        { lower: true },
+        String(
+          data.slug ||
+          data.title ||
+          existing.title,
+        ),
+        {
+          lower: true,
+        },
       );
-      if (nextSlug !== existing.slug) {
-        const clash = await Product.exists({
-          slug: nextSlug,
-          _id: { $ne: existing._id },
-        });
-        if (clash)
-          return res.status(400).json({ message: "Slug already exists" });
+
+      if (
+        nextSlug !== existing.slug
+      ) {
+        const clash =
+          await Product.exists({
+            slug: nextSlug,
+            _id: {
+              $ne: existing._id,
+            },
+          });
+
+        if (clash) {
+          return res
+            .status(400)
+            .json({
+              message:
+                "Slug already exists",
+            });
+        }
+
         data.slug = nextSlug;
       }
     }
 
     /* ---------------- categories ---------------- */
-    if (data.categories !== undefined) {
-      const raw = Array.isArray(data.categories)
+
+    if (
+      data.categories !== undefined
+    ) {
+      const raw = Array.isArray(
+        data.categories,
+      )
         ? data.categories
-        : typeof data.categories === "string"
+        : typeof data.categories ===
+          "string"
           ? data.categories
             .split(",")
-            .map((c) => s(c))
+            .map((category) =>
+              s(category),
+            )
             .filter(Boolean)
           : [];
 
-      const hadNewArrivals = raw.some(
-        (c) => String(c).toLowerCase() === "new-arrivals",
-      );
+      const hadNewArrivals =
+        raw.some(
+          (category) =>
+            String(
+              category,
+            ).toLowerCase() ===
+            "new-arrivals",
+        );
+
       const filtered = raw.filter(
-        (c) => !SYSTEM_CATEGORIES.has(String(c).toLowerCase()),
+        (category) =>
+          !SYSTEM_CATEGORIES.has(
+            String(
+              category,
+            ).toLowerCase(),
+          ),
       );
 
       if (!filtered.length) {
-        return res.status(400).json({
-          message:
-            "Select a main category like dress/top/shirt etc (all-clothing/new-arrivals are not allowed as main category)",
-        });
+        return res
+          .status(400)
+          .json({
+            message:
+              "Select a main category like dress/top/shirt etc (all-clothing/new-arrivals are not allowed as main category)",
+          });
       }
 
       data.categories = filtered;
 
       if (hadNewArrivals) {
-        const baseTags = tagsNorm(data.tags ?? existing.tags);
-        data.tags = Array.from(new Set([...baseTags, "new-arrival"]));
+        const baseTags = tagsNorm(
+          data.tags ?? existing.tags,
+        );
+
+        data.tags = Array.from(
+          new Set([
+            ...baseTags,
+            "new-arrival",
+          ]),
+        );
       }
     }
 
-    /* ---------------- validate attributes ---------------- */
-    await validateAttributes(data.attributes ?? existing.attributes);
+    /* ---------------- attributes ---------------- */
 
-    if (Array.isArray(data.variants))
-      data.variants = data.variants.map(({ image, ...v }) => v);
+    await validateAttributes(
+      data.attributes ??
+      existing.attributes,
+    );
 
-    // ✅ never accept product stock update here
+    if (
+      Array.isArray(data.variants)
+    ) {
+      data.variants =
+        data.variants.map(
+          ({ image, ...variant }) =>
+            variant,
+        );
+    }
+
+    // Inventory update yahan se nahi hoga
     delete data.stock;
     delete data.isInStock;
 
-    /* ---------------- variants (preserve inventory) ---------------- */
-    if (Array.isArray(data.variants)) {
-      const existingById = new Map(
-        (existing.variants || []).map((v) => [String(v._id), v]),
-      );
+    /* ---------------- variants ---------------- */
 
-      data.variants = keepOnlySizeVariants(
-        data.variants.map((v) => {
-          const prev = v?._id ? existingById.get(String(v._id)) : null;
-          return {
-            ...(v._id ? { _id: v._id } : {}),
-            sku: v.sku,
-            barcode: v.barcode ?? "",
-            weight: typeof v.weight === "number" ? v.weight : 0,
-            patternNumber: s(v?.patternNumber || ""),
-            stock: prev?.stock ?? 0,
-            reservedStock: prev?.reservedStock ?? 0,
-            isInStock: prev?.isInStock ?? false,
-            attributes: Array.isArray(v.attributes) ? v.attributes : [],
-          };
-        }),
-      );
+    if (
+      Array.isArray(data.variants)
+    ) {
+      const existingById =
+        new Map(
+          (
+            existing.variants || []
+          ).map((variant) => [
+            String(variant._id),
+            variant,
+          ]),
+        );
 
-      data.productType = data.variants.length ? "variable" : "simple";
+      data.variants =
+        keepOnlySizeVariants(
+          data.variants.map(
+            (variant) => {
+              const previous =
+                variant?._id
+                  ? existingById.get(
+                    String(
+                      variant._id,
+                    ),
+                  )
+                  : null;
 
-      // ✅ AUTO set isPatternReady if variants changed
-      data.isPatternReady = data.variants.some(
-        (v) => v?.patternNumber && String(v.patternNumber).trim(),
-      );
+              return {
+                ...(variant._id
+                  ? {
+                    _id: variant._id,
+                  }
+                  : {}),
+
+                sku: variant.sku,
+
+                barcode:
+                  variant.barcode ??
+                  "",
+
+                weight:
+                  typeof variant.weight ===
+                    "number"
+                    ? variant.weight
+                    : 0,
+
+                patternNumber: s(
+                  variant?.patternNumber ||
+                  "",
+                ),
+
+                stock:
+                  previous?.stock ?? 0,
+
+                reservedStock:
+                  previous?.reservedStock ??
+                  0,
+
+                isInStock:
+                  previous?.isInStock ??
+                  false,
+
+                attributes:
+                  Array.isArray(
+                    variant.attributes,
+                  )
+                    ? variant.attributes
+                    : [],
+              };
+            },
+          ),
+        );
+
+      data.productType =
+        data.variants.length
+          ? "variable"
+          : "simple";
+
+      data.isPatternReady =
+        data.variants.some(
+          (variant) =>
+            variant?.patternNumber &&
+            String(
+              variant.patternNumber,
+            ).trim(),
+        );
     } else {
       delete data.variants;
     }
 
     /* ---------------- cross-sell ---------------- */
-    if (data.crossSellProducts !== undefined) {
-      const raw = Array.isArray(data.crossSellProducts)
+
+    if (
+      data.crossSellProducts !==
+      undefined
+    ) {
+      const raw = Array.isArray(
+        data.crossSellProducts,
+      )
         ? data.crossSellProducts
-        : typeof data.crossSellProducts === "string"
-          ? data.crossSellProducts.split(",").map((id) => s(id))
+        : typeof data.crossSellProducts ===
+          "string"
+          ? data.crossSellProducts
+            .split(",")
+            .map((id) => s(id))
           : [];
 
-      data.crossSellProducts = raw
-        .filter(isValidObjectId)
-        .filter((id) => String(id) !== String(existing._id));
+      data.crossSellProducts =
+        raw
+          .filter(isValidObjectId)
+          .filter(
+            (id) =>
+              String(id) !==
+              String(existing._id),
+          );
     }
 
     /* ---------------- uploads ---------------- */
-    const { images, thumbnail } = await mergeUploads(req, {
+
+    const {
+      images,
+      thumbnail,
+    } = await mergeUploads(req, {
       keepImages: data.keepImages,
       images: data.images,
       thumbnail: data.thumbnail,
-      _existingImages: existing.images,
-      _existingThumb: existing.thumbnail,
+      _existingImages:
+        existing.images,
+      _existingThumb:
+        existing.thumbnail,
     });
 
     data.images = images;
     data.thumbnail = thumbnail;
+
     delete data.keepImages;
 
-    /* ---------------- SKU handling ---------------- */
+    /* ---------------- SKU ---------------- */
+
     const skuData = {
       ...existing.toObject(),
       ...data,
-      variants: Array.isArray(data.variants)
+
+      variants: Array.isArray(
+        data.variants,
+      )
         ? data.variants
         : existing.variants,
     };
 
     await ensureSKUs(skuData);
-    data.sku = skuData.sku;
-    if (Array.isArray(data.variants)) data.variants = skuData.variants;
 
-    // ✅ FINAL SAFETY: compute pattern ready from final variants (if variable)
-    const finalVariants = Array.isArray(data.variants)
-      ? data.variants
-      : existing.variants;
+    data.sku = skuData.sku;
+
+    if (
+      Array.isArray(data.variants)
+    ) {
+      data.variants =
+        skuData.variants;
+    }
+
+    /* ---------------- pattern ready ---------------- */
+
+    const finalVariants =
+      Array.isArray(data.variants)
+        ? data.variants
+        : existing.variants;
+
     const finalIsPatternReady =
-      Array.isArray(finalVariants) &&
+      Array.isArray(
+        finalVariants,
+      ) &&
       finalVariants.some(
-        (v) => v?.patternNumber && String(v.patternNumber).trim(),
+        (variant) =>
+          variant?.patternNumber &&
+          String(
+            variant.patternNumber,
+          ).trim(),
       );
 
-    if (data.isPatternReady === undefined)
-      data.isPatternReady = !!finalIsPatternReady;
+    if (
+      data.isPatternReady ===
+      undefined
+    ) {
+      data.isPatternReady =
+        !!finalIsPatternReady;
+    }
 
     /* ---------------- apply + save ---------------- */
 
     const oldCacheIdentity = {
       _id: existing._id,
       slug: existing.slug,
-      productCode: existing.productCode,
+      productCode:
+        existing.productCode,
     };
 
     existing.set(data);
+
+    if (priceChanged) {
+      existing.markModified(
+        "priceLogs",
+      );
+    }
 
     [
       "variants",
@@ -3836,33 +4401,74 @@ export const updateProduct = async (req, res) => {
       "hsnCode",
       "slug",
       "productType",
-    ].forEach((k) => data[k] !== undefined && existing.markModified(k));
+    ].forEach((key) => {
+      if (data[key] !== undefined) {
+        existing.markModified(key);
+      }
+    });
 
-    const saved = await existing.save({ validateBeforeSave: true });
+    const saved =
+      await existing.save({
+        validateBeforeSave: true,
+      });
 
-    const updated = await saved.populate([
-      { path: "collections" },
-      { path: "offer" },
-      { path: "couponsApplicable" },
-      { path: "reviews" },
-      { path: "crossSellProducts" },
-      { path: "attributes.attribute" },
-      { path: "variants.attributes.attribute" },
-    ]);
+    const updated =
+      await saved.populate([
+        {
+          path: "collections",
+        },
+        {
+          path: "offer",
+        },
+        {
+          path:
+            "couponsApplicable",
+        },
+        {
+          path: "reviews",
+        },
+        {
+          path:
+            "crossSellProducts",
+        },
+        {
+          path:
+            "attributes.attribute",
+        },
+        {
+          path:
+            "variants.attributes.attribute",
+        },
+      ]);
 
     await Promise.all([
-      clearProductCache(oldCacheIdentity),
+      clearProductCache(
+        oldCacheIdentity,
+      ),
       clearProductCache(updated),
       clearProductListCache(),
     ]);
 
     return res.json({
-      message: "Product updated successfully",
-      product: applyStockFromVariants(updated),
+      message:
+        "Product updated successfully",
+
+      product:
+        applyStockFromVariants(
+          updated,
+        ),
     });
-  } catch (e) {
-    console.error("❌ Update Product Error:", e);
-    return res.status(500).json({ message: e.message });
+  } catch (error) {
+    console.error(
+      "❌ Update Product Error:",
+      error,
+    );
+
+    return res
+      .status(500)
+      .json({
+        message: error.message,
+      });
   }
 };
 
@@ -4467,53 +5073,266 @@ export const bulkImportProducts = async (req, res) => {
   }
 };
 
-export const bulkUpdatePricing = async (req, res) => {
+export const bulkUpdatePricing = async (
+  req,
+  res,
+) => {
   try {
-    const { updates = [] } = req.body;
+    const {
+      updates = [],
+    } = req.body;
 
-    if (!Array.isArray(updates) || updates.length === 0) {
-      return res.status(400).json({ message: "No updates provided" });
+    if (
+      !Array.isArray(updates) ||
+      updates.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({
+          message:
+            "No updates provided",
+        });
     }
 
-    const ops = updates.map((u) => ({
-      updateOne: {
-        filter: { _id: u._id },
-        update: {
-          ...(u.price !== undefined ? { price: Number(u.price) } : {}),
-          ...(u.compareAtPrice !== undefined
-            ? {
-              compareAtPrice:
-                u.compareAtPrice === "" ? null : Number(u.compareAtPrice),
-            }
-            : {}),
+    const validUpdates =
+      updates.filter(
+        (update) =>
+          update?._id &&
+          mongoose.Types.ObjectId.isValid(
+            String(update._id),
+          ),
+      );
+
+    if (
+      validUpdates.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({
+          message:
+            "No valid product IDs provided",
+        });
+    }
+
+    const productIds =
+      validUpdates.map(
+        (update) => update._id,
+      );
+
+    const existingProducts =
+      await Product.find({
+        _id: {
+          $in: productIds,
         },
-      },
-    }));
+      })
+        .select(
+          "_id price compareAtPrice",
+        )
+        .lean();
 
-    const result = await Product.bulkWrite(ops);
+    const existingById =
+      new Map(
+        existingProducts.map(
+          (product) => [
+            String(product._id),
+            product,
+          ],
+        ),
+      );
 
-    if ((result.modifiedCount || 0) > 0) {
+    const operations = [];
+
+    for (
+      const update of
+      validUpdates
+    ) {
+      const existing =
+        existingById.get(
+          String(update._id),
+        );
+
+      if (!existing) {
+        continue;
+      }
+
+      const $set = {};
+      let $push = null;
+
+      if (
+        update.price !== undefined
+      ) {
+        const newPrice = Number(
+          update.price,
+        );
+
+        if (
+          !Number.isFinite(
+            newPrice,
+          ) ||
+          newPrice < 0
+        ) {
+          return res
+            .status(400)
+            .json({
+              message:
+                `Invalid price for product ${update._id}`,
+            });
+        }
+
+        const oldPrice = Number(
+          existing.price,
+        );
+
+        $set.price = newPrice;
+
+        if (
+          oldPrice !== newPrice
+        ) {
+          $push = {
+            priceLogs: {
+              $each: [
+                {
+                  oldPrice,
+                  newPrice,
+                  changedAt:
+                    new Date(),
+                },
+              ],
+              $slice: -50,
+            },
+          };
+        }
+      }
+
+      if (
+        update.compareAtPrice !==
+        undefined
+      ) {
+        if (
+          update.compareAtPrice ===
+          "" ||
+          update.compareAtPrice ===
+          null
+        ) {
+          $set.compareAtPrice =
+            null;
+        } else {
+          const compareAtPrice =
+            Number(
+              update.compareAtPrice,
+            );
+
+          if (
+            !Number.isFinite(
+              compareAtPrice,
+            ) ||
+            compareAtPrice < 0
+          ) {
+            return res
+              .status(400)
+              .json({
+                message:
+                  `Invalid compare-at price for product ${update._id}`,
+              });
+          }
+
+          $set.compareAtPrice =
+            compareAtPrice;
+        }
+      }
+
+      if (
+        Object.keys($set).length ===
+        0 &&
+        !$push
+      ) {
+        continue;
+      }
+
+      const updateQuery = {
+        ...(Object.keys($set)
+          .length > 0
+          ? {
+            $set,
+          }
+          : {}),
+
+        ...($push
+          ? {
+            $push,
+          }
+          : {}),
+      };
+
+      operations.push({
+        updateOne: {
+          filter: {
+            _id: existing._id,
+          },
+
+          update: updateQuery,
+        },
+      });
+    }
+
+    if (
+      operations.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({
+          message:
+            "No valid pricing changes found",
+        });
+    }
+
+    const result =
+      await Product.bulkWrite(
+        operations,
+        {
+          ordered: false,
+        },
+      );
+
+    if (
+      (result.modifiedCount || 0) >
+      0
+    ) {
       await clearProductListCache();
 
-      // Individual product detail caches may contain old prices.
       await Promise.all(
-        updates
-          .filter((u) => u?._id)
-          .map((u) =>
+        validUpdates.map(
+          (update) =>
             deleteCache(
-              `oatclub:product:${String(u._id)}`,
+              `oatclub:product:${String(
+                update._id,
+              )}`,
             ),
-          ),
+        ),
       );
     }
 
     return res.json({
-      message: "Pricing updated successfully",
-      modifiedCount: result.modifiedCount || 0,
+      message:
+        "Pricing updated successfully",
+
+      matchedCount:
+        result.matchedCount || 0,
+
+      modifiedCount:
+        result.modifiedCount || 0,
     });
-  } catch (e) {
-    console.error("❌ Bulk Pricing Update Error:", e);
-    return res.status(500).json({ message: e.message });
+  } catch (error) {
+    console.error(
+      "❌ Bulk Pricing Update Error:",
+      error,
+    );
+
+    return res
+      .status(500)
+      .json({
+        message: error.message,
+      });
   }
 };
 

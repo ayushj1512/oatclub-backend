@@ -246,6 +246,19 @@ const productSchema = new mongoose.Schema(
 
     /* PRICING (COMMON FOR ALL VARIANTS ✅) */
     price: { type: Number, required: true },
+    priceLogs: {
+      type: [
+        {
+          oldPrice: Number,
+          newPrice: Number,
+          changedAt: {
+            type: Date,
+            default: Date.now,
+          },
+        },
+      ],
+      default: [],
+    },
     compareAtPrice: { type: Number, default: null },
     currency: { type: String, default: "INR" },
     taxClass: { type: String, default: "standard" },
