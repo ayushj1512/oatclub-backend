@@ -214,7 +214,10 @@ export const lookupOrderForEvidence = async (req, res) => {
   }
 };
 
-export const createPackagingEvidence = async (req, res) => {
+export const createPackagingEvidence = async (
+  req,
+  res,
+) => {
   try {
     const {
       orderId,
@@ -223,102 +226,175 @@ export const createPackagingEvidence = async (req, res) => {
       awb: rawAwb,
       courierPartner,
       rmaNumber,
+
       stationName,
       computerName,
       packerName,
+
       storageRoot,
-      orderFolder: requestedOrderFolder,
+      orderFolder:
+      requestedOrderFolder,
       fileName: requestedFileName,
-      relativePath: requestedRelativePath,
+      relativePath:
+      requestedRelativePath,
+
       mimeType,
       fileSizeBytes,
       durationSeconds,
       sha256,
+
       width,
       height,
       framesPerSecond,
       hasAudio,
+
       recordedAt,
       notes,
+
+      /*
+       * Geolocation fields
+       */
+      latitude,
+      longitude,
+      accuracyMeters,
+      altitude,
+      locationCapturedAt,
+      locationPermissionStatus,
     } = req.body;
 
-    const orderNumber = cleanOrderNumber(rawOrderNumber);
-    const evidenceType = normalizeEvidenceType(rawEvidenceType);
+    const orderNumber =
+      cleanOrderNumber(
+        rawOrderNumber,
+      );
 
-    if (!orderNumber && !mongoose.isValidObjectId(orderId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid orderId or orderNumber is required.",
-      });
+    const evidenceType =
+      normalizeEvidenceType(
+        rawEvidenceType,
+      );
+
+    if (
+      !orderNumber &&
+      !mongoose.isValidObjectId(
+        orderId,
+      )
+    ) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "Valid orderId or orderNumber is required.",
+        });
     }
 
     if (!evidenceType) {
-      return res.status(400).json({
-        success: false,
-        message: "evidenceType must be forward or rto.",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "evidenceType must be forward or rto.",
+        });
     }
 
     if (!cleanText(stationName)) {
-      return res.status(400).json({
-        success: false,
-        message: "stationName is required.",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "stationName is required.",
+        });
     }
 
     if (!cleanText(storageRoot)) {
-      return res.status(400).json({
-        success: false,
-        message: "storageRoot is required.",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "storageRoot is required.",
+        });
     }
 
-    const orderQuery = mongoose.isValidObjectId(orderId)
-      ? { _id: orderId }
-      : { orderNumber };
+    const orderQuery =
+      mongoose.isValidObjectId(
+        orderId,
+      )
+        ? {
+          _id: orderId,
+        }
+        : {
+          orderNumber,
+        };
 
-    const order = await Order.findOne(orderQuery)
-      .select({
-        orderNumber: 1,
-        shipment: 1,
-        trackingDetails: 1,
-        rmas: 1,
-      })
-      .lean();
+    const order =
+      await Order.findOne(
+        orderQuery,
+      )
+        .select({
+          orderNumber: 1,
+          shipment: 1,
+          trackingDetails: 1,
+          rmas: 1,
+        })
+        .lean();
 
     if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found.",
-      });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message:
+            "Order not found.",
+        });
     }
 
-    const normalizedRmaNumber = cleanText(rmaNumber).toUpperCase();
+    const normalizedRmaNumber =
+      cleanText(
+        rmaNumber,
+      ).toUpperCase();
 
     const resolvedAwb =
       cleanText(rawAwb) ||
       (evidenceType === "rto"
-        ? getRtoAwb(order, normalizedRmaNumber)
+        ? getRtoAwb(
+          order,
+          normalizedRmaNumber,
+        )
         : getForwardAwb(order));
 
     if (!resolvedAwb) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "AWB was not found on the order. Please provide awb manually.",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "AWB was not found on the order. Please provide awb manually.",
+        });
     }
 
     const resolvedCourier =
       cleanText(courierPartner) ||
       (evidenceType === "rto"
-        ? getRtoCourier(order, normalizedRmaNumber)
-        : getForwardCourier(order));
+        ? getRtoCourier(
+          order,
+          normalizedRmaNumber,
+        )
+        : getForwardCourier(
+          order,
+        ));
 
-    const safeOrderNumber = safeFilePart(order.orderNumber);
-    const safeAwb = safeFilePart(resolvedAwb);
+    const safeOrderNumber =
+      safeFilePart(
+        order.orderNumber,
+      );
 
-    const generatedOrderFolder = safeOrderNumber;
+    const safeAwb =
+      safeFilePart(resolvedAwb);
+
+    const generatedOrderFolder =
+      safeOrderNumber;
 
     const generatedFileName =
       `${safeOrderNumber}-${safeAwb}-${evidenceType}.webm`;
@@ -327,80 +403,286 @@ export const createPackagingEvidence = async (req, res) => {
       `${generatedOrderFolder}\\${generatedFileName}`;
 
     const finalOrderFolder =
-      safeFilePart(requestedOrderFolder) ||
+      safeFilePart(
+        requestedOrderFolder,
+      ) ||
       generatedOrderFolder;
 
     const finalFileName =
-      safeFilePart(requestedFileName) ||
+      safeFilePart(
+        requestedFileName,
+      ) ||
       generatedFileName;
 
     const finalRelativePath =
-      cleanText(requestedRelativePath) ||
+      cleanText(
+        requestedRelativePath,
+      ) ||
       `${finalOrderFolder}\\${finalFileName}`;
 
-    const normalizedChecksum = cleanText(sha256).toLowerCase();
+    const normalizedChecksum =
+      cleanText(
+        sha256,
+      ).toLowerCase();
 
     if (
       normalizedChecksum &&
-      !/^[a-f0-9]{64}$/.test(normalizedChecksum)
+      !/^[a-f0-9]{64}$/.test(
+        normalizedChecksum,
+      )
     ) {
-      return res.status(400).json({
-        success: false,
-        message: "sha256 must be a valid 64-character SHA-256 hash.",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message:
+            "sha256 must be a valid 64-character SHA-256 hash.",
+        });
     }
 
-    const evidence = await PackagingEvidence.create({
-      order: order._id,
-      orderNumber: order.orderNumber,
-      evidenceType,
-      awb: resolvedAwb,
-      courierPartner: resolvedCourier,
-      rmaNumber: normalizedRmaNumber,
+    /*
+     * Normalize geolocation.
+     * These fields remain optional until
+     * the frontend patch is completed.
+     */
+    const parsedLatitude =
+      Number(latitude);
 
-      station: {
-        stationName: cleanText(stationName),
-        computerName: cleanText(computerName),
-        packerName: cleanText(packerName),
-      },
+    const parsedLongitude =
+      Number(longitude);
 
-      storage: {
-        storageRoot: cleanText(storageRoot),
-        orderFolder: finalOrderFolder,
-        fileName: finalFileName,
-        relativePath: finalRelativePath,
-        mimeType: cleanText(mimeType) || "video/webm",
-        fileSizeBytes: positiveNumber(fileSizeBytes),
-        durationSeconds: positiveNumber(durationSeconds),
-        sha256: normalizedChecksum,
-      },
+    const parsedAccuracy =
+      Number(accuracyMeters);
 
-      video: {
-        width: positiveNumber(width),
-        height: positiveNumber(height),
-        framesPerSecond: positiveNumber(framesPerSecond),
-        hasAudio: Boolean(hasAudio),
-      },
+    const parsedAltitude =
+      Number(altitude);
 
-      status: "saved",
-      recordedAt: recordedAt ? new Date(recordedAt) : new Date(),
-      saveVerifiedAt: new Date(),
-      notes: cleanText(notes),
-    });
+    const hasValidCoordinates =
+      Number.isFinite(
+        parsedLatitude,
+      ) &&
+      Number.isFinite(
+        parsedLongitude,
+      ) &&
+      parsedLatitude >= -90 &&
+      parsedLatitude <= 90 &&
+      parsedLongitude >= -180 &&
+      parsedLongitude <= 180;
 
-    return res.status(201).json({
-      success: true,
-      message: "Packaging evidence registered successfully.",
-      data: evidence,
-    });
+    const allowedPermissionStatuses =
+      [
+        "granted",
+        "denied",
+        "prompt",
+        "unknown",
+      ];
+
+    const normalizedPermission =
+      cleanText(
+        locationPermissionStatus,
+      ).toLowerCase();
+
+    const parsedLocationDate =
+      locationCapturedAt
+        ? new Date(
+          locationCapturedAt,
+        )
+        : null;
+
+    const validLocationDate =
+      parsedLocationDate &&
+        !Number.isNaN(
+          parsedLocationDate.getTime(),
+        )
+        ? parsedLocationDate
+        : null;
+
+    const parsedRecordedAt =
+      recordedAt
+        ? new Date(recordedAt)
+        : new Date();
+
+    const validRecordedAt =
+      !Number.isNaN(
+        parsedRecordedAt.getTime(),
+      )
+        ? parsedRecordedAt
+        : new Date();
+
+    const evidence =
+      await PackagingEvidence.create(
+        {
+          order: order._id,
+
+          orderNumber:
+            order.orderNumber,
+
+          evidenceType,
+
+          awb: resolvedAwb,
+
+          courierPartner:
+            resolvedCourier,
+
+          rmaNumber:
+            normalizedRmaNumber,
+
+          station: {
+            stationName:
+              cleanText(
+                stationName,
+              ),
+
+            computerName:
+              cleanText(
+                computerName,
+              ),
+
+            packerName:
+              cleanText(
+                packerName,
+              ),
+          },
+
+          location: {
+            latitude:
+              hasValidCoordinates
+                ? parsedLatitude
+                : null,
+
+            longitude:
+              hasValidCoordinates
+                ? parsedLongitude
+                : null,
+
+            accuracyMeters:
+              hasValidCoordinates &&
+                Number.isFinite(
+                  parsedAccuracy,
+                )
+                ? Math.max(
+                  0,
+                  parsedAccuracy,
+                )
+                : 0,
+
+            altitude:
+              hasValidCoordinates &&
+                Number.isFinite(
+                  parsedAltitude,
+                )
+                ? parsedAltitude
+                : null,
+
+            source:
+              hasValidCoordinates
+                ? "browser-geolocation"
+                : "unavailable",
+
+            capturedAt:
+              hasValidCoordinates
+                ? validLocationDate
+                : null,
+
+            permissionStatus:
+              allowedPermissionStatuses.includes(
+                normalizedPermission,
+              )
+                ? normalizedPermission
+                : "unknown",
+          },
+
+          storage: {
+            storageRoot:
+              cleanText(
+                storageRoot,
+              ),
+
+            orderFolder:
+              finalOrderFolder,
+
+            fileName:
+              finalFileName,
+
+            relativePath:
+              finalRelativePath,
+
+            mimeType:
+              cleanText(
+                mimeType,
+              ) ||
+              "video/webm",
+
+            fileSizeBytes:
+              positiveNumber(
+                fileSizeBytes,
+              ),
+
+            durationSeconds:
+              positiveNumber(
+                durationSeconds,
+              ),
+
+            sha256:
+              normalizedChecksum,
+          },
+
+          video: {
+            width:
+              positiveNumber(
+                width,
+              ),
+
+            height:
+              positiveNumber(
+                height,
+              ),
+
+            framesPerSecond:
+              positiveNumber(
+                framesPerSecond,
+              ),
+
+            hasAudio:
+              hasAudio === true ||
+              hasAudio === "true",
+          },
+
+          status: "saved",
+
+          recordedAt:
+            validRecordedAt,
+
+          saveVerifiedAt:
+            new Date(),
+
+          notes:
+            cleanText(notes),
+        },
+      );
+
+    return res
+      .status(201)
+      .json({
+        success: true,
+        message:
+          "Packaging evidence registered successfully.",
+        data: evidence,
+      });
   } catch (error) {
-    console.error("createPackagingEvidence error:", error);
+    console.error(
+      "createPackagingEvidence error:",
+      error,
+    );
 
-    return res.status(500).json({
-      success: false,
-      message: "Unable to register packaging evidence.",
-      error: error.message,
-    });
+    return res
+      .status(500)
+      .json({
+        success: false,
+        message:
+          "Unable to register packaging evidence.",
+        error: error.message,
+      });
   }
 };
 

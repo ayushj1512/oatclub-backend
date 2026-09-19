@@ -73,6 +73,58 @@ const packagingEvidenceSchema = new mongoose.Schema(
       },
     },
 
+    location: {
+      latitude: {
+        type: Number,
+        default: null,
+        min: -90,
+        max: 90,
+      },
+
+      longitude: {
+        type: Number,
+        default: null,
+        min: -180,
+        max: 180,
+      },
+
+      accuracyMeters: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+
+      altitude: {
+        type: Number,
+        default: null,
+      },
+
+      source: {
+        type: String,
+        enum: [
+          "browser-geolocation",
+          "unavailable",
+        ],
+        default: "unavailable",
+      },
+
+      capturedAt: {
+        type: Date,
+        default: null,
+      },
+
+      permissionStatus: {
+        type: String,
+        enum: [
+          "granted",
+          "denied",
+          "prompt",
+          "unknown",
+        ],
+        default: "unknown",
+      },
+    },
+
     storage: {
       /*
        * Example:
