@@ -182,10 +182,7 @@ export const getVendorSamplingProducts = async (req, res) => {
     }
 
     const query = {
-      isActive: true,
-      isDraft: {
-        $ne: true,
-      },
+  
     };
 
     if (!access.isSuperAdmin) {
@@ -416,10 +413,7 @@ export const getVendorPatternProducts = async (req, res) => {
     }
 
     const query = {
-      isActive: true,
-      isDraft: {
-        $ne: true,
-      },
+
     };
 
     if (!access.isSuperAdmin) {
