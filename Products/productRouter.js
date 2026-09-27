@@ -58,6 +58,7 @@ import {
   updateVendorPatternStatus,
   getVendorBestsellerInventoryAlerts,
   subtractVendorInventory,
+  getVendorAvailableInventory,
 } from "./product.vendor.controller.js";
 
 import {
@@ -199,7 +200,7 @@ router.post(
   uploadCsv.single("file"),
   bulkPreviewProducts
 );
-
+router.get("/vendor-available-inventory", getVendorAvailableInventory);
 router.post("/bulk/create-draft", bulkCreateDraftProducts);
 router.post("/bulk/delete", bulkDeleteProducts);
 router.post("/bulk/import", bulkImportProducts);

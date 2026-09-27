@@ -182,7 +182,7 @@ export const getVendorSamplingProducts = async (req, res) => {
     }
 
     const query = {
-  
+
     };
 
     if (!access.isSuperAdmin) {
@@ -1050,6 +1050,248 @@ export const getVendorBestsellerInventoryAlerts = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error?.message || "Failed to fetch inventory alerts",
+    });
+  }
+};
+
+
+
+// GET /api/products/vendor-available-inventory
+export const getVendorAvailableInventory = async (req, res) => {
+  try {
+    const page = toPositiveInt(req.query.page, 1);
+    const limit = Math.min(toPositiveInt(req.query.limit, 20), 100);
+    const threshold = Math.min(toPositiveInt(req.query.threshold, 5), 100000);
+    const search = String(req.query.search || "").trim().slice(0, 100);
+    const category = String(req.query.category || "").trim().slice(0, 100);
+    const size = String(req.query.size || "").trim().toUpperCase().slice(0, 30);
+    const stockStatus = String(req.query.stockStatus || "all").toLowerCase();
+    const sortBy = String(req.query.sortBy || "updatedAt");
+    const sortOrder = String(req.query.sortOrder || "desc").toLowerCase();
+
+    const allowedSorts = {
+      updatedAt: "updatedAt",
+      createdAt: "createdAt",
+      title: "title",
+      productCode: "productCode",
+      availableStock: "availableStock",
+      stock: "stock",
+      reservedStock: "reservedStock",
+    };
+
+    if (
+      !["all", "in_stock", "low_stock", "out_of_stock"].includes(stockStatus) ||
+      !Object.hasOwn(allowedSorts, sortBy) ||
+      !["asc", "desc"].includes(sortOrder)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid stockStatus, sortBy or sortOrder",
+      });
+    }
+
+    const match = {};
+
+    if (category) {
+      match.categories = {
+        $regex: `^${escapeRegex(category)}$`,
+        $options: "i",
+      };
+    }
+
+    if (search) {
+      const regex = { $regex: escapeRegex(search), $options: "i" };
+      match.$or = [
+        { title: regex },
+        { productCode: regex },
+        { slug: regex },
+      ];
+    }
+
+    const nonnegative = (value) => ({
+      $max: [0, { $ifNull: [value, 0] }],
+    });
+
+    const variantSize = {
+      $toUpper: {
+        $ifNull: [
+          {
+            $arrayElemAt: [
+              {
+                $map: {
+                  input: {
+                    $filter: {
+                      input: { $ifNull: ["$$variant.attributes", []] },
+                      as: "attr",
+                      cond: {
+                        $eq: [
+                          { $toLower: { $ifNull: ["$$attr.key", ""] } },
+                          "size",
+                        ],
+                      },
+                    },
+                  },
+                  as: "attr",
+                  in: "$$attr.value",
+                },
+              },
+              0,
+            ],
+          },
+          "",
+        ],
+      },
+    };
+
+    const pipeline = [
+      { $match: match },
+      {
+        $addFields: {
+          inventory: {
+            $map: {
+              input: { $ifNull: ["$variants", []] },
+              as: "variant",
+              in: {
+                variantId: "$$variant._id",
+                size: variantSize,
+                sku: "$$variant.sku",
+                barcode: "$$variant.barcode",
+                stock: nonnegative("$$variant.stock"),
+                reservedStock: nonnegative("$$variant.reservedStock"),
+                availableStock: {
+                  $max: [
+                    0,
+                    {
+                      $subtract: [
+                        nonnegative("$$variant.stock"),
+                        nonnegative("$$variant.reservedStock"),
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    if (size) {
+      pipeline.push(
+        {
+          $addFields: {
+            inventory: {
+              $filter: {
+                input: "$inventory",
+                as: "row",
+                cond: { $eq: ["$$row.size", size] },
+              },
+            },
+          },
+        },
+        { $match: { "inventory.0": { $exists: true } } },
+      );
+    }
+
+    pipeline.push({
+      $addFields: {
+        stock: {
+          $cond: [
+            { $gt: [{ $size: { $ifNull: ["$variants", []] } }, 0] },
+            { $sum: "$inventory.stock" },
+            nonnegative("$stock"),
+          ],
+        },
+        reservedStock: {
+          $cond: [
+            { $gt: [{ $size: { $ifNull: ["$variants", []] } }, 0] },
+            { $sum: "$inventory.reservedStock" },
+            nonnegative("$reservedStock"),
+          ],
+        },
+        availableStock: {
+          $cond: [
+            { $gt: [{ $size: { $ifNull: ["$variants", []] } }, 0] },
+            { $sum: "$inventory.availableStock" },
+            {
+              $max: [
+                0,
+                {
+                  $subtract: [
+                    nonnegative("$stock"),
+                    nonnegative("$reservedStock"),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    if (stockStatus === "in_stock") {
+      pipeline.push({ $match: { availableStock: { $gt: 0 } } });
+    } else if (stockStatus === "low_stock") {
+      pipeline.push({
+        $match: { availableStock: { $gt: 0, $lt: threshold } },
+      });
+    } else if (stockStatus === "out_of_stock") {
+      pipeline.push({ $match: { availableStock: 0 } });
+    }
+
+    const direction = sortOrder === "asc" ? 1 : -1;
+
+    const [result] = await Product.aggregate([
+      ...pipeline,
+      {
+        $facet: {
+          items: [
+            { $sort: { [allowedSorts[sortBy]]: direction, _id: 1 } },
+            { $skip: (page - 1) * limit },
+            { $limit: limit },
+            {
+              $project: {
+                title: 1,
+                slug: 1,
+                productCode: 1,
+                thumbnail: 1,
+                images: 1,
+                categories: 1,
+                isActive: 1,
+                isDraft: 1,
+                stock: 1,
+                reservedStock: 1,
+                availableStock: 1,
+                inventory: 1,
+                createdAt: 1,
+                updatedAt: 1,
+              },
+            },
+          ],
+          count: [{ $count: "total" }],
+        },
+      },
+    ]);
+
+    const total = result.count[0]?.total || 0;
+    const pages = Math.max(1, Math.ceil(total / limit));
+
+    return res.json({
+      success: true,
+      products: result.items,
+      page,
+      limit,
+      total,
+      pages,
+      hasNextPage: page < pages,
+      hasPrevPage: page > 1 && total > 0,
+      threshold,
+    });
+  } catch (error) {
+    console.error("getVendorAvailableInventory error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch available inventory",
     });
   }
 };
