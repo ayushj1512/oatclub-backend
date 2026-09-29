@@ -738,83 +738,58 @@ const extractReverseWaybill = (
   ).trim();
 };
 
-const getReverseStatus = (
-  trackingData,
-) => {
+const getReverseStatus = (trackingData) => {
   const shipment =
-    trackingData?.ShipmentData?.[0]
-      ?.Shipment ||
+    trackingData?.ShipmentData?.[0]?.Shipment ||
     trackingData?.shipment ||
     {};
 
-  const statusData =
-    shipment?.Status || {};
+  const statusData = shipment?.Status || {};
+  const scans = Array.isArray(shipment?.Scans)
+    ? shipment.Scans
+    : [];
+  const lastScan = scans.at(-1)?.ScanDetail || {};
 
-  const statusCode = String(
-    delhivery.statusCode ||
-    delhivery.lastWebhook?.NSLCode ||
-    order.shipment?.statusCode ||
-    order.shipment?.lastWebhook
-      ?.NSLCode ||
-    lastTrack?.Status?.StatusCode ||
-    lastTrack?.StatusCode ||
-    "",
-  )
-    .trim()
-    .toUpperCase();
-
-  const reason = String(
-    delhivery.lastWebhook
-      ?.Status?.Instructions ||
-    order.shipment?.lastWebhook
-      ?.Status?.Instructions ||
-    lastTrack?.Status?.Instructions ||
-    rawStatus ||
-    "Delivery attempt failed",
+  const rawStatus = String(
+    statusData?.Status ||
+    lastScan?.Scan ||
+    lastScan?.Status ||
+    shipment?.status ||
+    "Pickup scheduled"
   ).trim();
 
-  const normalized =
-    rawStatus.toLowerCase();
+  const statusCode = String(
+    statusData?.StatusCode ||
+    lastScan?.StatusCode ||
+    lastScan?.NSLCode ||
+    ""
+  ).trim().toUpperCase();
 
+  const normalized = rawStatus.toLowerCase();
   let status = "pickup_scheduled";
 
-  if (
-    normalized.includes("cancel")
-  ) {
+  if (normalized.includes("cancel")) {
     status = "cancelled";
   } else if (
     normalized.includes("delivered") ||
-    normalized.includes(
-      "returned to client",
-    )
+    normalized.includes("returned to client")
   ) {
     status = "received";
   } else if (
-    normalized.includes(
-      "in transit",
-    ) ||
+    normalized.includes("in transit") ||
     normalized.includes("transit") ||
-    normalized.includes(
-      "dispatched",
-    )
+    normalized.includes("dispatched")
   ) {
     status = "in_transit";
   } else if (
     normalized.includes("picked") ||
-    normalized.includes(
-      "pickup complete",
-    )
+    normalized.includes("pickup complete")
   ) {
     status = "picked";
   }
 
-  return {
-    status,
-    rawStatus,
-    statusCode,
-    shipment,
-  };
-};
+  return { status, rawStatus, statusCode, shipment };
+};  
 
 export const createReversePickupController = async (
   req,
