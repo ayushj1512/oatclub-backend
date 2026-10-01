@@ -142,10 +142,6 @@ export const PRODUCT_LIFECYCLE_STAGES = [
   "sampling",
   "sample_approval",
   "pattern_grading",
-  "cutting",
-  "stitching",
-  "finishing",
-  "completed",
 ];
 
 const lifecycleStageSchema = new mongoose.Schema(

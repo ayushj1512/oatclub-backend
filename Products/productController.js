@@ -8334,11 +8334,22 @@ export const advanceProductLifecycle = async (req, res) => {
     }
 
     const lifecycle = product.manufacturingLifecycle;
-    const currentIndex = PRODUCT_MAKING_STAGES.indexOf(lifecycle.currentStage);
+
+    if (!lifecycle) {
+      return res.status(400).json({
+        success: false,
+        message: "Manufacturing lifecycle is not available for this product",
+      });
+    }
+
+    const currentIndex = PRODUCT_LIFECYCLE_STAGES.indexOf(
+      lifecycle.currentStage,
+    );
 
     if (
+      currentIndex === -1 ||
       lifecycle.isCompleted ||
-      currentIndex === PRODUCT_MAKING_STAGES.length - 1
+      currentIndex === PRODUCT_LIFECYCLE_STAGES.length - 1
     ) {
       return res.status(400).json({
         success: false,
@@ -8346,10 +8357,16 @@ export const advanceProductLifecycle = async (req, res) => {
       });
     }
 
-    const nextStage = PRODUCT_MAKING_STAGES[currentIndex + 1];
+    const nextStage = PRODUCT_LIFECYCLE_STAGES[currentIndex + 1];
+    const finalStage = PRODUCT_LIFECYCLE_STAGES.at(-1);
 
     lifecycle.currentStage = nextStage;
-    lifecycle.isCompleted = nextStage === "completed";
+    lifecycle.isCompleted = nextStage === finalStage;
+
+    if (lifecycle.isCompleted) {
+      lifecycle.status = "completed";
+      lifecycle.completedAt = new Date();
+    }
 
     lifecycle.events.push({
       stage: nextStage,
@@ -8359,11 +8376,12 @@ export const advanceProductLifecycle = async (req, res) => {
 
     product.markModified("manufacturingLifecycle");
     await product.save();
+    await clearProductCache(product);
 
     return res.status(200).json({
       success: true,
       message:
-        nextStage === "completed"
+        nextStage === finalStage
           ? "Product making lifecycle completed"
           : `Product moved to ${nextStage.replaceAll("_", " ")}`,
       manufacturingLifecycle: product.manufacturingLifecycle,
@@ -8383,8 +8401,7 @@ export const completeProductLifecycle = async (req, res) => {
     const { id } = req.params;
 
     const note = String(
-      req.body?.note ||
-      "Remaining lifecycle stages marked as fulfilled",
+      req.body?.note || "Remaining lifecycle stages marked as fulfilled",
     ).trim();
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -8403,110 +8420,85 @@ export const completeProductLifecycle = async (req, res) => {
       });
     }
 
-    const lifecycle =
-      product.manufacturingLifecycle;
+    const lifecycle = product.manufacturingLifecycle;
 
     if (!lifecycle) {
       return res.status(400).json({
         success: false,
-        message:
-          "Manufacturing lifecycle is not available for this product",
+        message: "Manufacturing lifecycle is not available for this product",
       });
     }
 
+    const finalStage = PRODUCT_LIFECYCLE_STAGES.at(-1);
+
     if (
       lifecycle.status === "completed" ||
-      lifecycle.currentStage === "completed"
+      lifecycle.isCompleted ||
+      lifecycle.currentStage === finalStage
     ) {
       return res.status(400).json({
         success: false,
-        message:
-          "Product lifecycle is already completed",
+        message: "Product lifecycle is already completed",
       });
     }
 
     const now = new Date();
 
     lifecycle.status = "completed";
-    lifecycle.currentStage = "completed";
-    lifecycle.startedAt =
-      lifecycle.startedAt || now;
+    lifecycle.currentStage = finalStage;
+    lifecycle.isCompleted = true;
+    lifecycle.startedAt = lifecycle.startedAt || now;
     lifecycle.completedAt = now;
 
-    lifecycle.stages =
-      PRODUCT_MAKING_STAGES.map((stageName) => {
-        const existingStage =
-          lifecycle.stages?.find(
-            (item) =>
-              item.stage === stageName,
-          );
+    lifecycle.stages = PRODUCT_LIFECYCLE_STAGES.map((stageName) => {
+      const existingStage = lifecycle.stages?.find(
+        (item) => item.stage === stageName,
+      );
 
-        const stage =
-          existingStage || {
-            stage: stageName,
-          };
+      const stage = existingStage || { stage: stageName };
 
-        stage.status = "completed";
-        stage.startedAt =
-          stage.startedAt || now;
-        stage.completedAt =
-          stage.completedAt || now;
+      stage.status = "completed";
+      stage.startedAt = stage.startedAt || now;
+      stage.completedAt = stage.completedAt || now;
 
-        if (
-          !stage.note &&
-          stageName !== "completed"
-        ) {
-          stage.note = note;
-        }
+      if (!stage.note && stageName !== finalStage) {
+        stage.note = note;
+      }
 
-        if (stageName === "completed") {
-          stage.note = note;
-        }
+      if (stageName === finalStage) {
+        stage.note = note;
+      }
 
-        if (req.vendor?._id) {
-          stage.updatedBy =
-            req.vendor._id;
-        } else if (req.user?._id) {
-          stage.updatedBy =
-            req.user._id;
-        }
+      if (req.vendor?._id) {
+        stage.updatedBy = req.vendor._id;
+      } else if (req.user?._id) {
+        stage.updatedBy = req.user._id;
+      }
 
-        return stage;
-      });
-
-    product.markModified(
-      "manufacturingLifecycle",
-    );
-
-    await product.save({
-      validateBeforeSave: true,
+      return stage;
     });
 
+    product.markModified("manufacturingLifecycle");
+
+    await product.save({ validateBeforeSave: true });
     await clearProductCache(product);
 
     return res.status(200).json({
       success: true,
-      message:
-        "All remaining lifecycle stages marked as fulfilled",
+      message: "All remaining lifecycle stages marked as fulfilled",
       product,
-      manufacturingLifecycle:
-        product.manufacturingLifecycle,
+      manufacturingLifecycle: product.manufacturingLifecycle,
     });
   } catch (error) {
-    console.error(
-      "Complete Product Lifecycle Error:",
-      error,
-    );
+    console.error("Complete Product Lifecycle Error:", error);
 
     return res.status(500).json({
       success: false,
       message:
-        error.message ||
-        "Failed to complete product lifecycle",
+        error.message || "Failed to complete product lifecycle",
     });
   }
 };
-
 
 /* ============================================================
    UPDATE FABRIC + AVG FABRIC CONSUMPTION
