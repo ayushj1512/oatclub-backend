@@ -93,14 +93,16 @@ export const FAST2SMS_TEMPLATES = Object.freeze({
         cleanAmount(remainingAmount),
       ],
   },
-
   OTP: {
     key: "OTP",
-    messageId: null,
-    templateId: null,
-    templateName: null,
+    messageId: 29652,
+    templateId: "1057736476805729",
+    templateName: "otp_login_verification",
     language: "en",
-    status: "NOT_CONFIGURED",
+    status: "APPROVED",
+    buildVariables: ({ otp } = {}) => [
+      clean(otp),
+    ],
   },
 
   ORDER_SHIPPED: {

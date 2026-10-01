@@ -177,7 +177,6 @@ const customerSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
       default: "",
-      index: true,
     },
 
     phone: { type: String, trim: true, default: "", index: true },
@@ -485,8 +484,25 @@ customerSchema.index({ "cartAdds.productCode": 1 });
 /**
  * ✅ Basic indexes
  */
-customerSchema.index({ email: 1 });
-customerSchema.index({ phone: 1 });
+customerSchema.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      email: { $gt: "" },
+    },
+  },
+);
+
+customerSchema.index(
+  { phone: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      phone: { $gt: "" },
+    },
+  },
+);
 customerSchema.index({ ageGroup: 1 });
 customerSchema.index({ country: 1 });
 customerSchema.index({ state: 1 });

@@ -2,8 +2,10 @@ import {
   OTP_CHANNELS,
   OTP_PURPOSES,
 } from "./otp.constants.js";
+
 import {
   isValidEmail,
+  isValidIndianPhone,
   normalizeIdentifier,
 } from "./otp.utils.js";
 
@@ -40,14 +42,35 @@ const validateChannel = (channel = "email") => {
 };
 
 const validateIdentifier = (identifier, channel) => {
-  const normalized = normalizeIdentifier(identifier, channel);
+  const normalized = normalizeIdentifier(
+    identifier,
+    channel,
+  );
 
   if (!normalized) {
-    throw new OtpValidationError("Email is required");
+    throw new OtpValidationError(
+      channel === "whatsapp"
+        ? "WhatsApp phone number is required"
+        : "Email is required",
+    );
   }
 
-  if (channel === "email" && !isValidEmail(normalized)) {
-    throw new OtpValidationError("Please enter a valid email address");
+  if (
+    channel === "email" &&
+    !isValidEmail(normalized)
+  ) {
+    throw new OtpValidationError(
+      "Please enter a valid email address",
+    );
+  }
+
+  if (
+    channel === "whatsapp" &&
+    !isValidIndianPhone(normalized)
+  ) {
+    throw new OtpValidationError(
+      "Please enter a valid 10-digit Indian WhatsApp number",
+    );
   }
 
   return normalized;

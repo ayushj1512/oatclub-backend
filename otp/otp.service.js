@@ -19,13 +19,12 @@ import {
   getOtpExpiry,
   hashOtp,
   isExpired,
-  maskEmail,
-  sanitizeLimit,
+  maskIdentifier, sanitizeLimit,
   sanitizePage,
 } from "./otp.utils.js";
 
 import { sendOtpEmail } from "./otp.mail.js";
-
+import { sendOtpWhatsapp } from "../fast2sms/fast2sms.whatsapp.js";
 export class OtpServiceError extends Error {
   constructor(message, statusCode = 400, code = "OTP_ERROR") {
     super(message);
@@ -143,7 +142,7 @@ export const requestOtp = async ({
   if (lastOtp?.sentAt) {
     const nextAllowedAt = new Date(
       new Date(lastOtp.sentAt).getTime() +
-        OTP_CONFIG.RESEND_COOLDOWN_SECONDS * 1000
+      OTP_CONFIG.RESEND_COOLDOWN_SECONDS * 1000
     );
 
     const remainingSeconds =
@@ -184,8 +183,10 @@ export const requestOtp = async ({
   const otpLog = await OtpLog.create({
     referenceId,
     identifier,
-    maskedIdentifier: maskEmail(identifier),
-    channel,
+    maskedIdentifier: maskIdentifier(
+      identifier,
+      channel,
+    ), channel,
     purpose,
 
     otpHash: hashOtp({
@@ -208,19 +209,35 @@ export const requestOtp = async ({
   });
 
   try {
-    const mailResult = await sendOtpEmail({
-      to: identifier,
-      otp,
-      name,
-      purpose,
-    });
+    let deliveryResult;
+
+    if (channel === "whatsapp") {
+      deliveryResult = await sendOtpWhatsapp({
+        phone: identifier,
+        otp,
+        referenceId,
+        purpose,
+      });
+    } else {
+      deliveryResult = await sendOtpEmail({
+        to: identifier,
+        otp,
+        name,
+        purpose,
+      });
+    }
 
     otpLog.status = "sent";
     otpLog.sentAt = new Date();
-    otpLog.providerMessageId =
-      mailResult?.messageId ||
-      mailResult?.id ||
-      "";
+
+    otpLog.providerMessageId = String(
+      deliveryResult?.providerMessageId ||
+      deliveryResult?.messageId ||
+      deliveryResult?.id ||
+      deliveryResult?.data?.request_id ||
+      deliveryResult?.data?.message_id ||
+      "",
+    );
 
     await otpLog.save();
 
@@ -239,15 +256,18 @@ export const requestOtp = async ({
     otpLog.status = "failed";
     otpLog.failedAt = new Date();
     otpLog.failureReason = String(
-      error?.message || "OTP email delivery failed"
+      error?.message ||
+      `${channel} OTP delivery failed`,
     ).slice(0, 1000);
 
     await otpLog.save();
 
     throw new OtpServiceError(
-      "Unable to send OTP email. Please try again",
+      channel === "whatsapp"
+        ? "Unable to send OTP on WhatsApp. Please try again"
+        : "Unable to send OTP email. Please try again",
       500,
-      "OTP_DELIVERY_FAILED"
+      "OTP_DELIVERY_FAILED",
     );
   }
 };
@@ -325,7 +345,7 @@ export const verifyOtp = async ({
     const attemptsRemaining = Math.max(
       0,
       OTP_CONFIG.MAX_VERIFY_ATTEMPTS -
-        otpLog.attempts
+      otpLog.attempts
     );
 
     if (attemptsRemaining === 0) {
@@ -336,9 +356,8 @@ export const verifyOtp = async ({
 
     throw new OtpServiceError(
       attemptsRemaining > 0
-        ? `Invalid OTP. ${attemptsRemaining} attempt${
-            attemptsRemaining === 1 ? "" : "s"
-          } remaining`
+        ? `Invalid OTP. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? "" : "s"
+        } remaining`
         : "Maximum verification attempts reached. Please request a new OTP",
       attemptsRemaining > 0 ? 400 : 429,
       attemptsRemaining > 0
@@ -635,12 +654,12 @@ export const cleanupOtpLogs = async ({
   const parsedDays = Math.max(
     1,
     Number(olderThanDays) ||
-      OTP_CONFIG.LOG_RETENTION_DAYS
+    OTP_CONFIG.LOG_RETENTION_DAYS
   );
 
   const threshold = new Date(
     Date.now() -
-      parsedDays * 24 * 60 * 60 * 1000
+    parsedDays * 24 * 60 * 60 * 1000
   );
 
   const filter = {
@@ -785,7 +804,7 @@ export const getOtpAnalytics = async (query = {}) => {
           createdAt: {
             $gte: new Date(
               Date.now() -
-                30 * 24 * 60 * 60 * 1000
+              30 * 24 * 60 * 60 * 1000
             ),
           },
         },
@@ -856,17 +875,17 @@ export const getOtpAnalytics = async (query = {}) => {
       verificationRate:
         total > 0
           ? Number(
-              ((verified / total) * 100).toFixed(2)
-            )
+            ((verified / total) * 100).toFixed(2)
+          )
           : 0,
       averageVerificationSeconds:
         averageVerification[0]?.averageMs
           ? Number(
-              (
-                averageVerification[0].averageMs /
-                1000
-              ).toFixed(2)
-            )
+            (
+              averageVerification[0].averageMs /
+              1000
+            ).toFixed(2)
+          )
           : 0,
     },
 

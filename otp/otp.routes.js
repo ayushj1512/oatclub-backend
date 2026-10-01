@@ -11,48 +11,67 @@ import {
   verifyOtpController,
 } from "./otp.controller.js";
 
-// Apne existing admin middleware ka path use karo.
-// import { protectAdmin } from "../middleware/adminAuth.js";
-
 const router = express.Router();
 
-/* =========================================================
-   PUBLIC OTP ROUTES
-========================================================= */
+/* ================= PUBLIC OTP ROUTES ================= */
 
+// Existing generic routes: email + WhatsApp
 router.post("/send", sendOtpController);
-
 router.post("/resend", resendOtpController);
-
 router.post("/verify", verifyOtpController);
 
-/* =========================================================
-   ADMIN OTP LOG ROUTES
+/* =============== WHATSAPP OTP ROUTES ================ */
 
-   Production mein protectAdmin middleware zaroor lagana:
-   router.get("/logs", protectAdmin, getOtpLogsController);
-========================================================= */
+const useWhatsappChannel = (req, _res, next) => {
+  req.body = {
+    ...(req.body || {}),
+    channel: "whatsapp",
+  };
 
+  next();
+};
+
+router.post(
+  "/whatsapp/send",
+  useWhatsappChannel,
+  sendOtpController,
+);
+
+router.post(
+  "/whatsapp/resend",
+  useWhatsappChannel,
+  resendOtpController,
+);
+
+router.post(
+  "/whatsapp/verify",
+  useWhatsappChannel,
+  verifyOtpController,
+);
+
+/* ================= ADMIN OTP ROUTES ================== */
+
+// Add your admin authentication middleware here.
 router.get("/logs", getOtpLogsController);
 
 router.get(
   "/analytics",
-  getOtpAnalyticsController
+  getOtpAnalyticsController,
 );
 
 router.post(
   "/cleanup",
-  cleanupOtpLogsController
+  cleanupOtpLogsController,
 );
 
 router.get(
   "/logs/:id",
-  getOtpLogController
+  getOtpLogController,
 );
 
 router.delete(
   "/logs/:id",
-  deleteOtpLogController
+  deleteOtpLogController,
 );
 
 export default router;

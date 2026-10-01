@@ -64,12 +64,46 @@ export const compareOtpHash = ({
 export const normalizeEmail = (email = "") =>
   String(email).trim().toLowerCase();
 
-export const normalizeIdentifier = (identifier = "", channel = "email") => {
+export const normalizePhone = (value = "") => {
+  let phone = String(value || "").replace(/\D/g, "");
+
+  if (phone.startsWith("91") && phone.length === 12) {
+    phone = phone.slice(2);
+  }
+
+  if (phone.startsWith("0") && phone.length === 11) {
+    phone = phone.slice(1);
+  }
+
+  return phone;
+};
+
+export const isValidIndianPhone = (value = "") =>
+  /^[6-9]\d{9}$/.test(normalizePhone(value));
+
+export const maskPhone = (value = "") => {
+  const phone = normalizePhone(value);
+
+  if (phone.length !== 10) {
+    return phone;
+  }
+
+  return `${phone.slice(0, 2)}******${phone.slice(-2)}`;
+};
+
+export const normalizeIdentifier = (
+  identifier = "",
+  channel = "email",
+) => {
   if (channel === "email") {
     return normalizeEmail(identifier);
   }
 
-  return String(identifier).trim();
+  if (channel === "whatsapp") {
+    return normalizePhone(identifier);
+  }
+
+  return String(identifier || "").trim();
 };
 
 export const isValidEmail = (email = "") =>
@@ -90,6 +124,19 @@ export const maskEmail = (email = "") => {
 
   return `${visible}@${domain}`;
 };
+
+export const maskIdentifier = (
+  identifier = "",
+  channel = "email",
+) => {
+  if (channel === "whatsapp") {
+    return maskPhone(identifier);
+  }
+
+  return maskEmail(identifier);
+};
+
+
 
 export const getOtpExpiry = () =>
   new Date(Date.now() + OTP_CONFIG.EXPIRY_MINUTES * 60 * 1000);

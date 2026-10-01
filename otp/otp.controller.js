@@ -20,8 +20,8 @@ import {
 import {
   getRequestIp,
   getUserAgent,
+  normalizePhone,
 } from "./otp.utils.js";
-
 /* =========================================================
    HELPERS
 ========================================================= */
@@ -55,7 +55,10 @@ const createControllerError = (
   return error;
 };
 
-const generateCustomerToken = (customer) => {
+const generateCustomerToken = (
+  customer,
+  channel = "email",
+) => {
   const secret =
     process.env.AUTH_JWT_SECRET ||
     process.env.JWT_SECRET;
@@ -71,11 +74,17 @@ const generateCustomerToken = (customer) => {
   return jwt.sign(
     {
       sub: String(customer._id),
-      customerId:
-        customer.customerId || "",
+      customerId: customer.customerId || "",
       email: customer.email || "",
+      phone:
+        customer.phone ||
+        customer.mobile ||
+        "",
       role: "customer",
-      authProvider: "email_otp",
+      authProvider:
+        channel === "whatsapp"
+          ? "whatsapp_otp"
+          : "email_otp",
     },
     secret,
     {
@@ -88,9 +97,9 @@ const generateCustomerToken = (customer) => {
     },
   );
 };
-
 const resolveOtpCustomerSession = async ({
   identifier,
+  channel,
   purpose,
 }) => {
   if (
@@ -100,19 +109,44 @@ const resolveOtpCustomerSession = async ({
     return null;
   }
 
-  const email = normalizeEmail(identifier);
+  const isWhatsapp = channel === "whatsapp";
 
-  if (!email) {
+  const normalizedIdentifier = isWhatsapp
+    ? normalizePhone(identifier)
+    : normalizeEmail(identifier);
+
+  if (!normalizedIdentifier) {
     throw createControllerError(
-      "Verified email is missing",
+      isWhatsapp
+        ? "Verified phone number is missing"
+        : "Verified email is missing",
       400,
-      "EMAIL_MISSING",
+      isWhatsapp
+        ? "PHONE_MISSING"
+        : "EMAIL_MISSING",
     );
   }
 
-  let customer = await Customer.findOne({
-    email,
-  });
+  let customer;
+
+  if (isWhatsapp) {
+    const phone = normalizedIdentifier;
+
+    customer = await Customer.findOne({
+      $or: [
+        { phone },
+        { phone: `91${phone}` },
+        { phone: `+91${phone}` },
+        { mobile: phone },
+        { mobile: `91${phone}` },
+        { mobile: `+91${phone}` },
+      ],
+    });
+  } else {
+    customer = await Customer.findOne({
+      email: normalizedIdentifier,
+    });
+  }
 
   if (purpose === "login" && !customer) {
     throw createControllerError(
@@ -124,7 +158,13 @@ const resolveOtpCustomerSession = async ({
 
   if (purpose === "signup" && !customer) {
     customer = await Customer.create({
-      email,
+      ...(isWhatsapp
+        ? {
+          phone: normalizedIdentifier,
+        }
+        : {
+          email: normalizedIdentifier,
+        }),
       isActive: true,
       joinedAt: new Date(),
     });
@@ -146,8 +186,10 @@ const resolveOtpCustomerSession = async ({
     );
   }
 
-  const token =
-    generateCustomerToken(customer);
+  const token = generateCustomerToken(
+    customer,
+    channel,
+  );
 
   return {
     token,
@@ -233,6 +275,7 @@ export const verifyOtpController = async (
     const authSession =
       await resolveOtpCustomerSession({
         identifier: input.identifier,
+        channel: input.channel,
         purpose: input.purpose,
       });
 

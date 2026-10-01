@@ -7,8 +7,10 @@ export const OTP_CONFIG = Object.freeze({
   LOG_RETENTION_DAYS: 90,
 });
 
-export const OTP_CHANNELS = Object.freeze(["email"]);
-
+export const OTP_CHANNELS = Object.freeze([
+  "email",
+  "whatsapp",
+]);
 export const OTP_PURPOSES = Object.freeze([
   "login",
   "signup",

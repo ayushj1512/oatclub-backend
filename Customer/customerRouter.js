@@ -11,7 +11,7 @@ import {
   getCustomerByCustomerId,
   getCustomerByFirebaseUID,
   lookupCustomerByEmail,
-  // Analytics
+  lookupCustomerByPhone,  // Analytics
   updateCustomerAnalytics,
   syncCustomerAnalytics,
   syncAllCustomerAnalytics,
@@ -56,8 +56,19 @@ router.get("/by-firebase/:firebaseUID", getCustomerByFirebaseUID);
 /* =========================
    Authentication Lookup
 ========================= */
-router.post("/auth/email-lookup", lookupCustomerByEmail);
+/* =========================
+   Authentication Lookup
+========================= */
 
+router.post(
+  "/auth/email-lookup",
+  lookupCustomerByEmail,
+);
+
+router.post(
+  "/auth/phone-lookup",
+  lookupCustomerByPhone,
+);
 /* =========================
    Search
 ========================= */

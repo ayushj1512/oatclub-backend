@@ -10,9 +10,11 @@ import { sendCustomerCreditWhatsapp } from "../fast2sms/fast2sms.whatsapp.js";
 
 const normalizeIncomingCustomer = (body = {}) => {
   const firebaseUID = body.firebaseUID ? String(body.firebaseUID).trim() : null;
-  const email = body.email ? String(body.email).trim().toLowerCase() : "";
-  const phone = body.phone ? String(body.phone).trim() : "";
-  const name = body.name ? String(body.name).trim() : "";
+  const email = normalizeCustomerEmail(
+    body.email,
+  ); const phone = normalizeCustomerPhone(
+    body.phone,
+  ); const name = body.name ? String(body.name).trim() : "";
   const profileImage = body.profileImage
     ? String(body.profileImage).trim()
     : "";
@@ -27,6 +29,56 @@ const normalizeIncomingCustomer = (body = {}) => {
     referralCode: body.referralCode || null,
   };
 };
+
+const normalizeCustomerEmail = (value = "") =>
+  String(value)
+    .trim()
+    .toLowerCase();
+
+const normalizeCustomerPhone = (value = "") => {
+  let phone = String(value)
+    .replace(/\D/g, "");
+
+  if (
+    phone.startsWith("91") &&
+    phone.length === 12
+  ) {
+    phone = phone.slice(2);
+  }
+
+  if (
+    phone.startsWith("0") &&
+    phone.length === 11
+  ) {
+    phone = phone.slice(1);
+  }
+
+  return phone;
+};
+
+const getPhoneVariants = (phone = "") => {
+  if (!phone) return [];
+
+  return [
+    phone,
+    `91${phone}`,
+    `+91${phone}`,
+    `0${phone}`,
+  ];
+};
+
+const duplicateIdentityResponse = (
+  res,
+  field,
+) =>
+  res.status(409).json({
+    success: false,
+    field,
+    message:
+      field === "phone"
+        ? "This phone number is already associated with another account"
+        : "This email is already associated with another account",
+  });
 
 const buildSafeUpdate = ({
   email,
@@ -420,8 +472,11 @@ export const createCustomer = async (req, res) => {
     } = req.body;
 
     const safeFirebaseUID = firebaseUID ? String(firebaseUID).trim() : null;
-    const safeEmail = email ? String(email).trim().toLowerCase() : "";
-    const safePhone = phone ? String(phone).trim() : "";
+    const safeEmail =
+      normalizeCustomerEmail(email);
+
+    const safePhone =
+      normalizeCustomerPhone(phone);
     const safeName = name ? String(name).trim() : "";
     const safeProfileImage = profileImage ? String(profileImage).trim() : "";
 
@@ -457,6 +512,117 @@ export const createCustomer = async (req, res) => {
       });
     }
 
+    if (
+      safeEmail &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        safeEmail,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "A valid email address is required",
+      });
+    }
+
+    if (
+      safePhone &&
+      !/^[6-9]\d{9}$/.test(safePhone)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "A valid 10-digit Indian phone number is required",
+      });
+    }
+
+    const [
+      emailCustomer,
+      phoneCustomer,
+      firebaseCustomer,
+    ] = await Promise.all([
+      safeEmail
+        ? Customer.findOne({
+          email: safeEmail,
+        })
+          .select(
+            "_id email phone firebaseUID",
+          )
+          .lean()
+        : null,
+
+      safePhone
+        ? Customer.findOne({
+          phone: {
+            $in: getPhoneVariants(
+              safePhone,
+            ),
+          },
+        })
+          .select(
+            "_id email phone firebaseUID",
+          )
+          .lean()
+        : null,
+
+      safeFirebaseUID
+        ? Customer.findOne({
+          firebaseUID:
+            safeFirebaseUID,
+        })
+          .select(
+            "_id email phone firebaseUID",
+          )
+          .lean()
+        : null,
+    ]);
+
+    const matchedCustomerIds = new Set(
+      [
+        emailCustomer?._id,
+        phoneCustomer?._id,
+        firebaseCustomer?._id,
+      ]
+        .filter(Boolean)
+        .map(String),
+    );
+
+    if (matchedCustomerIds.size > 1) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Email and phone number are associated with different accounts",
+      });
+    }
+
+    if (
+      emailCustomer?.firebaseUID &&
+      safeFirebaseUID &&
+      emailCustomer.firebaseUID !==
+      safeFirebaseUID
+    ) {
+      return res.status(409).json({
+        success: false,
+        field: "email",
+        message:
+          "This email is already associated with another account",
+      });
+    }
+
+    if (
+      phoneCustomer?.firebaseUID &&
+      safeFirebaseUID &&
+      phoneCustomer.firebaseUID !==
+      safeFirebaseUID
+    ) {
+      return res.status(409).json({
+        success: false,
+        field: "phone",
+        message:
+          "This phone number is already associated with another account",
+      });
+    }
+
     if (safeFirebaseUID && safeEmail) {
       const uidExists = await Customer.findOne({ firebaseUID: safeFirebaseUID })
         .select("_id")
@@ -477,14 +643,34 @@ export const createCustomer = async (req, res) => {
       }
     }
 
-    const filter = safeFirebaseUID
-      ? { firebaseUID: safeFirebaseUID }
-      : {
-        $or: [
-          ...(safeEmail ? [{ email: safeEmail }] : []),
-          ...(safePhone ? [{ phone: safePhone }] : []),
-        ],
-      };
+    const matchedCustomer =
+      firebaseCustomer ||
+      emailCustomer ||
+      phoneCustomer;
+
+    const filter = matchedCustomer?._id
+      ? { _id: matchedCustomer._id }
+      : safeFirebaseUID
+        ? { firebaseUID: safeFirebaseUID }
+        : {
+          $or: [
+            ...(safeEmail
+              ? [{ email: safeEmail }]
+              : []),
+
+            ...(safePhone
+              ? [
+                {
+                  phone: {
+                    $in: getPhoneVariants(
+                      safePhone,
+                    ),
+                  },
+                },
+              ]
+              : []),
+          ],
+        };
 
     const before = await Customer.findOne(filter)
       .select("email customerId")
@@ -573,13 +759,19 @@ export const createCustomer = async (req, res) => {
       );
     } catch (err) {
       if (err?.code === 11000) {
-        const fallback = await Customer.findOne(filter);
-        if (fallback) {
-          return res.status(200).json({
-            message: "Customer already exists",
-            customer: fallback,
-          });
-        }
+        const duplicateField =
+          Object.keys(
+            err?.keyPattern ||
+            err?.keyValue ||
+            {},
+          )[0];
+
+        return duplicateIdentityResponse(
+          res,
+          duplicateField === "phone"
+            ? "phone"
+            : "email",
+        );
       }
 
       throw err;
@@ -870,12 +1062,54 @@ export const updateCustomer = async (req, res) => {
       if (!ALLOWED_TOP_LEVEL.includes(k)) delete payload[k];
     }
 
-    if (payload.email) {
-      payload.email = String(payload.email).trim().toLowerCase();
+    if (
+      Object.prototype.hasOwnProperty.call(
+        payload,
+        "email",
+      )
+    ) {
+      payload.email =
+        normalizeCustomerEmail(
+          payload.email,
+        );
+
+      if (
+        payload.email &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+          payload.email,
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "A valid email address is required",
+        });
+      }
     }
 
-    if (payload.phone) {
-      payload.phone = String(payload.phone).trim();
+    if (
+      Object.prototype.hasOwnProperty.call(
+        payload,
+        "phone",
+      )
+    ) {
+      payload.phone =
+        normalizeCustomerPhone(
+          payload.phone,
+        );
+
+      if (
+        payload.phone &&
+        !/^[6-9]\d{9}$/.test(
+          payload.phone,
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "A valid 10-digit Indian phone number is required",
+        });
+      }
     }
 
     if (payload.name) {
@@ -913,6 +1147,44 @@ export const updateCustomer = async (req, res) => {
       };
     }
 
+    if (payload.email) {
+      const emailConflict =
+        await Customer.exists({
+          _id: {
+            $ne: req.params.id,
+          },
+          email: payload.email,
+        });
+
+      if (emailConflict) {
+        return duplicateIdentityResponse(
+          res,
+          "email",
+        );
+      }
+    }
+
+    if (payload.phone) {
+      const phoneConflict =
+        await Customer.exists({
+          _id: {
+            $ne: req.params.id,
+          },
+          phone: {
+            $in: getPhoneVariants(
+              payload.phone,
+            ),
+          },
+        });
+
+      if (phoneConflict) {
+        return duplicateIdentityResponse(
+          res,
+          "phone",
+        );
+      }
+    }
+
     payload.updatedAt = new Date();
 
     const customer = await Customer.findByIdAndUpdate(req.params.id, payload, {
@@ -925,11 +1197,33 @@ export const updateCustomer = async (req, res) => {
     }
 
     res.json({ message: "Customer updated", customer });
-  } catch (err) {
-    console.error("Update Customer Error:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-};
+  } } catch (err) {
+    console.error(
+      "Update Customer Error:",
+      err,
+    );
+
+    if (err?.code === 11000) {
+      const duplicateField =
+        Object.keys(
+          err?.keyPattern ||
+          err?.keyValue ||
+          {},
+        )[0];
+
+      return duplicateIdentityResponse(
+        res,
+        duplicateField === "phone"
+          ? "phone"
+          : "email",
+      );
+    }
+
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  };
 
 /* =========================================================
    MANUAL UPDATE ANALYTICS
@@ -2073,6 +2367,67 @@ export const lookupCustomerByEmail = async (req, res) => {
     });
   } catch (error) {
     console.error("Lookup Customer Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      exists: false,
+      message: "Server error",
+    });
+  }
+};
+
+export const lookupCustomerByPhone = async (
+  req,
+  res,
+) => {
+  try {
+    let phone = String(
+      req.body?.phone || "",
+    ).replace(/\D/g, "");
+
+    if (
+      phone.startsWith("91") &&
+      phone.length === 12
+    ) {
+      phone = phone.slice(2);
+    }
+
+    if (
+      phone.startsWith("0") &&
+      phone.length === 11
+    ) {
+      phone = phone.slice(1);
+    }
+
+    if (!/^[6-9]\d{9}$/.test(phone)) {
+      return res.status(400).json({
+        success: false,
+        exists: false,
+        message:
+          "Valid 10-digit Indian phone number is required",
+      });
+    }
+
+    const exists = await Customer.exists({
+      phone: {
+        $in: [
+          phone,
+          `91${phone}`,
+          `+91${phone}`,
+          `0${phone}`,
+        ],
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      exists: Boolean(exists),
+    });
+  } catch (error) {
+    console.error(
+      "Lookup Customer By Phone Error:",
+      error,
+    );
 
     return res.status(500).json({
       success: false,

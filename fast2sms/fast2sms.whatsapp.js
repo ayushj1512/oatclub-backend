@@ -79,6 +79,69 @@ export const sendFast2SmsWhatsappTemplate = async ({
 };
 
 /* =========================================================
+   WHATSAPP OTP
+========================================================= */
+
+export const sendOtpWhatsapp = async ({
+  phone,
+  otp,
+  referenceId = "",
+  purpose = "login",
+}) => {
+  const normalizedOtp = String(otp || "").trim();
+
+  if (!/^\d{6}$/.test(normalizedOtp)) {
+    throw new Error(
+      "A valid 6-digit OTP is required",
+    );
+  }
+
+  const template =
+    getApprovedFast2SmsTemplate("OTP");
+
+  const variables = template.buildVariables({
+    otp: normalizedOtp,
+  });
+
+  const result =
+    await sendFast2SmsWhatsappTemplate({
+      phone,
+      templateKey: "OTP",
+      variables,
+      udf1: String(referenceId || ""),
+      udf2: `otp_${String(purpose || "login")
+        .trim()
+        .toLowerCase()}`,
+      udf3: "whatsapp_otp",
+    });
+
+  if (!result?.success) {
+    const providerMessage =
+      result?.data?.message ||
+      result?.data?.error ||
+      result?.error ||
+      "Fast2SMS WhatsApp OTP delivery failed";
+
+    throw new Error(String(providerMessage));
+  }
+
+  const providerMessageId =
+    result?.data?.request_id ||
+    result?.data?.requestId ||
+    result?.data?.message_id ||
+    result?.data?.messageId ||
+    result?.data?.id ||
+    "";
+
+  return {
+    ...result,
+    providerMessageId: String(
+      providerMessageId || "",
+    ),
+  };
+};
+
+/* =========================================================
    COD ORDER CONFIRMATION
 ========================================================= */
 
