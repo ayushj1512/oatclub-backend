@@ -17,7 +17,10 @@ import {
   deleteCache,
   deleteCacheByPattern,
 } from "../utility/redisCache.js";
-
+import {
+  createProductBarcode,
+  normalizeProductCode,
+} from "./product.barcode.service.js";
 
 const SYSTEM_CATEGORIES = new Set([
   "all-clothing",
@@ -8767,6 +8770,168 @@ export const updateProductStockType = async (
       message:
         error.message ||
         "Failed to update product stock type",
+    });
+  }
+};
+
+/* =========================================================
+   BARCODE SUPPORT
+
+   GET  /api/products/barcode/by-code/:code
+   POST /api/products/:id/barcodes/generate
+========================================================= */
+
+export const getProductForBarcode = async (req, res) => {
+  try {
+    const rawCode = String(req.params?.code || "").trim();
+
+    if (!rawCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Product code is required",
+      });
+    }
+
+    const productCode = normalizeProductCode(rawCode);
+
+    const product = await Product.findOne({
+      productCode,
+    })
+      .select(
+        "_id title productCode thumbnail images productType variants stock stockType",
+      )
+      .lean();
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: `Product ${productCode} not found`,
+      });
+    }
+
+    const variants = (product.variants || []).map((variant) => {
+      const size =
+        variant.attributes?.find(
+          (attribute) =>
+            String(attribute?.key || "").trim().toLowerCase() === "size",
+        )?.value || "";
+
+      let barcode = variant.barcode || "";
+
+      if (size) {
+        try {
+          barcode = createProductBarcode(product.productCode, size);
+        } catch {
+          // Keep the stored barcode if the variant has a size outside XS–XL.
+        }
+      }
+
+      return {
+        _id: variant._id,
+        size: String(size).trim().toUpperCase(),
+        sku: variant.sku || "",
+        barcode,
+        stock: Number(variant.stock || 0),
+        reservedStock: Number(variant.reservedStock || 0),
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      product: {
+        _id: product._id,
+        title: product.title,
+        productCode: product.productCode,
+        thumbnail: product.thumbnail || product.images?.[0] || "",
+        productType: product.productType,
+        stockType: product.stockType,
+        variants,
+      },
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Failed to load product for barcode",
+    });
+  }
+};
+
+export const generateProductBarcodes = async (req, res) => {
+  try {
+    const productId = String(req.params?.id || "").trim();
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product ID",
+      });
+    }
+
+    const product = await Product.findById(productId);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    if (!Array.isArray(product.variants) || product.variants.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "This product has no size variants",
+      });
+    }
+
+    const productCode = normalizeProductCode(product.productCode);
+    let generatedCount = 0;
+
+    product.variants.forEach((variant) => {
+      const size =
+        variant.attributes?.find(
+          (attribute) =>
+            String(attribute?.key || "").trim().toLowerCase() === "size",
+        )?.value || "";
+
+      if (!size) return;
+
+      // Validate the size and assign barcode in the format 00023-XS.
+      variant.barcode = createProductBarcode(productCode, size);
+      generatedCount += 1;
+    });
+
+    if (!generatedCount) {
+      return res.status(400).json({
+        success: false,
+        message: "No size variants were found for this product",
+      });
+    }
+
+    await product.save();
+    await invalidateProductCache(product);
+
+    return res.status(200).json({
+      success: true,
+      message: `${generatedCount} barcode(s) generated`,
+      productCode,
+      barcodes: product.variants.map((variant) => {
+        const size =
+          variant.attributes?.find(
+            (attribute) =>
+              String(attribute?.key || "").trim().toLowerCase() === "size",
+          )?.value || "";
+
+        return {
+          variantId: variant._id,
+          size: String(size).trim().toUpperCase(),
+          barcode: variant.barcode,
+        };
+      }),
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Failed to generate product barcodes",
     });
   }
 };

@@ -47,6 +47,8 @@ import {
   completeProductLifecycle,
   updateFabricConsumption,
   updateProductStockType,
+  getProductForBarcode,
+  generateProductBarcodes,
 } from "./productController.js";
 
 import { searchProductsForCard } from "./product.search.controller.js";
@@ -159,6 +161,13 @@ router.patch(
 /* =========================================================
    PRODUCT LISTING / SEARCH
 ========================================================= */
+
+router.get("/barcode/by-code/:code", getProductForBarcode);
+
+router.post(
+  "/:id/barcodes/generate",
+  generateProductBarcodes,
+);
 
 router.get("/cards", getProductCards);
 router.get("/card-search", searchProductsForCard);
