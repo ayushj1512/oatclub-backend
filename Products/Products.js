@@ -148,7 +148,13 @@ const lifecycleStageSchema = new mongoose.Schema(
   {
     stage: {
       type: String,
-      enum: PRODUCT_LIFECYCLE_STAGES,
+      enum: [
+        ...PRODUCT_LIFECYCLE_STAGES,
+        "cutting",
+        "stitching",
+        "finishing",
+        "completed",
+      ],
       required: true,
     },
 
@@ -439,7 +445,13 @@ const productSchema = new mongoose.Schema(
     manufacturingLifecycle: {
       currentStage: {
         type: String,
-        enum: PRODUCT_LIFECYCLE_STAGES,
+        enum: [
+          ...PRODUCT_LIFECYCLE_STAGES,
+          "cutting",
+          "stitching",
+          "finishing",
+          "completed",
+        ],
         default: "pattern_in_making",
         index: true,
       },
