@@ -1197,7 +1197,7 @@ export const updateCustomer = async (req, res) => {
     }
 
     res.json({ message: "Customer updated", customer });
-  } } catch (err) {
+  }  catch (err) {
     console.error(
       "Update Customer Error:",
       err,
