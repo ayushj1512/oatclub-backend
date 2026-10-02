@@ -1223,45 +1223,56 @@ export const updateCustomer = async (req, res) => {
       message: "Server error",
       error: err.message,
     });
-  };
+  }
+};
 
 /* =========================================================
    MANUAL UPDATE ANALYTICS
 ========================================================= */
 
-export const updateCustomerAnalytics = async (req, res) => {
-  try {
-    const allowed = ["wishlistCount", "couponUses", "walletCreditsEarned"];
+  export const updateCustomerAnalytics = async (req, res) => {
+    try {
+      const allowed = [
+        "wishlistCount",
+        "couponUses",
+        "walletCreditsEarned",
+      ];
 
-    const $set = {
-      updatedAt: new Date(),
-    };
+      const $set = {
+        updatedAt: new Date(),
+      };
 
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) {
-        $set[`analytics.${key}`] = Number(req.body[key]) || 0;
+      for (const key of allowed) {
+        if (req.body[key] !== undefined) {
+          $set[`analytics.${key}`] = Number(req.body[key]) || 0;
+        }
       }
+
+      const customer = await Customer.findByIdAndUpdate(
+        req.params.id,
+        { $set },
+        { new: true, runValidators: true },
+      );
+
+      if (!customer) {
+        return res.status(404).json({
+          message: "Customer not found",
+        });
+      }
+
+      return res.json({
+        message: "Analytics updated",
+        customer,
+      });
+    } catch (err) {
+      console.error("Update Analytics Error:", err);
+
+      return res.status(500).json({
+        message: "Server error",
+        error: err.message,
+      });
     }
-
-    const customer = await Customer.findByIdAndUpdate(
-      req.params.id,
-      { $set },
-      { new: true, runValidators: true },
-    );
-
-    if (!customer) {
-      return res.status(404).json({ message: "Customer not found" });
-    }
-
-    res.json({
-      message: "Analytics updated",
-      customer,
-    });
-  } catch (err) {
-    console.error("Update Analytics Error:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-};
+  };
 
 /* =========================================================
    RECALCULATE CUSTOMER ANALYTICS FROM ORDERS
