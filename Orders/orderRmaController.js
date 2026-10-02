@@ -172,6 +172,79 @@ const findVariantByAttrs = (variants = [], wantedAttrs = {}) => {
   return null;
 };
 
+const calculateRmaRefundAmount = (order, rma) => {
+  const savedAmount = Number(rma?.refund?.amount);
+
+  if (Number.isFinite(savedAmount) && savedAmount > 0) {
+    return Math.round(savedAmount * 100) / 100;
+  }
+
+  const orderItems = Array.isArray(order?.items)
+    ? order.items
+    : [];
+
+  const rmaItems = Array.isArray(rma?.items)
+    ? rma.items
+    : [];
+
+  if (!rmaItems.length) return 0;
+
+  let amount = 0;
+  const quantities = new Map();
+
+  for (const item of rmaItems) {
+    const lineId = String(item?.orderLineId || "").trim();
+
+    let index = lineId
+      ? orderItems.findIndex(
+        (line) => String(line?.lineId || "") === lineId
+      )
+      : -1;
+
+    // Legacy fallback only when no stable line ID exists.
+    if (
+      index < 0 &&
+      !lineId &&
+      Number.isInteger(item?.orderItemIndex)
+    ) {
+      index = item.orderItemIndex;
+    }
+
+    const matched = orderItems[index];
+
+    if (!matched) return 0;
+
+    const orderedQty = Number(matched.quantity);
+    const returnQty = Number(item.quantity);
+    const lineSubtotal = Number(matched.subtotal);
+
+    if (
+      !Number.isInteger(orderedQty) ||
+      !Number.isInteger(returnQty) ||
+      orderedQty <= 0 ||
+      returnQty <= 0 ||
+      !Number.isFinite(lineSubtotal) ||
+      lineSubtotal < 0
+    ) {
+      return 0;
+    }
+
+    const totalReturned =
+      (quantities.get(index) || 0) + returnQty;
+
+    if (totalReturned > orderedQty) return 0;
+
+    quantities.set(index, totalReturned);
+
+    // Uses the purchased line subtotal, including its
+    // allocated discount, proportionate to returned quantity.
+    amount += (lineSubtotal / orderedQty) * returnQty;
+  }
+
+  return Math.round(amount * 100) / 100;
+};
+
+
 /* ============================================================
    ✅ CREATE RMA
 ============================================================ */
@@ -1132,12 +1205,7 @@ export const getRmasByOrder = async (req, res) => {
       refundSummary:
         order?.refundSummary || null,
 
-      refundEligibleAmount:
-        Number(
-          order?.refundSummary?.eligibleAmount ||
-          rma?.refund?.amount ||
-          0
-        ),
+      refundEligibleAmount: calculateRmaRefundAmount(order, rma),
 
       // Reverse pickup automation
       returnPickupCompleted:
@@ -1211,13 +1279,7 @@ export const getRmaByNumber = async (req, res) => {
         refundSummary:
           order?.refundSummary || null,
 
-        refundEligibleAmount:
-          Number(
-            order?.refundSummary
-              ?.eligibleAmount ||
-            rma?.refund?.amount ||
-            0
-          ),
+        refundEligibleAmount: calculateRmaRefundAmount(order, rma),
 
         // Reverse pickup automation
         returnPickupCompleted:
@@ -1348,8 +1410,7 @@ export const getAllRmasAdmin = async (req, res) => {
           rma?.eligibleForRefund === true;
 
         const refundEligibleAmount =
-          Number(rma?.refund?.amount || 0);
-
+          calculateRmaRefundAmount(order, rma);
         allRmas.push({
           ...rma,
 
@@ -1482,235 +1543,322 @@ export const getAllRmasAdmin = async (req, res) => {
 
 
 export const refundRmaToCredit = async (req, res) => {
+  let session;
+
+  const fail = (statusCode, message) => {
+    const error = new Error(message);
+    error.statusCode = statusCode;
+    throw error;
+  };
+
+  const lower = (value) =>
+    String(value || "").trim().toLowerCase();
+
+  const number = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const round = (value) =>
+    Math.round(value * 100) / 100;
+
   try {
     const { id, rmaNumber } = req.params;
 
-    const order = await Order.findById(id);
-
-    if (!rma) {
-      return res.status(404).json({
-        message: "RMA not found",
-      });
+    if (!mongoose.isValidObjectId(id)) {
+      fail(400, "Invalid order ID");
     }
 
-    if (rma.isApproved !== true) {
-      return res.status(400).json({
-        success: false,
-        message: "RMA must be approved before refund",
-      });
+    const requestedDeduction = Number(
+      req.body?.deduction ?? 0
+    );
+
+    if (
+      !Number.isFinite(requestedDeduction) ||
+      requestedDeduction < 0 ||
+      requestedDeduction > 100
+    ) {
+      fail(400, "Deduction must be between ₹0 and ₹100");
     }
 
-    const rma = order.rmas?.find(
-      (x) => String(x?.rmaNumber) === String(rmaNumber)
-    );
+    session = await Order.db.startSession();
 
-    if (!rma) {
-      return res.status(404).json({
-        message: "RMA not found",
-      });
-    }
+    let result;
+    let notification;
 
-    if (!rma.returnPickupCompleted) {
-      return res.status(400).json({
-        message: "Return pickup is not completed",
-      });
-    }
+    await session.withTransaction(async () => {
+      // Transaction callbacks can retry.
+      result = null;
+      notification = null;
 
-    if (!rma.eligibleForRefund) {
-      return res.status(400).json({
-        message: "RMA is not eligible for refund",
-      });
-    }
+      const order = await Order.findById(id).session(session);
 
-    if (rma.refund?.status === "completed") {
-      return res.status(400).json({
-        message: "This RMA is already refunded",
-      });
-    }
+      if (!order) {
+        fail(404, "Order not found");
+      }
 
-    const eligibleAmount = Number(
-      rma?.refund?.amount || 0
-    );
+      const rma = order.rmas?.find(
+        (item) =>
+          String(item?.rmaNumber) === String(rmaNumber)
+      );
 
-    const requestedDeduction = Math.max(
-      0,
-      Number(req.body?.deduction || 0)
-    );
+      if (!rma) {
+        fail(404, "RMA not found");
+      }
 
-    const deduction = Math.min(
-      requestedDeduction,
-      eligibleAmount
-    );
+      if (
+        lower(rma.refund?.status) === "completed" ||
+        lower(rma.status) === "refund_completed"
+      ) {
+        fail(409, "This RMA is already refunded");
+      }
 
-    const refundAmount = Math.max(
-      0,
-      eligibleAmount - deduction
-    );
+      if (lower(rma.refund?.status) === "initiated") {
+        fail(409, "A refund is already initiated for this RMA");
+      }
 
-    if (refundAmount <= 0) {
-      return res.status(400).json({
-        message: "Refund amount is zero after deduction",
-      });
-    }
+      if (lower(rma.type) !== "return") {
+        fail(400, "Wallet refund is available for return RMAs");
+      }
 
-    const customer = await Customer.findById(
-      order.customerId
-    );
+      if (rma.isApproved !== true) {
+        fail(400, "RMA must be approved before refund");
+      }
 
-    if (!customer) {
-      return res.status(404).json({
-        message: "Customer not found",
-      });
-    }
+      if (rma.isFulfilled === true) {
+        fail(400, "This RMA is already fulfilled");
+      }
 
-    customer.credits = customer.credits || {};
+      const pickupCompleted =
+        rma.returnPickupCompleted === true ||
+        Boolean(rma.reverseShipment?.pickedAt) ||
+        ["picked", "in_transit", "received"].includes(
+          lower(rma.reverseShipment?.status)
+        );
 
-    customer.credits.balance = Number(
-      customer.credits.balance || 0
-    );
+      if (!pickupCompleted) {
+        fail(400, "Return pickup is not completed");
+      }
 
-    customer.credits.totalCredited = Number(
-      customer.credits.totalCredited || 0
-    );
+      // Use the saved RMA-specific amount.
+      // Do not substitute the full order amount for a partial return.
+      const eligibleAmount = calculateRmaRefundAmount(
+        order,
+        rma
+      );
 
-    customer.credits.totalRefundCredits = Number(
-      customer.credits.totalRefundCredits || 0
-    );
+      if (eligibleAmount <= 0) {
+        fail(
+          400,
+          "Set a valid refund amount on this RMA before crediting"
+        );
+      }
 
-    customer.credits.logs = Array.isArray(
-      customer.credits.logs
-    )
-      ? customer.credits.logs
-      : [];
+      const deduction = round(
+        Math.min(requestedDeduction, eligibleAmount)
+      );
 
-    const now = new Date();
+      const refundAmount = round(
+        eligibleAmount - deduction
+      );
 
-    const creditId =
-      `CR-${Date.now()}-${Math.floor(
-        Math.random() * 10000
-      )}`;
+      if (refundAmount <= 0) {
+        fail(400, "Refund amount is zero after deduction");
+      }
 
-    const newBalance =
-      customer.credits.balance + refundAmount;
+      const customer = await Customer.findById(
+        order.customerId
+      ).session(session);
 
-    customer.credits.balance = newBalance;
-    customer.credits.totalCredited += refundAmount;
-    customer.credits.totalRefundCredits += refundAmount;
-    customer.credits.lastCreditAt = now;
+      if (!customer) {
+        fail(404, "Customer not found");
+      }
 
-    customer.credits.logs.unshift({
-      creditId,
-      transactionType: "credit",
-      type: "refund",
+      customer.credits = customer.credits || {};
 
-      amount: refundAmount,
-      balanceAfterTransaction: newBalance,
+      const logs = Array.isArray(customer.credits.logs)
+        ? customer.credits.logs
+        : [];
 
-      reason: "RMA refund",
+      // Additional check for an existing credit for this RMA.
+      const existingCredit = logs.find(
+        (log) =>
+          log.transactionType === "credit" &&
+          log.type === "refund" &&
+          String(log.orderId || "") === String(order._id) &&
+          String(log.notes || "").split(" | ")[0] ===
+          `RMA ${rma.rmaNumber}`
+      );
 
-      notes:
-        deduction > 0
-          ? `RMA ${rma.rmaNumber} | ₹${deduction} deduction`
-          : `RMA ${rma.rmaNumber} | No deduction`,
+      if (existingCredit) {
+        fail(
+          409,
+          "A wallet credit already exists for this RMA. Verify its refund record before retrying."
+        );
+      }
 
-      orderId: order._id,
-      orderNumber: order.orderNumber,
+      const now = new Date();
 
-      addedBy: "admin",
-      createdAt: now,
+      const creditId =
+        `CR-${new mongoose.Types.ObjectId().toString()}`;
+
+      const newBalance = round(
+        number(customer.credits.balance) + refundAmount
+      );
+
+      const log = {
+        creditId,
+        transactionType: "credit",
+        type: "refund",
+        amount: refundAmount,
+        balanceAfterTransaction: newBalance,
+        reason: "RMA refund",
+        notes:
+          `RMA ${rma.rmaNumber} | ` +
+          `Eligible ₹${eligibleAmount} | ` +
+          `Deduction ₹${deduction} | Wallet credit`,
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        addedBy: "admin",
+        createdAt: now,
+      };
+
+      customer.credits.balance = newBalance;
+
+      customer.credits.totalCredited = round(
+        number(customer.credits.totalCredited) + refundAmount
+      );
+
+      customer.credits.totalRefundCredits = round(
+        number(customer.credits.totalRefundCredits) +
+        refundAmount
+      );
+
+      customer.credits.lastCreditAt = now;
+      customer.credits.logs = [log, ...logs].slice(0, 300);
+
+      customer.analytics = customer.analytics || {};
+
+      customer.analytics.walletCreditsEarned = round(
+        number(customer.analytics.walletCreditsEarned) +
+        refundAmount
+      );
+
+      rma.refund = {
+        amount: refundAmount,
+        mode: "manual",
+        status: "completed",
+        referenceId: creditId,
+      };
+
+      rma.returnPickupCompleted = true;
+      rma.status = "refund_completed";
+      rma.eligibleForRefund = false;
+
+      // Fulfillment remains a separate manual action.
+      customer.markModified("credits");
+      customer.markModified("analytics");
+      order.markModified("rmas");
+
+      await customer.save({ session });
+      await order.save({ session });
+
+      const plainRma = rma.toObject();
+
+      result = {
+        success: true,
+        message: `₹${refundAmount} refunded to customer credit`,
+        refund: {
+          eligibleAmount,
+          deduction,
+          refundAmount,
+          creditId,
+          status: "completed",
+        },
+        credits: {
+          balance: newBalance,
+        },
+        rma: {
+          ...plainRma,
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          refundEligibleAmount: calculateRmaRefundAmount(order, rma),          isRefunded: true,
+        },
+      };
+
+      notification = {
+        email: customer.email,
+        phone: customer.phone,
+        name: customer.name || "Customer",
+        amount: refundAmount,
+        balance: newBalance,
+        orderNumber: order.orderNumber,
+        creditId,
+        creditedAt: now,
+      };
     });
 
-    customer.credits.logs =
-      customer.credits.logs.slice(0, 300);
-
-    /* ==============================
-       RMA REFUND COMPLETE
-    ============================== */
-
-    rma.refund.amount = refundAmount;
-    rma.refund.mode = "source";
-    rma.refund.status = "completed";
-    rma.refund.referenceId = creditId;
-
-    rma.status = "refund_completed";
-    rma.eligibleForRefund = false;
-
-    await customer.save();
-    await order.save();
-
-    /* ==============================
-       NOTIFICATIONS
-    ============================== */
-
+    // Run only after the transaction commits.
+    // Promise wrappers also catch synchronous notification errors.
     const jobs = [];
 
-    if (customer.email) {
+    if (notification?.email) {
       jobs.push(
-        Mailer.sendCustomerCreditCredited({
-          to: customer.email,
-          name: customer.name || "Customer",
-
-          amount: refundAmount,
-          balance: newBalance,
-
-          orderNumber: order.orderNumber,
-          creditId,
-
-          reason: "Refund",
-          creditedAt: now,
-
-          ctaUrl:
-            `${process.env.CLIENT_URL || "https://oatclub.in"}/account`,
-        })
+        Promise.resolve().then(() =>
+          Mailer.sendCustomerCreditCredited({
+            to: notification.email,
+            name: notification.name,
+            amount: notification.amount,
+            balance: notification.balance,
+            orderNumber: notification.orderNumber,
+            creditId: notification.creditId,
+            reason: "Refund",
+            creditedAt: notification.creditedAt,
+            ctaUrl:
+              `${process.env.CLIENT_URL || "https://oatclub.in"}/account`,
+          })
+        )
       );
     }
 
-    if (customer.phone) {
+    if (notification?.phone) {
       jobs.push(
-        sendCustomerCreditWhatsapp({
-          phone: customer.phone,
-
-          customerName:
-            customer.name || "Customer",
-
-          amount: refundAmount,
-          creditId,
-        })
+        Promise.resolve().then(() =>
+          sendCustomerCreditWhatsapp({
+            phone: notification.phone,
+            customerName: notification.name,
+            amount: notification.amount,
+            creditId: notification.creditId,
+          })
+        )
       );
     }
 
-    if (jobs.length) {
-      Promise.allSettled(jobs).catch(() => { });
+    void Promise.allSettled(jobs).then((results) => {
+      results.forEach((item) => {
+        if (item.status === "rejected") {
+          console.error(
+            "RMA refund notification failed:",
+            item.reason?.message || item.reason
+          );
+        }
+      });
+    });
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("RMA Credit Refund Error:", error);
+
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message || "Refund failed",
+    });
+  } finally {
+    if (session) {
+      await session.endSession().catch((error) => {
+        console.error("Refund session cleanup failed:", error);
+      });
     }
-
-    return res.status(200).json({
-      success: true,
-
-      message:
-        `₹${refundAmount} refunded to customer credit`,
-
-      refund: {
-        eligibleAmount,
-        deduction,
-        refundAmount,
-        creditId,
-        status: "completed",
-      },
-
-      credits: {
-        balance: newBalance,
-      },
-    });
-  } catch (err) {
-    console.error(
-      "❌ RMA Credit Refund Error:",
-      err
-    );
-
-    return res.status(500).json({
-      message:
-        err.message || "Refund failed",
-    });
   }
 };
 

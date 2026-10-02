@@ -789,7 +789,7 @@ const getReverseStatus = (trackingData) => {
   }
 
   return { status, rawStatus, statusCode, shipment };
-};  
+};
 
 export const createReversePickupController = async (
   req,
@@ -990,155 +990,294 @@ export const createReversePickupController = async (
   }
 };
 
-export const syncReversePickupController =
-  async (req, res) => {
-    try {
-      const order =
-        await Order.findById(
-          req.params.orderId,
-        );
+export const syncReversePickupController = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId);
 
-      if (!order) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Order not found.",
-        });
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    const rma = findRma(order, req.params.rmaNumber);
+
+    if (!rma) {
+      return res.status(404).json({
+        success: false,
+        message: "RMA not found.",
+      });
+    }
+
+    const waybill = String(
+      rma.reverseShipment?.awb || ""
+    ).trim();
+
+    if (!waybill) {
+      return res.status(400).json({
+        success: false,
+        message: "Reverse Delhivery waybill is not assigned.",
+      });
+    }
+
+    const trackingData = await trackShipment(waybill);
+
+    const shipment = (
+      Array.isArray(trackingData?.ShipmentData)
+        ? trackingData.ShipmentData
+        : []
+    ).find(
+      (entry) =>
+        String(entry?.Shipment?.AWB || "").trim() === waybill
+    )?.Shipment;
+
+    if (!shipment) {
+      return res.status(502).json({
+        success: false,
+        message: "Tracking response did not contain this reverse AWB.",
+      });
+    }
+
+    const normalize = (value) =>
+      String(value || "").trim().toLowerCase();
+
+    // Delhivery timestamps without an offset are interpreted as IST.
+    const parseCourierDate = (value) => {
+      if (!value) return null;
+
+      if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value;
       }
 
-      const rma = findRma(
-        order,
-        req.params.rmaNumber,
+      let text = String(value).trim();
+
+      if (
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(text)
+      ) {
+        text += "+05:30";
+      }
+
+      const date = new Date(text);
+
+      return Number.isNaN(date.getTime()) ? null : date;
+    };
+
+    const scans = (
+      Array.isArray(shipment.Scans) ? shipment.Scans : []
+    )
+      .map((entry) => entry?.ScanDetail)
+      .filter(Boolean)
+      .sort((a, b) => {
+        const aTime = parseCourierDate(
+          a.ScanDateTime || a.StatusDateTime
+        )?.getTime() || 0;
+
+        const bTime = parseCourierDate(
+          b.ScanDateTime || b.StatusDateTime
+        )?.getTime() || 0;
+
+        return aTime - bTime;
+      });
+
+    const latestScan = scans[scans.length - 1];
+    const current = shipment.Status || {};
+
+    const rawStatus = String(
+      current.Status || latestScan?.Scan || ""
+    ).trim();
+
+    const statusCode = String(
+      current.StatusCode || latestScan?.StatusCode || ""
+    ).trim();
+
+    const instructions = String(
+      current.Instructions || latestScan?.Instructions || ""
+    ).trim();
+
+    const statusType = String(
+      current.StatusType || latestScan?.ScanType || ""
+    ).trim();
+
+    const raw = normalize(rawStatus);
+    const code = normalize(statusCode);
+    const detail = normalize(instructions);
+    const type = normalize(statusType);
+
+    const existingStatus = rma.reverseShipment.status;
+    const mapped = getReverseStatus(trackingData) || {};
+
+    let status = mapped.status || existingStatus;
+
+    // Explicit mapping for the return-completion response you shared.
+    if (
+      raw === "dto" &&
+      code === "rd-ac" &&
+      type === "dl"
+    ) {
+      status = "received";
+    } else if (
+      type === "dl" &&
+      (raw === "delivered" || detail === "return accepted")
+    ) {
+      status = "received";
+    } else if (
+      raw === "cancelled" ||
+      raw === "canceled" ||
+      detail === "pickup cancelled" ||
+      detail === "pickup canceled"
+    ) {
+      status = "cancelled";
+    } else if (detail === "pickup completed") {
+      status = "picked";
+    } else if (raw === "in transit") {
+      status = "in_transit";
+    } else if (
+      type === "pp" &&
+      ["yet to pickup", "pickup scheduled", "out for pickup"].includes(
+        detail
+      )
+    ) {
+      status = "pickup_scheduled";
+    }
+
+    const pickupScan = scans.find(
+      (scan) =>
+        normalize(scan.Instructions) === "pickup completed"
+    );
+
+    const transitScan = scans.find(
+      (scan) =>
+        normalize(scan.Scan) === "in transit" &&
+        normalize(scan.Instructions) !== "pickup completed"
+    );
+
+    const receivedScan = scans.find(
+      (scan) =>
+        normalize(scan.ScanType) === "dl" &&
+        (
+          (
+            normalize(scan.Scan) === "dto" &&
+            normalize(scan.StatusCode) === "rd-ac"
+          ) ||
+          normalize(scan.Scan) === "delivered" ||
+          normalize(scan.Instructions) === "return accepted"
+        )
+    );
+
+    const pickedAt =
+      parseCourierDate(
+        pickupScan?.ScanDateTime || pickupScan?.StatusDateTime
+      ) ||
+      parseCourierDate(shipment.PickedupDate) ||
+      parseCourierDate(shipment.PickUpDate);
+
+    const inTransitAt = parseCourierDate(
+      transitScan?.ScanDateTime || transitScan?.StatusDateTime
+    );
+
+    const receivedAt =
+      parseCourierDate(
+        receivedScan?.ScanDateTime || receivedScan?.StatusDateTime
+      ) ||
+      (
+        status === "received"
+          ? parseCourierDate(shipment.DeliveryDate) ||
+          parseCourierDate(current.StatusDateTime)
+          : null
       );
 
-      if (!rma) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "RMA not found.",
-        });
+    // Pickup evidence should prevent a fallback to "scheduled".
+    if (status === "pickup_scheduled") {
+      if (receivedAt) {
+        status = "received";
+      } else if (inTransitAt) {
+        status = "in_transit";
+      } else if (pickedAt) {
+        status = "picked";
+      } else {
+        const progressedStatuses = [
+          "picked",
+          "in_transit",
+          "received",
+        ];
+
+        if (progressedStatuses.includes(existingStatus)) {
+          status = existingStatus;
+        }
       }
+    }
 
-      const waybill = String(
-        rma.reverseShipment?.awb ||
-        "",
-      ).trim();
+    const now = new Date();
+    const reverse = rma.reverseShipment;
 
-      if (!waybill) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Reverse Delhivery waybill is not assigned.",
-        });
-      }
+    reverse.provider = "delhivery";
+    reverse.status = status;
+    reverse.rawStatus = rawStatus;
+    reverse.statusCode = statusCode;
+    reverse.lastTrack = trackingData;
+    reverse.lastTrackAt = now;
+    reverse.lastSyncedAt = now;
 
-      const trackingData =
-        await trackShipment(
-          waybill,
-        );
+    if (pickedAt) {
+      reverse.pickedAt = pickedAt;
+    }
 
-      const {
+    if (inTransitAt) {
+      reverse.inTransitAt = inTransitAt;
+    }
+
+    if (status === "received" && receivedAt) {
+      reverse.receivedAt = receivedAt;
+    }
+
+    if (
+      pickedAt ||
+      ["picked", "in_transit", "received"].includes(status)
+    ) {
+      rma.returnPickupCompleted = true;
+    }
+
+    if (status === "cancelled" && !reverse.cancelledAt) {
+      reverse.cancelledAt =
+        parseCourierDate(current.StatusDateTime) || now;
+    }
+
+    const rmaStatuses = [
+      "pickup_scheduled",
+      "picked",
+      "in_transit",
+      "received",
+    ];
+
+    // Keep an already fulfilled RMA's business status intact.
+    if (
+      rma.isFulfilled !== true &&
+      rmaStatuses.includes(status)
+    ) {
+      rma.status = status;
+    }
+
+    order.markModified("rmas");
+    await order.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Reverse pickup tracking synced.",
+      data: {
+        waybill,
         status,
         rawStatus,
         statusCode,
-      } = getReverseStatus(
-        trackingData,
-      );
-
-      const now = new Date();
-
-      rma.reverseShipment.provider =
-        "delhivery";
-
-      rma.reverseShipment.status =
-        status;
-
-      rma.reverseShipment.rawStatus =
-        rawStatus;
-
-      rma.reverseShipment.statusCode =
-        statusCode;
-
-      rma.reverseShipment.lastTrack =
-        trackingData;
-
-      rma.reverseShipment.lastTrackAt =
-        now;
-
-      rma.reverseShipment.lastSyncedAt =
-        now;
-
-      if (
-        status === "picked" &&
-        !rma.reverseShipment.pickedAt
-      ) {
-        rma.reverseShipment.pickedAt =
-          now;
-
-        rma.returnPickupCompleted =
-          true;
-      }
-
-      if (
-        status === "in_transit" &&
-        !rma.reverseShipment.inTransitAt
-      ) {
-        rma.reverseShipment.inTransitAt =
-          now;
-      }
-
-      if (
-        status === "received" &&
-        !rma.reverseShipment.receivedAt
-      ) {
-        rma.reverseShipment.receivedAt =
-          now;
-      }
-
-      if (
-        status === "cancelled" &&
-        !rma.reverseShipment.cancelledAt
-      ) {
-        rma.reverseShipment.cancelledAt =
-          now;
-      }
-
-      const rmaStatuses = [
-        "pickup_scheduled",
-        "picked",
-        "in_transit",
-        "received",
-      ];
-
-      if (
-        rmaStatuses.includes(status)
-      ) {
-        rma.status = status;
-      }
-
-      order.markModified("rmas");
-      await order.save();
-
-      return res.status(200).json({
-        success: true,
-        message:
-          "Reverse pickup tracking synced.",
-        data: {
-          waybill,
-          status,
-          rawStatus,
-          statusCode,
-          reverseShipment:
-            rma.reverseShipment,
-        },
-      });
-    } catch (error) {
-      return send(
-        res,
-        Promise.reject(error),
-      );
-    }
-  };
+        returnPickupCompleted: rma.returnPickupCompleted,
+        rma,
+        reverseShipment: rma.reverseShipment,
+      },
+    });
+  } catch (error) {
+    return send(res, Promise.reject(error));
+  }
+};
 
 export const updateNdrController = (
   req,

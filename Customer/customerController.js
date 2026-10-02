@@ -1799,7 +1799,7 @@ export const addCustomerCredit = async (req, res) => {
     const { id } = req.params;
     const payload = normalizeCreditPayload(req.body);
 
-    if (!payload.amount || payload.amount <= 0) {
+    if (!Number.isFinite(payload.amount) || payload.amount <= 0) {
       return res.status(400).json({
         message: "Valid amount is required",
       });
@@ -1828,33 +1828,40 @@ export const addCustomerCredit = async (req, res) => {
 
     customer.credits = customer.credits || {};
 
-    customer.credits.balance =
-      Number(customer.credits.balance || 0);
+    customer.credits.balance = Number(customer.credits.balance || 0);
+    customer.credits.totalCredited = Number(
+      customer.credits.totalCredited || 0,
+    );
+    customer.credits.totalDebited = Number(
+      customer.credits.totalDebited || 0,
+    );
+    customer.credits.logs = Array.isArray(customer.credits.logs)
+      ? customer.credits.logs
+      : [];
 
-    customer.credits.totalCredited =
-      Number(customer.credits.totalCredited || 0);
+    const creditedAt = new Date();
 
-    customer.credits.totalDebited =
-      Number(customer.credits.totalDebited || 0);
+    // One calendar year after the credit is issued.
+    // February 29 expires on February 28 in a non-leap year.
+    const expiresAt = new Date(creditedAt);
+    const originalMonth = expiresAt.getUTCMonth();
 
-    customer.credits.logs =
-      Array.isArray(customer.credits.logs)
-        ? customer.credits.logs
-        : [];
+    expiresAt.setUTCFullYear(expiresAt.getUTCFullYear() + 1);
 
-    const newBalance =
-      customer.credits.balance + payload.amount;
+    if (expiresAt.getUTCMonth() !== originalMonth) {
+      expiresAt.setUTCDate(0);
+    }
+
+    const newBalance = customer.credits.balance + payload.amount;
 
     const creditId =
       `CR-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
     const log = {
       creditId,
-
       transactionType: "credit",
       type: payload.type,
       amount: payload.amount,
-
       balanceAfterTransaction: newBalance,
 
       reason: payload.reason,
@@ -1862,7 +1869,6 @@ export const addCustomerCredit = async (req, res) => {
 
       orderId: payload.orderId,
       orderNumber: payload.orderNumber,
-
       refundId: payload.refundId,
 
       promotionName: payload.promotionName,
@@ -1875,50 +1881,40 @@ export const addCustomerCredit = async (req, res) => {
       addedBy: payload.addedBy,
       adminId: payload.adminId,
 
-      expiresAt: payload.expiresAt,
+      expiresAt,
       isExpired: false,
-
-      createdAt: new Date(),
+      createdAt: creditedAt,
     };
 
     customer.credits.balance = newBalance;
     customer.credits.totalCredited += payload.amount;
-    customer.credits.lastCreditAt = new Date();
+    customer.credits.lastCreditAt = creditedAt;
 
     if (payload.type === "refund") {
       customer.credits.totalRefundCredits =
-        Number(customer.credits.totalRefundCredits || 0) +
-        payload.amount;
+        Number(customer.credits.totalRefundCredits || 0) + payload.amount;
     }
 
     if (
-      ["promotion", "cashback", "referral_bonus"].includes(
-        payload.type
-      )
+      ["promotion", "cashback", "referral_bonus"].includes(payload.type)
     ) {
       customer.credits.totalPromotionCredits =
-        Number(customer.credits.totalPromotionCredits || 0) +
-        payload.amount;
+        Number(customer.credits.totalPromotionCredits || 0) + payload.amount;
     }
 
     if (payload.type === "influencer") {
       customer.credits.totalInfluencerCredits =
-        Number(customer.credits.totalInfluencerCredits || 0) +
-        payload.amount;
+        Number(customer.credits.totalInfluencerCredits || 0) + payload.amount;
     }
 
     customer.analytics = customer.analytics || {};
 
     customer.analytics.walletCreditsEarned =
-      Number(customer.analytics.walletCreditsEarned || 0) +
-      payload.amount;
+      Number(customer.analytics.walletCreditsEarned || 0) + payload.amount;
 
     customer.credits.logs.unshift(log);
+    customer.credits.logs = customer.credits.logs.slice(0, 300);
 
-    customer.credits.logs =
-      customer.credits.logs.slice(0, 300);
-
-    // ✅ FIRST SAVE CREDIT
     await customer.save();
 
     /* =========================================================
@@ -1928,59 +1924,46 @@ export const addCustomerCredit = async (req, res) => {
 
     const notificationJobs = [];
 
-    // ✅ EMAIL
     if (customer.email) {
       notificationJobs.push(
-        Mailer.sendCustomerCreditCredited({
-          to: customer.email,
-          name: customer.name || "Customer",
-
-          amount: payload.amount,
-          balance: newBalance,
-
-          orderNumber: payload.orderNumber || "",
-          creditId,
-
-          reason:
-            payload.type === "refund"
-              ? "Refund"
-              : payload.reason,
-
-          creditedAt: log.createdAt,
-
-          ctaUrl:
-            `${process.env.CLIENT_URL || "https://oatclub.in"}/account`,
-        }),
+        Promise.resolve().then(() =>
+          Mailer.sendCustomerCreditCredited({
+            to: customer.email,
+            name: customer.name || "Customer",
+            amount: payload.amount,
+            balance: newBalance,
+            orderNumber: payload.orderNumber || "",
+            creditId,
+            reason: payload.type === "refund" ? "Refund" : payload.reason,
+            creditedAt,
+            ctaUrl: `${process.env.CLIENT_URL || "https://oatclub.in"}/account`,
+          }),
+        ),
       );
     }
 
-    // ✅ FAST2SMS WHATSAPP
     if (customer.phone) {
       notificationJobs.push(
-        sendCustomerCreditWhatsapp({
-          phone: customer.phone,
-
-          customerName:
-            customer.name || "Customer",
-
-          amount: payload.amount,
-
-          creditId,
-        }),
+        Promise.resolve().then(() =>
+          sendCustomerCreditWhatsapp({
+            phone: customer.phone,
+            customerName: customer.name || "Customer",
+            amount: payload.amount,
+            creditId,
+          }),
+        ),
       );
     }
 
-    // ✅ Notification failure must NOT rollback wallet credit
+    // Notification failures must not turn a saved credit into an error.
     if (notificationJobs.length) {
-      const results =
-        await Promise.allSettled(notificationJobs);
+      const results = await Promise.allSettled(notificationJobs);
 
       results.forEach((result) => {
         if (result.status === "rejected") {
           console.error(
-            "❌ Customer credit notification failed:",
-            result.reason?.message ||
-            result.reason,
+            "Customer credit notification failed:",
+            result.reason?.message || result.reason,
           );
         }
       });
@@ -1988,20 +1971,15 @@ export const addCustomerCredit = async (req, res) => {
 
     return res.status(200).json({
       message: "Customer credit added",
-
       credits: customer.credits,
       customer,
-
       notification: {
         email: Boolean(customer.email),
         whatsapp: Boolean(customer.phone),
       },
     });
   } catch (err) {
-    console.error(
-      "Add Customer Credit Error:",
-      err,
-    );
+    console.error("Add Customer Credit Error:", err);
 
     return res.status(500).json({
       message: "Server error",
