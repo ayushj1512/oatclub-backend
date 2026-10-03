@@ -3105,6 +3105,8 @@ export const getAllOrders = async (req, res) => {
 
       paymentMethod: 1,
       paymentStatus: 1,
+      walletCredit: 1,
+      paymentBreakdown: 1,
       fulfillmentStatus: 1,
       isConfirmed: 1,
       isInfluencerOrder: 1,
@@ -10025,6 +10027,8 @@ const ADVANCED_ORDER_LIST_FIELDS = {
 
   paymentMethod: 1,
   paymentStatus: 1,
+  walletCredit: 1,
+  paymentBreakdown: 1,
   fulfillmentStatus: 1,
   eligibleForRefund: 1,
   isRefunded: 1,
