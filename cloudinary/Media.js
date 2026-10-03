@@ -13,11 +13,12 @@ const mediaSchema = new mongoose.Schema(
       index: true,
     },
 
-    // cloudinary_1 = existing account
-    // cloudinary_2 = new active account
+    // cloudinary_1 = legacy account
+    // cloudinary_2 = previous account
+    // cloudinary_3 = active upload account
     cloudinarySource: {
       type: String,
-      enum: ["cloudinary_1", "cloudinary_2"],
+      enum: ["cloudinary_1", "cloudinary_2", "cloudinary_3"],
       default: "cloudinary_1",
       index: true,
     },
@@ -72,7 +73,7 @@ const mediaSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Same publicId can exist in different Cloudinary accounts
@@ -83,7 +84,7 @@ mediaSchema.index(
   },
   {
     unique: true,
-  }
+  },
 );
 
 mediaSchema.index({

@@ -5,7 +5,17 @@ import dotenv from "dotenv";
 dotenv.config();
 
 /* =====================================================
-   CLOUDINARY 1 — EXISTING / LEGACY
+   CLOUDINARY SOURCES
+===================================================== */
+
+export const CLOUDINARY_SOURCES = {
+  LEGACY: "cloudinary_1",
+  SECONDARY: "cloudinary_2",
+  ACTIVE: "cloudinary_3",
+};
+
+/* =====================================================
+   ACCOUNT CONFIGURATION
 ===================================================== */
 
 const CLOUDINARY_1_CONFIG = {
@@ -14,49 +24,54 @@ const CLOUDINARY_1_CONFIG = {
   api_secret: (process.env.CLOUDINARY_API_SECRET || "").trim(),
 };
 
-/* =====================================================
-   CLOUDINARY 2 — NEW / ACTIVE
-===================================================== */
-
 const CLOUDINARY_2_CONFIG = {
   cloud_name: (process.env.CLOUDINARY_2_CLOUD_NAME || "").trim(),
   api_key: (process.env.CLOUDINARY_2_API_KEY || "").trim(),
   api_secret: (process.env.CLOUDINARY_2_API_SECRET || "").trim(),
 };
 
-const CLOUDINARY_2_UPLOAD_ENABLED =
-  String(
-    process.env.CLOUDINARY_2_UPLOAD_ENABLED || "false"
-  ).toLowerCase() === "true";
-
-export const CLOUDINARY_SOURCES = {
-  LEGACY: "cloudinary_1",
-  ACTIVE: "cloudinary_2",
+// Backend only — this file contains credentials; keep it out of public repos.
+const CLOUDINARY_3_CONFIG = {
+  cloud_name: "euldaicq",
+  api_key: "762151676257499",
+  api_secret: "Z5Txg4mQL_wi-rCBTFDWyZtVHbY",
 };
 
-/* =====================================================
-   DEFAULT GLOBAL CONFIG = CLOUDINARY 1
+const CLOUDINARY_2_UPLOAD_ENABLED =
+  String(process.env.CLOUDINARY_2_UPLOAD_ENABLED || "false")
+    .trim()
+    .toLowerCase() === "true";
 
-   Existing project imports remain compatible.
-===================================================== */
+const CLOUDINARY_3_UPLOAD_ENABLED = true;
 
-cloudinary.config({
-  ...CLOUDINARY_1_CONFIG,
-  secure: true,
-});
+const ACCOUNT_CONFIGS = {
+  [CLOUDINARY_SOURCES.LEGACY]: CLOUDINARY_1_CONFIG,
+  [CLOUDINARY_SOURCES.SECONDARY]: CLOUDINARY_2_CONFIG,
+  [CLOUDINARY_SOURCES.ACTIVE]: CLOUDINARY_3_CONFIG,
+};
 
 const isConfigValid = (config) =>
-  Boolean(
-    config.cloud_name &&
-      config.api_key &&
-      config.api_secret
-  );
+  Boolean(config?.cloud_name && config?.api_key && config?.api_secret);
 
 export const isCloudinary1Configured =
   isConfigValid(CLOUDINARY_1_CONFIG);
 
 export const isCloudinary2Configured =
   isConfigValid(CLOUDINARY_2_CONFIG);
+
+export const isCloudinary3Configured =
+  isConfigValid(CLOUDINARY_3_CONFIG);
+
+/* =====================================================
+   DEFAULT SDK CONFIG
+   Preserve legacy direct imports.
+   Upload helpers below explicitly select their account.
+===================================================== */
+
+cloudinary.config({
+  ...CLOUDINARY_1_CONFIG,
+  secure: true,
+});
 
 console.log("☁️ Cloudinary accounts:", {
   cloudinary_1: {
@@ -68,6 +83,12 @@ console.log("☁️ Cloudinary accounts:", {
     cloudName: CLOUDINARY_2_CONFIG.cloud_name,
     configured: isCloudinary2Configured,
     uploadEnabled: CLOUDINARY_2_UPLOAD_ENABLED,
+    role: "previous",
+  },
+  cloudinary_3: {
+    cloudName: CLOUDINARY_3_CONFIG.cloud_name,
+    configured: isCloudinary3Configured,
+    uploadEnabled: CLOUDINARY_3_UPLOAD_ENABLED,
     role: "active",
   },
 });
@@ -93,10 +114,8 @@ export const upload = multer({
   fileFilter: (req, file, cb) => {
     if (!allowedImageMimeTypes.includes(file.mimetype)) {
       return cb(
-        new Error(
-          "Only JPG, JPEG, PNG and WEBP images are allowed"
-        ),
-        false
+        new Error("Only JPG, JPEG, PNG and WEBP images are allowed"),
+        false,
       );
     }
 
@@ -117,37 +136,28 @@ export const uploadAny = multer({
 ===================================================== */
 
 export const getCloudinaryConfig = (
-  source = CLOUDINARY_SOURCES.ACTIVE
+  source = CLOUDINARY_SOURCES.ACTIVE,
 ) => {
-  if (source === CLOUDINARY_SOURCES.LEGACY) {
-    if (!isCloudinary1Configured) {
-      throw new Error("Cloudinary 1 is not configured");
-    }
+  const config = ACCOUNT_CONFIGS[source];
 
-    return CLOUDINARY_1_CONFIG;
+  if (!config) {
+    throw new Error(`Unsupported Cloudinary source: ${source}`);
   }
 
-  if (source === CLOUDINARY_SOURCES.ACTIVE) {
-    if (!isCloudinary2Configured) {
-      throw new Error("Cloudinary 2 is not configured");
-    }
-
-    return CLOUDINARY_2_CONFIG;
+  if (!isConfigValid(config)) {
+    throw new Error(`${source} is not configured`);
   }
 
-  throw new Error(
-    `Unsupported Cloudinary source: ${source}`
-  );
+  return config;
 };
 
-export const getCloudinaryName = (source) => {
-  return getCloudinaryConfig(source).cloud_name;
-};
+export const getCloudinaryName = (
+  source = CLOUDINARY_SOURCES.ACTIVE,
+) => getCloudinaryConfig(source).cloud_name;
 
 /* =====================================================
-   CREATE TEMPORARY ACCOUNT CLIENT
-
-   SDK global config ko permanently change nahi karta.
+   ACCOUNT API
+   Pass credentials per request without changing globals.
 ===================================================== */
 
 const createAccountApi = (source) => {
@@ -157,6 +167,7 @@ const createAccountApi = (source) => {
     cloud_name: config.cloud_name,
     api_key: config.api_key,
     api_secret: config.api_secret,
+    secure: true,
   };
 
   return {
@@ -167,7 +178,7 @@ const createAccountApi = (source) => {
             ...options,
             ...accountOptions,
           },
-          callback
+          callback,
         );
       },
 
@@ -203,20 +214,20 @@ const createAccountApi = (source) => {
 };
 
 /* =====================================================
-   UPLOAD — ALL NEW UPLOADS TO CLOUDINARY 2
+   UPLOAD
+   All default helper uploads go to Cloudinary 3.
 ===================================================== */
 
 export const uploadToCloudinary = (
   file,
   folder = "products",
-  resourceType = "auto"
-) => {
-  return uploadToCloudinarySource(file, {
+  resourceType = "auto",
+) =>
+  uploadToCloudinarySource(file, {
     source: CLOUDINARY_SOURCES.ACTIVE,
     folder,
     resourceType,
   });
-};
 
 export const uploadToCloudinarySource = (
   file,
@@ -224,7 +235,7 @@ export const uploadToCloudinarySource = (
     source = CLOUDINARY_SOURCES.ACTIVE,
     folder = "oatclub/media",
     resourceType = "auto",
-  } = {}
+  } = {},
 ) => {
   return new Promise((resolve, reject) => {
     if (!file?.buffer) {
@@ -232,13 +243,13 @@ export const uploadToCloudinarySource = (
     }
 
     if (
-      source === CLOUDINARY_SOURCES.ACTIVE &&
-      !CLOUDINARY_2_UPLOAD_ENABLED
+      (source === CLOUDINARY_SOURCES.SECONDARY &&
+        !CLOUDINARY_2_UPLOAD_ENABLED) ||
+      (source === CLOUDINARY_SOURCES.ACTIVE &&
+        !CLOUDINARY_3_UPLOAD_ENABLED)
     ) {
       return reject(
-        new Error(
-          "Cloudinary 2 uploads are currently disabled"
-        )
+        new Error(`Uploads are currently disabled for ${source}`),
       );
     }
 
@@ -265,9 +276,7 @@ export const uploadToCloudinarySource = (
 
         if (!result) {
           return reject(
-            new Error(
-              "Cloudinary returned an empty upload result"
-            )
+            new Error("Cloudinary returned an empty upload result"),
           );
         }
 
@@ -276,7 +285,7 @@ export const uploadToCloudinarySource = (
           cloudinarySource: source,
           cloudName: getCloudinaryName(source),
         });
-      }
+      },
     );
 
     uploadStream.on("error", reject);
@@ -286,12 +295,13 @@ export const uploadToCloudinarySource = (
 
 /* =====================================================
    DELETE FROM CORRECT ACCOUNT
+   Legacy default remains Cloudinary 1.
 ===================================================== */
 
 export const deleteFromCloudinary = async (
   publicId,
   resourceType = "image",
-  source = CLOUDINARY_SOURCES.LEGACY
+  source = CLOUDINARY_SOURCES.LEGACY,
 ) => {
   if (!publicId) {
     throw new Error("publicId is required");
