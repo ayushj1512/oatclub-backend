@@ -1825,7 +1825,11 @@ export const addCustomerCredit = async (req, res) => {
         message: "Customer not found",
       });
     }
+    customer.expireCreditBatches();
 
+    if (customer.isModified("credits")) {
+      await customer.save();
+    }
     customer.credits = customer.credits || {};
 
     customer.credits.balance = Number(customer.credits.balance || 0);
@@ -1885,7 +1889,15 @@ export const addCustomerCredit = async (req, res) => {
       isExpired: false,
       createdAt: creditedAt,
     };
-
+    customer.credits.batches.push({
+      creditId: log.creditId,
+      amount: payload.amount,
+      remainingAmount: payload.amount,
+      createdAt: log.createdAt,
+      expiresAt: log.expiresAt,
+      isExpired: false,
+      isLegacy: false,
+    });
     customer.credits.balance = newBalance;
     customer.credits.totalCredited += payload.amount;
     customer.credits.lastCreditAt = creditedAt;
@@ -2030,7 +2042,11 @@ export const debitCustomerCredit = async (req, res) => {
     if (!customer) {
       return res.status(404).json({ message: "Customer not found" });
     }
+    customer.expireCreditBatches();
 
+    if (customer.isModified("credits")) {
+      await customer.save();
+    }
     customer.credits = customer.credits || {};
     customer.credits.balance = Number(customer.credits.balance || 0);
     customer.credits.totalDebited = Number(customer.credits.totalDebited || 0);
@@ -2044,7 +2060,7 @@ export const debitCustomerCredit = async (req, res) => {
         availableBalance: customer.credits.balance,
       });
     }
-
+    customer.consumeCreditBatches(payload.amount);
     const newBalance = customer.credits.balance - payload.amount;
 
     const log = {

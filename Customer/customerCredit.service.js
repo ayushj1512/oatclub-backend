@@ -1,16 +1,37 @@
 import Customer from "./Customer.js";
+import { Mailer } from "../nodemailer/mailer.js";
+import { sendCustomerCreditWhatsapp } from "../fast2sms/fast2sms.whatsapp.js";
 
 const CREDIT_LOG_LIMIT = 300;
 
-const num = (v) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
+const num = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 };
 
-const str = (v) => (v == null ? "" : String(v).trim());
+const str = (value) =>
+  value == null ? "" : String(value).trim();
 
 const makeCreditId = () =>
   `CR-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+const getCreditExpiry = (createdAt) => {
+  const expiresAt = new Date(createdAt);
+  const originalMonth = expiresAt.getUTCMonth();
+
+  expiresAt.setUTCFullYear(expiresAt.getUTCFullYear() + 1);
+
+  // February 29 expires on February 28 in a non-leap year.
+  if (expiresAt.getUTCMonth() !== originalMonth) {
+    expiresAt.setUTCDate(0);
+  }
+
+  return expiresAt;
+};
+
+const saveCustomer = async (customer, session) => {
+  await customer.save(session ? { session } : {});
+};
 
 const notifyRefundCredit = async ({
   customer,
@@ -23,28 +44,32 @@ const notifyRefundCredit = async ({
 
   if (customer?.email) {
     jobs.push(
-      Mailer.sendCustomerCreditCredited({
-        to: customer.email,
-        name: customer.name || "Customer",
-        amount,
-        balance,
-        orderNumber,
-        creditId: log?.creditId || "",
-        reason: "Refund",
-        creditedAt: log?.createdAt || new Date(),
-        ctaUrl: `${process.env.CLIENT_URL || "https://oatclub.in"}/account`,
-      }),
+      Promise.resolve().then(() =>
+        Mailer.sendCustomerCreditCredited({
+          to: customer.email,
+          name: customer.name || "Customer",
+          amount,
+          balance,
+          orderNumber,
+          creditId: log?.creditId || "",
+          reason: "Refund",
+          creditedAt: log?.createdAt || new Date(),
+          ctaUrl: `${process.env.CLIENT_URL || "https://oatclub.in"}/account`,
+        }),
+      ),
     );
   }
 
   if (customer?.phone) {
     jobs.push(
-      sendCustomerCreditWhatsapp({
-        phone: customer.phone,
-        customerName: customer.name || "Customer",
-        amount,
-        creditId: log?.creditId || "",
-      }),
+      Promise.resolve().then(() =>
+        sendCustomerCreditWhatsapp({
+          phone: customer.phone,
+          customerName: customer.name || "Customer",
+          amount,
+          creditId: log?.creditId || "",
+        }),
+      ),
     );
   }
 
@@ -55,47 +80,77 @@ const notifyRefundCredit = async ({
   results.forEach((result) => {
     if (result.status === "rejected") {
       console.error(
-        "❌ Refund credit notification failed:",
+        "Refund credit notification failed:",
         result.reason?.message || result.reason,
       );
     }
   });
 };
 
-const getCustomerById = async ({ customerId, session = null }) => {
+const getCustomerById = async ({
+  customerId,
+  session = null,
+}) => {
   const query = Customer.findById(customerId);
+
   if (session) query.session(session);
 
   const customer = await query;
-  if (!customer) throw new Error("Customer not found");
+
+  if (!customer) {
+    throw new Error("Customer not found");
+  }
 
   customer.credits = customer.credits || {};
+
   customer.credits.balance = num(customer.credits.balance);
-  customer.credits.totalCredited = num(customer.credits.totalCredited);
-  customer.credits.totalDebited = num(customer.credits.totalDebited);
-  customer.credits.totalRefundCredits = num(customer.credits.totalRefundCredits);
-  customer.credits.totalPromotionCredits = num(customer.credits.totalPromotionCredits);
-  customer.credits.totalInfluencerCredits = num(customer.credits.totalInfluencerCredits);
+  customer.credits.totalCredited = num(
+    customer.credits.totalCredited,
+  );
+  customer.credits.totalDebited = num(
+    customer.credits.totalDebited,
+  );
+  customer.credits.totalRefundCredits = num(
+    customer.credits.totalRefundCredits,
+  );
+  customer.credits.totalPromotionCredits = num(
+    customer.credits.totalPromotionCredits,
+  );
+  customer.credits.totalInfluencerCredits = num(
+    customer.credits.totalInfluencerCredits,
+  );
+
   customer.credits.logs = Array.isArray(customer.credits.logs)
     ? customer.credits.logs
     : [];
 
   customer.analytics = customer.analytics || {};
+  customer.expireCreditBatches();
 
+  if (customer.isModified("credits")) {
+    await customer.save(session ? { session } : {});
+  }
   return customer;
 };
+
+/* =========================================================
+   BALANCE
+========================================================= */
 
 export const getCustomerCreditBalanceInternal = async ({
   customerId,
   session = null,
 }) => {
-  const customer = await getCustomerById({ customerId, session });
+  const customer = await getCustomerById({
+    customerId,
+    session,
+  });
 
   return {
     customerId: customer._id,
-    balance: num(customer.credits?.balance),
-    totalCredited: num(customer.credits?.totalCredited),
-    totalDebited: num(customer.credits?.totalDebited),
+    balance: num(customer.credits.balance),
+    totalCredited: num(customer.credits.totalCredited),
+    totalDebited: num(customer.credits.totalDebited),
   };
 };
 
@@ -105,20 +160,30 @@ export const validateCustomerCreditBalanceInternal = async ({
   session = null,
 }) => {
   const safeAmount = num(amount);
-  if (safeAmount <= 0) throw new Error("Invalid wallet amount");
 
-  const customer = await getCustomerById({ customerId, session });
+  if (safeAmount <= 0) {
+    throw new Error("Invalid wallet amount");
+  }
 
-  if (num(customer.credits.balance) < safeAmount) {
+  const customer = await getCustomerById({
+    customerId,
+    session,
+  });
+
+  if (customer.credits.balance < safeAmount) {
     throw new Error("Insufficient wallet balance");
   }
 
   return {
     customer,
-    balance: num(customer.credits.balance),
+    balance: customer.credits.balance,
     requestedAmount: safeAmount,
   };
 };
+
+/* =========================================================
+   ADD CREDIT — ONE-YEAR VALIDITY
+========================================================= */
 
 export const addCustomerCreditInternal = async ({
   customerId,
@@ -139,16 +204,24 @@ export const addCustomerCreditInternal = async ({
 
   addedBy = "system",
   adminId = null,
-  expiresAt = null,
 
   session = null,
 }) => {
   const safeAmount = num(amount);
-  if (safeAmount <= 0) throw new Error("Invalid credit amount");
 
-  const customer = await getCustomerById({ customerId, session });
+  if (safeAmount <= 0) {
+    throw new Error("Invalid credit amount");
+  }
 
-  const newBalance = num(customer.credits.balance) + safeAmount;
+  const customer = await getCustomerById({
+    customerId,
+    session,
+  });
+
+  const creditedAt = new Date();
+  const expiresAt = getCreditExpiry(creditedAt);
+
+  const newBalance = customer.credits.balance + safeAmount;
 
   const log = {
     creditId: makeCreditId(),
@@ -156,6 +229,7 @@ export const addCustomerCreditInternal = async ({
     type,
     amount: safeAmount,
     balanceAfterTransaction: newBalance,
+
     reason: str(reason),
     notes: str(notes),
 
@@ -166,25 +240,39 @@ export const addCustomerCreditInternal = async ({
     promotionName: str(promotionName),
     influencerName: str(influencerName),
     influencerCode: str(influencerCode).toUpperCase(),
+
     couponId,
     couponCode: str(couponCode).toUpperCase(),
 
     addedBy,
     adminId,
+
     expiresAt,
     isExpired: false,
-    createdAt: new Date(),
+    createdAt: creditedAt,
   };
+
+  customer.credits.batches.push({
+    creditId: log.creditId,
+    amount: safeAmount,
+    remainingAmount: safeAmount,
+    createdAt: log.createdAt,
+    expiresAt: log.expiresAt,
+    isExpired: false,
+    isLegacy: false,
+  });
 
   customer.credits.balance = newBalance;
   customer.credits.totalCredited += safeAmount;
-  customer.credits.lastCreditAt = new Date();
+  customer.credits.lastCreditAt = creditedAt;
 
   if (type === "refund") {
     customer.credits.totalRefundCredits += safeAmount;
   }
 
-  if (["promotion", "cashback", "referral_bonus"].includes(type)) {
+  if (
+    ["promotion", "cashback", "referral_bonus"].includes(type)
+  ) {
     customer.credits.totalPromotionCredits += safeAmount;
   }
 
@@ -196,9 +284,12 @@ export const addCustomerCreditInternal = async ({
     num(customer.analytics.walletCreditsEarned) + safeAmount;
 
   customer.credits.logs.unshift(log);
-  customer.credits.logs = customer.credits.logs.slice(0, CREDIT_LOG_LIMIT);
+  customer.credits.logs = customer.credits.logs.slice(
+    0,
+    CREDIT_LOG_LIMIT,
+  );
 
-  await customer.save({ session });
+  await saveCustomer(customer, session);
 
   return {
     customer,
@@ -206,6 +297,11 @@ export const addCustomerCreditInternal = async ({
     balance: newBalance,
   };
 };
+
+/* =========================================================
+   DEBIT CREDIT
+   Expiry enforcement requires the upcoming allocation patch.
+========================================================= */
 
 export const debitCustomerCreditInternal = async ({
   customerId,
@@ -224,15 +320,23 @@ export const debitCustomerCreditInternal = async ({
   session = null,
 }) => {
   const safeAmount = num(amount);
-  if (safeAmount <= 0) throw new Error("Invalid debit amount");
 
-  const customer = await getCustomerById({ customerId, session });
+  if (safeAmount <= 0) {
+    throw new Error("Invalid debit amount");
+  }
 
-  if (num(customer.credits.balance) < safeAmount) {
+  const customer = await getCustomerById({
+    customerId,
+    session,
+  });
+
+  if (customer.credits.balance < safeAmount) {
     throw new Error("Insufficient wallet balance");
   }
 
-  const newBalance = num(customer.credits.balance) - safeAmount;
+  const debitedAt = new Date();
+  customer.consumeCreditBatches(safeAmount);
+  const newBalance = customer.credits.balance - safeAmount;
 
   const log = {
     creditId: makeCreditId(),
@@ -240,6 +344,7 @@ export const debitCustomerCreditInternal = async ({
     type,
     amount: safeAmount,
     balanceAfterTransaction: newBalance,
+
     reason: str(reason),
     notes: str(notes),
 
@@ -249,17 +354,23 @@ export const debitCustomerCreditInternal = async ({
 
     addedBy,
     adminId,
-    createdAt: new Date(),
+
+    expiresAt: null,
+    isExpired: type === "expired",
+    createdAt: debitedAt,
   };
 
   customer.credits.balance = newBalance;
   customer.credits.totalDebited += safeAmount;
-  customer.credits.lastDebitAt = new Date();
+  customer.credits.lastDebitAt = debitedAt;
 
   customer.credits.logs.unshift(log);
-  customer.credits.logs = customer.credits.logs.slice(0, CREDIT_LOG_LIMIT);
+  customer.credits.logs = customer.credits.logs.slice(
+    0,
+    CREDIT_LOG_LIMIT,
+  );
 
-  await customer.save({ session });
+  await saveCustomer(customer, session);
 
   return {
     customer,
@@ -267,6 +378,10 @@ export const debitCustomerCreditInternal = async ({
     balance: newBalance,
   };
 };
+
+/* =========================================================
+   ORDER WALLET USAGE
+========================================================= */
 
 export const debitWalletForOrderInternal = async ({
   customerId,
@@ -280,13 +395,19 @@ export const debitWalletForOrderInternal = async ({
     amount,
     type: "order_usage",
     reason: "Wallet credit used on order",
-    notes: orderNumber ? `Wallet used for order ${orderNumber}` : "",
+    notes: orderNumber
+      ? `Wallet used for order ${orderNumber}`
+      : "",
     orderId,
     orderNumber,
     addedBy: "system",
     session,
   });
 };
+
+/* =========================================================
+   REFUND CREDIT
+========================================================= */
 
 export const creditWalletForRefundInternal = async ({
   customerId,
@@ -314,11 +435,7 @@ export const creditWalletForRefundInternal = async ({
     session,
   });
 
-  /*
-   * Important:
-   * Don't send external notifications from inside an
-   * uncommitted Mongo transaction.
-   */
+  // With a session, the caller must notify after transaction commit.
   if (!session) {
     await notifyRefundCredit({
       customer: result.customer,
@@ -331,6 +448,11 @@ export const creditWalletForRefundInternal = async ({
 
   return result;
 };
+
+/* =========================================================
+   REVERSE ORDER WALLET DEBIT
+   Existing behavior: issue fresh credit with one-year validity.
+========================================================= */
 
 export const rollbackOrderWalletDebitInternal = async ({
   customerId,
@@ -354,6 +476,10 @@ export const rollbackOrderWalletDebitInternal = async ({
   });
 };
 
+/* =========================================================
+   MANUAL CREDIT
+========================================================= */
+
 export const manualCreditCustomerInternal = async ({
   customerId,
   amount,
@@ -362,7 +488,9 @@ export const manualCreditCustomerInternal = async ({
   adminId = null,
   session = null,
 }) => {
-  if (!str(reason)) throw new Error("Reason is required for manual credit");
+  if (!str(reason)) {
+    throw new Error("Reason is required for manual credit");
+  }
 
   return addCustomerCreditInternal({
     customerId,
@@ -376,6 +504,10 @@ export const manualCreditCustomerInternal = async ({
   });
 };
 
+/* =========================================================
+   MANUAL DEBIT
+========================================================= */
+
 export const manualDebitCustomerInternal = async ({
   customerId,
   amount,
@@ -384,7 +516,9 @@ export const manualDebitCustomerInternal = async ({
   adminId = null,
   session = null,
 }) => {
-  if (!str(reason)) throw new Error("Reason is required for manual debit");
+  if (!str(reason)) {
+    throw new Error("Reason is required for manual debit");
+  }
 
   return debitCustomerCreditInternal({
     customerId,

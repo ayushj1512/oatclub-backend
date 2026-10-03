@@ -153,6 +153,19 @@ const customerCreditLogSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const customerCreditBatchSchema = new mongoose.Schema(
+  {
+    creditId: { type: String, required: true },
+    amount: { type: Number, required: true, min: 0 },
+    remainingAmount: { type: Number, required: true, min: 0 },
+    createdAt: { type: Date, required: true },
+    expiresAt: { type: Date, default: null },
+    isExpired: { type: Boolean, default: false },
+    isLegacy: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
 /**
  * ✅ Customer Schema
  */
@@ -217,6 +230,22 @@ const customerSchema = new mongoose.Schema(
      * 💰 Customer Credits / Wallet
      */
     credits: {
+
+      batchesInitialized: {
+        type: Boolean,
+        default: false,
+      },
+
+      batches: {
+        type: [customerCreditBatchSchema],
+        default: [],
+      },
+
+      totalExpired: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
       balance: {
         type: Number,
         default: 0,
@@ -422,6 +451,195 @@ const customerSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+const walletMoney = (value) => {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    throw new Error("Invalid wallet amount");
+  }
+
+  return Math.round(number * 100) / 100;
+};
+
+customerSchema.methods.initializeCreditBatches = function () {
+  if (this.credits.batchesInitialized) return;
+
+  const balance = walletMoney(this.credits.balance || 0);
+
+  // Existing balances require a separate history reconciliation.
+  // Do not invent an expiry date or reset their validity.
+  if (balance > 0) {
+    this.credits.batches.push({
+      creditId: `LEGACY-${this._id}`,
+      amount: balance,
+      remainingAmount: balance,
+      createdAt: this.credits.lastCreditAt || this.createdAt || new Date(),
+      expiresAt: null,
+      isExpired: false,
+      isLegacy: true,
+    });
+  }
+
+  this.credits.batchesInitialized = true;
+};
+
+customerSchema.methods.expireCreditBatches = function (
+  now = new Date(),
+) {
+  this.initializeCreditBatches();
+
+  const batches = this.credits.batches || [];
+
+  const trackedBalance = walletMoney(
+    batches.reduce(
+      (sum, batch) => sum + Number(batch.remainingAmount || 0),
+      0,
+    ),
+  );
+
+  // Catch wallet writes that have not been integrated with batches.
+  if (trackedBalance !== walletMoney(this.credits.balance || 0)) {
+    throw new Error("Wallet batch balance mismatch");
+  }
+
+  let expiredAmount = 0;
+  const expiredIds = [];
+
+  for (const batch of batches) {
+    if (
+      batch.isExpired ||
+      !batch.expiresAt ||
+      new Date(batch.expiresAt).getTime() > now.getTime()
+    ) {
+      continue;
+    }
+
+    expiredAmount = walletMoney(
+      expiredAmount + Number(batch.remainingAmount || 0),
+    );
+
+    expiredIds.push(batch.creditId);
+    batch.remainingAmount = 0;
+    batch.isExpired = true;
+  }
+
+  if (!expiredIds.length) return 0;
+
+  const expiredIdSet = new Set(expiredIds);
+
+  for (const log of this.credits.logs || []) {
+    if (
+      log.transactionType === "credit" &&
+      expiredIdSet.has(log.creditId)
+    ) {
+      log.isExpired = true;
+    }
+  }
+
+  if (expiredAmount > 0) {
+    this.credits.balance = walletMoney(
+      this.credits.balance - expiredAmount,
+    );
+
+    this.credits.totalDebited = walletMoney(
+      Number(this.credits.totalDebited || 0) + expiredAmount,
+    );
+
+    this.credits.totalExpired = walletMoney(
+      Number(this.credits.totalExpired || 0) + expiredAmount,
+    );
+
+    this.credits.lastDebitAt = now;
+
+    this.credits.logs.unshift({
+      creditId: `EXP-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      transactionType: "debit",
+      type: "expired",
+      amount: expiredAmount,
+      balanceAfterTransaction: this.credits.balance,
+      reason: "Unused wallet credit expired",
+      notes: `Expired batches: ${expiredIds.join(", ")}`,
+      addedBy: "system",
+      expiresAt: null,
+      isExpired: true,
+      createdAt: now,
+    });
+
+    this.credits.logs = this.credits.logs.slice(0, 300);
+  }
+
+  // Remove closed batches; logs remain the transaction history.
+  this.credits.batches = batches.filter(
+    (batch) => Number(batch.remainingAmount || 0) > 0,
+  );
+
+  return expiredAmount;
+};
+
+customerSchema.methods.consumeCreditBatches = function (amount) {
+  const safeAmount = walletMoney(amount);
+
+  if (safeAmount <= 0) {
+    throw new Error("Invalid debit amount");
+  }
+
+  this.expireCreditBatches();
+
+  if (walletMoney(this.credits.balance) < safeAmount) {
+    throw new Error("Insufficient wallet balance");
+  }
+
+  // Spend the credit that expires first.
+  // Unreconciled legacy balance is consumed after dated credits.
+  const batches = [...this.credits.batches].sort((a, b) => {
+    const aExpiry = a.expiresAt
+      ? new Date(a.expiresAt).getTime()
+      : Infinity;
+
+    const bExpiry = b.expiresAt
+      ? new Date(b.expiresAt).getTime()
+      : Infinity;
+
+    if (aExpiry !== bExpiry) return aExpiry < bExpiry ? -1 : 1;
+
+    return (
+      new Date(a.createdAt).getTime() -
+      new Date(b.createdAt).getTime()
+    );
+  });
+
+  let remaining = safeAmount;
+
+  for (const batch of batches) {
+    if (remaining <= 0) break;
+
+    const used = Math.min(
+      walletMoney(batch.remainingAmount),
+      remaining,
+    );
+
+    batch.remainingAmount = walletMoney(
+      batch.remainingAmount - used,
+    );
+
+    remaining = walletMoney(remaining - used);
+  }
+
+  if (remaining > 0) {
+    throw new Error("Wallet batch balance mismatch");
+  }
+
+  this.credits.batches = this.credits.batches.filter(
+    (batch) => Number(batch.remainingAmount || 0) > 0,
+  );
+
+  // Caller updates balance and creates its normal debit log.
+};
+
+customerSchema.pre("validate", function () {
+  this.expireCreditBatches();
+});
 
 /**
  * ✅ Auto-generate customerId like 0001, 0002...
