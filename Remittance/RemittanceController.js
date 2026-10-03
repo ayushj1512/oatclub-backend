@@ -238,7 +238,15 @@ const getShippingNoExpr = () => ({
   ],
 });
 const getDeliveredDateExpr = () => ({
-  $ifNull: ["$shipment.deliveredAt", "$trackingDetails.deliveredAt"],
+  $ifNull: [
+    "$fulfillmentDates.deliveredAt",
+    {
+      $ifNull: [
+        "$shipment.deliveredAt",
+        "$trackingDetails.deliveredAt",
+      ],
+    },
+  ],
 });
 
 const getPendingBasePipeline = (search = "") => {
@@ -252,6 +260,7 @@ const getPendingBasePipeline = (search = "") => {
   }
 
   return [
+    { $match: orderMatch },
     {
       $match: {
         $or: [
@@ -304,8 +313,16 @@ const getPendingBasePipeline = (search = "") => {
         ],
       },
     },
-    { $addFields: { deliveredDate: getDeliveredDateExpr() } },
     {
+      $addFields: {
+        deliveredDate: getDeliveredDateExpr(),
+      },
+    },
+    {
+      $match: {
+        deliveredDate: { $type: "date" },
+      },
+    }, {
       $lookup: {
         from: "remittances",
         localField: "orderNumber",
@@ -841,7 +858,7 @@ export const importRemittanceCsv = async (req, res) => {
     });
 
     if (!rows.length) {
-      fs.unlink(req.file.path, () => {});
+      fs.unlink(req.file.path, () => { });
       return res.status(400).json({ message: "No valid rows found in CSV", invalidRows });
     }
 
@@ -866,7 +883,7 @@ export const importRemittanceCsv = async (req, res) => {
     }));
 
     const result = await Remittance.bulkWrite(ops, { ordered: false });
-    fs.unlink(req.file.path, () => {});
+    fs.unlink(req.file.path, () => { });
 
     return res.json({
       message: "CSV imported successfully",
@@ -881,7 +898,7 @@ export const importRemittanceCsv = async (req, res) => {
       invalidRows: invalidRows.slice(0, 100),
     });
   } catch (error) {
-    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    if (req.file?.path) fs.unlink(req.file.path, () => { });
     return res.status(500).json({ message: "importRemittanceCsv error", error: error.message });
   }
 };
